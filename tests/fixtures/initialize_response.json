@@ -1,0 +1,9 @@
+{
+  "id": 1,
+  "result": {
+    "userAgent": "codex_cli_rs/0.1.0",
+    "codexHome": "C:/Users/someone/.codex",
+    "platformFamily": "windows",
+    "platformOs": "windows"
+  }
+}

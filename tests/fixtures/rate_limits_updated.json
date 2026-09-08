@@ -1,0 +1,13 @@
+{
+  "method": "account/rateLimits/updated",
+  "params": {
+    "rateLimits": {
+      "limitId": "codex",
+      "primary": {
+        "usedPercent": 31,
+        "windowDurationMins": 300,
+        "resetsAt": 1730948100
+      }
+    }
+  }
+}

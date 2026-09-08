@@ -1,0 +1,5 @@
+
+this is not json
+{"only":"object","but":"not-rpc"}
+["array"]
+{"method":"account/rateLimits/updated","params":{"rateLimits":{"primary":{"usedPercent":1}}}}
