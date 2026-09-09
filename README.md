@@ -1,4 +1,4 @@
-# AIQuota
+# Codexio
 
 Windows 桌面额度与用量面板，通过 Codex `app-server` 读取当前账户额度，并增量扫描会话计量记录，显示：
 
@@ -9,7 +9,7 @@ Windows 桌面额度与用量面板，通过 Codex `app-server` 读取当前账�
 - 今日、近 7 天、近 30 天及历史 Token 和 API 等价美元
 - 小时／天／周用量趋势、逐次请求明细、模型价格和订阅周额度观测估值
 
-可用源码运行，也可以打包成单个 `AIQuota.exe` 发给其他 Windows 用户。0.1.1 起支持从 GitHub 自动下载安装新版，完成后自动重启。
+可用源码运行，也可以打包成单个 `Codexio.exe` 发给其他 Windows 用户。0.1.1 起支持从 GitHub 自动下载安装新版，完成后自动重启。
 
 ## 环境要求
 
@@ -33,7 +33,7 @@ Windows 桌面额度与用量面板，通过 Codex `app-server` 读取当前账�
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 $env:PYTHONPATH = "src"
-.\.venv\Scripts\python.exe -m aiquota
+.\.venv\Scripts\python.exe -m codexio
 ```
 
 开发预览（不连接真实 Codex）：
@@ -113,10 +113,10 @@ Session ID 旁的 `!` 可悬停查看会话标题以及最多三行的用户消�
 
 ## 配置与日志
 
-为兼容旧版设置与历史统计，AIQuota 继续使用原有的配置和缓存目录：
+为兼容旧版设置与历史统计，Codexio 继续使用原有的配置和缓存目录：
 
 ```text
-%LOCALAPPDATA%\AIQuotaWidget
+%LOCALAPPDATA%\Codexio
 ```
 
 - `settings.json`：刷新间隔、显示模式、额度样式、窗口位置和大小、背景透明度、边框、可选 Codex 路径
@@ -124,7 +124,7 @@ Session ID 旁的 `!` 可悬停查看会话标题以及最多三行的用户消�
 - `analytics_settings.json`：主题、统计来源、价格同步、历史归属及悬浮窗显示状态
 - `usage.sqlite`：Token、额度观测、会话标题和短输入预览的本机增量索引
 - `prices\`：当前模型价格、手工覆盖及历史价格版本
-- `logs\aiquota.log`：运行日志。日志会脱敏，不会写入 access token 等认证内容
+- `logs\codexio.log`：运行日志。日志会脱敏，不会写入 access token 等认证内容
 
 如需指定 Codex 路径，可在 `settings.json` 写入 `codex_path`，或设置环境变量 `CODEX_CLI_PATH`。
 
@@ -134,7 +134,7 @@ Session ID 旁的 `!` 可悬停查看会话标题以及最多三行的用户消�
 
 ## 打包成 EXE
 
-`dist` 始终只保留 `AIQuota.exe` 一个可执行文件。构建先暂存到 `build/release-staging`，成功后统一发布；旧包放在 `build/release-backups`，不再保留 `dist/update`、`dist/refined` 等多版本目录。若目标正在运行，先退出小组件再重试发布。
+`dist` 始终只保留 `Codexio.exe` 一个可执行文件。构建先暂存到 `build/release-staging`，成功后统一发布；旧包放在 `build/release-backups`，不再保留 `dist/update`、`dist/refined` 等多版本目录。若目标正在运行，先退出小组件再重试发布。
 
 在已经能用 `.\run.ps1` 跑起来的电脑上执行：
 
@@ -142,22 +142,22 @@ Session ID 旁的 `!` 可悬停查看会话标题以及最多三行的用户消�
 .\build_exe.ps1
 ```
 
-构建前请先退出正在运行的旧版小组件。完成后得到 `dist\AIQuota.exe`。把这个文件复制到其他 Windows 10/11（x64）电脑即可双击使用。
+构建前请先退出正在运行的旧版小组件。完成后得到 `dist\Codexio.exe`。把这个文件复制到其他 Windows 10/11（x64）电脑即可双击使用。
 
 对方电脑仍需：
 
 1. 已安装并登录 Codex（小组件只读本机 Codex 额度，不会自带账号）
 2. 如本机用了代理访问 ChatGPT，对方也需要能访问 `chatgpt.com`
 
-配置写在每个用户自己的 `%LOCALAPPDATA%\AIQuotaWidget`，不写进 EXE。
+配置写在每个用户自己的 `%LOCALAPPDATA%\Codexio`，不写进 EXE。
 
 ## 自动更新与发布
 
-更新源固定为 [Wujuhu/AIQuota](https://github.com/Wujuhu/AIQuota)。EXE 启动 5 秒后检查新版，运行期间每 6 小时检查一次；默认自动下载、校验、安装并重启。可在“设置 → 应用更新”关闭自动更新，或从设置及托盘点击“检查并更新”。源码和 `--mock` 预览模式不自动安装更新。
+更新源固定为 [Wujuhu/Codexio](https://github.com/Wujuhu/Codexio)。EXE 启动 5 秒后检查新版，运行期间每 6 小时检查一次；默认自动下载、校验、安装并重启。可在“设置 → 应用更新”关闭自动更新，或从设置及托盘点击“检查并更新”。源码和 `--mock` 预览模式不自动安装更新。
 
 客户端下载 Release 附件 `latest.json`，避免公共 API 限流。仅接受固定仓库对应版本的 HTTPS 下载地址，并校验文件大小、SHA-256 和 Windows 程序头。发布者身份依赖 GitHub 仓库与 HTTPS，当前未使用独立的发布签名。客户端不需要 GitHub 令牌。
 
-下载成功后，独立更新程序先验证文件和目标目录可写性，再等待 AIQuota 保存设置、停止后台工作并正常退出；随后原位替换 EXE 并自动启动。文件占用时不会结束其他进程。新版启动失败时恢复并启动旧版。更新暂存及最近两份备份保存在 `%LOCALAPPDATA%\AIQuotaWidget\updates`，配置和用量数据库沿用原目录。
+下载成功后，独立更新程序先验证文件和目标目录可写性，再等待 Codexio 保存设置、停止后台工作并正常退出；随后原位替换 EXE 并自动启动。文件占用时不会结束其他进程。新版启动失败时恢复并启动旧版。更新暂存及最近两份备份保存在 `%LOCALAPPDATA%\Codexio\updates`，配置和用量数据库沿用原目录。
 
 首次发布前安装并登录 GitHub CLI（安装后重新打开 PowerShell）：
 
@@ -178,7 +178,7 @@ gh auth login --hostname github.com --web
 .\publish_release.ps1 -Version 0.1.4 -Notes "填写本次更新说明"
 ```
 
-脚本会检查登录和版本号、运行测试、构建 EXE、生成更新清单、上传草稿、核验 GitHub 附件哈希，最后发布为 Latest。首次使用空仓库时自动添加发布用 README；本地源码和个人配置不上传。失败的草稿可用同一条命令重试，已发布版本不会被覆盖。应用与 Windows 文件属性统一读取 `src/aiquota/__init__.py` 的版本号。
+脚本会检查登录和版本号、运行测试、构建 EXE、生成更新清单、上传草稿、核验 GitHub 附件哈希，最后发布为 Latest。首次使用空仓库时自动添加发布用 README；本地源码和个人配置不上传。失败的草稿可用同一条命令重试，已发布版本不会被覆盖。应用与 Windows 文件属性统一读取 `src/codexio/__init__.py` 的版本号。
 
 不使用 GitHub CLI 时，可先准备附件：
 
@@ -186,7 +186,7 @@ gh auth login --hostname github.com --web
 .\publish_release.ps1 -Version 0.1.3 -SkipBuild -PrepareOnly
 ```
 
-本次交付的两个文件位于 `build/github-releases/0.1.3`。将 `AIQuota.exe` 和 `latest.json` 一起上传到标签为 `v0.1.3` 的正式 Release，附件全部上传后再发布并设为 Latest。空仓库需先在 GitHub 创建一个 README。以后增加版本号前须经用户明确确认，再使用递增的三段版本号，例如 `0.1.4`；不使用预发布标签。每次 EXE 变化都必须重新生成清单。
+本次交付的两个文件位于 `build/github-releases/0.1.3`。将 `Codexio.exe` 和 `latest.json` 一起上传到标签为 `v0.1.3` 的正式 Release，附件全部上传后再发布并设为 Latest。空仓库需先在 GitHub 创建一个 README。以后增加版本号前须经用户明确确认，再使用递增的三段版本号，例如 `0.1.4`；不使用预发布标签。每次 EXE 变化都必须重新生成清单。
 
 旧版 0.1.0 需要手动换上一次 0.1.1 或更高版本，此后即可自动更新。
 
@@ -200,7 +200,7 @@ $env:PYTHONPATH = "src"
 ## 故障排查
 
 **窗口没有出现**  
-查看托盘区是否有 AIQuota 图标。单击托盘图标打开主界面，再勾选“显示悬浮窗”。
+查看托盘区是否有 Codexio 图标。单击托盘图标打开主界面，再勾选“显示悬浮窗”。
 
 **提示未找到 Codex**  
 确认 `codex --version` 能在终端运行。常见位置：
@@ -209,7 +209,7 @@ $env:PYTHONPATH = "src"
 - `%LOCALAPPDATA%\OpenAI\Codex\bin\codex.exe`
 - `%USERPROFILE%\.local\bin\codex.cmd`
 
-必要时把完整路径写入 `%LOCALAPPDATA%\AIQuotaWidget\settings.json` 的 `codex_path`。
+必要时把完整路径写入 `%LOCALAPPDATA%\Codexio\settings.json` 的 `codex_path`。
 
 **提示未登录 / authentication required**  
 先在终端执行 `codex login` 或打开 Codex 应用完成 ChatGPT 登录，再刷新小组件。
@@ -221,7 +221,7 @@ $env:PYTHONPATH = "src"
 Codex 需要访问 ChatGPT 后端才能读额度。若系统代理指向 `127.0.0.1:7890` 一类本地端口但代理软件未启动，小组件会先尝试直连；直连仍失败时再按退避重试。也可以启动代理，或关闭无效的系统代理。
 
 **读取失败或数据过期**  
-查看 `%LOCALAPPDATA%\AIQuotaWidget\logs\aiquota.log`。程序会自动重启异常退出的 `app-server`；网络波动时会退避重试。
+查看 `%LOCALAPPDATA%\Codexio\logs\codexio.log`。程序会自动重启异常退出的 `app-server`；网络波动时会退避重试。
 
 **退出后仍有 Codex 进程**  
 正常退出应由 Job Object 或进程树清理结束 `codex app-server`。若仍残留，可在任务管理器结束对应 `codex` 进程，并把日志一并保留以便排查。
