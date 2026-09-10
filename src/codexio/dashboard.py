@@ -937,7 +937,8 @@ class Dashboard(QMainWindow):
         side.setSpacing(14)
         from codexio.app_icon import render_app_pixmap
         brand_row = QHBoxLayout()
-        brand_row.setSpacing(8)
+        brand_row.setContentsMargins(4, 0, 0, 0)
+        brand_row.setSpacing(4)
         brand_icon = QLabel()
         brand_icon.setObjectName("brandIcon")
         brand_icon.setPixmap(render_app_pixmap(32))
