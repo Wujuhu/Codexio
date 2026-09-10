@@ -19,9 +19,10 @@ def usage(**changes):
 def test_token_subsets_and_reasoning_not_double_charged(tmp_path):
     result = PricingCatalog(tmp_path).price(usage())
     assert result["pricing_status"] == "priced"
-    assert result["usd"] == pytest.approx(.2 + .08 + .1)
-    assert result["rates"]["cache_write"] == result["rates"]["input"]
-    assert result["rates"]["cache_write_surcharge"] == 0
+    assert result["usd"] == pytest.approx(.1 + .08 + .125 + .1)
+    assert result["rates"]["cache_write"] == 12.5
+    assert result["rates"]["cache_write_basis"] == "api"
+    assert result["rates"]["cache_write_surcharge"] == 2.5
 
 
 def test_long_context_and_priority_combination_is_applied_once(tmp_path):
@@ -95,7 +96,10 @@ def test_codex_modifiers_derive_from_the_same_standard_base(tmp_path,model,fast)
     assert long["rates"]["input"] == pytest.approx(base["input"]*(2 if surcharge else 1))
     assert long["rates"]["cache_read"] == pytest.approx(base["cache_read"]*(2 if surcharge else 1))
     assert long["rates"]["output"] == pytest.approx(base["output"]*(1.5 if surcharge else 1))
-    assert accelerated["usd"] == pytest.approx(long["usd"]*fast)
+    expected = long["usd"] * fast
+    if model == "gpt-6-astra":
+        expected -= 10000 * (base["cache_write"] - base["input"]) / 1e6 * fast
+    assert accelerated["usd"] == pytest.approx(expected)
     assert accelerated["rates"] in catalog.rows()
     assert all(row["threshold"]==0 and row["service_tier"]=="default" for row in catalog.standard_rows())
 
@@ -123,7 +127,8 @@ def test_base_override_updates_every_codex_variant_and_optional_rates_remain_unk
     assert {(row["service_tier"],row["threshold"],row["input"],row["output"]) for row in rows}=={
         ("default",0,2,8),("default",272000,4,12),("priority",0,5,20),("priority",272000,10,30)}
     assert catalog.price(usage(model="gpt-5.6-sol"))["usd"] is None
-    assert catalog.price(usage(model="gpt-5.6-sol",cached_input_tokens=0))["usd"] is not None
+    assert catalog.price(usage(model="gpt-5.6-sol",cached_input_tokens=0))["usd"] is None
+    assert catalog.price(usage(model="gpt-5.6-sol",cached_input_tokens=0,cache_write_input_tokens=0))["usd"] is not None
 
 
 def test_fallback_parser_ignores_upstream_long_context_tables():

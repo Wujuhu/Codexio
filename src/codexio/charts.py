@@ -11,6 +11,7 @@ from PySide6.QtGui import QFontMetrics, QColor, QLinearGradient, QPainter, QPain
 from PySide6.QtWidgets import QApplication, QFrame, QGridLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from codexio.theme import theme_colors
+from codexio.money import usd
 from codexio.confirmed_usage import ConfirmedUsage, confirmed_count, confirmed_tokens
 
 
@@ -206,16 +207,16 @@ class _ChartGeometry:
 
 
 def _axis_label(value: float, currency: bool = False) -> str:
-    """Keep large axis values readable; the hover preview retains full precision."""
-    if currency and abs(value) < 1000:
-        return "$%.2f" % value
+    """Keep large axes compact and dollar labels at two decimal places."""
+    if currency:
+        return usd(value, compact=True)
     for limit, suffix in ((1e18, "E"), (1e15, "P"), (1e12, "T")):
         if abs(value) >= limit:
             text = ("%.2f" % (value / limit)).rstrip("0").rstrip(".") + suffix
             break
     else:
         text = compact_number(value)
-    return ("$" if currency else "") + text
+    return text
 
 
 def series_paths(buckets, key, plot, maximum):
@@ -513,7 +514,7 @@ class UsageChart(QWidget):
 
     def _tooltip_text(self, bucket: dict) -> str:
         lines = [bucket["timestamp"].strftime("%Y-%m-%d %H:%M"),
-                 "价格  未定价" if bucket["usd"] is None else "价格  $%.6f" % bucket["usd"],
+                 "价格  " + usd(bucket["usd"]),
                  "Total Token  暂无有效数据" if bucket["tokens"] is None else "Total Token  {:,}".format(bucket["tokens"]),
                  "请求数  {:,}".format(bucket["requests"])]
         for key, label, _color in self.SERIES:

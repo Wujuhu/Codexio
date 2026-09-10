@@ -72,7 +72,7 @@ def test_tooltip_shows_overview_then_only_enabled_breakdowns(app):
     bucket = next(bucket for bucket in chart.buckets if bucket["requests"])
     tooltip = chart._tooltip_text(bucket)
     assert "Total Token  1,200" in tooltip
-    assert "价格  $0.040000" in tooltip
+    assert "价格  $0.04" in tooltip
     assert "请求数  1" in tooltip
     assert not any(label in tooltip for label in ("普通输入", "缓存创建", "缓存利用", "输出"))
     chart._enabled.update({"cache_write", "cache_read", "input", "output"})
@@ -125,7 +125,7 @@ def test_tooltip_wraps_long_totals_and_grows_vertically(app):
 def test_tooltip_reuses_colored_rows_when_only_pointer_moves(app):
     chart = UsageChart()
     tooltip = chart._tooltip
-    text = "2026/09/07 18:00\nTotal Token  123,456\n价格  $12.340000\n请求数  3"
+    text = "2026/09/07 18:00\nTotal Token  123,456\n价格  $12.34\n请求数  3"
     tooltip.show_at(QPoint(20, 20), text, "dark")
     first = tooltip.rows[0]["value_label"]
     tooltip.show_at(QPoint(30, 20), text, "dark")

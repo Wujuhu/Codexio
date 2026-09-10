@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from codexio.app_icon import load_app_icon
+from codexio.money import usd
 from codexio.dock import (
     DOCK_BOTTOM,
     DOCK_LEFT,
@@ -193,8 +194,7 @@ class QuotaWindow(QWidget):
         self._summary_dirty = True
         tokens = _short_tokens(summary.get("tokens", 0))
         amount = summary.get("usd", 0)
-        usd = "费用未定价" if amount is None else "$%.2f" % amount
-        self._usage_text = "今日 %s Token %s" % (tokens, usd)
+        self._usage_text = "今日 %s Token %s" % (tokens, usd(amount, missing="费用未定价"))
         if self.isVisible():
             self._render_pending()
 
@@ -204,7 +204,7 @@ class QuotaWindow(QWidget):
             return
         tokens = _short_tokens(summary.get("tokens", 0))
         amount = summary.get("usd", 0)
-        compact_usd = "未定价" if amount is None else "$" + (_short_tokens(amount) if amount >= 1000 else "%.2f" % amount)
+        compact_usd = usd(amount, compact=True)
         self._orb_usage.setText("%s\n%s" % (tokens, compact_usd))
         self._refresh_status_text()
         self._apply_minimum_size()

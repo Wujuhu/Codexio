@@ -44,7 +44,7 @@ def test_default_groups_full_request_and_can_switch_to_calls(app):
     assert [window._log_table.horizontalHeaderItem(i).text() for i in range(8)] == [
         "用户请求 / 发起时间", "模型", "档位", "输入 / 输出", "API 等价", "耗时", "状态", "来源"]
     assert window._log_table.item(0, 2).text() == "Mixed"
-    assert window._log_table.item(0, 4).text().splitlines()[0] == "$4.00000"
+    assert window._log_table.item(0, 4).text().splitlines()[0] == "$4.00"
     assert window._log_table.item(0, 6).text() == "回复中"
     window._log_mode.setCurrentIndex(window._log_mode.findData("model_call"))
     assert window._log_table.rowCount() == 2
@@ -60,7 +60,7 @@ def test_source_model_filter_keeps_whole_turn_cost(app):
     window.apply_data(data())
     window._log_source.setCurrentIndex(window._log_source.findData("ssh:server"))
     window._log_model.setCurrentIndex(window._log_model.findData("model-b"))
-    assert window._log_table.rowCount() == 1 and window._log_table.item(0, 4).text().splitlines()[0] == "$4.00000"
+    assert window._log_table.rowCount() == 1 and window._log_table.item(0, 4).text().splitlines()[0] == "$4.00"
     window._log_model.setCurrentIndex(window._log_model.findData("model-a"))
     assert window._log_table.rowCount() == 0
     window.deleteLater()
@@ -75,7 +75,7 @@ def test_cross_midnight_request_belongs_to_start_date(app):
     assert window._log_table.rowCount() == 0
     window._log_period.setCurrentIndex(window._log_period.findData("all"))
     assert window._log_table.rowCount() == 1
-    assert window._log_table.item(0, 4).text().splitlines()[0] == "$4.00000"
+    assert window._log_table.item(0, 4).text().splitlines()[0] == "$4.00"
     window._log_mode.setCurrentIndex(window._log_mode.findData("model_call"))
     window._log_period.setCurrentIndex(window._log_period.findData("today"))
     assert window._log_table.rowCount() == 2

@@ -212,7 +212,7 @@ def test_data_palette_is_distinct_and_tooltip_ink_passes_contrast(theme):
 
 def test_api_amounts_have_no_estimate_badge_without_changing_price_status():
     row = record(pricing_status="estimated")
-    assert request_cost_text(row) == "$1.00000" and row["pricing_status"] == "estimated"
+    assert request_cost_text(row) == "$1.00" and row["pricing_status"] == "estimated"
     assert "估算" not in PRICE_STATUS_LABELS["estimated"]
     assert "部分未定价" in request_cost_text(record(pricing_status="partial"))
     assert request_cost_text(record(pricing_status="unpriced", cost_usd=None)) == "未定价"

@@ -147,7 +147,7 @@ def test_preview_summarizes_all_calls_by_model_without_paging(app, worker, monke
     assert len(summaries) == 1
     labels = [label.text() for label in summaries[0].findChildren(QLabel)]
     assert "gpt-6-astra × 250" in labels
-    assert request_cost_text(window._inspected_record, 6) in labels
+    assert request_cost_text(window._inspected_record) in labels
     assert window._records == [] and window._dialogs == []
     assert not any(button.text() in ("上一页", "下一页") or button.property("memberCall") for button in content.findChildren(QPushButton))
     app.processEvents()

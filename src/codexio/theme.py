@@ -12,17 +12,21 @@ _fonts_ready = False
 
 
 def ensure_ui_fonts() -> None:
-    """Offscreen Qt on Windows omits system fonts; load the installed CJK font."""
+    """Offscreen Qt on Windows omits system fonts; load installed UI/brand fonts."""
     global _fonts_ready
     if _fonts_ready or QApplication.instance() is None:
         return
     _fonts_ready = True
-    if os.name == "nt" and "Microsoft YaHei UI" not in QFontDatabase.families():
+    if os.name == "nt":
         font_dir = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
-        for filename in ("msyh.ttc", "msyhbd.ttc"):
-            path = font_dir / filename
-            if path.is_file():
-                QFontDatabase.addApplicationFont(str(path))
+        for family, files in (("Microsoft YaHei UI", ("msyh.ttc", "msyhbd.ttc")),
+                              ("Times New Roman", ("times.ttf", "timesbd.ttf"))):
+            if family in QFontDatabase.families():
+                continue
+            for filename in files:
+                path = font_dir / filename
+                if path.is_file():
+                    QFontDatabase.addApplicationFont(str(path))
 
 
 def resolve_theme(name: str = "system") -> str:
@@ -175,7 +179,7 @@ QFrame#sidebar { background: %(sidebar_start)s; border: none; }
 QFrame#contentSurface { background: %(bg)s; border: 1px solid %(border)s; border-radius: 18px; }
 QFrame[card="true"] { background: %(surface)s; border: none; border-radius: 14px; }
 QFrame[card="true"][tone] { background: %(surface)s; border: none; }
-QLabel#brandName { font-size: 18px; font-weight: 600; padding: 0 8px 5px; }
+QLabel#brandName { font-family: "Times New Roman"; font-size: 18px; font-weight: 600; padding: 4px 4px 0; }
 QLabel#statusText, QLabel#sidebarStatus { font-size: 11px; color: %(muted)s; }
 QPushButton { padding: 7px 11px; border-radius: 8px; }
 QPushButton[quiet="true"] { background: transparent; border: none; color: %(muted)s; padding: 6px 9px; }

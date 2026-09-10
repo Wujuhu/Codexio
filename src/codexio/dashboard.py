@@ -6,7 +6,6 @@ import math
 import re
 import uuid
 from dataclasses import replace
-from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime, time, timedelta, timezone
 from typing import Callable, Optional
 
@@ -22,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from codexio import __version__
+from codexio.money import usd
 from codexio.charts import UsageChart, bucket_records, compact_number, parse_timestamp, period_bounds
 from codexio.activity import UsageActivity, activity_bounds
 from codexio.settings import AppSettings
@@ -106,23 +106,11 @@ class SessionIdLabel(QLabel):
         super().resizeEvent(event)
 
 
-def usd(value: object, precision: int = 2) -> str:
-    if value is None:
-        return "未定价"
-    try:
-        number = float(value)
-        if 0 < number < 10 ** (-precision):
-            return "<$%s" % format(10 ** (-precision), ".%df" % precision)
-        return "$%s" % format(number, ",.%df" % precision)
-    except (TypeError, ValueError):
-        return "未定价"
-
-
-def request_cost_text(record: dict, precision: int = 5) -> str:
+def request_cost_text(record: dict) -> str:
     status = record.get("pricing_status")
     if status == "unmetered":
         return "待计量"
-    value = usd(record.get("cost_usd"), precision)
+    value = usd(record.get("cost_usd"))
     if status == "partial":
         return value + "\n部分未定价"
     return value
@@ -508,7 +496,7 @@ def populate_request_table(view: CompactLogTable, rows: list[dict], grouped: boo
         view.item(index, 2).setToolTip("开启：Fast；关闭：Standard；混合：本轮包含不同档位；未知：日志未记录。")
         view.item(index, 3).setToolTip("输入 Token：{:,}\n缓存命中：{:,}\n缓存创建：{:,}".format(
             int(row.get("input_tokens") or 0), int(row.get("cached_input_tokens") or 0), int(row.get("cache_write_input_tokens") or 0)))
-        view.item(index, 5).setToolTip(request_cost_text(row, 6) + "\n" + str(row.get("pricing_reason") or ""))
+        view.item(index, 5).setToolTip(request_cost_text(row) + "\n" + str(row.get("pricing_reason") or ""))
         view.item(index, DURATION_COLUMN).setToolTip(duration_tooltip(row))
         view.item(index, view.columnCount() - 1).setToolTip("\n".join(row.get("source_names") or [str(values[-1])]))
         if grouped:
@@ -529,7 +517,7 @@ class RequestContent(QWidget):
         if compact:
             top = QHBoxLayout()
             top.addWidget(title, 1)
-            amount = plain_label(request_cost_text(record, 6), wrap=True)
+            amount = plain_label(request_cost_text(record), wrap=True)
             amount.setProperty("money", True)
             top.addWidget(amount)
             layout.addLayout(top)
@@ -573,7 +561,7 @@ class RequestContent(QWidget):
         grid.setVerticalSpacing(20)
         content.addLayout(grid)
         if not compact:
-            amount = plain_label(request_cost_text(record, 6), wrap=True)
+            amount = plain_label(request_cost_text(record), wrap=True)
             amount.setProperty("money", True)
             content.addWidget(amount)
         if not compact:
@@ -813,16 +801,7 @@ class HistoryAssignmentEditor(QDialog):
 
 
 def price_rate_text(value):
-    """Show useful unit-price precision without binary-float noise."""
-    if value is None:
-        return "未定价"
-    number = Decimal(str(value))
-    if not number.is_finite() or number < 0:
-        return "未定价"
-    rounded = number.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
-    text = format(number.normalize() if number and not rounded else rounded, "f")
-    whole, _, fraction = text.partition(".")
-    return whole + "." + fraction.rstrip("0").ljust(2, "0")
+    return usd(value, symbol=False)
 
 
 class PriceEditor(QDialog):
@@ -835,13 +814,18 @@ class PriceEditor(QDialog):
         self.model = QLineEdit(str(price.get("model") or ""))
         form.addRow("模型 ID", self.model)
         self.inputs: dict[str, QDoubleSpinBox] = {}
+        self._original_rates = {key: price.get(key) for key in ("input", "cache_read", "cache_write", "output")}
+        self._edited_rates = set()
         for key, label in (("input", "普通输入"), ("cache_read", "缓存读取"), ("cache_write", "缓存创建"), ("output", "输出")):
             spin = QDoubleSpinBox()
             spin.setRange(-1, 1000000)
             spin.setSpecialValueText("未定价")
-            spin.setDecimals(6)
+            spin.setDecimals(2)
             spin.setSingleStep(0.01)
-            spin.setValue(-1 if price.get(key) is None else float(price[key]))
+            displayed = price_rate_text(price.get(key))
+            spin.setValue(-1 if displayed == "未定价" else float(displayed))
+            spin.valueChanged.connect(lambda _value, field=key: self._edited_rates.add(field))
+            spin.lineEdit().textEdited.connect(lambda _text, field=key: self._edited_rates.add(field))
             self.inputs[key] = spin
             form.addRow(label, spin)
         layout.addLayout(form)
@@ -863,7 +847,9 @@ class PriceEditor(QDialog):
         self.accept()
 
     def rates(self) -> dict:
-        return {**{key: None if item.value() < 0 else item.value() for key, item in self.inputs.items()},
+        # Merely displaying a rounded rate must not rewrite the catalog value.
+        return {**{key: (self._original_rates[key] if key not in self._edited_rates else
+                        None if item.value() < 0 else item.value()) for key, item in self.inputs.items()},
                 "service_tier": "default", "threshold": 0,
                 "locked": True}
 
@@ -953,6 +939,7 @@ class Dashboard(QMainWindow):
         brand_row = QHBoxLayout()
         brand_row.setSpacing(8)
         brand_icon = QLabel()
+        brand_icon.setObjectName("brandIcon")
         brand_icon.setPixmap(render_app_pixmap(32))
         brand_icon.setFixedSize(32, 32)
         brand_icon.setAccessibleName("Codexio")
@@ -1338,7 +1325,7 @@ class Dashboard(QMainWindow):
         self._price_empty = plain_label("没有匹配的模型", muted=True)
         self._price_empty.hide()
         layout.addWidget(self._price_empty)
-        layout.addWidget(plain_label("API 基准行仅作参考，费用统一使用换算行。缓存创建按普通输入价计入，无写入附加费。", muted=True, wrap=True))
+        layout.addWidget(plain_label("普通 Standard 使用 OpenAI API 标准价；Fast 与长上下文沿用 Codex 换算规则。", muted=True, wrap=True))
         return page
 
     def _build_settings(self) -> QWidget:
@@ -2340,30 +2327,28 @@ class Dashboard(QMainWindow):
         self._standard_prices_by_model = {p["model"]: p for p in standard if isinstance(p, dict) and p.get("model") in allowed}
         converted = {}
         for price in self._data.get("prices", []):
-            if isinstance(price, dict) and price.get("model") in allowed and price.get("service_tier", "default") in ("default", "standard", "priority"):
+            if isinstance(price, dict) and price.get("model") in allowed and price.get("service_tier", "default") in ("default", "standard", "priority", "fast"):
                 converted.setdefault(price["model"], []).append(price)
         self._visible_prices = []
         for model in available:
             if search not in model.lower():
                 continue
-            base = self._standard_prices_by_model.get(model, {"model": model})
-            self._visible_prices.append(dict(base, _is_api_base=True))
-            variants = sorted(converted.get(model, []), key=lambda p: (p.get("service_tier", "default"), int(p.get("threshold") or 0)))
-            self._visible_prices.extend(dict(price, _is_api_base=False) for price in variants)
+            variants = sorted(converted.get(model, []), key=lambda p:
+                              (p.get("service_tier", "default") in ("priority", "fast"), int(p.get("threshold") or 0)))
+            self._visible_prices.extend(dict(price) for price in variants or [{"model": model, "service_tier": "default"}])
         self._price_table.blockSignals(True)
         self._price_table.setRowCount(len(self._visible_prices))
         selected = None
         for index, price in enumerate(self._visible_prices):
-            is_base = price["_is_api_base"]
             context = ("\n>%s" % compact_number(price["threshold"]) if price.get("threshold") else
                        ("\n≤%s" % compact_number(price["long_context_threshold"]) if price.get("long_context_threshold") else ""))
-            tier = {"default": "Standard", "standard": "Standard", "priority": "Fast"}.get(price.get("service_tier") or "default", "Standard")
-            condition = "API 基准" if is_base else tier + context
+            tier = {"default": "Standard", "standard": "Standard", "priority": "Fast", "fast": "Fast"}.get(price.get("service_tier") or "default", "Standard")
+            condition = tier + context
             values = [price.get("model") or "—", condition,
                       *[price_rate_text(price.get(k)) for k in ("input", "cache_read", "cache_write", "output")]]
             multiplier = price.get("multipliers", {})
-            if is_base:
-                rule = "原始 API Standard 基础价，不含 Fast 或长上下文倍率。修改本模型基础价会更新所有换算行及费用。"
+            if tier == "Standard" and not price.get("threshold"):
+                rule = "OpenAI API Standard 标准价；使用官方输入、缓存读取、缓存创建与输出单价，未公布的单价保留未定价。"
             elif multiplier:
                 rule = "标准 API 基础价 × Codex 倍率\n输入 / 缓存读取 ×%g，输出 ×%g\n缓存创建按普通输入单价，无写入附加费" % (multiplier["input"], multiplier["output"])
                 if price.get("model") == "gpt-6-astra":
@@ -2374,9 +2359,9 @@ class Dashboard(QMainWindow):
                 item = QTableWidgetItem(value)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 item.setToolTip(value + "\n" + rule + ("\n使用手工基础价" if price.get("locked") else ""))
-                if is_base and column in (0, 1):
+                if tier == "Standard" and not price.get("threshold"):
                     font = QFont(self._price_table.font())
-                    font.setWeight(QFont.Weight.DemiBold)
+                    font.setBold(True)
                     item.setFont(font)
                 self._price_table.setItem(index, column, item)
             if self._price_row_key(price) == self._selected_price_key:
@@ -2406,7 +2391,7 @@ class Dashboard(QMainWindow):
 
     @staticmethod
     def _price_row_key(price):
-        return (price.get("model"), price.get("_is_api_base", False), price.get("service_tier", "default"), price.get("threshold", 0))
+        return (price.get("model"), price.get("service_tier", "default"), price.get("threshold", 0))
 
     def _size_price_columns(self) -> None:
         if not hasattr(self, "_price_table"):
@@ -2776,7 +2761,8 @@ class Dashboard(QMainWindow):
         form.setVerticalSpacing(14)
         plan = QLineEdit(profile["plan"] or self._profile_plan_text())
         plan.setMaxLength(64)
-        price = QLineEdit("" if profile["price_usd"] is None else str(profile["price_usd"]))
+        displayed_price = "" if profile["price_usd"] is None else price_rate_text(profile["price_usd"])
+        price = QLineEdit(displayed_price)
         price.setPlaceholderText("未填写")
         renewal = QLineEdit(profile["renewal_date"])
         renewal.setPlaceholderText("YYYY-MM-DD，可留空")
@@ -2789,7 +2775,8 @@ class Dashboard(QMainWindow):
         layout.addWidget(buttons)
         buttons.rejected.connect(dialog.reject)
         def save():
-            raw = dict(plan=plan.text().strip(), price_usd=price.text().strip() or None, renewal_date=renewal.text().strip())
+            amount = profile["price_usd"] if price.text().strip() == displayed_price else price.text().strip() or None
+            raw = dict(plan=plan.text().strip(), price_usd=amount, renewal_date=renewal.text().strip())
             value = normalize_subscription_profile(raw)
             if raw["price_usd"] is not None and value["price_usd"] is None:
                 note.setText("请输入有效的美元金额。")
@@ -2884,7 +2871,7 @@ class Dashboard(QMainWindow):
         summary = section("inspectorUsageSummary", spacing=12)
         stamp = parse_timestamp(record.get("timestamp"))
         summary.addWidget(plain_label(("发起时间 " if grouped else "计量时间 ") + (stamp.strftime("%Y/%m/%d %H:%M:%S") if stamp else "—"), muted=True, wrap=True))
-        cost_lines = request_cost_text(record, 6).splitlines()
+        cost_lines = request_cost_text(record).splitlines()
         value = plain_label(cost_lines[0], wrap=True)
         value.setProperty("metric", True)
         summary.addWidget(value)
@@ -2962,7 +2949,7 @@ class Dashboard(QMainWindow):
                 row_layout.addWidget(model)
                 amount = QHBoxLayout()
                 amount.addWidget(plain_label(tier_label(value), muted=True))
-                price_text = "未定价" if value["pricing_status"] == "unpriced" else request_cost_text(value, 6)
+                price_text = "未定价" if value["pricing_status"] == "unpriced" else request_cost_text(value)
                 price = plain_label(price_text, wrap=True)
                 price.setAlignment(Qt.AlignmentFlag.AlignRight)
                 amount.addWidget(price, 1)

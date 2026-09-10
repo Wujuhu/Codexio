@@ -53,7 +53,7 @@ def test_price_revision_recomputes_calls_groups_charts_summaries_and_weekly_cach
     assert queries.rebuild(catalog)==current
 
 
-def test_one_price_table_groups_bases_and_variants_and_edits_only_base_prices(tmp_path):
+def test_one_price_table_keeps_only_standard_fast_and_context_variants(tmp_path):
     app = QApplication.instance() or QApplication([])
     catalog = PricingCatalog(tmp_path/"prices")
     window = Dashboard(AppSettings(),{}, {})
@@ -61,15 +61,15 @@ def test_one_price_table_groups_bases_and_variants_and_edits_only_base_prices(tm
     window.open_page("pricing")
     app.processEvents()
     assert window._pages["pricing"].findChildren(QTableWidget)==[window._price_table]
-    assert window._price_table.rowCount()==8
-    assert window._price_table.item(0,1).text()=="API 基准"
+    assert window._price_table.rowCount()==6
+    assert window._price_table.item(0,1).text()=="Standard"
     assert window._price_table.item(0,2).text()=="10.00"
     assert window._price_table.item(0,4).text()=="12.50"
     astra_fast = next(i for i,p in enumerate(window._visible_prices) if p["model"]=="gpt-6-astra" and p.get("service_tier")=="priority")
     assert window._price_table.item(astra_fast,2).text()=="25.00"
     assert window._price_table.item(astra_fast,4).text()=="25.00"
     assert window._price_table.item(astra_fast,5).text()=="125.00"
-    window._price_table.selectRow(7)
+    window._price_table.selectRow(5)
     window._edit_selected_price()
     editor = window._dialogs[-1]
     assert editor.model.text()=="gpt-5.6-sol" and editor.inputs["input"].value()==4
@@ -78,7 +78,7 @@ def test_one_price_table_groups_bases_and_variants_and_edits_only_base_prices(tm
     window._price_search.setText("astra")
     for _ in range(4):
         app.processEvents()
-    assert window._price_table.rowCount()==3
+    assert window._price_table.rowCount()==2
     assert window._selected_price_model is None and not window._edit_base_price.isEnabled()
     window._price_search.setText("unavailable-model")
     assert window._price_empty.isVisible()
@@ -92,6 +92,6 @@ def test_base_editor_and_display_distinguish_missing_free_and_small_prices():
     editor = PriceEditor(dict(model="gpt-test",input=1,output=2,cache_read=None,cache_write=0))
     assert editor.rates()["cache_read"] is None and editor.rates()["cache_write"]==0
     assert price_rate_text(None)=="未定价"
-    assert price_rate_text(0)=="0.00" and price_rate_text(.000004)=="0.000004"
-    assert price_rate_text(.39999999999999997)=="0.40" and price_rate_text(.175)=="0.175"
+    assert price_rate_text(0)=="0.00" and price_rate_text(.000004)=="0.00"
+    assert price_rate_text(.39999999999999997)=="0.40" and price_rate_text(.175)=="0.18"
     editor.close()

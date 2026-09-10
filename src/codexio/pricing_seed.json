@@ -2,7 +2,7 @@
   "version": 1,
   "verified_at": "2026-09-07",
   "unit": "USD per million tokens",
-  "notes": "Standard API base prices only: no long-context, priority/Fast or flex rates. Codexio derives all displayed and calculated usage prices from these bases using its versioned Codex modifiers. Cache-write base rates are retained for reference; Codex conversion has no extra cache-write charge. Missing base prices remain null.",
+  "notes": "Standard API base prices only: no long-context, priority/Fast or flex rates. Ordinary Standard uses published rates directly, including cache writes. Fast and long-context conditions retain Codex modifiers and charge cache creation as ordinary input. Missing base prices remain null.",
   "rows": [
     {
       "input": 1.5,

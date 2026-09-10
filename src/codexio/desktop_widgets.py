@@ -17,6 +17,7 @@ from codexio.analytics_config import NAVIGATION_PAGES, normalize_navigation_orde
 from codexio.charts import compact_number, parse_timestamp
 from codexio.durations import elapsed_milliseconds, duration_text, duration_tooltip
 from codexio.theme import theme_colors
+from codexio.money import usd
 from codexio.usage_collector import _user_preview
 
 PAGE_TITLES = dict(overview="概览", subscription="订阅额度", trends="用量趋势", logs="请求日志", pricing="模型定价", settings="设置")
@@ -496,7 +497,7 @@ class PeriodChange(QWidget):
         self.caption.setStyleSheet("color: %s; font-size: 12px;" % c["muted"])
         self.caption.setText(data["label"])
         def amount(value):
-            return "暂无有效数据" if value is None else "$%.6f" % value if metric == "usd" else format(int(value), ",")
+            return "暂无有效数据" if value is None else usd(value) if metric == "usd" else format(int(value), ",")
         def when(value):
             stamp = parse_timestamp(value)
             return stamp.strftime("%Y/%m/%d %H:%M") if stamp else "—"

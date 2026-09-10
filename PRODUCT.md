@@ -20,7 +20,7 @@ Confirmed on 2026-09-10 for local 0.2.2 development: Logs page one automatically
 
 Repository evidence: five-hour and weekly remaining quota and reset times; read-only available reset-credit counts; usage trends and history; grouping by user request or model call; model pricing; local and opt-in SSH sources; floating and docked quota windows; settings; light and dark main-window themes.
 
-Dollar amounts follow the user-approved definition: Standard API base prices multiplied by Codex model/context/speed rules. The same derived catalog prices calls, request groups, overview metrics, trends, floating summaries and weekly estimates. These amounts are not actual API invoices, subscription charges or official credits. Weekly estimates represent observed usage and may be unavailable. Unknown and stale values must not be presented as zero or current data.
+Dollar amounts use one catalog for calls, request groups, overview metrics, trends, floating summaries and weekly estimates. Ordinary Standard uses official OpenAI API prices for all published token categories. Fast and long-context conditions retain the existing Codex conversion rules. These amounts are not actual API invoices, subscription charges or official credits. Display dollars to exactly two decimal places while retaining the original stored/calculated precision. Weekly estimates represent observed usage and may be unavailable. Unknown and stale values must not be presented as zero or current data.
 
 The user explicitly authorized native UI implementation on 2026-09-08 after reviewing C. Implement the current C design, keep the overview first while allowing persisted navigation reordering, and keep each Token composition label next to its percentage. Preserve the current application version. Local build and verification are part of delivery; a public release is not requested.
 
@@ -38,7 +38,7 @@ The sidebar now uses six two-character labels: 概览、日志、用量、订阅
 
 ## Evidence on Hand
 
-Confirmed on 2026-09-10: retain only ordinary-context Standard API rates as base data, derive Codex modifiers centrally, and keep base and derived rows together in one pricing table without separate section headings. Manual edits change only the base; a price-policy revision automatically revalues history and dependent caches.
+Confirmed for local 0.2.2 on 2026-09-10: show only Standard, Fast and applicable context conditions in one pricing table, with no separate API Base rows. Make the ordinary Standard row bold across all six columns and use official API Standard rates. Manual edits change only the base; a price-policy revision automatically revalues history and dependent caches. Keep the existing icon and move the main sidebar wordmark slightly left and down, using Times New Roman.
 
 README.md, src/codexio/dashboard.py, src/codexio/window.py, src/codexio/theme.py, and current synthetic screenshots rendered with scripts/render_preview.py. Preview data must be visibly identified as synthetic.
 

@@ -185,7 +185,7 @@ def test_trend_period_defaults_and_custom_date_filter(app):
     dashboard.deleteLater()
 
 
-def test_prices_only_show_available_codex_models_and_preserve_unit_precision(app):
+def test_prices_only_show_available_codex_models_and_two_decimal_rates(app):
     dashboard = Dashboard(AppSettings(), {}, {})
     dashboard.open_page("pricing")
     source = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
@@ -193,11 +193,11 @@ def test_prices_only_show_available_codex_models_and_preserve_unit_precision(app
         dict(model="gpt-6-astra", input=10, cache_read=1.125, cache_write=12.5, output=50, source=source),
         dict(model="not-offered-by-codex", input=1, output=2)]})
     assert dashboard._price_table.columnCount() == 6
-    assert dashboard._price_table.rowCount() == 3
+    assert dashboard._price_table.rowCount() == 2
     assert dashboard._price_table.item(0, 2).text() == "10.00"
-    assert dashboard._price_table.item(0, 3).text() == "1.125"
-    assert dashboard._price_table.item(2, 0).text() == "gpt-5.3-codex-spark"
-    assert dashboard._price_table.item(2, 2).text() == "未定价"
+    assert dashboard._price_table.item(0, 3).text() == "1.13"
+    assert dashboard._price_table.item(1, 0).text() == "gpt-5.3-codex-spark"
+    assert dashboard._price_table.item(1, 2).text() == "未定价"
     dashboard.deleteLater()
 
 

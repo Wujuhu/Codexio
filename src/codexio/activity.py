@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from codexio.charts import ChartTooltip, compact_number, parse_timestamp
 from codexio.theme import theme_colors
+from codexio.money import usd
 
 
 def activity_bounds(now=None):
@@ -150,7 +151,7 @@ class UsageActivity(QWidget):
             return "\n".join(lines + ["暂无记录"])
         lines.extend(["Total Token  暂无有效数据" if row.get("tokens") is None else "Total Token  {:,}".format(row["tokens"]),
                       "请求数  {:,}".format(row.get("requests", 0)),
-                      "价格  未定价" if row.get("usd") is None else "价格  $%.6f" % row["usd"]])
+                      "价格  " + usd(row.get("usd"))])
         if row.get("unpriced"):
             lines.append("%d 次请求未定价" % row["unpriced"])
         return "\n".join(lines)

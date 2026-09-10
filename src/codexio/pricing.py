@@ -24,7 +24,7 @@ MODELS_DEV_URL = "https://models.dev/api.json"
 RATE_KEYS = ("input", "cache_read", "cache_write", "output")
 _FIELDS = {"input": "input_cost_per_token", "cache_read": "cache_read_input_token_cost",
            "cache_write": "cache_creation_input_token_cost", "output": "output_cost_per_token"}
-PRICING_RULE_VERSION = "codex-api-base-2026-09-10-v1"
+PRICING_RULE_VERSION = "codex-api-base-2026-09-10-v2-standard"
 PRICING_BASIS = "standard_api_x_codex"
 PRICING_BASIS_LABEL = "标准 API 单价 × Codex 倍率"
 LONG_CONTEXT_THRESHOLD = 272000
@@ -64,14 +64,17 @@ def _codex_rows(base):
         for context in contexts:
             input_multiplier = speed * (2.0 if context else 1.0)
             output_multiplier = speed * (1.5 if context else 1.0)
+            api_standard = tier == "default" and context == 0
+            write_rate = base["cache_write"] if api_standard else base["input"]
             yield dict(base, service_tier=tier, threshold=context,
                        input=_scaled(base["input"], input_multiplier),
                        cache_read=_scaled(base["cache_read"], input_multiplier),
-                       cache_write=_scaled(base["input"], input_multiplier), output=_scaled(base["output"], output_multiplier),
+                       cache_write=_scaled(write_rate, input_multiplier), output=_scaled(base["output"], output_multiplier),
                        base_rates={key: base[key] for key in RATE_KEYS},
                        multipliers={"input": input_multiplier, "cache_read": input_multiplier,
                                     "cache_write": input_multiplier, "output": output_multiplier},
-                       cache_write_basis="input", cache_write_surcharge=0.0,
+                       cache_write_basis="api" if api_standard else "input",
+                       cache_write_surcharge=(None if write_rate is None else max(0, write_rate - base["input"])) if api_standard else 0.0,
                        fast_multiplier=speed, long_context_threshold=threshold,
                        pricing_basis=PRICING_BASIS, rule_version=PRICING_RULE_VERSION,
                        rule_sources=list(RULE_SOURCES))
@@ -319,7 +322,7 @@ class PricingCatalog:
         rates = next((r for r in model_rows if r["service_tier"] == tier and r["threshold"] == threshold), None)
         if rates is None:
             return dict(result, reason="缺少该模型与服务档位的 Codex 换算规则")
-        # Cache creation remains ordinary input; Codex has no extra write charge.
+        # All components are disjoint; their selected rate owns the write policy.
         parts = {"input": counts["input_tokens"] - counts["cached_input_tokens"] - counts["cache_write_input_tokens"],
                  "cache_read": counts["cached_input_tokens"], "cache_write": counts["cache_write_input_tokens"],
                  "output": counts["output_tokens"]}
@@ -327,8 +330,12 @@ class PricingCatalog:
             return dict(result, reason="缺少已使用 Token 类别的明确价格", rates=dict(rates))
         usd = math.fsum(count * (rates[key] or 0.0) / 1_000_000 for key, count in parts.items())
         multipliers = rates["multipliers"]
-        reasons = [PRICING_BASIS_LABEL + "；输入/缓存读取 ×%g，输出 ×%g；缓存创建按普通输入价，无写入附加费" %
-                   (multipliers["input"], multipliers["output"])]
+        if rates["cache_write_basis"] == "api":
+            basis = "手工 Standard 基础价" if rates.get("locked") else "OpenAI API Standard 标准价"
+            reasons = [basis + "；缓存创建使用单列价格，缺失时保留未定价"]
+        else:
+            reasons = [PRICING_BASIS_LABEL + "；输入/缓存读取 ×%g，输出 ×%g；缓存创建按普通输入价，无写入附加费" %
+                       (multipliers["input"], multipliers["output"])]
         if missing_tier:
             reasons.append("服务档位缺失，按标准价估计")
         if aggregate:

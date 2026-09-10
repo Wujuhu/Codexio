@@ -112,7 +112,7 @@ def test_empty_unpriced_and_large_values_fit_at_minimum_size(app, records, theme
         assert text_bounds.height() <= layout.plot.height()
     assert not chart.grab().isNull()
     if records and records[0]["usd"] == 123_456_789.25:
-        assert "123456789.250000" in chart._tooltip_text(records[0])
+        assert "$123,456,789.25" in chart._tooltip_text(records[0])
     chart.close()
 
 
