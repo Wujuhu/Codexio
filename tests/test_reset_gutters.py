@@ -53,11 +53,11 @@ def test_subscription_shows_reference_projection_without_right_explanation(app):
     now=datetime.now().astimezone()
     value=dict(plan_type="pro",reset_at=(now+timedelta(days=7)).timestamp(),start=(now-timedelta(hours=3)).isoformat(),
                end=(now-timedelta(hours=1)).isoformat(),delta_percent=2,estimated_total_usd=500,
-               estimated_remaining_usd=400,status="estimated_prices")
+               estimated_remaining_usd=400,status="estimated_prices",limit_id="codex",account_key="current")
     window=Dashboard(AppSettings(),{}, {})
     window.apply_data(dict(records=[],weekly_estimates=[value]))
     window.open_page("subscription")
-    assert window._estimate_value.text()=="$500.00" and window._estimate_note.text()=="已采样 2 个百分点"
+    assert window._estimate_value.text()=="$500.00" and window._estimate_note.text()=="本地观测参考 · 已采样 2 个百分点"
     assert window._subscription_history.item(0,4).text()=="参考估值"
     assert "周" in window._subscription_history.item(0,1).text()
     assert not any("基于已观测" in label.text() or "不代表固定" in label.text() for label in window._pages["subscription"].findChildren(QLabel))

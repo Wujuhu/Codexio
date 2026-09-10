@@ -70,6 +70,32 @@ def test_mock_publish_delivers_ready_estimate_even_when_local_sources_disabled(t
                for row in queries.page("model_call", page=page)["rows"])
 
 
+def test_server_history_survives_local_rescan_and_reloads_for_publication(tmp_path):
+    from codexio.server_usage_store import ServerUsageStore
+    worker = worker_at(tmp_path)
+    server = ServerUsageStore(tmp_path / "server_usage.sqlite")
+    now = datetime.now(timezone.utc)
+    base = now.replace(hour=0, minute=0, second=0, microsecond=0)-timedelta(days=4)
+    reset = (base+timedelta(days=7)).timestamp()
+    context = dict(account_key="verified", quota_status="ok", plan_type="pro", reset_at=reset)
+    for day, pct in ((0, 10), (2, 50)):
+        server.save(context, observation=dict(account_key="verified", plan_type="pro", limit_id="codex", window_seconds=604800,
+                     used_percent=pct, timestamp=(base+timedelta(days=day)).isoformat(), reset_at=reset))
+    days = [dict(account_key="verified", date=(base+timedelta(days=d)).date().isoformat(), credits=1000,
+                 scope_ok=True, fetched_at=now.isoformat()) for d in (0, 1)]
+    server.save(context, daily=days)
+    worker._store.clear_index()
+    data = publish(worker)
+    assert data["weekly_server_estimates"][0]["estimated_total_usd"] == 200
+    assert data["weekly_estimates"] == []
+    days[1]["credits"] = 3000
+    server.save(context, daily=days)
+    data = publish(worker)
+    assert data["weekly_server_estimates"][0]["estimated_total_usd"] == 400
+    worker._config["server_estimates_enabled"] = False
+    assert publish(worker)["weekly_server_estimates"] == []
+
+
 def test_changing_theme_does_not_unassign_mock_history(tmp_path, monkeypatch):
     worker = worker_at(tmp_path, mock=True)
     worker.update_config(dict(worker._config, theme="dark", account_since=datetime.now(timezone.utc).isoformat()))

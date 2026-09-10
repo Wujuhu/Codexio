@@ -81,7 +81,7 @@ def test_estimate_history_distinguishes_reset_time_and_sample_time():
         "start": "2026-09-07T08:00:00+00:00", "end": "2026-09-07T09:00:00+00:00",
         "estimated_total_usd": None, "delta_percent": 3}]})
     assert window._estimate_value.text() == "待采样"
-    assert window._estimate_period.text() == "待确认账号"
+    assert window._estimate_period.text() == "正在积累服务端多日数据"
     window._show_estimates()
     app.processEvents()
     view = window._estimate_history_table

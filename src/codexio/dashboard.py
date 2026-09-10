@@ -32,6 +32,8 @@ from codexio.user_requests import aggregate_user_requests, matches_call, REQUEST
 from codexio.usage_collector import _user_preview
 from codexio.usage_queries import summarize_model_calls, compare_usage
 from codexio.confirmed_usage import summarize_confirmed_usage
+from codexio.estimate_display import (ESTIMATE_HEADERS, estimate_amount, estimate_detail, estimate_history,
+                                      method_label, select_estimates)
 from codexio.analytics_config import NAVIGATION_PAGES, normalize_navigation_order, normalize_subscription_profile
 from codexio.desktop_widgets import (DatePicker, DrawerHost, LedgerTable, NavigationList, PAGE_TITLES, PeriodChange, QuotaMeter,
                                     SegmentedControl, TokenComposition, WidgetStylePreview, ledger_duration_text, preview_title, tier_label, ui_icon)
@@ -60,6 +62,12 @@ ESTIMATE_STATUSES = {
 
 
 def estimate_status(value: dict) -> tuple[str, str]:
+    if str(value.get("method", "")).startswith("server_"):
+        label = ("较高可信" if value.get("method") == "server_aligned" else "全账号范围") if value.get("status") == "ready" else {
+            "inconsistent": "数据待核对", "pending_daily": "等待补账", "missing_daily": "等待日数据",
+            "mixed_scope": "额度池待确认", "unknown_plan": "套餐未识别",
+        }.get(value.get("status"), "继续采样")
+        return label, estimate_detail(value)
     status = value.get("status") or ("ready" if value.get("estimated_total_usd") is not None else "insufficient")
     return ESTIMATE_STATUSES.get(status, ("暂不可用", "等待完整的用量与额度数据。"))
 
@@ -1450,6 +1458,9 @@ class Dashboard(QMainWindow):
         updates.addWidget(self._check_update, alignment=Qt.AlignmentFlag.AlignLeft)
         self._update_status = plain_label("", muted=True, wrap=True)
         updates.addWidget(self._update_status)
+        self._server_estimates_enabled = QCheckBox("用服务端多日数据估算周额度")
+        updates.addWidget(self._server_estimates_enabled)
+        updates.addWidget(plain_label("服务端日数据允许延迟，补齐后自动重算；无须每天 08:00 在线。", muted=True, wrap=True))
         updates.addStretch()
         layout.addLayout(body, 1)
         save_row = QHBoxLayout()
@@ -1958,6 +1969,7 @@ class Dashboard(QMainWindow):
             self._theme_combo.setCurrentIndex(max(0, self._theme_combo.findData(self._theme)))
             self._theme_combo.blockSignals(False)
             self._restore_control(self._show_log_source, self._config.get("show_log_source") is True)
+            self._server_estimates_enabled.setChecked(self._config.get("server_estimates_enabled", True) is True)
             self._account_since.setText("当前账号观测起点：" + (str(self._config.get("account_since")) if self._config.get("account_since") else "首次成功读取额度后记录"))
             self._refresh_source_list()
         self._config_dirty.discard(name)
@@ -2427,54 +2439,63 @@ class Dashboard(QMainWindow):
             self._callback("price_override", self._selected_price_model, None)
 
     def _update_estimate(self) -> None:
-        estimates = self._data.get("weekly_estimates") or []
-        value = estimates[0] if estimates else {}
-        amount = value.get("estimated_total_usd")
-        status, reason = estimate_status(value)
-        self._estimate_value.setText(usd(amount) if amount is not None else "待采样")
-        self._estimate_value.setToolTip("周额度用满时折合的预计金额（美元）。\n" + reason)
+        selected = select_estimates(self._data)
+        value = selected["primary"]
+        amount = estimate_amount(value)
+        self._estimate_value.setText(amount if amount != "—" else "待采样")
+        detail = estimate_detail(value)
+        self._estimate_value.setToolTip(detail)
         delta = value.get("delta_percent")
-        self._estimate_note.setText("已采样 %g 个百分点" % float(delta) if delta is not None else "尚无有效样本")
-        self._estimate_note.setToolTip(reason)
-        remaining = value.get("estimated_remaining_usd")
-        self._estimate_period.setText("剩余额度 " + usd(remaining) if remaining is not None else status)
+        label = method_label(value) if value else "尚无有效样本"
+        if selected["cached"] and str(value.get("method", "")).startswith("server_"):
+            label = "缓存 · " + label
+        self._estimate_note.setText(label + (" · 已采样 %g 个百分点" % float(delta) if delta is not None else ""))
+        self._estimate_note.setToolTip(detail)
+        message = selected["message"]
+        if not str(value.get("method", "")).startswith("server_") and value.get("estimated_remaining_usd") is not None:
+            message = "剩余额度参考 " + usd(value["estimated_remaining_usd"]) + " · " + message
+        self._estimate_period.setText(message)
+        reference = selected["reference"]
+        self._estimate_reference.setText("本地观测参考：" + estimate_amount(reference) if reference and value is not reference else "")
+        self._estimate_reference.setToolTip(estimate_detail(reference or {}))
+
+    def _fill_estimate_history(self, view):
+        estimates = estimate_history(self._data)
+        view.setRowCount(len(estimates))
+        for index, value in enumerate(estimates):
+            reset = value.get("reset_at")
+            try:
+                reset_text = format_reset_date(datetime.fromtimestamp(float(reset)), split_time=True) if reset is not None else "—"
+            except (ValueError, TypeError, OverflowError, OSError):
+                reset_text = "—"
+            interval, detail = estimate_interval(value)
+            status, _ = estimate_status(value)
+            pool = {"codex": "Codex", "codex_bengalfox": "Spark"}.get(value.get("limit_id"), "未识别")
+            columns = (str(value.get("plan_type") or "—").upper(), reset_text, interval, estimate_amount(value),
+                       status, "服务端采样" if str(value.get("method", "")).startswith("server_") and value.get("status") != "ready" else
+                       "服务端 · 日界对齐" if value.get("method") == "server_aligned" else
+                       "服务端 · 跨多日" if value.get("method") == "server_range" else "本地观测参考", pool)
+            for column, text in enumerate(columns):
+                item = QTableWidgetItem(str(text))
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                item.setToolTip(detail if column == 2 else estimate_detail(value))
+                view.setItem(index, column, item)
 
     def _show_estimates(self) -> None:
         dialog = QDialog(self)
         dialog.setWindowTitle("周额度估值记录")
-        dialog.resize(900, 460)
+        dialog.resize(1150, 460)
         apply_theme(dialog, self._theme)
         layout = QVBoxLayout(dialog)
-        view = table(["套餐", "额度重置时间", "采样时间段", "整周估值（美元）", "状态"])
+        view = table(ESTIMATE_HEADERS)
         self._estimate_history_table = view
-        estimates = self._data.get("weekly_estimates") or []
-        view.setRowCount(len(estimates))
-        for index, value in enumerate(estimates):
-            amount = value.get("estimated_total_usd")
-            reset = value.get("reset_at")
-            try:
-                reset_text = format_reset_date(datetime.fromtimestamp(reset)) if isinstance(reset, (int, float)) else "—"
-            except (ValueError, OSError, OverflowError):
-                reset_text = "—"
-            interval, interval_detail = estimate_interval(value)
-            status, reason = estimate_status(value)
-            columns = (str(value.get("plan_type") or "—").upper(), reset_text, interval,
-                       usd(amount) if amount is not None else "—", status)
-            for column, text in enumerate(columns):
-                item = QTableWidgetItem(str(text))
-                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                if column == 2:
-                    item.setToolTip(interval_detail)
-                elif column == 4:
-                    item.setToolTip(reason)
-                    item.setForeground(QColor(theme_colors(self._theme)["success" if value.get("status") == "ready" else "muted"]))
-                view.setItem(index, column, item)
+        self._fill_estimate_history(view)
         header = view.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         header.setMinimumSectionSize(130)
         header.setStretchLastSection(False)
         layout.addWidget(view)
-        layout.addWidget(plain_label("按标准 API 基础价与 Codex 倍率折算，非订阅实际扣款。", muted=True))
+        layout.addWidget(plain_label("服务端为已入账数据估值，本地算法单列参考；非订阅实际扣款。", muted=True, wrap=True))
         self._dialog(dialog)
 
     def _save_settings(self) -> None:
@@ -2487,6 +2508,7 @@ class Dashboard(QMainWindow):
         self._settings = replace(self._settings, **values).normalized()
         self._config["theme"] = self._theme_combo.currentData()
         self._config["show_log_source"] = self._show_log_source.isChecked()
+        self._config["server_estimates_enabled"] = self._server_estimates_enabled.isChecked()
         self._theme = self._config["theme"]
         self._callback("settings", self._settings)
         self._callback("config", copy.deepcopy(self._config))
@@ -2649,23 +2671,24 @@ class Dashboard(QMainWindow):
         history_layout.addWidget(title)
         summary = QHBoxLayout()
         values = QVBoxLayout()
-        values.addWidget(plain_label("整周观测估值", muted=True))
-        self._estimate_value = plain_label("待采样")
+        values.addWidget(plain_label("整周额度估值", muted=True))
+        self._estimate_value = plain_label("待采样", wrap=True)
         self._estimate_value.setProperty("metric", True)
-        self._estimate_note = plain_label("", muted=True)
-        self._estimate_period = plain_label("", muted=True)
+        self._estimate_note = plain_label("", muted=True, wrap=True)
+        self._estimate_period = plain_label("", muted=True, wrap=True)
+        self._estimate_reference = plain_label("", muted=True, wrap=True)
         values.addWidget(self._estimate_value)
         values.addWidget(self._estimate_note)
         values.addWidget(self._estimate_period)
-        summary.addLayout(values)
-        summary.addStretch()
+        values.addWidget(self._estimate_reference)
+        summary.addLayout(values, 1)
         history_layout.addLayout(summary)
-        self._subscription_history = table(["套餐", "额度重置时间", "采样时间段", "整周估值（美元）", "状态"])
+        self._subscription_history = table(ESTIMATE_HEADERS)
         self._subscription_history.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._subscription_history.setMinimumHeight(260)
         self._subscription_history.setMaximumHeight(420)
         history_layout.addWidget(self._subscription_history)
-        history_layout.addWidget(plain_label("缺少有效观测或价格时保留“—”。", muted=True))
+        history_layout.addWidget(plain_label("日数据按 UTC（北京时间 08:00）分日，结束满 24 小时后纳入，后续补账自动修正。金额为额度等价估算；悬停可查看范围与采样依据。", muted=True, wrap=True))
         contents.addWidget(self._subscription_history_section)
         contents.addStretch()
         return page
@@ -2731,26 +2754,11 @@ class Dashboard(QMainWindow):
         self._subscription_price.setText(usd(profile["price_usd"]) if profile["price_usd"] is not None else "未填写")
         self._subscription_renewal.setText(profile["renewal_date"] or "未填写")
         self._update_estimate()
-        estimates = self._data.get("weekly_estimates") or []
         view = self._subscription_history
         view.horizontalHeader().setMinimumSectionSize(max(
             view.fontMetrics().horizontalAdvance(view.horizontalHeaderItem(column).text()) + 30
             for column in range(view.columnCount())))
-        view.setRowCount(len(estimates))
-        for index, value in enumerate(estimates):
-            status, reason = estimate_status(value)
-            reset = value.get("reset_at")
-            try:
-                reset_text = format_reset_date(datetime.fromtimestamp(float(reset)), split_time=True) if reset is not None else "—"
-            except (ValueError, TypeError, OverflowError, OSError):
-                reset_text = "—"
-            interval, detail = estimate_interval(value)
-            amount = value.get("estimated_total_usd")
-            for column, text in enumerate((value.get("plan_type") or "—", reset_text, interval, usd(amount) if amount is not None else "—", status)):
-                item = QTableWidgetItem(str(text))
-                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                item.setToolTip(detail if column == 2 else reason if column == 4 else str(text))
-                view.setItem(index, column, item)
+        self._fill_estimate_history(view)
 
     def _edit_subscription_profile(self):
         profile = normalize_subscription_profile(self._config.get("subscription_profile"))

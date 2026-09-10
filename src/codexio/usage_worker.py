@@ -116,6 +116,10 @@ class UsageWorker(QThread):
         self._commands.put(("sync", None))
         self._wake.set()
 
+    def request_estimate_refresh(self) -> None:
+        self._commands.put(("server_estimates", None))
+        self._wake.set()
+
     def set_price_override(self, model: str, rates: dict | None) -> None:
         self._commands.put(("override", (model, rates)))
         self._wake.set()
@@ -237,6 +241,8 @@ class UsageWorker(QThread):
                         force_sync = True
                     elif command == "refresh":
                         next_remote = 0
+                    elif command == "server_estimates":
+                        self._server_cache_key = None
                     dirty = True
                 except Exception:
                     logger.exception("用量操作失败: %s", command)
@@ -334,6 +340,23 @@ class UsageWorker(QThread):
             self._next_summary_at = parse_time(queries.next_record_at(now))
         self._estimates = queries.weekly_estimates(active, self._config["account_since"], sources_complete=complete,
                                                    assignments=self._config.get("history_assignments", []), now=now)
+        from codexio.server_usage_store import read_server_snapshot
+        from codexio.server_estimation import estimate_server_weeks
+        server_path = self._directory / "server_usage.sqlite"
+        revision = []
+        for path in (server_path, server_path.with_name(server_path.name + "-wal")):
+            try:
+                stat = path.stat()
+                revision.append((stat.st_mtime_ns, stat.st_size))
+            except OSError:
+                revision.append(None)
+        server_key = (self._mock, self._config.get("server_estimates_enabled", True), int(now.timestamp()) // 60, *revision)
+        if server_key != getattr(self, "_server_cache_key", None):
+            server = (read_server_snapshot(server_path) if not self._mock and server_key[1]
+                      else dict(context={"quota_status": "mock" if self._mock else "disabled"}, observations=[], daily=[]))
+            self._server_estimates = estimate_server_weeks(server["observations"], server["daily"], server["context"].get("account_key"), now=now)
+            self._server_context = server["context"]
+            self._server_cache_key = server_key
         if self._mock:
             model_catalog = {"models": ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"], "status": "ok"}
         else:
@@ -352,6 +375,7 @@ class UsageWorker(QThread):
             "prices": self._catalog.rows(),
             "standard_prices": self._catalog.standard_rows(),
             "pricing_status": copy.deepcopy(self._catalog.status), "sources": sources, "weekly_estimates": self._estimates,
+            "weekly_server_estimates": self._server_estimates, "server_usage_context": self._server_context,
             "calibration_sources": sorted(active), "sources_complete": complete,
             "available_models": model_catalog.get("models", []), "model_catalog_status": model_catalog,
             "updated_at": utc_now(), "scan_status": self._scan_status,

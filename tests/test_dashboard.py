@@ -119,14 +119,56 @@ def test_chart_preserves_unpriced_and_separates_cache_categories():
 
 
 def test_latest_week_estimate_uses_newest_first_and_real_estimator_fields(app):
+    now = datetime.now(timezone.utc)
+    current = dict(limit_id="codex", account_key="current", reset_at=(now+timedelta(days=3)).timestamp(),
+                   start=(now-timedelta(hours=3)).isoformat(), end=(now-timedelta(hours=1)).isoformat())
     dashboard = Dashboard(AppSettings(), {}, {})
     dashboard.open_page("subscription")
     dashboard.apply_data({"weekly_estimates": [
-        {"estimated_total_usd": 1200.0, "estimated_remaining_usd": 600.0, "delta_percent": 20, "plan_type": "pro", "reason": "观测区间"},
+        dict(current, estimated_total_usd=1200.0, estimated_remaining_usd=600.0, delta_percent=20, plan_type="pro", reason="观测区间"),
         {"estimated_total_usd": 900.0, "plan_type": "plus"},
     ]})
     assert dashboard._estimate_value.text() == "$1,200.00"
     assert "600" in dashboard._estimate_period.text()
+    assert "本地观测参考" in dashboard._estimate_note.text()
+
+
+def test_subscription_displays_server_range_and_separate_local_reference(app):
+    now = datetime.now(timezone.utc)
+    reset = (now+timedelta(days=2)).timestamp()
+    local = dict(estimated_total_usd=999, estimated_remaining_usd=400, delta_percent=20, plan_type="pro",
+                 limit_id="codex", account_key="current", reset_at=reset, start=(now-timedelta(days=3)).isoformat(),
+                 end=(now-timedelta(days=2)).isoformat())
+    server = dict(local, account_key="verified", method="server_range", status="ready", estimated_total_usd=None,
+                  low_usd=980.39, high_usd=1428.57, usd_per_credit=0.04, delta_percent=50)
+    data = dict(weekly_estimates=[local], weekly_server_estimates=[server], server_usage_context=dict(
+        account_key="verified", quota_status="ok", daily_status="ok", last_quota_at=now.isoformat(),
+        last_daily_at=now.isoformat(), reset_at=reset, plan_type="pro"))
+    dashboard = Dashboard(AppSettings(), {}, {})
+    dashboard.open_page("subscription")
+    dashboard.apply_data(data)
+    assert dashboard._estimate_value.text() == "$980.39 – $1,428.57"
+    assert "全账号估算范围" in dashboard._estimate_note.text()
+    assert dashboard._estimate_reference.text() == "本地观测参考：$999.00"
+    view = dashboard._subscription_history
+    assert view.rowCount() == 2 and view.columnCount() == 7
+    assert view.item(0, 5).text() == "服务端 · 跨多日"
+    assert view.item(1, 5).text() == "本地观测参考"
+    assert "$0.04" in view.item(0, 3).toolTip()
+    dashboard.close()
+
+
+def test_server_setting_has_no_credit_conversion_control(app):
+    from codexio.analytics_config import default_config
+    changes = []
+    dashboard = Dashboard(AppSettings(), default_config(), {"config": changes.append})
+    dashboard.open_page("settings")
+    assert not hasattr(dashboard, "_credit_rate")
+    dashboard._server_estimates_enabled.setChecked(False)
+    dashboard._save_settings()
+    assert "usd_per_credit" not in changes[-1]
+    assert changes[-1]["server_estimates_enabled"] is False
+    dashboard.close()
     dashboard.deleteLater()
 
 
