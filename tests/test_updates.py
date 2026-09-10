@@ -8,14 +8,14 @@ from urllib.error import HTTPError
 
 import pytest
 
-from aiquota import updates
+from codexio import updates
 
 
 PACKAGE = b"MZ" + b"test executable payload" * 100
 
 
 def manifest(**changes):
-    data = {"version": "0.1.2", "url": "https://github.com/Wujuhu/AIQuota/releases/download/v0.1.2/AIQuota.exe",
+    data = {"version": "0.1.2", "url": "https://github.com/Wujuhu/Codexio/releases/download/v0.1.2/Codexio.exe",
             "sha256": hashlib.sha256(PACKAGE).hexdigest(), "size": len(PACKAGE), "notes": "test release"}
     data.update(changes)
     return data
@@ -40,10 +40,10 @@ def test_rejects_invalid_versions(version):
 
 
 @pytest.mark.parametrize("changes", [
-    {"url": "http://github.com/Wujuhu/AIQuota/releases/download/v0.1.2/AIQuota.exe"},
-    {"url": "https://github.com/Other/AIQuota/releases/download/v0.1.2/AIQuota.exe"},
-    {"url": "https://github.com/Wujuhu/AIQuota/releases/download/v0.1.3/AIQuota.exe"},
-    {"url": "https://github.com/Wujuhu/AIQuota/releases/download/v0.1.2/AIQuota.exe?redirect=evil"},
+    {"url": "http://github.com/Wujuhu/Codexio/releases/download/v0.1.2/Codexio.exe"},
+    {"url": "https://github.com/Other/Codexio/releases/download/v0.1.2/Codexio.exe"},
+    {"url": "https://github.com/Wujuhu/Codexio/releases/download/v0.1.3/Codexio.exe"},
+    {"url": "https://github.com/Wujuhu/Codexio/releases/download/v0.1.2/Codexio.exe?redirect=evil"},
     {"sha256": "missing"}, {"size": True}, {"size": -1}, {"size": updates.MAX_DOWNLOAD_BYTES + 1},
 ])
 def test_manifest_rejects_untrusted_or_incomplete_downloads(changes):

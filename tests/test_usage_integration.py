@@ -1,9 +1,9 @@
 from datetime import datetime, timezone, timedelta
 import json
 
-from aiquota.analytics_config import load_analytics_config, save_analytics_config
-from aiquota.rate_limits import parse_rate_limits_result, snapshot_to_cache, snapshot_from_cache, merge_rate_limit_snapshots
-from aiquota.usage_worker import summarize
+from codexio.analytics_config import load_analytics_config, save_analytics_config
+from codexio.rate_limits import parse_rate_limits_result, snapshot_to_cache, snapshot_from_cache, merge_rate_limit_snapshots
+from codexio.usage_worker import summarize
 
 
 def test_raw_percentage_and_multi_bucket_survive_cache():
@@ -65,7 +65,7 @@ def test_summary_cached_subset_unknown_price_and_midnight():
 
 
 def test_all_unpriced_chart_bucket_is_a_gap_not_zero_dollars():
-    from aiquota.charts import bucket_records
+    from codexio.charts import bucket_records
     now = datetime.now().astimezone()
     result = bucket_records([{"timestamp": now.isoformat(), "input_tokens": 10,
                              "total_tokens": 10, "cost_usd": None}], now=now)
@@ -77,8 +77,8 @@ def test_all_unpriced_chart_bucket_is_a_gap_not_zero_dollars():
 def test_docked_widget_keeps_quota_only_and_original_minimum(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     from PySide6.QtWidgets import QApplication, QLabel
-    from aiquota.settings import AppSettings
-    from aiquota.window import QuotaWindow
+    from codexio.settings import AppSettings
+    from codexio.window import QuotaWindow
     app = QApplication.instance() or QApplication([])
     widget = QuotaWindow(AppSettings(dock_edge="top"), lambda: None, lambda _: None, lambda: None)
     original_minimum = widget._docked_min_size("top")

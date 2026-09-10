@@ -1,6 +1,6 @@
 import pytest
 
-from aiquota.theme import theme_colors
+from codexio.theme import theme_colors
 
 
 def luminance(hex_color):
@@ -25,4 +25,8 @@ def test_small_text_and_primary_actions_remain_readable(theme):
     assert contrast(colors["header_text"], colors["header_bg"]) >= 4.5
     assert contrast(colors["scroll_thumb"], colors["scroll_track"]) >= 3
     for metric in ("chart_tokens", "chart_cost", "chart_input", "chart_cache_read", "chart_cache_write", "chart_output"):
-        assert contrast(colors[metric], colors["surface"]) >= 4.5
+        assert contrast(colors[metric + "_ink"], colors["surface"]) >= 4.5
+    for direction in ("comparison_up", "comparison_down"):
+        assert contrast(colors[direction], colors["surface"]) >= 4.5
+    for background in ("surface", "selection", "hover"):
+        assert contrast(colors["running"], colors[background]) >= 4.5

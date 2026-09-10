@@ -9,14 +9,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from aiquota.durations import duration_text, elapsed_milliseconds
-from aiquota.user_requests import aggregate_user_requests, turn_key
-from aiquota.usage_collector import Collector, PARSER_VERSION, cursor_key, scan_directory
-from aiquota.usage_store import UsageStore
-from aiquota.usage_queries import UsageQueries
-from aiquota.pricing import PricingCatalog
-from aiquota.dashboard import Dashboard, CALL_HEADERS, USER_REQUEST_HEADERS, DURATION_COLUMN, SESSION_COLUMN
-from aiquota.settings import AppSettings
+from codexio.durations import duration_text, elapsed_milliseconds
+from codexio.user_requests import aggregate_user_requests, turn_key
+from codexio.usage_collector import Collector, PARSER_VERSION, cursor_key, scan_directory
+from codexio.usage_store import UsageStore
+from codexio.usage_queries import UsageQueries
+from codexio.pricing import PricingCatalog
+from codexio.dashboard import Dashboard, CALL_HEADERS, USER_REQUEST_HEADERS, DURATION_COLUMN, SESSION_COLUMN
+from codexio.settings import AppSettings
 
 BASE = datetime(2026, 9, 8, tzinfo=timezone.utc)
 
@@ -157,7 +157,7 @@ def test_database_pages_and_details_keep_timing(tmp_path):
 
 
 def test_duration_column_and_visible_only_running_clock(monkeypatch):
-    from aiquota import dashboard as module
+    from codexio import dashboard as module
     app=QApplication.instance() or QApplication([])
     now=datetime.now(timezone.utc)
     start=now-timedelta(seconds=90)
@@ -170,15 +170,18 @@ def test_duration_column_and_visible_only_running_clock(monkeypatch):
     window.open_page("logs","all")
     assert CALL_HEADERS[5:8] == ["费用","耗时","Session ID"]
     assert len(CALL_HEADERS)==9 and len(USER_REQUEST_HEADERS)==10
-    assert window._log_table.item(0,DURATION_COLUMN).text() != "—"
-    assert window._log_table.cellWidget(0,SESSION_COLUMN) is not None
+    column = window._log_table.duration_column
+    assert window._log_table.item(0,column).text() != "—"
+    window._inspect_log_row(0)
+    assert window._inspected_record["session_id"] == record["session_id"]
+    window._close_inspector()
     assert window._duration_timer.isActive()
     class Clock(datetime):
         @classmethod
         def now(cls, tz=None): return start+timedelta(seconds=123)
     monkeypatch.setattr(module,"datetime",Clock)
     window._refresh_duration_cells()
-    assert window._log_table.item(0,DURATION_COLUMN).text() == "2分03秒"
+    assert window._log_table.item(0,column).text() == "02:03"
     window.open_page("settings")
     assert not window._duration_timer.isActive()
     window.open_page("logs")
@@ -189,6 +192,6 @@ def test_duration_column_and_visible_only_running_clock(monkeypatch):
     assert window._duration_timer.isActive()
     window._log_mode.setCurrentIndex(window._log_mode.findData("model_call"))
     assert not window._duration_timer.isActive()
-    assert window._log_table.item(0,DURATION_COLUMN).text() == "—"
+    assert window._log_table.item(0,column).text() == "—"
     window.close()
     app.processEvents()

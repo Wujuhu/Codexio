@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from aiquota.rate_limits import (
+from codexio.rate_limits import (
     QuotaState,
     QuotaStatus,
     WindowView,
@@ -174,9 +174,9 @@ def test_format_reset_time() -> None:
     tomorrow = now + timedelta(days=1)
     later = now + timedelta(days=4)
     assert format_reset_time(None, now) == "N/A"
-    assert format_reset_time(same_day, now) == "今天 19:20"
-    assert format_reset_time(tomorrow, now) == "明天 16:00"
-    assert format_reset_time(later, now) == "8月31日 16:00"
+    assert format_reset_time(same_day, now) == "今天 周四 19:20"
+    assert format_reset_time(tomorrow, now) == "明天 周五 16:00"
+    assert format_reset_time(later, now) == "8月31日 周一 16:00"
 
 
 def test_backoff_and_stale_threshold() -> None:

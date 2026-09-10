@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from aiquota import available_models
-from aiquota.available_models import load_available_models
+from codexio import available_models
+from codexio.available_models import load_available_models
 
 
 @pytest.fixture(autouse=True)

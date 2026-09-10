@@ -10,10 +10,10 @@ from PySide6.QtCore import QCoreApplication, QEvent
 from PySide6.QtWidgets import QApplication, QLabel
 from shiboken6 import isValid
 
-from aiquota.dashboard import Dashboard
-from aiquota.dashboard_host import DashboardHost
-from aiquota.settings import AppSettings
-from aiquota.update_manager import UpdateManager
+from codexio.dashboard import Dashboard
+from codexio.dashboard_host import DashboardHost
+from codexio.settings import AppSettings
+from codexio.update_manager import UpdateManager
 
 
 @pytest.fixture
@@ -63,7 +63,7 @@ def test_host_releases_closed_window_and_restores_latest_background_state(app):
     assert not isValid(first)
     assert host.dashboard is second and isValid(second)
     assert second._latest_record["cost_usd"] == 3
-    assert second._quota_plan.text() == "PLUS"
+    assert second._quota_state["plan_type"] == "plus"
     assert not second._startup_banner.isVisible()
     second.open_page("settings")
     assert second._update_status.text() == "Update ready"
@@ -74,7 +74,7 @@ def test_host_releases_closed_window_and_restores_latest_background_state(app):
 
 
 def test_page_queries_run_only_for_current_visible_page(app, monkeypatch):
-    from aiquota import usage_queries
+    from codexio import usage_queries
     calls = []
     class Queries:
         def __init__(self, _path): pass
@@ -101,7 +101,7 @@ def test_page_queries_run_only_for_current_visible_page(app, monkeypatch):
     window.apply_data(dict(data, query_generation=3))
     assert len(calls) == before
     window.open_page("overview")
-    assert calls[-1] == ("chart", "week", "day")
+    assert calls[-1] == ("chart", "today", "hour")
     window.hide()
     before = len(calls)
     window.apply_data(dict(data, query_generation=4))
@@ -109,7 +109,7 @@ def test_page_queries_run_only_for_current_visible_page(app, monkeypatch):
     assert len(calls) == before
     window.show()
     app.processEvents()
-    assert len(calls) == before + 1
+    assert calls[before:] == [("page", "user_request"), ("chart", "today", "hour")]
     window.showMinimized()
     app.processEvents()
     before = len(calls)
@@ -117,7 +117,7 @@ def test_page_queries_run_only_for_current_visible_page(app, monkeypatch):
     assert len(calls) == before
     window.showNormal()
     app.processEvents()
-    assert len(calls) == before + 1
+    assert calls[before:] == [("page", "user_request"), ("chart", "today", "hour")]
     window.close()
     delete_pending(app)
 
@@ -182,25 +182,28 @@ def test_closed_window_preserves_filters_and_unsaved_draft_without_widgets(app):
 
 
 def test_hidden_session_info_does_not_leave_a_pending_tooltip(app):
-    from aiquota.dashboard import SessionInfoButton
+    from codexio.dashboard import SessionInfoButton
     window = Dashboard(AppSettings(), {}, {})
     window.apply_data(payload())
     window.open_page("logs")
-    button = window._log_table.cellWidget(0, 7).findChild(SessionInfoButton)
+    window._show_request_row(0)
+    dialog = window._dialogs[-1]
+    button = dialog.call_table.cellWidget(0, 7).findChild(SessionInfoButton)
     button._timer.start(140)
-    window.hide()
+    dialog.hide()
     assert not button._timer.isActive()
     button._show_tip()
     assert button._tip is None
+    dialog.close()
     window.close()
     delete_pending(app)
 
 
 def test_runtime_history_assignment_uses_compact_database_bounds(app, tmp_path):
     from datetime import timedelta
-    from aiquota.pricing import PricingCatalog
-    from aiquota.usage_store import UsageStore
-    from aiquota.usage_queries import UsageQueries
+    from codexio.pricing import PricingCatalog
+    from codexio.usage_store import UsageStore
+    from codexio.usage_queries import UsageQueries
     store = UsageStore(tmp_path / "usage.sqlite")
     row = payload()["records"][0]
     old = datetime.now(timezone.utc) - timedelta(days=200)

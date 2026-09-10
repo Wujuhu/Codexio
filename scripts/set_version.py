@@ -15,5 +15,5 @@ def set_version(value: str, source: Path) -> None:
 
 
 if __name__ == "__main__":
-    set_version(sys.argv[1], Path(__file__).resolve().parents[1] / "src" / "aiquota" / "__init__.py")
+    set_version(sys.argv[1], Path(__file__).resolve().parents[1] / "src" / "codexio" / "__init__.py")
     print("Version: " + sys.argv[1])

@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from aiquota.app_server import MessageKind, parse_jsonrpc_line
-from aiquota.logging_setup import redact_text
-from aiquota.rate_limits import parse_rate_limits_result
+from codexio.app_server import MessageKind, parse_jsonrpc_line
+from codexio.logging_setup import redact_text
+from codexio.rate_limits import parse_rate_limits_result
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 

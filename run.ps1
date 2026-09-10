@@ -1,4 +1,4 @@
-# Launch AIQuota from source.
+# Launch Codexio from source.
 # ASCII-only so Windows PowerShell 5.x can parse this file without a UTF-8 BOM.
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -45,4 +45,4 @@ if ($LASTEXITCODE -ne 0) {
     python -m pip --python $VenvPython install -q -r $Requirements --proxy ""
 }
 $env:PYTHONPATH = Join-Path $Root "src"
-& $VenvPython -m aiquota @args
+& $VenvPython -m codexio @args

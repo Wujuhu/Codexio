@@ -9,3 +9,6 @@ dist/
 build/
 *.log
 tests/_ui_*.png
+
+# Local design-session process state.
+.impeccable/questions/*.state.json

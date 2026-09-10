@@ -8,12 +8,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 from PySide6.QtWidgets import QApplication, QLabel
 
-from aiquota.analytics_config import default_config
-from aiquota.dashboard import Dashboard, UserRequestDetails
-from aiquota.pricing import PricingCatalog
-from aiquota.settings import AppSettings
-from aiquota.usage_store import UsageStore
-from aiquota.usage_worker import UsageWorker
+from codexio.analytics_config import default_config
+from codexio.dashboard import Dashboard, UserRequestDetails
+from codexio.pricing import PricingCatalog
+from codexio.settings import AppSettings
+from codexio.usage_store import UsageStore
+from codexio.usage_worker import UsageWorker
 
 
 @pytest.fixture
@@ -76,12 +76,12 @@ def test_database_filters_preserve_whole_request_and_raw_mode_totals(app, worker
     window._log_model.setCurrentIndex(window._log_model.findData("gpt-6-astra"))
     actual = next(row for row in window._filtered_records if row["id"] == expected["id"])
     assert actual["cost_usd"] == expected["cost_usd"] and actual["call_count"] == 2
-    assert window._log_model.itemText(0) == "所有模型"
+    assert window._log_model.itemText(0) == "全部模型"
     assert window._log_model.itemText(1) == "gpt-6-astra"
     window._log_model.setCurrentIndex(0)
     window._log_mode.setCurrentIndex(window._log_mode.findData("model_call"))
     assert window._query_page["total"] == 420
-    assert window._log_table.columnCount() == 9
+    assert window._log_table.columnCount() == 7
     assert len(window._filtered_records) == 100
     window._change_page(4)
     assert window._log_table.rowCount() == 20
@@ -126,3 +126,34 @@ def test_large_request_details_page_calls_without_retaining_all_members(app, wor
     dialog.close()
     window.hide()
     window.deleteLater()
+
+
+def test_preview_summarizes_all_calls_by_model_without_paging(app, worker, monkeypatch):
+    from PySide6.QtWidgets import QFrame, QPushButton
+    from codexio.dashboard import request_cost_text
+    worker._store.clear_index()
+    now = datetime.now(timezone.utc) - timedelta(hours=2)
+    rows = [dict(id="inline:%03d" % i, session_id="inline-session", turn_id="inline-turn",
+                  timestamp=(now + timedelta(seconds=i)).isoformat(), model="gpt-6-astra", service_tier="default",
+                  input_tokens=1000, output_tokens=100, total_tokens=1100, quality="response") for i in range(250)]
+    worker._store.upsert_records(rows, "local")
+    window = Dashboard(AppSettings(), {}, {})
+    window.open_page("logs", "all")
+    window.apply_data(publish(worker))
+    monkeypatch.setattr(window._queries, "request_members", lambda *args, **kwargs: pytest.fail("Inspector should not read paged call details"))
+    window._inspect_log_row(0)
+    content = window._inspector_scroll.widget()
+    summaries = [frame for frame in content.findChildren(QFrame) if frame.property("callSummary")]
+    assert len(summaries) == 1
+    labels = [label.text() for label in summaries[0].findChildren(QLabel)]
+    assert "gpt-6-astra × 250" in labels
+    assert request_cost_text(window._inspected_record, 6) in labels
+    assert window._records == [] and window._dialogs == []
+    assert not any(button.text() in ("上一页", "下一页") or button.property("memberCall") for button in content.findChildren(QPushButton))
+    app.processEvents()
+    window._inspector_scroll.verticalScrollBar().setValue(100)
+    previous = window._inspector_scroll.verticalScrollBar().value()
+    window._show_inspector(window._inspected_record, focus=False)
+    app.processEvents()
+    assert window._inspector_scroll.verticalScrollBar().value() == previous
+    window.close()

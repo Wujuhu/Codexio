@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from aiquota.settings import (
+from codexio.settings import (
     DEFAULT_BACKGROUND_OPACITY,
     DEFAULT_BORDER_COLOR,
     DEFAULT_QUOTA_SCOPE,
@@ -10,7 +10,7 @@ from aiquota.settings import (
     load_settings,
     save_settings,
 )
-from aiquota.visuals import (
+from codexio.visuals import (
     QUOTA_FIVE_LABEL,
     QUOTA_WEEK_LABEL,
     STYLE_LABELS,
@@ -134,7 +134,7 @@ def test_invalid_border_color_falls_back() -> None:
 
 
 def test_every_style_has_label_and_default_size() -> None:
-    from aiquota.settings import VISUAL_STYLES
+    from codexio.settings import VISUAL_STYLES
 
     assert set(STYLE_LABELS) == set(VISUAL_STYLES)
     for name in STYLE_LABELS:
@@ -153,8 +153,8 @@ def test_every_style_has_label_and_default_size() -> None:
 def test_orb_quota_picks_five_hour_then_week() -> None:
     from datetime import datetime
 
-    from aiquota.rate_limits import QuotaState, QuotaStatus, WindowView
-    from aiquota.visuals import QUOTA_FIVE_LABEL, QUOTA_WEEK_LABEL, quota_hover_text, resolve_orb_quota
+    from codexio.rate_limits import QuotaState, QuotaStatus, WindowView
+    from codexio.visuals import QUOTA_FIVE_LABEL, QUOTA_WEEK_LABEL, quota_hover_text, resolve_orb_quota
 
     week = WindowView(40, 60, 10080, datetime.now().astimezone())
     five = WindowView(80, 20, 300, datetime.now().astimezone())
@@ -188,14 +188,14 @@ def test_bundled_sans_font_registers() -> None:
     from PySide6.QtGui import QFontInfo
     from PySide6.QtWidgets import QApplication, QLabel
 
-    from aiquota.visuals import (
+    from codexio.visuals import (
         bundled_font_path,
         display_font,
         display_font_css,
         display_font_family,
         register_bundled_fonts,
     )
-    from aiquota.window import _STYLESHEET
+    from codexio.window import _STYLESHEET
 
     app = QApplication.instance() or QApplication([])
     assert bundled_font_path().is_file()
@@ -211,3 +211,24 @@ def test_bundled_sans_font_registers() -> None:
     label.setFont(display_font(16))
     assert QFontInfo(label.font()).family() == "Anthropic Sans Web"
     del app
+
+
+def test_codexio_reuses_existing_user_data_after_rename(tmp_path, monkeypatch):
+    from codexio.settings import data_dir
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    legacy = tmp_path / "AIQuotaWidget"
+    legacy.mkdir()
+    (legacy / "settings.json").write_text('{"refresh_interval_seconds": 300}', encoding="utf-8")
+    assert data_dir() == legacy
+    assert load_settings().refresh_interval_seconds == 300
+    assert not (tmp_path / "Codexio").exists()
+
+
+def test_codexio_new_install_and_existing_new_profile(tmp_path, monkeypatch):
+    from codexio.settings import data_dir
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    assert data_dir() == tmp_path / "Codexio"
+    legacy = tmp_path / "AIQuota"
+    legacy.mkdir()
+    (legacy / "settings.json").write_text('{"refresh_interval_seconds": 300}', encoding="utf-8")
+    assert data_dir() == tmp_path / "Codexio"

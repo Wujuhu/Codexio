@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from aiquota.remote_collector import _remote_script, build_ssh_command, collect_ssh
+from codexio.remote_collector import _remote_script, build_ssh_command, collect_ssh
 
 
 @pytest.mark.parametrize("host", ["-oProxyCommand=bad", "host; touch nope", "$(whoami)", "a b", "a\nwhoami", "x'", "", "a/b"])
@@ -52,7 +52,7 @@ def test_remote_python_path_is_quoted_by_validation():
 
 
 def test_embedded_scanner_returns_bounded_visible_output_and_incremental_backfill(tmp_path):
-    from aiquota.usage_store import UsageStore
+    from codexio.usage_store import UsageStore
     directory = tmp_path / "sessions"
     directory.mkdir()
     path = directory / "rollout-11111111-1111-4111-8111-111111111111.jsonl"

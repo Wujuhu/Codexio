@@ -50,7 +50,7 @@ while ($Pending.Count -gt 0) {
     }
 }
 
-$Destination = Join-Path $DistDir "AIQuota.exe"
+$Destination = Join-Path $DistDir "Codexio.exe"
 $BackupDir = [IO.Path]::GetFullPath((Join-Path $BuildDir ("release-backups\" + [Guid]::NewGuid().ToString("N"))))
 if (-not $BackupDir.StartsWith($BuildPrefix, [StringComparison]::OrdinalIgnoreCase)) {
     throw "Unexpected backup directory."
@@ -89,7 +89,7 @@ try {
     if ($RestoreErrors.Count -gt 0) {
         throw "Publication failed. The staged build is preserved; previous releases needing restoration are in $BackupDir. $PublishError $($RestoreErrors -join ' ')"
     }
-    throw "Could not publish dist\AIQuota.exe. Close the running widget and retry; the previous release and staged build are preserved. $PublishError"
+    throw "Could not publish dist\Codexio.exe. Close the running widget and retry; the previous release and staged build are preserved. $PublishError"
 }
 if ((Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash -ne $ExpectedHash) {
     throw "Published executable hash verification failed. Backup: $BackupDir"

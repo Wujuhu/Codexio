@@ -6,10 +6,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from aiquota.estimation import estimate_weeks
-from aiquota.pricing import PricingCatalog
-from aiquota.usage_queries import UsageQueries
-from aiquota.usage_store import UsageStore
+from codexio.estimation import estimate_weeks
+from codexio.pricing import PricingCatalog
+from codexio.usage_queries import UsageQueries
+from codexio.usage_store import UsageStore
 
 BASE = datetime(2026, 9, 1, tzinfo=timezone.utc)
 NOW = BASE + timedelta(days=19, hours=12)
@@ -58,6 +58,27 @@ def check(queries, now=NOW, active=("local",), since=SINCE, complete=True, assig
     actual = queries.weekly_estimates(active, since, now=now, sources_complete=complete, assignments=assignments)
     assert actual == expected
     return actual
+
+
+def test_new_estimator_recomputes_old_cached_five_point_gate(tmp_path, monkeypatch):
+    from codexio import estimation, estimation_cache
+    store = UsageStore(tmp_path / "usage.sqlite")
+    catalog = PricingCatalog(tmp_path / "prices")
+    queries = UsageQueries(store.path)
+    reset = BASE + timedelta(days=7)
+    store.upsert_records([call("two-points", BASE + timedelta(hours=2))], "local")
+    store.upsert_observations([quota("start", BASE + timedelta(hours=1), reset, 10),
+                              quota("end", BASE + timedelta(hours=4), reset, 12)], "local")
+    queries.rebuild(catalog)
+    now = BASE + timedelta(hours=5)
+    with monkeypatch.context() as old:
+        old.setattr(estimation, "MIN_PERCENT_SPAN", 5.0)
+        old.setattr(estimation_cache, "CACHE_VERSION", 2)
+        assert queries.weekly_estimates(["local"], SINCE, now=now)[0]["estimated_total_usd"] is None
+    value = queries.weekly_estimates(["local"], SINCE, now=now)[0]
+    assert value["delta_percent"] == 2 and value["status"] == "ready"
+    assert value["estimated_total_usd"] == pytest.approx(value["consumed_usd"] * 50)
+    assert queries.last_estimation_stats["evaluated_cycles"] == 1
 
 
 def test_current_cycle_only_recomputes_for_append_maturity_and_reset(tmp_path):
@@ -229,7 +250,7 @@ def test_scoped_calibration_reads_use_time_index_instead_of_all_source_ids(tmp_p
         db = connect(*args, **kwargs)
         db.set_trace_callback(statements.append)
         return db
-    monkeypatch.setattr("aiquota.usage_queries.sqlite3.connect", traced_connection)
+    monkeypatch.setattr("codexio.usage_queries.sqlite3.connect", traced_connection)
     rows = list(queries.calibration_records(("local",), start=BASE, end=BASE + timedelta(days=7)))
     assert [row["id"] for row in rows] == ["call-0"]
     sql = next(statement for statement in statements if statement.startswith("SELECT c.metrics"))
@@ -244,7 +265,7 @@ def test_failed_cache_update_rolls_back_results_and_retains_change_journal(tmp_p
     before = check(queries)
     store.upsert_records([call("late", BASE + timedelta(hours=3))], "local")
     queries.rebuild(catalog)
-    import aiquota.estimation_cache as cache_module
+    import codexio.estimation_cache as cache_module
     original = cache_module.estimate_weeks
     monkeypatch.setattr(cache_module, "estimate_weeks", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("synthetic failure")))
     with pytest.raises(RuntimeError):
@@ -296,9 +317,9 @@ def test_existing_priced_index_initializes_missing_journal_watermark_without_reb
 
 
 def test_worker_skips_unchanged_minute_summary_scans_but_honors_time_boundaries(tmp_path, monkeypatch):
-    from aiquota.analytics_config import default_config
-    from aiquota.usage_worker import UsageWorker
-    import aiquota.usage_worker as worker_module
+    from codexio.analytics_config import default_config
+    from codexio.usage_worker import UsageWorker
+    import codexio.usage_worker as worker_module
     store = UsageStore(tmp_path / "summary.sqlite")
     catalog = PricingCatalog(tmp_path / "prices")
     start = BASE + timedelta(hours=3)

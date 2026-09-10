@@ -6,9 +6,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
-from aiquota.app_icon import bundled_icon_path, load_app_icon, master_png_path
-from aiquota.rate_limits import QuotaState
-from aiquota.tray import TrayController
+from codexio.app_icon import bundled_icon_path, load_app_icon, master_png_path
+from codexio.rate_limits import QuotaState
+from codexio.tray import TrayController
 
 
 def test_bundled_app_icon_is_present() -> None:

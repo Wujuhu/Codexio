@@ -10,10 +10,10 @@ from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent
 from PySide6.QtWidgets import QApplication
 from shiboken6 import isValid
 
-from aiquota.rate_limits import QuotaState, QuotaStatus, WindowView
-from aiquota.settings import AppSettings, VISUAL_STYLES
-from aiquota.visuals import PercentAnimator
-from aiquota.window import QuotaWindow
+from codexio.rate_limits import QuotaState, QuotaStatus, WindowView
+from codexio.settings import AppSettings, VISUAL_STYLES
+from codexio.visuals import PercentAnimator
+from codexio.window import QuotaWindow
 
 
 def drain(app):

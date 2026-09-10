@@ -5,9 +5,9 @@ import math
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
-from aiquota.user_requests import aggregate_user_requests, matches_call, turn_key
-from aiquota.usage_collector import Collector, scan_directory, _hash, _plain
-from aiquota.usage_store import UsageStore
+from codexio.user_requests import aggregate_user_requests, matches_call, turn_key
+from codexio.usage_collector import Collector, scan_directory, _hash, _plain
+from codexio.usage_store import UsageStore
 
 PARENT = "11111111-1111-4111-8111-111111111111"
 CHILD = "22222222-2222-4222-8222-222222222222"

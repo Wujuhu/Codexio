@@ -1,0 +1,994 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-09T08:56:49.520Z",
+  "title": "Design System: Codexio",
+  "extensions": {
+    "colorMeta": {
+      "dark-bg": {
+        "role": "neutral",
+        "displayName": "Dark · bg",
+        "tonalRamp": [
+          "oklch(15.00% 0.0041 285.97)",
+          "oklch(26.43% 0.0041 285.97)",
+          "oklch(37.86% 0.0041 285.97)",
+          "oklch(49.29% 0.0041 285.97)",
+          "oklch(60.71% 0.0041 285.97)",
+          "oklch(72.14% 0.0041 285.97)",
+          "oklch(83.57% 0.0041 285.97)",
+          "oklch(95.00% 0.0041 285.97)"
+        ]
+      },
+      "light-bg": {
+        "role": "neutral",
+        "displayName": "Light · bg",
+        "tonalRamp": [
+          "oklch(15.00% 0.0026 286.35)",
+          "oklch(26.43% 0.0026 286.35)",
+          "oklch(37.86% 0.0026 286.35)",
+          "oklch(49.29% 0.0026 286.35)",
+          "oklch(60.71% 0.0026 286.35)",
+          "oklch(72.14% 0.0026 286.35)",
+          "oklch(83.57% 0.0026 286.35)",
+          "oklch(95.00% 0.0026 286.35)"
+        ]
+      },
+      "dark-surface": {
+        "role": "neutral",
+        "displayName": "Dark · surface",
+        "tonalRamp": [
+          "oklch(15.00% 0.0077 285.76)",
+          "oklch(26.43% 0.0077 285.76)",
+          "oklch(37.86% 0.0077 285.76)",
+          "oklch(49.29% 0.0077 285.76)",
+          "oklch(60.71% 0.0077 285.76)",
+          "oklch(72.14% 0.0077 285.76)",
+          "oklch(83.57% 0.0077 285.76)",
+          "oklch(95.00% 0.0077 285.76)"
+        ]
+      },
+      "light-surface": {
+        "role": "neutral",
+        "displayName": "Light · surface",
+        "tonalRamp": [
+          "oklch(15.00% 0.0053 286.30)",
+          "oklch(26.43% 0.0053 286.30)",
+          "oklch(37.86% 0.0053 286.30)",
+          "oklch(49.29% 0.0053 286.30)",
+          "oklch(60.71% 0.0053 286.30)",
+          "oklch(72.14% 0.0053 286.30)",
+          "oklch(83.57% 0.0053 286.30)",
+          "oklch(95.00% 0.0053 286.30)"
+        ]
+      },
+      "dark-raised": {
+        "role": "neutral",
+        "displayName": "Dark · raised",
+        "tonalRamp": [
+          "oklch(15.00% 0.0089 285.87)",
+          "oklch(26.43% 0.0089 285.87)",
+          "oklch(37.86% 0.0089 285.87)",
+          "oklch(49.29% 0.0089 285.87)",
+          "oklch(60.71% 0.0089 285.87)",
+          "oklch(72.14% 0.0089 285.87)",
+          "oklch(83.57% 0.0089 285.87)",
+          "oklch(95.00% 0.0089 285.87)"
+        ]
+      },
+      "light-raised": {
+        "role": "neutral",
+        "displayName": "Light · raised",
+        "tonalRamp": [
+          "oklch(15.00% 0.0108 286.18)",
+          "oklch(26.43% 0.0108 286.18)",
+          "oklch(37.86% 0.0108 286.18)",
+          "oklch(49.29% 0.0108 286.18)",
+          "oklch(60.71% 0.0108 286.18)",
+          "oklch(72.14% 0.0108 286.18)",
+          "oklch(83.57% 0.0108 286.18)",
+          "oklch(95.00% 0.0108 286.18)"
+        ]
+      },
+      "dark-text": {
+        "role": "neutral",
+        "displayName": "Dark · text",
+        "tonalRamp": [
+          "oklch(15.00% 0.0040 286.32)",
+          "oklch(26.43% 0.0040 286.32)",
+          "oklch(37.86% 0.0040 286.32)",
+          "oklch(49.29% 0.0040 286.32)",
+          "oklch(60.71% 0.0040 286.32)",
+          "oklch(72.14% 0.0040 286.32)",
+          "oklch(83.57% 0.0040 286.32)",
+          "oklch(95.00% 0.0040 286.32)"
+        ]
+      },
+      "light-text": {
+        "role": "neutral",
+        "displayName": "Light · text",
+        "tonalRamp": [
+          "oklch(15.00% 0.0111 285.63)",
+          "oklch(26.43% 0.0111 285.63)",
+          "oklch(37.86% 0.0111 285.63)",
+          "oklch(49.29% 0.0111 285.63)",
+          "oklch(60.71% 0.0111 285.63)",
+          "oklch(72.14% 0.0111 285.63)",
+          "oklch(83.57% 0.0111 285.63)",
+          "oklch(95.00% 0.0111 285.63)"
+        ]
+      },
+      "dark-muted": {
+        "role": "neutral",
+        "displayName": "Dark · muted",
+        "tonalRamp": [
+          "oklch(15.00% 0.0142 281.48)",
+          "oklch(26.43% 0.0142 281.48)",
+          "oklch(37.86% 0.0142 281.48)",
+          "oklch(49.29% 0.0142 281.48)",
+          "oklch(60.71% 0.0142 281.48)",
+          "oklch(72.14% 0.0142 281.48)",
+          "oklch(83.57% 0.0142 281.48)",
+          "oklch(95.00% 0.0142 281.48)"
+        ]
+      },
+      "light-muted": {
+        "role": "neutral",
+        "displayName": "Light · muted",
+        "tonalRamp": [
+          "oklch(15.00% 0.0177 285.68)",
+          "oklch(26.43% 0.0177 285.68)",
+          "oklch(37.86% 0.0177 285.68)",
+          "oklch(49.29% 0.0177 285.68)",
+          "oklch(60.71% 0.0177 285.68)",
+          "oklch(72.14% 0.0177 285.68)",
+          "oklch(83.57% 0.0177 285.68)",
+          "oklch(95.00% 0.0177 285.68)"
+        ]
+      },
+      "dark-border": {
+        "role": "neutral",
+        "displayName": "Dark · border",
+        "tonalRamp": [
+          "oklch(15.00% 0.0140 285.61)",
+          "oklch(26.43% 0.0140 285.61)",
+          "oklch(37.86% 0.0140 285.61)",
+          "oklch(49.29% 0.0140 285.61)",
+          "oklch(60.71% 0.0140 285.61)",
+          "oklch(72.14% 0.0140 285.61)",
+          "oklch(83.57% 0.0140 285.61)",
+          "oklch(95.00% 0.0140 285.61)"
+        ]
+      },
+      "light-border": {
+        "role": "neutral",
+        "displayName": "Light · border",
+        "tonalRamp": [
+          "oklch(15.00% 0.0137 286.11)",
+          "oklch(26.43% 0.0137 286.11)",
+          "oklch(37.86% 0.0137 286.11)",
+          "oklch(49.29% 0.0137 286.11)",
+          "oklch(60.71% 0.0137 286.11)",
+          "oklch(72.14% 0.0137 286.11)",
+          "oklch(83.57% 0.0137 286.11)",
+          "oklch(95.00% 0.0137 286.11)"
+        ]
+      },
+      "dark-control-border": {
+        "role": "neutral",
+        "displayName": "Dark · control border",
+        "tonalRamp": [
+          "oklch(15.00% 0.0151 285.68)",
+          "oklch(26.43% 0.0151 285.68)",
+          "oklch(37.86% 0.0151 285.68)",
+          "oklch(49.29% 0.0151 285.68)",
+          "oklch(60.71% 0.0151 285.68)",
+          "oklch(72.14% 0.0151 285.68)",
+          "oklch(83.57% 0.0151 285.68)",
+          "oklch(95.00% 0.0151 285.68)"
+        ]
+      },
+      "light-control-border": {
+        "role": "neutral",
+        "displayName": "Light · control border",
+        "tonalRamp": [
+          "oklch(15.00% 0.0196 285.95)",
+          "oklch(26.43% 0.0196 285.95)",
+          "oklch(37.86% 0.0196 285.95)",
+          "oklch(49.29% 0.0196 285.95)",
+          "oklch(60.71% 0.0196 285.95)",
+          "oklch(72.14% 0.0196 285.95)",
+          "oklch(83.57% 0.0196 285.95)",
+          "oklch(95.00% 0.0196 285.95)"
+        ]
+      },
+      "dark-accent": {
+        "role": "primary",
+        "displayName": "Dark · accent",
+        "tonalRamp": [
+          "oklch(15.00% 0.0108 286.18)",
+          "oklch(26.43% 0.0108 286.18)",
+          "oklch(37.86% 0.0108 286.18)",
+          "oklch(49.29% 0.0108 286.18)",
+          "oklch(60.71% 0.0108 286.18)",
+          "oklch(72.14% 0.0108 286.18)",
+          "oklch(83.57% 0.0108 286.18)",
+          "oklch(95.00% 0.0108 286.18)"
+        ]
+      },
+      "light-accent": {
+        "role": "primary",
+        "displayName": "Light · accent",
+        "tonalRamp": [
+          "oklch(15.00% 0.0186 285.48)",
+          "oklch(26.43% 0.0186 285.48)",
+          "oklch(37.86% 0.0186 285.48)",
+          "oklch(49.29% 0.0186 285.48)",
+          "oklch(60.71% 0.0186 285.48)",
+          "oklch(72.14% 0.0186 285.48)",
+          "oklch(83.57% 0.0186 285.48)",
+          "oklch(95.00% 0.0186 285.48)"
+        ]
+      },
+      "dark-action": {
+        "role": "primary",
+        "displayName": "Dark · action",
+        "tonalRamp": [
+          "oklch(15.00% 0.0108 286.18)",
+          "oklch(26.43% 0.0108 286.18)",
+          "oklch(37.86% 0.0108 286.18)",
+          "oklch(49.29% 0.0108 286.18)",
+          "oklch(60.71% 0.0108 286.18)",
+          "oklch(72.14% 0.0108 286.18)",
+          "oklch(83.57% 0.0108 286.18)",
+          "oklch(95.00% 0.0108 286.18)"
+        ]
+      },
+      "light-action": {
+        "role": "primary",
+        "displayName": "Light · action",
+        "tonalRamp": [
+          "oklch(15.00% 0.0175 285.41)",
+          "oklch(26.43% 0.0175 285.41)",
+          "oklch(37.86% 0.0175 285.41)",
+          "oklch(49.29% 0.0175 285.41)",
+          "oklch(60.71% 0.0175 285.41)",
+          "oklch(72.14% 0.0175 285.41)",
+          "oklch(83.57% 0.0175 285.41)",
+          "oklch(95.00% 0.0175 285.41)"
+        ]
+      },
+      "dark-action-hover": {
+        "role": "primary",
+        "displayName": "Dark · action hover",
+        "tonalRamp": [
+          "oklch(15.00% 0.0067 286.27)",
+          "oklch(26.43% 0.0067 286.27)",
+          "oklch(37.86% 0.0067 286.27)",
+          "oklch(49.29% 0.0067 286.27)",
+          "oklch(60.71% 0.0067 286.27)",
+          "oklch(72.14% 0.0067 286.27)",
+          "oklch(83.57% 0.0067 286.27)",
+          "oklch(95.00% 0.0067 286.27)"
+        ]
+      },
+      "light-action-hover": {
+        "role": "primary",
+        "displayName": "Light · action hover",
+        "tonalRamp": [
+          "oklch(15.00% 0.0229 285.41)",
+          "oklch(26.43% 0.0229 285.41)",
+          "oklch(37.86% 0.0229 285.41)",
+          "oklch(49.29% 0.0229 285.41)",
+          "oklch(60.71% 0.0229 285.41)",
+          "oklch(72.14% 0.0229 285.41)",
+          "oklch(83.57% 0.0229 285.41)",
+          "oklch(95.00% 0.0229 285.41)"
+        ]
+      },
+      "dark-action-text": {
+        "role": "neutral",
+        "displayName": "Dark · action text",
+        "tonalRamp": [
+          "oklch(15.00% 0.0096 285.60)",
+          "oklch(26.43% 0.0096 285.60)",
+          "oklch(37.86% 0.0096 285.60)",
+          "oklch(49.29% 0.0096 285.60)",
+          "oklch(60.71% 0.0096 285.60)",
+          "oklch(72.14% 0.0096 285.60)",
+          "oklch(83.57% 0.0096 285.60)",
+          "oklch(95.00% 0.0096 285.60)"
+        ]
+      },
+      "light-action-text": {
+        "role": "neutral",
+        "displayName": "Light · action text",
+        "tonalRamp": [
+          "oklch(15.00% 0.0000 89.88)",
+          "oklch(26.43% 0.0000 89.88)",
+          "oklch(37.86% 0.0000 89.88)",
+          "oklch(49.29% 0.0000 89.88)",
+          "oklch(60.71% 0.0000 89.88)",
+          "oklch(72.14% 0.0000 89.88)",
+          "oklch(83.57% 0.0000 89.88)",
+          "oklch(95.00% 0.0000 89.88)"
+        ]
+      },
+      "dark-selection": {
+        "role": "neutral",
+        "displayName": "Dark · selection",
+        "tonalRamp": [
+          "oklch(15.00% 0.0145 285.46)",
+          "oklch(26.43% 0.0145 285.46)",
+          "oklch(37.86% 0.0145 285.46)",
+          "oklch(49.29% 0.0145 285.46)",
+          "oklch(60.71% 0.0145 285.46)",
+          "oklch(72.14% 0.0145 285.46)",
+          "oklch(83.57% 0.0145 285.46)",
+          "oklch(95.00% 0.0145 285.46)"
+        ]
+      },
+      "light-selection": {
+        "role": "neutral",
+        "displayName": "Light · selection",
+        "tonalRamp": [
+          "oklch(15.00% 0.0149 286.10)",
+          "oklch(26.43% 0.0149 286.10)",
+          "oklch(37.86% 0.0149 286.10)",
+          "oklch(49.29% 0.0149 286.10)",
+          "oklch(60.71% 0.0149 286.10)",
+          "oklch(72.14% 0.0149 286.10)",
+          "oklch(83.57% 0.0149 286.10)",
+          "oklch(95.00% 0.0149 286.10)"
+        ]
+      },
+      "dark-hover": {
+        "role": "neutral",
+        "displayName": "Dark · hover",
+        "tonalRamp": [
+          "oklch(15.00% 0.0127 285.56)",
+          "oklch(26.43% 0.0127 285.56)",
+          "oklch(37.86% 0.0127 285.56)",
+          "oklch(49.29% 0.0127 285.56)",
+          "oklch(60.71% 0.0127 285.56)",
+          "oklch(72.14% 0.0127 285.56)",
+          "oklch(83.57% 0.0127 285.56)",
+          "oklch(95.00% 0.0127 285.56)"
+        ]
+      },
+      "light-hover": {
+        "role": "neutral",
+        "displayName": "Light · hover",
+        "tonalRamp": [
+          "oklch(15.00% 0.0094 286.22)",
+          "oklch(26.43% 0.0094 286.22)",
+          "oklch(37.86% 0.0094 286.22)",
+          "oklch(49.29% 0.0094 286.22)",
+          "oklch(60.71% 0.0094 286.22)",
+          "oklch(72.14% 0.0094 286.22)",
+          "oklch(83.57% 0.0094 286.22)",
+          "oklch(95.00% 0.0094 286.22)"
+        ]
+      },
+      "dark-sidebar": {
+        "role": "neutral",
+        "displayName": "Dark · sidebar",
+        "tonalRamp": [
+          "oklch(15.00% 0.0038 286.12)",
+          "oklch(26.43% 0.0038 286.12)",
+          "oklch(37.86% 0.0038 286.12)",
+          "oklch(49.29% 0.0038 286.12)",
+          "oklch(60.71% 0.0038 286.12)",
+          "oklch(72.14% 0.0038 286.12)",
+          "oklch(83.57% 0.0038 286.12)",
+          "oklch(95.00% 0.0038 286.12)"
+        ]
+      },
+      "light-sidebar": {
+        "role": "neutral",
+        "displayName": "Light · sidebar",
+        "tonalRamp": [
+          "oklch(15.00% 0.0053 286.30)",
+          "oklch(26.43% 0.0053 286.30)",
+          "oklch(37.86% 0.0053 286.30)",
+          "oklch(49.29% 0.0053 286.30)",
+          "oklch(60.71% 0.0053 286.30)",
+          "oklch(72.14% 0.0053 286.30)",
+          "oklch(83.57% 0.0053 286.30)",
+          "oklch(95.00% 0.0053 286.30)"
+        ]
+      },
+      "dark-success": {
+        "role": "secondary",
+        "displayName": "Dark · success",
+        "tonalRamp": [
+          "oklch(15.00% 0.0751 161.76)",
+          "oklch(26.43% 0.0751 161.76)",
+          "oklch(37.86% 0.0751 161.76)",
+          "oklch(49.29% 0.0751 161.76)",
+          "oklch(60.71% 0.0751 161.76)",
+          "oklch(72.14% 0.0751 161.76)",
+          "oklch(83.57% 0.0751 161.76)",
+          "oklch(95.00% 0.0751 161.76)"
+        ]
+      },
+      "light-success": {
+        "role": "secondary",
+        "displayName": "Light · success",
+        "tonalRamp": [
+          "oklch(15.00% 0.0720 158.99)",
+          "oklch(26.43% 0.0720 158.99)",
+          "oklch(37.86% 0.0720 158.99)",
+          "oklch(49.29% 0.0720 158.99)",
+          "oklch(60.71% 0.0720 158.99)",
+          "oklch(72.14% 0.0720 158.99)",
+          "oklch(83.57% 0.0720 158.99)",
+          "oklch(95.00% 0.0720 158.99)"
+        ]
+      },
+      "dark-warning": {
+        "role": "secondary",
+        "displayName": "Dark · warning",
+        "tonalRamp": [
+          "oklch(15.00% 0.0871 70.06)",
+          "oklch(26.43% 0.0871 70.06)",
+          "oklch(37.86% 0.0871 70.06)",
+          "oklch(49.29% 0.0871 70.06)",
+          "oklch(60.71% 0.0871 70.06)",
+          "oklch(72.14% 0.0871 70.06)",
+          "oklch(83.57% 0.0871 70.06)",
+          "oklch(95.00% 0.0871 70.06)"
+        ]
+      },
+      "light-warning": {
+        "role": "secondary",
+        "displayName": "Light · warning",
+        "tonalRamp": [
+          "oklch(15.00% 0.1022 68.34)",
+          "oklch(26.43% 0.1022 68.34)",
+          "oklch(37.86% 0.1022 68.34)",
+          "oklch(49.29% 0.1022 68.34)",
+          "oklch(60.71% 0.1022 68.34)",
+          "oklch(72.14% 0.1022 68.34)",
+          "oklch(83.57% 0.1022 68.34)",
+          "oklch(95.00% 0.1022 68.34)"
+        ]
+      },
+      "dark-grid": {
+        "role": "neutral",
+        "displayName": "Dark · grid",
+        "tonalRamp": [
+          "oklch(15.00% 0.0124 285.66)",
+          "oklch(26.43% 0.0124 285.66)",
+          "oklch(37.86% 0.0124 285.66)",
+          "oklch(49.29% 0.0124 285.66)",
+          "oklch(60.71% 0.0124 285.66)",
+          "oklch(72.14% 0.0124 285.66)",
+          "oklch(83.57% 0.0124 285.66)",
+          "oklch(95.00% 0.0124 285.66)"
+        ]
+      },
+      "light-grid": {
+        "role": "neutral",
+        "displayName": "Light · grid",
+        "tonalRamp": [
+          "oklch(15.00% 0.0136 286.11)",
+          "oklch(26.43% 0.0136 286.11)",
+          "oklch(37.86% 0.0136 286.11)",
+          "oklch(49.29% 0.0136 286.11)",
+          "oklch(60.71% 0.0136 286.11)",
+          "oklch(72.14% 0.0136 286.11)",
+          "oklch(83.57% 0.0136 286.11)",
+          "oklch(95.00% 0.0136 286.11)"
+        ]
+      },
+      "dark-chart-tokens": {
+        "role": "secondary",
+        "displayName": "Dark · chart tokens",
+        "tonalRamp": [
+          "oklch(15.00% 0.0299 181.69)",
+          "oklch(26.43% 0.0527 181.69)",
+          "oklch(37.86% 0.0755 181.69)",
+          "oklch(49.29% 0.0798 181.69)",
+          "oklch(60.71% 0.0798 181.69)",
+          "oklch(72.14% 0.0741 181.69)",
+          "oklch(83.57% 0.0437 181.69)",
+          "oklch(95.00% 0.0133 181.69)"
+        ]
+      },
+      "light-chart-tokens": {
+        "role": "secondary",
+        "displayName": "Light · chart tokens",
+        "tonalRamp": [
+          "oklch(15.00% 0.0340 179.91)",
+          "oklch(26.43% 0.0599 179.91)",
+          "oklch(37.86% 0.0858 179.91)",
+          "oklch(49.29% 0.0906 179.91)",
+          "oklch(60.71% 0.0906 179.91)",
+          "oklch(72.14% 0.0842 179.91)",
+          "oklch(83.57% 0.0496 179.91)",
+          "oklch(95.00% 0.0151 179.91)"
+        ]
+      },
+      "dark-chart-cost": {
+        "role": "secondary",
+        "displayName": "Dark · chart cost",
+        "tonalRamp": [
+          "oklch(15.00% 0.0435 32.11)",
+          "oklch(26.43% 0.0766 32.11)",
+          "oklch(37.86% 0.1098 32.11)",
+          "oklch(49.29% 0.1160 32.11)",
+          "oklch(60.71% 0.1160 32.11)",
+          "oklch(72.14% 0.1077 32.11)",
+          "oklch(83.57% 0.0635 32.11)",
+          "oklch(95.00% 0.0193 32.11)"
+        ]
+      },
+      "light-chart-cost": {
+        "role": "secondary",
+        "displayName": "Light · chart cost",
+        "tonalRamp": [
+          "oklch(15.00% 0.0607 32.70)",
+          "oklch(26.43% 0.1070 32.70)",
+          "oklch(37.86% 0.1533 32.70)",
+          "oklch(49.29% 0.1620 32.70)",
+          "oklch(60.71% 0.1620 32.70)",
+          "oklch(72.14% 0.1504 32.70)",
+          "oklch(83.57% 0.0887 32.70)",
+          "oklch(95.00% 0.0270 32.70)"
+        ]
+      },
+      "dark-chart-input": {
+        "role": "secondary",
+        "displayName": "Dark · chart input",
+        "tonalRamp": [
+          "oklch(15.00% 0.0422 224.75)",
+          "oklch(26.43% 0.0743 224.75)",
+          "oklch(37.86% 0.1064 224.75)",
+          "oklch(49.29% 0.1125 224.75)",
+          "oklch(60.71% 0.1125 224.75)",
+          "oklch(72.14% 0.1044 224.75)",
+          "oklch(83.57% 0.0616 224.75)",
+          "oklch(95.00% 0.0187 224.75)"
+        ]
+      },
+      "light-chart-input": {
+        "role": "secondary",
+        "displayName": "Light · chart input",
+        "tonalRamp": [
+          "oklch(15.00% 0.0464 228.38)",
+          "oklch(26.43% 0.0817 228.38)",
+          "oklch(37.86% 0.1171 228.38)",
+          "oklch(49.29% 0.1237 228.38)",
+          "oklch(60.71% 0.1237 228.38)",
+          "oklch(72.14% 0.1149 228.38)",
+          "oklch(83.57% 0.0677 228.38)",
+          "oklch(95.00% 0.0206 228.38)"
+        ]
+      },
+      "dark-chart-cache-read": {
+        "role": "secondary",
+        "displayName": "Dark · chart cache read",
+        "tonalRamp": [
+          "oklch(15.00% 0.0469 295.37)",
+          "oklch(26.43% 0.0826 295.37)",
+          "oklch(37.86% 0.1183 295.37)",
+          "oklch(49.29% 0.1250 295.37)",
+          "oklch(60.71% 0.1250 295.37)",
+          "oklch(72.14% 0.1161 295.37)",
+          "oklch(83.57% 0.0684 295.37)",
+          "oklch(95.00% 0.0208 295.37)"
+        ]
+      },
+      "light-chart-cache-read": {
+        "role": "secondary",
+        "displayName": "Light · chart cache read",
+        "tonalRamp": [
+          "oklch(15.00% 0.0523 297.11)",
+          "oklch(26.43% 0.0921 297.11)",
+          "oklch(37.86% 0.1320 297.11)",
+          "oklch(49.29% 0.1394 297.11)",
+          "oklch(60.71% 0.1394 297.11)",
+          "oklch(72.14% 0.1295 297.11)",
+          "oklch(83.57% 0.0764 297.11)",
+          "oklch(95.00% 0.0232 297.11)"
+        ]
+      },
+      "dark-chart-cache-write": {
+        "role": "secondary",
+        "displayName": "Dark · chart cache write",
+        "tonalRamp": [
+          "oklch(15.00% 0.0348 349.91)",
+          "oklch(26.43% 0.0614 349.91)",
+          "oklch(37.86% 0.0879 349.91)",
+          "oklch(49.29% 0.0929 349.91)",
+          "oklch(60.71% 0.0929 349.91)",
+          "oklch(72.14% 0.0863 349.91)",
+          "oklch(83.57% 0.0509 349.91)",
+          "oklch(95.00% 0.0155 349.91)"
+        ]
+      },
+      "light-chart-cache-write": {
+        "role": "secondary",
+        "displayName": "Light · chart cache write",
+        "tonalRamp": [
+          "oklch(15.00% 0.0420 347.15)",
+          "oklch(26.43% 0.0740 347.15)",
+          "oklch(37.86% 0.1060 347.15)",
+          "oklch(49.29% 0.1120 347.15)",
+          "oklch(60.71% 0.1120 347.15)",
+          "oklch(72.14% 0.1040 347.15)",
+          "oklch(83.57% 0.0613 347.15)",
+          "oklch(95.00% 0.0187 347.15)"
+        ]
+      },
+      "dark-chart-output": {
+        "role": "secondary",
+        "displayName": "Dark · chart output",
+        "tonalRamp": [
+          "oklch(15.00% 0.0489 90.13)",
+          "oklch(26.43% 0.0862 90.13)",
+          "oklch(37.86% 0.1235 90.13)",
+          "oklch(49.29% 0.1305 90.13)",
+          "oklch(60.71% 0.1305 90.13)",
+          "oklch(72.14% 0.1212 90.13)",
+          "oklch(83.57% 0.0714 90.13)",
+          "oklch(95.00% 0.0217 90.13)"
+        ]
+      },
+      "light-chart-output": {
+        "role": "secondary",
+        "displayName": "Light · chart output",
+        "tonalRamp": [
+          "oklch(15.00% 0.0523 86.12)",
+          "oklch(26.43% 0.0921 86.12)",
+          "oklch(37.86% 0.1319 86.12)",
+          "oklch(49.29% 0.1394 86.12)",
+          "oklch(60.71% 0.1394 86.12)",
+          "oklch(72.14% 0.1294 86.12)",
+          "oklch(83.57% 0.0763 86.12)",
+          "oklch(95.00% 0.0232 86.12)"
+        ]
+      },
+      "dark-token-cache-read": {
+        "role": "secondary",
+        "displayName": "Dark · token cache read",
+        "tonalRamp": [
+          "oklch(15.00% 0.0469 295.37)",
+          "oklch(26.43% 0.0826 295.37)",
+          "oklch(37.86% 0.1183 295.37)",
+          "oklch(49.29% 0.1250 295.37)",
+          "oklch(60.71% 0.1250 295.37)",
+          "oklch(72.14% 0.1161 295.37)",
+          "oklch(83.57% 0.0684 295.37)",
+          "oklch(95.00% 0.0208 295.37)"
+        ]
+      },
+      "dark-token-input": {
+        "role": "secondary",
+        "displayName": "Dark · token input",
+        "tonalRamp": [
+          "oklch(15.00% 0.0443 223.22)",
+          "oklch(26.43% 0.0781 223.22)",
+          "oklch(37.86% 0.1119 223.22)",
+          "oklch(49.29% 0.1182 223.22)",
+          "oklch(60.71% 0.1182 223.22)",
+          "oklch(72.14% 0.1097 223.22)",
+          "oklch(83.57% 0.0647 223.22)",
+          "oklch(95.00% 0.0197 223.22)"
+        ]
+      },
+      "dark-token-output": {
+        "role": "secondary",
+        "displayName": "Dark · token output",
+        "tonalRamp": [
+          "oklch(15.00% 0.0489 90.13)",
+          "oklch(26.43% 0.0862 90.13)",
+          "oklch(37.86% 0.1235 90.13)",
+          "oklch(49.29% 0.1305 90.13)",
+          "oklch(60.71% 0.1305 90.13)",
+          "oklch(72.14% 0.1212 90.13)",
+          "oklch(83.57% 0.0714 90.13)",
+          "oklch(95.00% 0.0217 90.13)"
+        ]
+      },
+      "dark-token-cache-write": {
+        "role": "secondary",
+        "displayName": "Dark · token cache write",
+        "tonalRamp": [
+          "oklch(15.00% 0.0348 349.91)",
+          "oklch(26.43% 0.0614 349.91)",
+          "oklch(37.86% 0.0879 349.91)",
+          "oklch(49.29% 0.0929 349.91)",
+          "oklch(60.71% 0.0929 349.91)",
+          "oklch(72.14% 0.0863 349.91)",
+          "oklch(83.57% 0.0509 349.91)",
+          "oklch(95.00% 0.0155 349.91)"
+        ]
+      },
+      "dark-comparison-up": {
+        "role": "secondary",
+        "displayName": "Dark · comparison up",
+        "tonalRamp": [
+          "oklch(15.00% 0.0448 160.23)",
+          "oklch(26.43% 0.0789 160.23)",
+          "oklch(37.86% 0.1130 160.23)",
+          "oklch(49.29% 0.1194 160.23)",
+          "oklch(60.71% 0.1194 160.23)",
+          "oklch(72.14% 0.1109 160.23)",
+          "oklch(83.57% 0.0654 160.23)",
+          "oklch(95.00% 0.0199 160.23)"
+        ]
+      },
+      "dark-comparison-down": {
+        "role": "secondary",
+        "displayName": "Dark · comparison down",
+        "tonalRamp": [
+          "oklch(15.00% 0.0367 13.94)",
+          "oklch(26.43% 0.0647 13.94)",
+          "oklch(37.86% 0.0927 13.94)",
+          "oklch(49.29% 0.0979 13.94)",
+          "oklch(60.71% 0.0979 13.94)",
+          "oklch(72.14% 0.0909 13.94)",
+          "oklch(83.57% 0.0536 13.94)",
+          "oklch(95.00% 0.0163 13.94)"
+        ]
+      },
+      "light-token-cache-read": {
+        "role": "secondary",
+        "displayName": "Light · token cache read",
+        "tonalRamp": [
+          "oklch(15.00% 0.0497 296.00)",
+          "oklch(26.43% 0.0875 296.00)",
+          "oklch(37.86% 0.1254 296.00)",
+          "oklch(49.29% 0.1325 296.00)",
+          "oklch(60.71% 0.1325 296.00)",
+          "oklch(72.14% 0.1230 296.00)",
+          "oklch(83.57% 0.0726 296.00)",
+          "oklch(95.00% 0.0221 296.00)"
+        ]
+      },
+      "light-token-input": {
+        "role": "secondary",
+        "displayName": "Light · token input",
+        "tonalRamp": [
+          "oklch(15.00% 0.0470 224.44)",
+          "oklch(26.43% 0.0828 224.44)",
+          "oklch(37.86% 0.1186 224.44)",
+          "oklch(49.29% 0.1253 224.44)",
+          "oklch(60.71% 0.1253 224.44)",
+          "oklch(72.14% 0.1164 224.44)",
+          "oklch(83.57% 0.0686 224.44)",
+          "oklch(95.00% 0.0209 224.44)"
+        ]
+      },
+      "light-token-output": {
+        "role": "secondary",
+        "displayName": "Light · token output",
+        "tonalRamp": [
+          "oklch(15.00% 0.0569 89.03)",
+          "oklch(26.43% 0.1002 89.03)",
+          "oklch(37.86% 0.1436 89.03)",
+          "oklch(49.29% 0.1517 89.03)",
+          "oklch(60.71% 0.1517 89.03)",
+          "oklch(72.14% 0.1409 89.03)",
+          "oklch(83.57% 0.0831 89.03)",
+          "oklch(95.00% 0.0253 89.03)"
+        ]
+      },
+      "light-token-cache-write": {
+        "role": "secondary",
+        "displayName": "Light · token cache write",
+        "tonalRamp": [
+          "oklch(15.00% 0.0375 349.66)",
+          "oklch(26.43% 0.0662 349.66)",
+          "oklch(37.86% 0.0948 349.66)",
+          "oklch(49.29% 0.1001 349.66)",
+          "oklch(60.71% 0.1001 349.66)",
+          "oklch(72.14% 0.0930 349.66)",
+          "oklch(83.57% 0.0548 349.66)",
+          "oklch(95.00% 0.0167 349.66)"
+        ]
+      },
+      "light-comparison-up": {
+        "role": "secondary",
+        "displayName": "Light · comparison up",
+        "tonalRamp": [
+          "oklch(15.00% 0.0408 161.61)",
+          "oklch(26.43% 0.0719 161.61)",
+          "oklch(37.86% 0.1031 161.61)",
+          "oklch(49.29% 0.1089 161.61)",
+          "oklch(60.71% 0.1089 161.61)",
+          "oklch(72.14% 0.1011 161.61)",
+          "oklch(83.57% 0.0596 161.61)",
+          "oklch(95.00% 0.0181 161.61)"
+        ]
+      },
+      "light-comparison-down": {
+        "role": "secondary",
+        "displayName": "Light · comparison down",
+        "tonalRamp": [
+          "oklch(15.00% 0.0521 17.75)",
+          "oklch(26.43% 0.0918 17.75)",
+          "oklch(37.86% 0.1315 17.75)",
+          "oklch(49.29% 0.1390 17.75)",
+          "oklch(60.71% 0.1390 17.75)",
+          "oklch(72.14% 0.1290 17.75)",
+          "oklch(83.57% 0.0761 17.75)",
+          "oklch(95.00% 0.0232 17.75)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Summary value",
+        "purpose": "Main summary metrics."
+      },
+      "headline": {
+        "displayName": "Page heading",
+        "purpose": "Page and subscription profile headings."
+      },
+      "title": {
+        "displayName": "Section heading",
+        "purpose": "Settings and detail section headings."
+      },
+      "body": {
+        "displayName": "Desktop body",
+        "purpose": "Native labels and controls."
+      },
+      "ledger": {
+        "displayName": "Ledger primary",
+        "purpose": "Centered primary row content."
+      },
+      "label": {
+        "displayName": "Secondary label",
+        "purpose": "Captions, freshness and second ledger lines."
+      }
+    },
+    "shadows": [
+      {
+        "name": "floating-text",
+        "value": "Qt QGraphicsDropShadowEffect: blurRadius=12, offset=(0, 1), color=QColor(0, 0, 0, 210)",
+        "purpose": "Existing floating text treatment where apply_text_shadow is used; main cards remain flat."
+      }
+    ],
+    "motion": [
+      {
+        "name": "floating-percent",
+        "value": "520ms, QEasingCurve.OutCubic",
+        "purpose": "Existing percentage interpolation; hidden previews settle their animation."
+      },
+      {
+        "name": "floating-orb-percent",
+        "value": "720ms, QEasingCurve.OutCubic",
+        "purpose": "Existing OrbStyle percentage interpolation."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "native-window-minimum-width",
+        "value": "920px"
+      },
+      {
+        "name": "native-details-minimum-width",
+        "value": "260px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Native QPushButton primary variant; panel translation of the dark state.",
+      "html": "<div class=\"ds-example\"><button class=\"ds-button ds-primary\">保存设置</button></div>",
+      "css": ".ds-example{display:inline-block;background:#101012;color:#F0F0F3;padding:16px;border-radius:14px;font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;font-size:13px;}.ds-button{font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;font-size:13px;font-weight:500;border:1px solid #44444D;border-radius:8px;padding:7px 11px;background:#1B1B1F;color:#F0F0F3;cursor:pointer}.ds-button:hover{background:#303035;border-color:#DDDDE5}.ds-button:active{background:#303037}.ds-button:focus-visible{outline:none;border:2px solid #DDDDE5}.ds-button:disabled{color:#AFB0BA;background:#303035;cursor:default}.ds-primary{background:#DDDDE5;color:#1B1B20;border-color:#DDDDE5}.ds-primary:hover{background:#F0F0F5;border-color:#F0F0F5}.ds-primary:active{background:#DDDDE5}"
+    },
+    {
+      "name": "Bordered button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Standard secondary action with the native hover, focus and disabled treatment.",
+      "html": "<div class=\"ds-example\"><button class=\"ds-button\">编辑</button></div>",
+      "css": ".ds-example{display:inline-block;background:#101012;color:#F0F0F3;padding:16px;border-radius:14px;font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;font-size:13px;}.ds-button{font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;font-size:13px;font-weight:500;border:1px solid #44444D;border-radius:8px;padding:7px 11px;background:#1B1B1F;color:#F0F0F3;cursor:pointer}.ds-button:hover{background:#303035;border-color:#DDDDE5}.ds-button:active{background:#303037}.ds-button:focus-visible{outline:none;border:2px solid #DDDDE5}.ds-button:disabled{color:#AFB0BA;background:#303035;cursor:default}"
+    },
+    {
+      "name": "Quiet button",
+      "kind": "button",
+      "refersTo": "button-quiet",
+      "description": "Low-emphasis actions inside the header, profile and content sections.",
+      "html": "<div class=\"ds-example\"><button class=\"ds-button ds-quiet\">查看全部</button></div>",
+      "css": ".ds-example{display:inline-block;background:#101012;color:#F0F0F3;padding:16px;border-radius:14px;font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;font-size:13px;}.ds-button{font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;font-size:13px;font-weight:500;border:1px solid #44444D;border-radius:8px;padding:7px 11px;background:#1B1B1F;color:#F0F0F3;cursor:pointer}.ds-button:hover{background:#303035;border-color:#DDDDE5}.ds-button:active{background:#303037}.ds-button:focus-visible{outline:none;border:2px solid #DDDDE5}.ds-button:disabled{color:#AFB0BA;background:#303035;cursor:default}.ds-quiet{background:transparent;border:none;color:#AFB0BA;padding:6px 9px}.ds-quiet:hover{background:#292930;color:#F0F0F3}.ds-quiet:active{background:transparent}"
+    },
+    {
+      "name": "Search field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Bounded QLineEdit with a visible border and muted placeholder; dark panel translation.",
+      "html": "<div class=\"ds-example\"><input class=\"ds-input\" aria-label=\"搜索输入、会话或 ID\" placeholder=\"搜索输入、会话或 ID\"></div>",
+      "css": ".ds-example{display:inline-block;background:#101012;color:#F0F0F3;padding:16px;border-radius:14px;font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;font-size:13px;}.ds-input{font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;font-size:13px;background:#1B1B1F;color:#F0F0F3;border:1px solid #44444D;border-radius:7px;padding:7px 10px;min-height:18px;width:280px}.ds-input::placeholder{color:#AFB0BA}.ds-input:focus-visible{outline:none;border-color:#DDDDE5}.ds-input:disabled{color:#AFB0BA}"
+    },
+    {
+      "name": "Persistent navigation",
+      "kind": "nav",
+      "refersTo": "navigation-selected",
+      "description": "Full-width native list rows start in Overview, Logs, Trends, Subscription, Pricing, Settings order. Overview stays first; subsequent native drag, context-menu and Alt-arrow ordering persists.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"主导航\"><strong class=\"ds-brand\">Codexio</strong><button class=\"ds-nav-item\" aria-current=\"page\">概览</button><button class=\"ds-nav-item\">日志</button><button class=\"ds-nav-item\">用量</button><button class=\"ds-nav-item\">订阅</button><button class=\"ds-nav-item\">定价</button><button class=\"ds-nav-item\">设置</button></nav>",
+      "css": ".ds-nav{width:156px;padding:20px 12px;background:#202022;color:#F0F0F3;font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;font-size:13px;}.ds-brand{display:block;font-size:18px;font-weight:600;padding:0 8px 18px}.ds-nav-item{display:block;width:100%;min-height:39px;margin:4px 0;border:none;border-radius:8px;background:transparent;color:#AFB0BA;text-align:left;padding:7px 10px;font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;font-size:13px;}.ds-nav-item[aria-current]{background:#303035;color:#F0F0F3}.ds-nav-item:hover{background:#292930}.ds-nav-item:focus-visible{outline:none;background:#303035;color:#F0F0F3}"
+    },
+    {
+      "name": "Segmented switch",
+      "kind": "chip",
+      "refersTo": "segment-selected",
+      "description": "Mutually exclusive native checkable buttons; subscription placement remains fixed above both scrolling views.",
+      "html": "<div class=\"ds-example\"><div class=\"ds-segments\" role=\"group\" aria-label=\"订阅视图\"><button class=\"ds-segment\" aria-pressed=\"true\">当前额度</button><button class=\"ds-segment\" aria-pressed=\"false\">周期记录</button></div></div>",
+      "css": ".ds-example{display:inline-block;background:#101012;color:#F0F0F3;padding:16px;border-radius:14px;font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;font-size:13px;}.ds-segments{display:inline-flex;gap:2px;padding:3px;background:#1B1B1F;border-radius:8px}.ds-segment{font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;font-size:13px;font-size:12px;border:none;border-radius:8px;background:transparent;color:#AFB0BA;padding:5px 10px}.ds-segment[aria-pressed=true]{background:#303035;color:#F0F0F3}.ds-segment:hover{background:#303035}.ds-segment:focus-visible{outline:none;border:2px solid #DDDDE5}"
+    },
+    {
+      "name": "Summary card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Flat tonal card with the actual metric hierarchy; missing data stays a dash.",
+      "html": "<div class=\"ds-example\"><section class=\"ds-card\"><div class=\"ds-muted\">API 等价费用</div><div class=\"ds-metric\">—</div><div class=\"ds-muted\">按当前模型价格</div></section></div>",
+      "css": ".ds-example{display:inline-block;background:#101012;color:#F0F0F3;padding:16px;border-radius:14px;font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;font-size:13px;}.ds-card{background:#1B1B1F;border:none;border-radius:14px;padding:20px 22px;width:230px;display:grid;gap:9px}.ds-muted{color:#AFB0BA}.ds-metric{font-size:29px;font-weight:500}"
+    },
+    {
+      "name": "Subscription quota gauges",
+      "kind": "custom",
+      "refersTo": "quota-meter",
+      "description": "Two native blue half-ring meters with up to 200 px diameter, 9 px strokes and 34 px values; warning ink is reserved for low quota. Dates include the Chinese weekday. This panel uses illustrative values; overview uses compact bars.",
+      "html": "<div class=\"ds-example\"><div class=\"ds-gauges\" aria-label=\"额度仪表示例\"><section class=\"ds-gauge\"><div class=\"ds-gauge-title\">5 小时额度 · 示例</div><svg class=\"ds-arc\" viewBox=\"0 0 220 116\" aria-hidden=\"true\"><path class=\"ds-track\" d=\"M10 110 A100 100 0 0 1 210 110\"/><path class=\"ds-fill\" d=\"M10 110 A100 100 0 0 1 210 110\" pathLength=\"100\" stroke-dasharray=\"72 100\"/></svg><div class=\"ds-gauge-value\">72%<small>剩余</small></div><div class=\"ds-gauge-reset\">重置 9月16日 周三 16:03</div></section><section class=\"ds-gauge\"><div class=\"ds-gauge-title\">本周额度 · 示例</div><svg class=\"ds-arc\" viewBox=\"0 0 220 116\" aria-hidden=\"true\"><path class=\"ds-track\" d=\"M10 110 A100 100 0 0 1 210 110\"/><path class=\"ds-fill\" d=\"M10 110 A100 100 0 0 1 210 110\" pathLength=\"100\" stroke-dasharray=\"62 100\"/></svg><div class=\"ds-gauge-value\">62%<small>剩余</small></div><div class=\"ds-gauge-reset\">重置 9月16日 周三 16:03</div></section></div></div>",
+      "css": ".ds-example{display:inline-block;background:#101012;color:#F0F0F3;padding:16px;border-radius:14px;font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;font-size:13px;}.ds-gauges{display:flex;gap:16px}.ds-gauge{position:relative;width:244px;height:238px;background:#1B1B1F;border-radius:13px}.ds-gauge-title{position:absolute;left:16px;top:12px;color:#AFB0BA;font-size:13px}.ds-arc{position:absolute;left:12px;top:38px;width:220px;height:116px;overflow:visible}.ds-track,.ds-fill{fill:none;stroke:#303035;stroke-width:9;stroke-linecap:round}.ds-fill{stroke:#82A8CA}.ds-gauge-value{color:#82A8CA;position:absolute;top:106px;left:12px;right:12px;text-align:center;font-size:34px;font-weight:500}.ds-gauge-value small{display:block;color:#AFB0BA;font-size:12px;font-weight:400}.ds-gauge-reset{position:absolute;left:16px;bottom:35px;font-size:12px;color:#AFB0BA}"
+    },
+    {
+      "name": "Token composition",
+      "kind": "custom",
+      "refersTo": "token-composition",
+      "description": "An 11 px pastel segmented bar with matching 8 px legend dots. Label–percentage groups wrap together; sample proportions are illustrative.",
+      "html": "<div class=\"ds-example\"><section class=\"ds-composition\"><div class=\"ds-composition-title\">Token 构成 · 示例</div><div class=\"ds-token-bar\" aria-hidden=\"true\"><i class=\"ds-cache\"></i><i class=\"ds-input-part\"></i><i class=\"ds-output\"></i></div><div class=\"ds-token-legend\"><span class=\"ds-pair\"><span>缓存读取</span><b>80%</b></span><span class=\"ds-pair\"><span>普通输入</span><b>15%</b></span><span class=\"ds-pair\"><span>输出</span><b>5%</b></span></div></section></div>",
+      "css": ".ds-example{display:inline-block;background:#101012;color:#F0F0F3;padding:16px;border-radius:14px;font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;font-size:13px;}.ds-composition{background:#1B1B1F;border-radius:13px;padding:12px 16px 14px;max-width:390px;min-width:240px}.ds-composition-title{color:#AFB0BA;font-size:12px}.ds-token-bar{display:flex;gap:4px;height:11px;background:#303035;border-radius:5.5px;margin:15px 0}.ds-cache{flex:80;background:#BEA7FF}.ds-input-part{flex:15;background:#56CCF3}.ds-output{flex:5;background:#F8D36A}.ds-token-legend{display:flex;flex-wrap:wrap;column-gap:20px;row-gap:8px;font-size:11px}.ds-pair{display:inline-flex;gap:6px;white-space:nowrap;color:#AFB0BA}.ds-pair b{color:#F0F0F3;font-weight:400}.ds-token-bar i{border-radius:5.5px}.ds-pair:before{content:'';width:8px;height:8px;border-radius:50%;align-self:center;background:#BEA7FF}.ds-pair:nth-child(2):before{background:#56CCF3}.ds-pair:nth-child(3):before{background:#F8D36A}"
+    },
+    {
+      "name": "Request ledger",
+      "kind": "custom",
+      "refersTo": "request-ledger",
+      "description": "Native QTableWidget and delegate translated for the panel. Centered row hierarchy, independent columns, measured numbers, horizontal overflow; the sample is synthetic.",
+      "html": "<div class=\"ds-example\"><div class=\"ds-ledger-wrap\"><table class=\"ds-ledger\" aria-label=\"合成请求示例\"><thead><tr><th>用户请求 / 发起时间</th><th>模型</th><th>档位</th><th>API 等价</th><th>状态</th></tr></thead><tbody><tr tabindex=\"0\" aria-selected=\"true\"><td>输入预览原文（示例）<small>09/08 20:51:03 · 2 次调用</small></td><td>多模型（2）<small>模型 A / 模型 B</small></td><td>Mixed</td><td>—</td><td class=\"ds-running\">回复中</td></tr></tbody></table></div></div>",
+      "css": ".ds-example{display:inline-block;background:#101012;color:#F0F0F3;padding:16px;border-radius:14px;font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;font-size:13px;}.ds-ledger-wrap{max-width:720px;overflow:auto}.ds-ledger{border-collapse:collapse;background:#101012;color:#F0F0F3;min-width:650px;font-size:12px}.ds-ledger th{padding:12px 9px;color:#AFB0BA;font-size:11px;font-weight:400;text-align:center}.ds-ledger td{height:58px;padding:0 9px;text-align:center;border-bottom:1px solid #303037;white-space:nowrap}.ds-ledger small{display:block;margin-top:5px;color:#AFB0BA;font-size:11px}.ds-ledger tr[aria-selected=true]{background:#2A2A32}.ds-ledger tbody tr:hover{background:#292930}.ds-ledger tbody tr:focus-visible{outline:none;background:#2A2A32}.ds-running{color:#58E8A0;font-size:13px;font-weight:700}"
+    }
+  ],
+  "narrative": {
+    "northStar": "C · Quiet analytical workspace",
+    "overview": "C is a quiet analytical workspace for sustained desktop use. An inset canvas and full-height navigation frame the data; compact quota summaries, measured typography, restrained chart colors, and daily activity keep the next comparison easy to find. This is the implemented Windows/PySide6 visual system.",
+    "keyCharacteristics": [
+      "A continuous desktop workspace with a persistent sidebar.",
+      "Tonal surfaces, compact controls, and inspectable records."
+    ],
+    "rules": [
+      "Overview, Trends, and Logs default to Today; hourly chart buckets apply to Today. Explicit selections and date drilldowns take precedence.",
+      "The overview five-hour quota, weekly quota, and Token composition share the row equally after gaps; keep each label beside its percentage when wrapping.",
+      "Use a single coral-price/mint-Token plot with both zero-based axes. In the combined view, Token headroom is 2.2× peak and price headroom 1.12×; labelled scales remain truthful and crossings are allowed. Token-only restores normal scaling. Use faint fills and clear pastel Token composition with matching legend dots.",
+      "Add directional percentage changes beneath overview metrics and the Trends chart, comparing against a complete preceding local-time unit (yesterday or full preceding 7/30 days). Apply model filtering to both windows; preserve missing-history, zero-baseline, incomplete-price and sync states.",
+      "Keep subscription current data and cycle history in one continuous scrolling page. Date pickers use aligned fields and an isolated native-calendar style that displays all six weeks, with working navigation and keyboard selection.",
+      "Overview metric cards omit bottom annotation lines. Home quota bars are 11 px high with rounded ends; their fill color interpolates red/yellow/green with 0/50/75% remaining, holding bright mint green above 75%. Unknown quota remains neutral. Keep chart points visible without hover and list Price before Total Token in the tooltip.",
+      "Keep request details in a permanent 260–320 px right pane with a 20 px gap; preserve side-by-side geometry at narrow widths using left-table horizontal scrolling. Initially show a click-to-select hint. Only row clicks or keyboard activation show content; pointer motion and outside clicks do not change it. Refresh and filters preserve the selected table ID and detail scroll while the row remains on the current page, otherwise clear to the hint. Escape clears selection without hiding the pane.",
+      "Use a 20 px semibold session title as the fixed preview heading, visibly larger than the message body and preserved through theme changes. The scrolling sequence is the bold question (up to three actual lines), an extra [image] x N line, API/usage summary, reply, Turn/Session IDs, then model × count and summed call prices. Combine mixed tiers, preserve missing prices, and remove member pagination. Use a raised charcoal or white inspector surface distinct from the ledger.",
+      "Request Logs groups the table and pagination in one rounded surface card with aligned edges; filters stay above, and the technical aggregation footer is omitted.",
+      "Append the Chinese weekday to local reset dates across overview, subscription, history, reset-credit deadlines and all floating styles. Narrow floating metadata wraps at a measured height. Subscription gauges use up to 200 px diameter, 9 px strokes and 34 px values.",
+      "Begin weekly projection at a 2 percentage-point quota change. Valid reference prices participate with a reference-estimate status; missing prices still prevent projection. Omit the explanation to the right of the estimate summary.",
+      "Place page vertical scrollbars 9 px from the canvas border and the inspector scrollbar 5 px from its border; preserve inner text spacing and usable dragging.",
+      "Running request status uses vivid green and 13 px bold type, with at least 4.5:1 contrast on ordinary, hovered and selected rows. Overview quota high colors are brighter mint greens independent of status text ink.",
+      "Use one centered six-column pricing table, grouping each model as API Base followed by Standard/long-context/Fast derived rows. Do not split into two section headings. Show conditions on two lines; use 50 px rows and 4 px vertical / 8 px horizontal cell padding. All edits target the selected model's Standard base, and all fee displays use the backend-derived catalog. Preserve sufficient unit-price precision and unknown values.",
+      "Use the concise sidebar labels 概览、日志、用量、订阅、定价、设置 without changing page identities or full page headings.",
+      "Synchronize framed Windows caption dark mode, background and text with the app theme after theme changes, native-handle creation and show. Exclude custom floating windows and menus.",
+      "Derive prices from ordinary-context Standard API bases only. Codex Fast is 2.5x for Astra/GPT-5.6/GPT-5.5 and 2x for GPT-5.4. Above 272K input, GPT-5.6/GPT-5.5/GPT-5.4 apply 2x input/cache and 1.5x output; Astra has no extra long-context multiplier. Cache creation uses ordinary input rates without a write premium. Version the policy and revalue all historical fee caches consistently."
+    ],
+    "dos": [
+      "Do preserve label–percentage pairs, complete numeric values, independent record fields, and visible freshness or missing-data states.",
+      "Do keep subscription profiles user-entered and blank by default; label synthetic previews and retain API-equivalent units without “估算” badges. Internal estimated-price flags remain intact.",
+      "Do retain Qt keyboard focus, Ctrl+K search, scrolling, scaling, and the existing background-worker lifecycle."
+    ],
+    "donts": [
+      "Don't infer renewal dates, credit deadlines, zero usage, Standard tier, or per-call timing from absent data.",
+      "Don't replace the full sidebar with a narrow icon rail or make the floating surface follow the main-window theme."
+    ]
+  }
+}

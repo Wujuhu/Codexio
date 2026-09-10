@@ -5,10 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from aiquota.analytics_config import default_config
-from aiquota.pricing import PricingCatalog
-from aiquota.usage_worker import UsageWorker
-from aiquota.usage_queries import UsageQueries
+from codexio.analytics_config import default_config
+from codexio.pricing import PricingCatalog
+from codexio.usage_worker import UsageWorker
+from codexio.usage_queries import UsageQueries
 
 
 def setup_worker(tmp_path, monkeypatch, *, records=(), scan_error=False, **config):
@@ -34,7 +34,7 @@ def setup_worker(tmp_path, monkeypatch, *, records=(), scan_error=False, **confi
             self.store.set_source_status(source_id, status="ok", name="本机")
             return {"changed": bool(records), "indexed_files": len(records)}
 
-    monkeypatch.setattr("aiquota.usage_collector.Collector", FakeCollector)
+    monkeypatch.setattr("codexio.usage_collector.Collector", FakeCollector)
     monkeypatch.setattr(worker, "_collect_remote", lambda: None)
     monkeypatch.setattr(PricingCatalog, "sync", lambda *_args, **_kwargs: pytest.fail("unexpected network sync"))
     worker._wake = SimpleNamespace(clear=lambda: None, set=lambda: None,
@@ -72,7 +72,7 @@ def test_loading_starts_before_store_initialization_and_ends_on_safe_failure(tmp
         assert events == [("loading", {"loading": True, "stage": "正在准备本地用量数据", "error": None})]
         raise PermissionError("private path and credentials must not reach the UI")
 
-    monkeypatch.setattr("aiquota.usage_store.UsageStore", fail_store)
+    monkeypatch.setattr("codexio.usage_store.UsageStore", fail_store)
     worker.run()
     assert len(events) == 2
     assert events[-1][1]["loading"] is False
@@ -162,7 +162,7 @@ def test_mock_first_load_has_same_completion_lifecycle_without_network(tmp_path,
 
 
 def test_invalid_utf8_quota_cache_does_not_abort_initial_quota_loading(tmp_path):
-    from aiquota.settings import load_quota_cache
+    from codexio.settings import load_quota_cache
     path = tmp_path / "quota_cache.json"
     path.write_bytes(b"\xff\xfeinvalid")
     assert load_quota_cache(path) == {}

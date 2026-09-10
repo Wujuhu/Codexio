@@ -9,11 +9,11 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import QApplication, QMenu, QLabel
 
-from aiquota.analytics_config import load_analytics_config, save_analytics_config
-from aiquota.dashboard import Dashboard
-from aiquota.settings import AppSettings, load_settings, save_settings
-from aiquota.theme import apply_dark_menu, apply_theme, theme_colors
-from aiquota.window import QuotaWindow
+from codexio.analytics_config import load_analytics_config, save_analytics_config
+from codexio.dashboard import Dashboard, PAGE_NAMES
+from codexio.settings import AppSettings, load_settings, save_settings
+from codexio.theme import apply_dark_menu, apply_theme, theme_colors
+from codexio.window import QuotaWindow
 
 
 def test_removed_network_settings_migrate_without_changing_appearance(tmp_path):
@@ -62,12 +62,12 @@ def test_overview_hides_scrollbar_and_network_controls():
     window.open_page("overview")
     app.processEvents()
     area = window._stack.widget(0)
-    assert area.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert area.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
     assert area.verticalScrollBar().maximum() > 0
     area.verticalScrollBar().setValue(area.verticalScrollBar().maximum())
     assert area.verticalScrollBar().value() > 0
     window.open_page("settings")
-    labels = [label.text() for label in window._stack.widget(4).findChildren(QLabel)]
+    labels = [label.text() for label in window._stack.widget(PAGE_NAMES.index("settings")).findChildren(QLabel)]
     assert not any("局域网" in text for text in labels)
     assert "quota_source" not in window._setting_widgets
     window.hide()
@@ -76,11 +76,11 @@ def test_overview_hides_scrollbar_and_network_controls():
 def test_estimate_history_distinguishes_reset_time_and_sample_time():
     app = QApplication.instance() or QApplication([])
     window = Dashboard(AppSettings(), {}, {})
-    window.open_page("overview")
+    window.open_page("subscription")
     window.apply_data({"weekly_estimates": [{"status": "unattributed", "plan_type": "pro", "reset_at": 1790000000,
         "start": "2026-09-07T08:00:00+00:00", "end": "2026-09-07T09:00:00+00:00",
         "estimated_total_usd": None, "delta_percent": 3}]})
-    assert window._estimate_value.text() == "待估算"
+    assert window._estimate_value.text() == "待采样"
     assert window._estimate_period.text() == "待确认账号"
     window._show_estimates()
     app.processEvents()

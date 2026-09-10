@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from aiquota.estimation import estimate_weeks
+from codexio.estimation import estimate_weeks
 
 BASE = datetime(2026, 9, 1, tzinfo=timezone.utc)
 RESET = BASE + timedelta(days=7)
@@ -43,7 +43,8 @@ def test_matched_delta_not_all_history_and_rounding_range():
 
 
 def test_percent_span_and_maturity_gates():
-    assert estimate([request(2)], [quota(1, 10), quota(4, 14)])[0]["estimated_total_usd"] is None
+    assert estimate([request(2)], [quota(1, 10), quota(4, 11.99)])[0]["estimated_total_usd"] is None
+    assert estimate([request(2)], [quota(1, 10), quota(4, 12)])[0]["estimated_total_usd"] == 500
     assert estimate([request(2)], [quota(1, 10), quota(24, 20)])[0]["status"] == "collecting"
 
 
@@ -130,11 +131,14 @@ def test_stale_paired_snapshot_does_not_become_endpoint():
     assert row["estimated_total_usd"] is None
 
 
-def test_standard_price_estimates_display_cost_but_never_calibrate():
+def test_reference_prices_produce_a_labelled_projection_from_two_points():
     row = estimate([request(2, 10, pricing_status="estimated")], [quota(1, 10), quota(4, 20)])[0]
     assert row["consumed_usd"] == 10
     assert row["status"] == "estimated_prices"
-    assert row["estimated_total_usd"] is None
+    assert row["estimated_total_usd"] == 100
+    assert row["estimated_price_requests"] == 1 and "参考单价" in row["reason"]
+    small = estimate([request(2, 10, pricing_status="estimated")], [quota(1, 10), quota(4, 12)])[0]
+    assert small["status"] == "estimated_prices" and small["estimated_total_usd"] == 500
 
 
 def test_unknown_quota_scope_cannot_be_silently_put_in_default_bucket():

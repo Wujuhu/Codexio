@@ -1,0 +1,19 @@
+{
+  "desktop": {
+    "width": 1280,
+    "scroll": 1280,
+    "icons": 8
+  },
+  "mobile": {
+    "width": 390,
+    "scroll": 390,
+    "dark": true,
+    "size": "16px",
+    "labels": [
+      "16 px",
+      "16 px",
+      "16 px",
+      "16 px"
+    ]
+  }
+}

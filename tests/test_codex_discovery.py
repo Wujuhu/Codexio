@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from aiquota import codex_discovery as discovery
+from codexio import codex_discovery as discovery
 
 
 @pytest.fixture
@@ -182,9 +182,9 @@ def test_native_backend_is_returned_without_probing_wrapper(isolated, monkeypatc
 
 
 def test_worker_retries_wrapper_when_native_app_initialization_fails(isolated, monkeypatch):
-    from aiquota import worker as module
-    from aiquota.app_server import AppServerError
-    from aiquota.settings import AppSettings
+    from codexio import worker as module
+    from codexio.app_server import AppServerError
+    from codexio.settings import AppSettings
     shim = make_exe(isolated / "Home" / ".local" / "bin" / "codex.cmd")
     backend = make_exe(isolated / "Local" / "OpenAI" / "Codex" / "bin" / "current" / "codex.exe")
     allow(monkeypatch, shim, backend)
@@ -213,9 +213,9 @@ def test_worker_retries_wrapper_when_native_app_initialization_fails(isolated, m
 
 
 def test_worker_falls_back_when_a_discovered_backend_cannot_initialize(isolated, monkeypatch):
-    from aiquota import worker as module
-    from aiquota.app_server import AppServerError
-    from aiquota.settings import AppSettings
+    from codexio import worker as module
+    from codexio.app_server import AppServerError
+    from codexio.settings import AppSettings
     first, second = Path("first.exe"), Path("second.exe")
     monkeypatch.setattr(module, "discover_codex_executable", lambda _hint, excluded: second if first in excluded else first)
     closed = []

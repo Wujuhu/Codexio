@@ -12,8 +12,8 @@ def test_close_to_tray_then_explicit_exit_does_not_leave_event_loop_running(tmp_
     script = '''
 from PySide6.QtWidgets import QApplication as BaseApp
 from PySide6.QtCore import QTimer
-import aiquota.__main__ as entry
-import aiquota.dashboard as dashboard_module
+import codexio.__main__ as entry
+import codexio.dashboard as dashboard_module
 original = dashboard_module.Dashboard
 windows = []
 def create(*args, **kwargs):

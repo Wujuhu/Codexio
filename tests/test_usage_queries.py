@@ -6,14 +6,14 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from aiquota.analytics_config import default_config
-from aiquota.charts import bucket_records
-from aiquota.estimation import estimate_weeks
-from aiquota.pricing import PricingCatalog
-from aiquota.usage_queries import UsageQueries
-from aiquota.usage_store import UsageStore
-from aiquota.usage_worker import UsageWorker, summarize
-from aiquota.user_requests import aggregate_user_requests, matches_call, turn_key
+from codexio.analytics_config import default_config
+from codexio.charts import bucket_records
+from codexio.estimation import estimate_weeks
+from codexio.pricing import PricingCatalog
+from codexio.usage_queries import UsageQueries, summarize_model_calls
+from codexio.usage_store import UsageStore
+from codexio.usage_worker import UsageWorker, summarize
+from codexio.user_requests import aggregate_user_requests, matches_call, turn_key
 
 
 def record(ident, stamp="2026-09-08T01:00:00Z", **extra):
@@ -39,6 +39,47 @@ def setup(tmp_path):
     catalog = PricingCatalog(tmp_path / "prices")
     queries = UsageQueries(store.path)
     return store, catalog, queries
+
+
+def test_model_call_composition_combines_tiers_counts_and_prices_and_keeps_missing_values():
+    rows = [dict(model="gpt-6-astra", service_tier="default", cost_usd=.1, pricing_status="priced") for _ in range(24)]
+    rows.append(dict(model="gpt-6-astra", service_tier="priority", cost_usd=.6, pricing_status="priced"))
+    rows += [dict(model="model-b", service_tier=None, cost_usd=2), dict(model="model-b", cost_usd=None),
+             dict(model="model-c", cost_usd=None), dict(model="model-zero", cost_usd=0)]
+    summary = {row["model"]: row for row in summarize_model_calls(iter(rows))}
+    assert summary["gpt-6-astra"]["call_count"] == 25
+    assert summary["gpt-6-astra"]["service_tier"] == "mixed"
+    assert summary["gpt-6-astra"]["cost_usd"] == math.fsum([.1] * 24 + [.6])
+    assert summary["model-b"]["call_count"] == 2 and summary["model-b"]["cost_usd"] == 2
+    assert summary["model-b"]["pricing_status"] == "partial" and summary["model-b"]["unpriced_calls"] == 1
+    assert summary["model-c"]["cost_usd"] is None and summary["model-c"]["pricing_status"] == "unpriced"
+    assert summary["model-zero"]["cost_usd"] == 0 and summary["model-zero"]["pricing_status"] == "priced"
+    assert summarize_model_calls([]) == []
+
+
+def test_database_composition_covers_entire_request_and_parent_child_calls(tmp_path):
+    store, catalog, queries = setup(tmp_path)
+    store.upsert_records([record("parent-%03d" % i) for i in range(25)], "local")
+    store.upsert_records([record("child-%03d" % i, session_id="child", service_tier="priority") for i in range(2)], "ssh:peer")
+    store.upsert_turns([turn(), turn("child", is_subagent=True, parent_session_id="parent", parent_turn_id="t1")])
+    store.upsert_agent_links([dict(id="spawn", kind="spawn", parent_session_id="parent", parent_turn_id="t1", child_session_id="child")])
+    queries.rebuild(catalog)
+    request = queries.page()["rows"][0]
+    summary = queries.request_composition(request["id"])
+    assert len(summary) == 1 and summary[0]["call_count"] == request["call_count"] == 27
+    assert summary[0]["cost_usd"] == request["cost_usd"]
+    assert summary[0]["service_tier"] == "mixed"
+    assert queries.request_composition("missing") == []
+
+
+def test_cached_generated_turn_preview_falls_back_to_the_real_call_question(tmp_path):
+    store, catalog, queries = setup(tmp_path)
+    store.upsert_records([record("question", prompt_preview="[$impeccable](C:/skills/impeccable/SKILL.md) 检查布局 [image 1]")], "local")
+    store.upsert_turns([turn(prompt_preview="<recommended_plugins>cached context</recommended_plugins>")])
+    queries.rebuild(catalog)
+    request = queries.page()["rows"][0]
+    assert request["prompt_preview"] == "@Impeccable 检查布局\n[image] x 1"
+    assert request["call_count"] == 1 and request["total_tokens"] == 1100
 
 
 def priced_reference(store, catalog):
@@ -84,6 +125,25 @@ def test_pages_preserve_whole_request_members_start_date_and_conjunctive_filters
     assert queries.page(end=datetime(2026, 9, 7, 23, 59, tzinfo=timezone.utc))["total"] == 1
     assert queries.request_members(group["id"])["total"] == 2
     assert queries.request(group["id"]) == group
+    assert queries.request_for_record("child") == group
+    assert queries.request_for_record("missing") is None
+    assert queries.page(tier="mixed")["rows"] == [group]
+    assert queries.page(tier="mixed", source="local", model="gpt-5.6-sol")["total"] == 0
+    assert queries.page(tier="mixed", source="ssh:peer", model="gpt-5.6-sol")["rows"][0]["cost_usd"] == group["cost_usd"]
+    assert queries.page("model_call", tier="mixed")["total"] == 0
+
+
+def test_literal_request_search_remains_paged_and_applies_filters(tmp_path):
+    store, catalog, queries = setup(tmp_path)
+    store.upsert_records([record(str(i), session_id="session-" + str(i), prompt_preview="Find 100%_safe 数据") for i in range(125)], "local")
+    store.upsert_records([record("other", session_id="other", prompt_preview="Find ordinary data")], "local")
+    queries.rebuild(catalog)
+    result = queries.page(search="100%_SAFE 数据")
+    assert result["total"] == 125 and len(result["rows"]) == 100
+    assert len(queries.page(search="100%_safe 数据", page=1)["rows"]) == 25
+    assert queries.page(search="100%_safe 数据", source="missing")["total"] == 0
+    assert queries.page("model_call", search="SESSION-124")["rows"][0]["id"] == "124"
+    assert queries.page("model_call", search="' OR 1=1 --")["total"] == 0
 
 
 def test_database_pagination_bounds_and_member_order(tmp_path):
@@ -117,7 +177,7 @@ def test_filtered_groups_lookup_matching_members_once_using_record_index(tmp_pat
         db = connect(*args, **kwargs)
         db.set_trace_callback(statements.append)
         return db
-    monkeypatch.setattr("aiquota.usage_queries.sqlite3.connect", traced_connection)
+    monkeypatch.setattr("codexio.usage_queries.sqlite3.connect", traced_connection)
     page = queries.page(source="local", model="gpt-6-astra", tier="priority")
     assert page["total"] == 150 and len(page["rows"]) == 100
     count_sql = next(sql for sql in statements if sql.startswith("SELECT COUNT(*)") and "usage_request_groups" in sql)
@@ -178,6 +238,23 @@ def test_streamed_summaries_and_charts_equal_full_history_reference(tmp_path):
     assert queries.chart_buckets("all", "day", model="gpt-6-astra", end=now) == bucket_records(filtered, "all", "day", now=now, end=now)
 
 
+def test_scoped_comparison_matches_record_reference_and_applies_model_filter(tmp_path):
+    from codexio.usage_queries import compare_usage
+    store, catalog, queries = setup(tmp_path)
+    now = datetime.now().astimezone().replace(hour=12, minute=0, second=0, microsecond=0)
+    rows = [record("current", now.isoformat()), record("previous", (now - timedelta(days=1)).isoformat()),
+            record("other", now.isoformat(), model="gpt-5.6-terra"),
+            record("outside", (now - timedelta(days=70)).isoformat())]
+    store.upsert_records(rows, "local")
+    queries.rebuild(catalog)
+    reference = priced_reference(store, catalog)
+    for period in ("today", "week", "month"):
+        assert queries.period_comparison(period, now) == compare_usage(reference, period, now)
+    selected = [row for row in reference if row["model"] == "gpt-6-astra"]
+    assert queries.period_comparison("today", now, "gpt-6-astra") == compare_usage(selected, "today", now)
+    assert queries.period_comparison("all", now) is None
+
+
 def test_streamed_summary_preserves_integral_float_and_numeric_string_counters(tmp_path):
     store, catalog, queries = setup(tmp_path)
     now = datetime.now(timezone.utc)
@@ -197,8 +274,8 @@ def test_streamed_summary_preserves_integral_float_and_numeric_string_counters(t
 @pytest.mark.parametrize("value", [True, False, -1, 0, 9007199254740993, 1000.0, 1000.5, "200", "1e3", "bad", None,
                                   float("nan"), float("inf")])
 def test_streamed_counter_boundary_matches_existing_summary(value):
-    from aiquota.usage_queries import _count as query_count
-    from aiquota.usage_worker import _count as summary_count
+    from codexio.usage_queries import _count as query_count
+    from codexio.usage_worker import _count as summary_count
     assert query_count(value) == summary_count(value)
 
 

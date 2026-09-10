@@ -7,12 +7,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from aiquota.analytics_config import default_config
-from aiquota.pricing import PricingCatalog
-from aiquota.rate_limits import RateLimitSnapshot
-from aiquota.usage_store import UsageStore
-from aiquota.usage_queries import UsageQueries
-from aiquota.usage_worker import UsageWorker, _count, parse_time, summarize
+from codexio.analytics_config import default_config
+from codexio.pricing import PricingCatalog
+from codexio.rate_limits import RateLimitSnapshot
+from codexio.usage_store import UsageStore
+from codexio.usage_queries import UsageQueries
+from codexio.usage_worker import UsageWorker, _count, parse_time, summarize
 
 
 def worker_at(tmp_path, mock=False, **config):
@@ -185,7 +185,7 @@ def test_live_snapshot_keeps_current_account_utc_and_bucket_ids(tmp_path):
 
 def test_ssh_diagnostics_block_ready_without_losing_valid_import(tmp_path, monkeypatch):
     worker = worker_at(tmp_path, ssh_sources=[dict(id="peer", host="peer", enabled=True)])
-    monkeypatch.setattr("aiquota.remote_collector.collect_ssh", lambda *_args, **_kwargs:
+    monkeypatch.setattr("codexio.remote_collector.collect_ssh", lambda *_args, **_kwargs:
                         dict(records=[], observations=[], cursors={"saved": {}}, errors=[], diagnostics={"missing_baseline": 1}))
     worker._collect_remote()
     source = next(s for s in worker._store.sources() if s["id"] == "ssh:peer")
@@ -198,7 +198,7 @@ def test_incomplete_ssh_scan_keeps_valid_records_and_titles(tmp_path, monkeypatc
     worker = worker_at(tmp_path, ssh_sources=[dict(id="peer", host="peer", enabled=True)])
     result = dict(records=[record(datetime.now(timezone.utc))], observations=[], cursors={}, titles={"session": "Example task"})
     result.update(problem)
-    monkeypatch.setattr("aiquota.remote_collector.collect_ssh", lambda *_args, **_kwargs: result)
+    monkeypatch.setattr("codexio.remote_collector.collect_ssh", lambda *_args, **_kwargs: result)
     worker._collect_remote()
     assert worker._store.records()[0]["session_title"] == "Example task"
     assert worker._store.sources()[0]["status"] == "error"

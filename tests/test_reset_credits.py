@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from aiquota.rate_limits import (
+from codexio.rate_limits import (
     QuotaState,
     QuotaStatus,
     RateLimitSnapshot,
@@ -37,9 +37,11 @@ def test_account_reset_count_survives_bucket_selection_and_cache(by_limit):
     assert state.status == QuotaStatus.STALE
     saved_at = datetime(2026, 9, 7, tzinfo=timezone.utc)
     cached = snapshot_to_cache(snapshot, saved_at)
-    assert cached["rateLimitResetCredits"] == {"availableCount": 2}
+    assert cached["rateLimitResetCredits"]["availableCount"] == 2
+    assert cached["rateLimitResetCredits"]["credits"][0]["id"] == "one"
     restored, timestamp = snapshot_from_cache(cached)
     assert restored.reset_credits == 2
+    assert restored.reset_credit_details == snapshot.reset_credit_details
     assert timestamp == saved_at
     assert restored.primary.used_percent == snapshot.primary.used_percent
     if by_limit:
@@ -120,3 +122,31 @@ def test_bare_count_notification_and_nested_compatibility():
         "rate_limit_reset_credits": {"available_count": 2},
     }})
     assert nested.reset_credits == 2
+
+
+def test_per_credit_deadlines_distinguish_unknown_unlimited_and_real_dates():
+    expires = 1790000000
+    credits = [dict(id="dated", expiresAt=expires, status="available", resetType="codexRateLimits", grantedAt=1780000000),
+               dict(id="unlimited", expiresAt=None, status="available"), dict(id="unknown"),
+               dict(id="invalid", expiresAt=True), dict(id="dated", expiresAt=0), {}, None]
+    snapshot = parse_rate_limits_result({"rateLimits": {}, "rateLimitResetCredits": {"availableCount": 7, "credits": credits}})
+    details = snapshot.reset_credit_details
+    assert len(details) == 4 and snapshot.reset_credits == 7
+    assert details[0].expires_at == datetime.fromtimestamp(expires, timezone.utc)
+    assert details[0].expiry_known and details[0].granted_at is not None
+    assert details[1].expiry_known and details[1].expires_at is None
+    assert not details[2].expiry_known and not details[3].expiry_known
+    restored, _ = snapshot_from_cache(snapshot_to_cache(snapshot, datetime.now(timezone.utc)))
+    assert restored.reset_credit_details == details
+    assert quota_state_from_snapshot(restored, status=QuotaStatus.OK, message="").reset_credit_details == details
+
+
+def test_credit_detail_notifications_follow_authoritative_summary_presence():
+    original = parse_rate_limits_result(_result())
+    partial = parse_rate_limits_result({"rateLimits": {"primary": {"usedPercent": 10}}})
+    assert merge_rate_limit_snapshots(original, partial).reset_credit_details == original.reset_credit_details
+    for summary in ({"availableCount": 1}, {"availableCount": 1, "credits": None}, None):
+        changed = parse_rate_limits_result({"rateLimits": {}, "rateLimitResetCredits": summary})
+        assert merge_rate_limit_snapshots(original, changed).reset_credit_details is None
+    empty = parse_rate_limits_result({"rateLimits": {}, "rateLimitResetCredits": {"availableCount": 0, "credits": []}})
+    assert merge_rate_limit_snapshots(original, empty).reset_credit_details == ()

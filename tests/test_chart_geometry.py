@@ -11,8 +11,8 @@ from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from aiquota.charts import UsageChart
-from aiquota.theme import apply_theme, ensure_ui_fonts
+from codexio.charts import UsageChart
+from codexio.theme import apply_theme, ensure_ui_fonts
 
 
 @pytest.fixture(scope="module")

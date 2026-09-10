@@ -1,4 +1,4 @@
-# AIQuota 本地源码版开发计划
+# Codexio 本地源码版开发计划
 
 ## 1. 项目目标
 
@@ -66,13 +66,13 @@ account/rateLimits/read
 ## 5. 建议目录结构
 
 ```text
-AIQuota/
+Codexio/
 ├─ PLAN.md
 ├─ README.md
 ├─ requirements.txt
 ├─ run.ps1
 ├─ src/
-│  └─ aiquota/
+│  └─ codexio/
 │     ├─ __main__.py
 │     ├─ app_server.py       # app-server 启动、JSON-RPC 通信
 │     ├─ rate_limits.py      # 额度模型和窗口转换
@@ -121,7 +121,7 @@ AIQuota/
 ### 阶段五：配置与日志
 
 - 保存刷新间隔、窗口位置、显示模式和 Codex 路径。
-- 配置和缓存放在 `%LOCALAPPDATA%\\AIQuotaWidget`。
+- 配置和缓存放在 `%LOCALAPPDATA%\\Codexio`。
 - 日志中禁止写入访问令牌或敏感认证内容。
 
 ### 阶段六：本机联调

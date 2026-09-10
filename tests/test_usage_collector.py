@@ -6,8 +6,8 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from aiquota.usage_collector import Collector, cursor_key, read_session_titles, scan_directory
-from aiquota.usage_store import UsageStore
+from codexio.usage_collector import Collector, cursor_key, read_session_titles, scan_directory
+from codexio.usage_store import UsageStore
 
 PARENT = "11111111-1111-4111-8111-111111111111"
 CHILD = "22222222-2222-4222-8222-222222222222"
@@ -319,6 +319,101 @@ def test_old_user_role_fallback_skips_generated_wrappers(tmp_path):
     assert status["status"] == "ok" and status["name"] == "本机"
 
 
+def test_user_preview_filters_context_blocks_before_joining_and_limiting():
+    from codexio.usage_collector import _user_preview
+    plugin_context = "<recommended_plugins>" + "generated catalog " * 1600 + "</recommended_plugins>"
+    blocks = [{"type": "input_text", "text": plugin_context},
+              {"type": "input_text", "text": "# AGENTS.md instructions <INSTRUCTIONS>rules</INSTRUCTIONS>"},
+              {"type": "input_text", "text": "<environment_context>cwd</environment_context>"}]
+    assert _user_preview(blocks) == ""
+    assert _user_preview(blocks + [{"type": "text", "text": "Review my permutation code."}]) == "Review my permutation code."
+    assert _user_preview(plugin_context + "\nReal question") == "Real question"
+    assert _user_preview("<recommended_plugins>truncated catalog") == ""
+    assert _user_preview("Explain the <recommended_plugins> tag") == "Explain the <recommended_plugins> tag"
+    assert _user_preview(plugin_context + "\n## My request:\nActual question") == "Actual question"
+
+
+def test_parser_upgrade_replaces_wrapper_title_without_changing_usage_or_cost(tmp_path, monkeypatch):
+    from codexio import usage_collector as module
+    from codexio import usage_queries as query_module
+    from codexio.usage_queries import UsageQueries
+    from codexio.pricing import PricingCatalog
+    root, store, collector = setup(tmp_path)
+    question = "Review my Collections.swap permutation implementation."
+    content = [{"type": "input_text", "text": "<recommended_plugins>Catalog</recommended_plugins>"},
+               {"type": "input_text", "text": "# AGENTS.md instructions <INSTRUCTIONS>Rules</INSTRUCTIONS>"}]
+    entries = [meta(), event("event_msg", dict(type="task_started", turn_id="turn-1")),
+               event("response_item", dict(type="message", role="user", content=content), 2),
+               event("turn_context", dict(turn_id="turn-1", model="gpt-6-astra"), 3),
+               event("response_item", dict(type="message", role="user", content=[dict(type="input_text", text=question)]), 4),
+               event("event_msg", dict(type="item_completed", item=dict(type="UserMessage", id="user-item",
+                     content=[dict(type="text", text=question)])), 5),
+               modern(second=6), legacy(last=usage(), second=7),
+               event("event_msg", dict(type="task_complete", turn_id="turn-1"), 8)]
+    write(root, entries)
+    queries, prices = UsageQueries(store.path), PricingCatalog(tmp_path / "prices")
+    def previous_preview(value):
+        text = module._plain(value, 12000)
+        return "" if text.startswith(("# AGENTS.md instructions", "<environment_context>")) else text[:600]
+    with monkeypatch.context() as old:
+        old.setattr(module, "PARSER_VERSION", 5)
+        old.setattr(module, "_user_preview", previous_preview)
+        old.setattr(query_module, "_user_preview", previous_preview)
+        collector.scan(root)
+        queries.rebuild(prices)
+        before = queries.page()["rows"][0]
+        before_records = store.records()
+        assert before["prompt_preview"].startswith("<recommended_plugins>")
+        assert before_records[0]["prompt_preview"] == question
+    assert collector.scan(root)["bytes_read"] > 0
+    queries.rebuild(prices)
+    after = queries.page()["rows"][0]
+    assert after["prompt_preview"] == question
+    assert store.records() == before_records
+    assert after["call_count"] == before["call_count"] == 1
+    assert after["total_tokens"] == before["total_tokens"] == 110
+    assert after["cost_usd"] == before["cost_usd"] and after["cost_usd"] > 0
+    assert Collector(store).scan(root)["bytes_read"] == 0
+
+
+def test_preview_upgrade_simplifies_real_skill_and_image_parts_without_recount(tmp_path, monkeypatch):
+    from codexio import usage_collector as module
+    from codexio.pricing import PricingCatalog
+    from codexio.usage_queries import UsageQueries
+    root, store, collector = setup(tmp_path)
+    question = "[$impeccable](C:/skills/impeccable/SKILL.md) 调整图片里的布局。"
+    response_parts = [dict(type="input_text", text=question),
+                      dict(type="input_text", text='<image name=[Image #1] path="C:/temp/a.png">'),
+                      dict(type="input_image", image_url="data:image/png;base64,unused"),
+                      dict(type="input_text", text="</image>")]
+    write(root, [meta(), event("event_msg", dict(type="task_started", turn_id="turn-1")), turn(),
+                 event("response_item", dict(type="message", role="user", content=response_parts), 2),
+                 event("event_msg", dict(type="item_completed", item=dict(type="UserMessage", id="user-message",
+                       content=[dict(type="text", text=question), dict(type="local_image", path="C:/temp/a.png")])), 3),
+                 modern(second=4), legacy(last=usage(), second=5),
+                 event("event_msg", dict(type="task_complete", turn_id="turn-1"), 6)])
+    prices, queries = PricingCatalog(tmp_path / "prices"), UsageQueries(store.path)
+    with monkeypatch.context() as old:
+        old.setattr(module, "PARSER_VERSION", 6)
+        old.setattr(module, "_user_preview", lambda content: module._plain(content, 600))
+        collector.scan(root)
+        queries.rebuild(prices)
+        before = queries.page()["rows"][0]
+        before_calls = store.records()
+        assert "SKILL.md" in before_calls[0]["prompt_preview"]
+    collector.scan(root)
+    queries.rebuild(prices)
+    after = queries.page()["rows"][0]
+    assert after["prompt_preview"] == "@Impeccable 调整图片里的布局。\n[image] x 1"
+    assert store.records()[0]["prompt_preview"] == after["prompt_preview"]
+    assert after["call_count"] == before["call_count"] == 1
+    for key in ("id", "total_tokens", "input_tokens", "cached_input_tokens", "output_tokens", "cost_usd"):
+        assert after[key] == before[key]
+    assert {key: value for key, value in store.records()[0].items() if key != "prompt_preview"} == {
+        key: value for key, value in before_calls[0].items() if key != "prompt_preview"}
+    assert collector.scan(root)["bytes_read"] == 0
+
+
 def test_task_rename_updates_queries_without_rescan(tmp_path):
     root, store, collector = setup(tmp_path)
     write(root, [meta(), turn(), modern()])
@@ -351,7 +446,7 @@ def test_reparse_reconciles_replaced_legacy_without_old_records(tmp_path):
 
 
 def test_interrupted_reparse_does_not_delete_old_rows_and_resume_has_no_loss(tmp_path, monkeypatch):
-    from aiquota import usage_collector as module
+    from codexio import usage_collector as module
     root, store, collector = setup(tmp_path)
     write(root, [meta(), turn(), modern("one"), modern("two", second=4)])
     collector.scan(root)
@@ -581,12 +676,12 @@ def test_preview_limits_and_copied_context_preserve_owner_output(tmp_path):
     copied = dict(row, prompt_preview="wrong user", output_preview="wrong output", context_owner_verified=False)
     store.upsert_records([copied], "ssh:copy")
     assert store.records()[0]["output_preview"] == "a" * 600
-    assert store.records()[0]["prompt_preview"] == "u" * 600
+    assert store.records()[0]["prompt_preview"] == row["prompt_preview"]
     assert store.count_records() == 1
 
 
 def test_parser_upgrade_reloads_old_cursor_and_backfills_preview_without_recount(tmp_path):
-    from aiquota import usage_collector as module
+    from codexio import usage_collector as module
     root, store, collector = setup(tmp_path)
     path = write(root, [meta(), turn(), assistant("Backfilled answer"), modern()])
     collector.scan(root)

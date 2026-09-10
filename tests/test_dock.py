@@ -7,7 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QPoint, QRect
 from PySide6.QtWidgets import QApplication, QBoxLayout
 
-from aiquota.dock import (
+from codexio.dock import (
     DOCK_BAR_MIN_LENGTH,
     DOCK_BOTTOM,
     DOCK_LEFT,
@@ -22,9 +22,9 @@ from aiquota.dock import (
     snap_geometry,
     snap_threshold,
 )
-from aiquota.hit_test import HIT_DRAG, HIT_RESIZE
-from aiquota.settings import AppSettings
-from aiquota.window import QuotaWindow
+from codexio.hit_test import HIT_DRAG, HIT_RESIZE
+from codexio.settings import AppSettings
+from codexio.window import QuotaWindow
 
 
 def test_choose_dock_edge_prefers_top_on_corner() -> None:
@@ -199,7 +199,7 @@ def test_dock_strip_narrower_side_and_horizontal_bars(tmp_path, monkeypatch) -> 
 
 def test_week_only_hides_five_hour_everywhere(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    from aiquota.rate_limits import QuotaState, QuotaStatus, WindowView
+    from codexio.rate_limits import QuotaState, QuotaStatus, WindowView
 
     app = QApplication.instance() or QApplication([])
     window = QuotaWindow(AppSettings(), lambda: None, lambda _seconds: None, lambda: None)
@@ -368,7 +368,7 @@ def test_docked_text_and_bar_scale_with_window(tmp_path, monkeypatch) -> None:
 def test_docked_quota_tooltip_shows_reset(tmp_path, monkeypatch) -> None:
     from datetime import datetime, timedelta
 
-    from aiquota.rate_limits import QuotaState, QuotaStatus, WindowView
+    from codexio.rate_limits import QuotaState, QuotaStatus, WindowView
 
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     app = QApplication.instance() or QApplication([])
@@ -398,8 +398,8 @@ def test_docked_quota_tooltip_shows_reset(tmp_path, monkeypatch) -> None:
 def test_orb_style_uses_one_ball_and_prefers_five_hour(tmp_path, monkeypatch) -> None:
     from datetime import datetime, timedelta
 
-    from aiquota.rate_limits import QuotaState, QuotaStatus, WindowView
-    from aiquota.visuals import ORB_MIN_SIZE, ORB_STYLE
+    from codexio.rate_limits import QuotaState, QuotaStatus, WindowView
+    from codexio.visuals import ORB_MIN_SIZE, ORB_STYLE
 
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     app = QApplication.instance() or QApplication([])

@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from aiquota import update_installer as installer
-from aiquota.updates import UpdateCancelled, UpdateError, file_sha256
+from codexio import update_installer as installer
+from codexio.updates import UpdateCancelled, UpdateError, file_sha256
 
 
 def prepare(tmp_path, monkeypatch):
@@ -17,7 +17,7 @@ def prepare(tmp_path, monkeypatch):
     directory = installer.new_job_dir()
     target_dir = tmp_path / "程序 空格" / "app"
     target_dir.mkdir(parents=True)
-    target = target_dir / "AIQuota.exe"
+    target = target_dir / "Codexio.exe"
     target.write_bytes(b"MZold executable")
     package = directory / "package.bin"
     package.write_bytes(b"MZnew executable")
@@ -107,17 +107,17 @@ def test_restart_gets_fresh_pyinstaller_environment(tmp_path, monkeypatch):
         captured.update(arguments=arguments, **options)
         return object()
     monkeypatch.setattr(installer.subprocess, "Popen", popen)
-    installer._restart(tmp_path / "AIQuota.exe", ["--mock"], tmp_path)
+    installer._restart(tmp_path / "Codexio.exe", ["--mock"], tmp_path)
     assert captured["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
-    assert captured["env"]["AIQUOTA_SKIP_UPDATE_ONCE"] == "1"
-    assert captured["arguments"] == [str(tmp_path / "AIQuota.exe"), "--mock"]
+    assert captured["env"]["CODEXIO_SKIP_UPDATE_ONCE"] == "1"
+    assert captured["arguments"] == [str(tmp_path / "Codexio.exe"), "--mock"]
     assert captured["creationflags"] & subprocess.CREATE_NO_WINDOW
 
 
 def test_auto_update_can_be_cancelled_after_download_before_restart(tmp_path, monkeypatch):
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
-    from aiquota.update_manager import UpdateManager
+    from codexio.update_manager import UpdateManager
     app = QApplication.instance() or QApplication([])
     directory, _target, _job = prepare(tmp_path, monkeypatch)
     installer._state(directory, "ready")
@@ -136,7 +136,7 @@ def test_auto_update_can_be_cancelled_after_download_before_restart(tmp_path, mo
 def test_install_callback_occurs_only_after_ready_and_commit(tmp_path, monkeypatch):
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
-    from aiquota.update_manager import UpdateManager
+    from codexio.update_manager import UpdateManager
     app = QApplication.instance() or QApplication([])
     directory, _target, _job = prepare(tmp_path, monkeypatch)
     installer._state(directory, "ready")

@@ -10,8 +10,8 @@ from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QToolTip
 
-from aiquota.charts import UsageChart, bucket_records
-from aiquota.theme import apply_theme, ensure_ui_fonts
+from codexio.charts import UsageChart, bucket_records
+from codexio.theme import apply_theme, ensure_ui_fonts
 
 
 @pytest.fixture(scope="module")

@@ -7,7 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, Qt
 from PySide6.QtGui import QMouseEvent
 
-from aiquota.hit_test import (
+from codexio.hit_test import (
     HIT_BUTTON,
     HIT_DRAG,
     HIT_RESIZE,
@@ -56,8 +56,8 @@ def test_window_chrome_and_default_size(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     from PySide6.QtWidgets import QApplication
 
-    from aiquota.settings import AppSettings
-    from aiquota.window import QuotaWindow
+    from codexio.settings import AppSettings
+    from codexio.window import QuotaWindow
 
     app = QApplication.instance() or QApplication([])
     window = QuotaWindow(AppSettings(), lambda: None, lambda _seconds: None, lambda: None)
