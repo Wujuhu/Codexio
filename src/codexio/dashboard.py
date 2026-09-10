@@ -915,6 +915,7 @@ class Dashboard(QMainWindow):
         self._quota_widgets = {}
         self._inspected_record = None
         self._inspector_origin = None
+        self._log_preview_dismissed = False
         self._comparison_cache = {}
         self._tier_preferences = {"user_request": "", "model_call": ""}
         self._last_log_mode = "user_request"
@@ -1531,7 +1532,8 @@ class Dashboard(QMainWindow):
                 selected = self._log_table.currentRow()
                 rows = self._rendered_log_rows or []
                 value.update(page=self._page_number, scroll=self._log_table.verticalScrollBar().value(),
-                             selected=rows[selected].get("id") if 0 <= selected < len(rows) else None)
+                             selected=rows[selected].get("id") if 0 <= selected < len(rows) else None,
+                             preview_dismissed=self._log_preview_dismissed)
             elif name == "settings":
                 # Preserve unsaved edits only; unchanged controls should reflect
                 # fresh floating-window settings when the page is recreated.
@@ -1567,6 +1569,7 @@ class Dashboard(QMainWindow):
             self._page_number = max(0, int(state.get("page", 0)))
             self._saved_log_scroll = int(state.get("scroll", 0))
             self._saved_log_selection = state.get("selected")
+            self._log_preview_dismissed = state.get("preview_dismissed") is True
             self._date_row.setVisible(self._log_period.currentData() == "custom")
             self._last_log_mode = self._log_mode.currentData()
             self._sync_tier_options()
@@ -1592,6 +1595,7 @@ class Dashboard(QMainWindow):
         self._restore_control(field, period)
         if name == "logs":
             self._page_number = 0
+            self._log_preview_dismissed = False
             self._date_row.setVisible(field.currentData() == "custom")
         else:
             default = {"today": "hour", "week": "day", "month": "day", "all": "week"}.get(period)
@@ -2089,6 +2093,9 @@ class Dashboard(QMainWindow):
         if not self._page_is_active("logs"):
             self._dirty_pages.add("logs")
             return
+        if reset_page:
+            self._page_number = 0
+            self._log_preview_dismissed = False
         period = self._log_period.currentData()
         lower, upper = period_bounds(period)
         if period == "custom":
@@ -2099,8 +2106,6 @@ class Dashboard(QMainWindow):
         if self._queries:
             self._query_filters = dict(mode=self._log_mode.currentData(), start=lower, end=upper,
                                        source=source or "", model=model or "", tier=tier or "", search=self._log_search.text().strip())
-            if reset_page:
-                self._page_number = 0
             self._render_log_page()
             return
         rows = []
@@ -2125,8 +2130,6 @@ class Dashboard(QMainWindow):
                 continue
             rows.append(row)
         self._filtered_records = rows
-        if reset_page:
-            self._page_number = 0
         self._render_log_page()
 
     def _render_log_page(self) -> None:
@@ -2146,6 +2149,7 @@ class Dashboard(QMainWindow):
             rows = self._filtered_records[self._page_number * self._page_size:(self._page_number + 1) * self._page_size]
         if getattr(self, "_rendered_log_rows", None) == rows:
             self._update_log_navigation(count, page_count)
+            self._select_default_log_preview()
             return
         previous_rows = getattr(self, "_rendered_log_rows", None) or []
         selected = self._log_table.currentRow()
@@ -2167,6 +2171,18 @@ class Dashboard(QMainWindow):
                 self._show_inspector(latest, focus=False)
             elif latest is None:
                 self._close_inspector(restore_focus=False)
+        self._select_default_log_preview()
+
+    def _select_default_log_preview(self) -> None:
+        """Open the first available page-one row without overriding user intent."""
+        rows = self._rendered_log_rows or []
+        if self._page_number != 0 or not rows or self._inspected_record or self._log_preview_dismissed:
+            return
+        selected = self._log_table.currentRow()
+        # A restored selection takes precedence over the initial first-row default.
+        selected = selected if 0 <= selected < len(rows) else 0
+        self._log_table.selectRow(selected)
+        self._inspect_log_row(selected)
 
     def _update_log_navigation(self, count: int, page_count: int) -> None:
         if self._log_mode.currentData() == "user_request":
@@ -2192,6 +2208,7 @@ class Dashboard(QMainWindow):
 
     def _change_page(self, delta: int) -> None:
         self._page_number += delta
+        self._log_preview_dismissed = False
         self._render_log_page()
 
     def _dialog(self, dialog: QDialog) -> None:
@@ -2970,6 +2987,8 @@ class Dashboard(QMainWindow):
 
     def _close_inspector(self, *args, restore_focus=True):
         """Clear details while keeping the right pane in place."""
+        if restore_focus:
+            self._log_preview_dismissed = True
         self._escape_inspector.setEnabled(False)
         self._inspected_record = None
         self._inspector_duration = None

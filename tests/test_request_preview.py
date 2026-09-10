@@ -192,16 +192,19 @@ def hover_first(window):
 
 
 @pytest.mark.parametrize("width", [920, 1280, 1600])
-def test_details_are_permanent_nonoverlapping_and_wait_for_a_click(app, window, width):
+def test_details_default_to_first_row_and_keep_geometry_when_cleared(app, window, width):
     window.resize(width, 660)
     app.processEvents()
     host = window._log_drawer
     assert host.inspector.isVisible()
     assert host.primary.geometry().right() < host.inspector.geometry().left()
-    assert window._inspected_record is None
+    assert window._inspector_origin == window._rendered_log_rows[0]["id"]
+    assert window._log_table.currentRow() == 0
+    assert window._inspector_stack.currentWidget() is window._inspector_scroll
+    before = host.primary.geometry(), host.inspector.geometry()
+    window._close_inspector()
     assert window._inspector_stack.currentWidget() is window._inspector_empty
     assert "点击左侧请求" in window._inspector_empty.text()
-    before = host.primary.geometry(), host.inspector.geometry()
     hover_first(window)
     assert window._inspected_record is None
     point = window._log_table.visualItemRect(window._log_table.item(0, 0)).center()
@@ -254,8 +257,8 @@ def test_details_follow_selected_id_through_filters_refresh_and_page_changes(app
     assert window._inspected_record["id"] == ident
     updated = [dict(row, session_id="session-replaced", turn_id="turn-replaced") for row in sample_rows()]
     window.apply_data({"records": updated})
-    assert window._inspected_record is None and window._inspector_empty.isVisible()
-    window._inspect_log_row(0)
+    assert window._inspected_record["session_id"] == "session-replaced"
+    assert window._log_table.currentRow() == 0
     window._log_search.setText("没有匹配的请求")
     QTest.qWait(260)
     assert window._log_table.rowCount() == 0 and window._inspected_record is None

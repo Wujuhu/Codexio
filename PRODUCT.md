@@ -14,6 +14,8 @@ Confirmed on 2026-09-08: the primary user frequently opens the main application 
 
 Read Codex account rate limits and locally indexed usage records so the user can understand remaining quota, token consumption, API-equivalent cost, and individual requests.
 
+Confirmed on 2026-09-10 for local 0.2.2 development: Logs page one automatically selects and previews its first available record. Today with no records keeps the empty state; background refresh preserves the user's selected record or explicit dismissal. Complete each change with verification, packaging, and a local Git commit. Pushing and remote releases require new explicit authorization.
+
 ## Capabilities and Constraints
 
 Repository evidence: five-hour and weekly remaining quota and reset times; read-only available reset-credit counts; usage trends and history; grouping by user request or model call; model pricing; local and opt-in SSH sources; floating and docked quota windows; settings; light and dark main-window themes.
