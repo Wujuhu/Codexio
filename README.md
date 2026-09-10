@@ -16,7 +16,7 @@ Windows 桌面额度与用量面板，通过 Codex `app-server` 读取当前账�
 ## 环境要求
 
 - Windows 10/11（x64）
-- Python 3.9+（计划目标为 3.11+，当前实现兼容 3.9）
+- 本地开发与打包使用 Python 3.13.15（64 位）。现有 PySide6 6.9 依赖支持 Python 3.9–3.13，暂不支持 3.14。
 - 已安装并完成登录的本机 Codex（`codex.exe` / `codex.cmd`）
 
 程序通过 `account/rateLimits/read` 读取额度，不发起模型请求，也不读取或保存 `auth.json` 中的凭据。用量统计扫描 `sessions` 和 `archived_sessions` 中的计量事件；会话标题、用户消息和模型可见输出的短预览（每段最多 600 字符）保存在本机索引，用于请求列表的悬浮提示。不会保存完整对话或工具输出。
@@ -32,11 +32,13 @@ Windows 桌面额度与用量面板，通过 Codex `app-server` 读取当前账�
 首次运行会创建 `.venv` 并安装依赖。也可以手动启动：
 
 ```powershell
-python -m venv .venv
+py -3.13 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 $env:PYTHONPATH = "src"
 .\.venv\Scripts\python.exe -m codexio
 ```
+
+`run.ps1` 优先使用已有的项目虚拟环境；需要创建环境时，优先选择兼容的 Python 3.13。终端若已激活 Anaconda，`python` 仍会指向该 Conda 环境；使用 `py -3.13` 或 `.\.venv\Scripts\python.exe` 可明确选择本项目使用的独立 Python。
 
 开发预览（不连接真实 Codex）：
 

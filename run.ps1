@@ -17,22 +17,25 @@ function Find-Python {
             continue
         }
         try {
-            & $command.Source @($candidate.Args + "--version") | Out-Null
-            return @{ File = $command.Source; Args = $candidate.Args }
+            & $command.Source @($candidate.Args + @("-c", "import sys; sys.exit(0 if (3, 9) <= sys.version_info[:2] < (3, 14) else 1)")) *> $null
+            if ($LASTEXITCODE -eq 0) {
+                return @{ File = $command.Source; Args = $candidate.Args }
+            }
         }
         catch {
             continue
         }
     }
-    throw "Python not found. Install Python 3.9 or later."
+    throw "Compatible Python not found. Install Python 3.13 (supported: Python 3.9-3.13)."
 }
 
-$Python = Find-Python
 $VenvDir = Join-Path $Root ".venv"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $VenvPython)) {
+    $Python = Find-Python
     Write-Host "Creating virtual environment..."
     & $Python.File @($Python.Args + @("-m", "venv", $VenvDir))
+    if ($LASTEXITCODE -ne 0) { throw "Failed to create the project virtual environment." }
 }
 
 Write-Host "Checking dependencies..."
