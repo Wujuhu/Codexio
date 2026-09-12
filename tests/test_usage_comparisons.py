@@ -138,7 +138,8 @@ def test_overview_and_model_filtered_trends_display_matching_percentage_changes(
     assert window._trend_comparisons["usd"].value.text() == "+100.0%"
     assert window._trend_metric_values["tokens"].text() == "400"
     window._trend_period.setCurrentIndex(window._trend_period.findData("all"))
-    assert not window._trend_metrics_box.isVisible()
+    assert not window._trend_metrics_box.isHidden()
+    assert window._trend_metric_values["tokens"].text() == "600"
     window.open_page("overview")
     window.apply_data(dict(records=rows, sources_complete=False))
     assert window._overview_comparisons["tokens"].value.text() == "0.0%"

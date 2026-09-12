@@ -4,7 +4,7 @@ import copy
 import json
 import os
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
@@ -317,4 +317,55 @@ def test_database_overview_cards_read_confirmed_totals_instead_of_worker_summari
         assert window._trend_metric_values["requests"].text() == format(totals["requests"], ",")
     else:
         assert not any(widget.isVisible() for widget in window._overview_comparisons.values())
+    window.close()
+
+
+@pytest.mark.parametrize("database", [False, True])
+def test_custom_and_all_trend_totals_follow_dates_models_and_clear_invalid_ranges(app, tmp_path, database):
+    from PySide6.QtCore import QDate
+    day = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=3)
+    end = day.replace(hour=23, minute=59, second=59, microsecond=999999)
+    rows = [record(day, id="start"), record(end, id="end"),
+            record(day + timedelta(hours=1), id="unpriced", provider="unknown", cost_usd=None, pricing_status="unpriced"),
+            record(day + timedelta(hours=2), id="other", model="gpt-5.6-terra"),
+            record(day - timedelta(microseconds=1), id="before"),
+            record(end + timedelta(microseconds=1), id="after")]
+    window = Dashboard(AppSettings(), {"theme": "light"}, {})
+    if database:
+        store = UsageStore(tmp_path / "usage.sqlite")
+        store.upsert_records(rows, "local")
+        catalog = PricingCatalog(tmp_path / "prices")
+        queries = UsageQueries(store.path)
+        queries.rebuild(catalog)
+        # Preserve exact microsecond endpoints to exercise the display index's date bounds.
+        with sqlite3.connect(store.path) as db:
+            for row in rows:
+                stamp = datetime.fromisoformat(row["timestamp"]).astimezone(timezone.utc).isoformat(timespec="microseconds")
+                db.execute("UPDATE usage_priced_calls SET timestamp=?,metrics=? WHERE id=?", (stamp, json.dumps(row), row["id"]))
+        window.apply_data(dict(query_path=str(store.path), query_generation=1, available_models=["gpt-6-astra", "gpt-5.6-terra"]))
+    else:
+        window.apply_data(dict(records=rows, available_models=["gpt-6-astra", "gpt-5.6-terra"]))
+    window.open_page("trends", "today")
+    window._trend_model.setCurrentIndex(window._trend_model.findData("gpt-6-astra"))
+    selected = QDate(day.year, day.month, day.day)
+    window._trend_start.setDate(selected)
+    window._trend_end.setDate(selected)
+    window._trend_period.setCurrentIndex(window._trend_period.findData("custom"))
+    assert not window._trend_metrics_box.isHidden()
+    assert tuple(window._trend_metric_values[k].text() for k in ("tokens", "usd", "requests")) == ("300", "$2.00", "3")
+    assert all(w.isHidden() for w in window._trend_comparisons.values())
+    assert "按已确认数据计算" in window._trend_metric_values["usd"].toolTip()
+    window._trend_model.setCurrentIndex(window._trend_model.findData("gpt-5.6-terra"))
+    assert tuple(window._trend_metric_values[k].text() for k in ("tokens", "usd", "requests")) == ("100", "$1.00", "1")
+    window._trend_model.setCurrentIndex(window._trend_model.findData("gpt-6-astra"))
+    window._trend_period.setCurrentIndex(window._trend_period.findData("all"))
+    assert tuple(window._trend_metric_values[k].text() for k in ("tokens", "usd", "requests")) == ("500", "$4.00", "5")
+    window._trend_period.setCurrentIndex(window._trend_period.findData("custom"))
+    window._trend_start.setDate(selected.addDays(1))
+    assert all(w.text() == "—" for w in window._trend_metric_values.values())
+    assert not window._trend_note.isHidden()
+    window._trend_end.setDate(selected.addDays(2))
+    window._trend_start.setDate(selected.addDays(2))
+    assert all(w.text() == "—" for w in window._trend_metric_values.values())
+    assert window._trend_note.isHidden()
     window.close()

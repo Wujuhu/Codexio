@@ -420,9 +420,10 @@ class UsageQueries:
         _, end, previous_start, _ = bounds
         return compare_usage(self._metrics(previous_start, end, model), period, end)
 
-    def confirmed_summary(self, now=None):
-        """All-time overview cards; leave worker/calibration summaries intact."""
-        return summarize_confirmed_usage(self._metrics(end=now or datetime.now().astimezone()))
+    def confirmed_summary(self, now=None, *, start=None, end=None, model=""):
+        """Confirmed cards for a selected range, independent of comparisons."""
+        return summarize_confirmed_usage(self._metrics(start=start,
+            end=end or now or datetime.now().astimezone(), model=model))
 
     def summaries(self, now=None):
         local = (now or datetime.now().astimezone()).astimezone()

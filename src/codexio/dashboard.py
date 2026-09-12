@@ -2238,7 +2238,7 @@ class Dashboard(QMainWindow):
             self._dirty_pages.add("trends")
             return
         if hasattr(self, "_trend_chart"):
-            self._trend_metrics_box.setVisible(self._trend_period.currentData() in ("today", "week", "month"))
+            self._trend_metrics_box.show()
             model = self._trend_model.currentData()
             rows = [row for row in self._records if not model or row.get("model") == model]
             self._update_activity(model, rows)
@@ -2249,6 +2249,7 @@ class Dashboard(QMainWindow):
                 end = datetime.combine(self._trend_end.date().toPython(), time.max, tzinfo=zone)
                 if start > end:
                     self._trend_chart.set_records([], "all")
+                    self._set_trend_metrics({})
                     self._trend_note.setText("起始日期应早于或等于结束日期。")
                     self._trend_note.show()
                     return
@@ -2260,15 +2261,30 @@ class Dashboard(QMainWindow):
             else:
                 self._trend_chart.set_records(rows, self._trend_period.currentData(), self._granularity.currentData(), start=start, end=end)
             comparison = self._period_comparison(self._trend_period.currentData(), model or "")
-            for metric, widget in self._trend_comparisons.items():
-                widget.set_comparison(comparison, metric, self._theme)
-                current = (comparison or {}).get("current", {})
-                value = current.get(metric)
-                self._trend_metric_values[metric].setText("—" if value is None else
-                    usd(value) if metric == "usd" else compact_number(value) if metric == "tokens" else format(value, ","))
+            if comparison:
+                summary = comparison["current"]
+            else:
+                lower, upper = period_bounds(self._trend_period.currentData())
+                lower, upper = start or lower, end or upper
+                if self._queries:
+                    summary = self._queries.confirmed_summary(start=lower, end=upper, model=model or "")
+                else:
+                    summary = summarize_confirmed_usage(row for row in rows
+                        if (stamp := parse_timestamp(row.get("timestamp"))) is not None
+                        and stamp <= upper and (lower is None or stamp >= lower))
+            self._set_trend_metrics(summary, comparison)
             if hasattr(self, "_trend_note"):
                 self._trend_note.clear()
                 self._trend_note.hide()
+
+    def _set_trend_metrics(self, summary, comparison=None):
+        for metric, widget in self._trend_comparisons.items():
+            widget.set_comparison(comparison, metric, self._theme)
+            value = summary.get(metric)
+            label = self._trend_metric_values[metric]
+            label.setText("—" if value is None else
+                usd(value) if metric == "usd" else compact_number(value) if metric == "tokens" else format(value, ","))
+            label.setToolTip("按已确认数据计算" if summary.get("skipped", {}).get(metric) else "")
 
     def _period_comparison(self, period, model=""):
         if period not in ("today", "week", "month"):
