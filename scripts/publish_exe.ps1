@@ -1,13 +1,17 @@
-# Publish exactly one executable under dist. Compatible with Windows PowerShell 5.1.
+# Publish one executable under release/<version>, preserving other versions. Compatible with Windows PowerShell 5.1.
 param(
     [Parameter(Mandatory = $true)]
-    [string]$StagedExe
+    [string]$StagedExe,
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$')]
+    [string]$Version
 )
 $ErrorActionPreference = "Stop"
 $ProjectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
-$DistDir = [IO.Path]::GetFullPath((Join-Path $ProjectRoot "dist"))
+$ReleaseRoot = [IO.Path]::GetFullPath((Join-Path $ProjectRoot "release"))
+$ReleaseDir = [IO.Path]::GetFullPath((Join-Path $ReleaseRoot $Version))
 $BuildDir = [IO.Path]::GetFullPath((Join-Path $ProjectRoot "build"))
-$DistPrefix = $DistDir.TrimEnd('\') + '\'
+$ReleasePrefix = $ReleaseDir.TrimEnd('\') + '\'
 $BuildPrefix = $BuildDir.TrimEnd('\') + '\'
 $Source = (Resolve-Path -LiteralPath $StagedExe).ProviderPath
 if (-not $Source.StartsWith($BuildPrefix, [StringComparison]::OrdinalIgnoreCase)) {
@@ -16,7 +20,7 @@ if (-not $Source.StartsWith($BuildPrefix, [StringComparison]::OrdinalIgnoreCase)
 if ((Get-Item -LiteralPath $Source).Length -eq 0) {
     throw "The staged executable is empty."
 }
-foreach ($directory in @($DistDir, $BuildDir)) {
+foreach ($directory in @($ReleaseRoot, $ReleaseDir, $BuildDir)) {
     if (Test-Path -LiteralPath $directory) {
         if ((Get-Item -LiteralPath $directory -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
             throw "Refusing to publish through a linked directory: $directory"
@@ -30,16 +34,16 @@ foreach ($directory in @($DistDir, $BuildDir)) {
 $Files = New-Object 'System.Collections.Generic.List[string]'
 $Directories = New-Object 'System.Collections.Generic.List[string]'
 $Pending = New-Object 'System.Collections.Generic.Stack[string]'
-$Pending.Push($DistDir)
+$Pending.Push($ReleaseDir)
 while ($Pending.Count -gt 0) {
     $Current = $Pending.Pop()
     foreach ($item in @(Get-ChildItem -LiteralPath $Current -Force)) {
         $Full = [IO.Path]::GetFullPath($item.FullName)
-        if (-not $Full.StartsWith($DistPrefix, [StringComparison]::OrdinalIgnoreCase)) {
-            throw "Unexpected path outside dist: $Full"
+        if (-not $Full.StartsWith($ReleasePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Unexpected path outside this version directory: $Full"
         }
         if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-            throw "Refusing to publish through a link inside dist: $Full"
+            throw "Refusing to publish through a link inside this version directory: $Full"
         }
         if ($item.PSIsContainer) {
             $Directories.Add($Full)
@@ -50,7 +54,7 @@ while ($Pending.Count -gt 0) {
     }
 }
 
-$Destination = Join-Path $DistDir "Codexio.exe"
+$Destination = Join-Path $ReleaseDir "Codexio.exe"
 $BackupDir = [IO.Path]::GetFullPath((Join-Path $BuildDir ("release-backups\" + [Guid]::NewGuid().ToString("N"))))
 if (-not $BackupDir.StartsWith($BuildPrefix, [StringComparison]::OrdinalIgnoreCase)) {
     throw "Unexpected backup directory."
@@ -60,7 +64,7 @@ $ExpectedHash = (Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash
 
 $Relocated = New-Object 'System.Collections.Generic.List[object]'
 # Retire previous filenames before publishing, so a locked old EXE cannot leave
-# two releases in dist. Restore them if any move or the publication fails.
+# two executables in this version directory. Restore them if any move or the publication fails.
 try {
     $Index = 0
     foreach ($file in $Files) {
@@ -89,7 +93,7 @@ try {
     if ($RestoreErrors.Count -gt 0) {
         throw "Publication failed. The staged build is preserved; previous releases needing restoration are in $BackupDir. $PublishError $($RestoreErrors -join ' ')"
     }
-    throw "Could not publish dist\Codexio.exe. Close the running widget and retry; the previous release and staged build are preserved. $PublishError"
+    throw "Could not publish release\$Version\Codexio.exe. Close the running widget and retry; the previous release and staged build are preserved. $PublishError"
 }
 if ((Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash -ne $ExpectedHash) {
     throw "Published executable hash verification failed. Backup: $BackupDir"
@@ -107,8 +111,8 @@ foreach ($directory in ($Directories | Sort-Object Length -Descending)) {
         }
     }
 }
-$Remaining = @(Get-ChildItem -LiteralPath $DistDir -File -Filter "*.exe" -Recurse -Force)
+$Remaining = @(Get-ChildItem -LiteralPath $ReleaseDir -File -Filter "*.exe" -Recurse -Force)
 if ($Remaining.Count -ne 1 -or $Remaining[0].FullName -ine $Destination) {
-    throw "dist still contains more than one executable; publication is incomplete."
+    throw "This version directory still contains more than one executable; publication is incomplete."
 }
 Write-Host "Published: $Destination"

@@ -1,4 +1,4 @@
-"""Stage, verify, then publish a local Mac application without touching dist/."""
+"""Stage and verify a Mac application, then deliver its DMG under release/<version>/."""
 from __future__ import annotations
 
 import argparse
@@ -47,7 +47,7 @@ def build_icon():
 
 def main():
     parser = argparse.ArgumentParser(description="本地构建并验证 Codexio.app；可选生成安装镜像。")
-    parser.add_argument("--dmg", action="store_true", help="同时生成 build/macos/Codexio.dmg")
+    parser.add_argument("--dmg", action="store_true", help="同时生成 release/<版本号>/Codexio.dmg 和共用的 latest.json")
     parser.add_argument("--staging-subdir", help="在构建暂存区使用独立子目录，保留正在运行的旧暂存应用")
     parser.add_argument("--manifest", type=Path, help="待合并的现有 latest.json；默认查找本地或已发布的清单")
     args = parser.parse_args()
@@ -107,16 +107,11 @@ def main():
         raise
     run("codesign", "--verify", "--deep", "--strict", target)
     if args.dmg:
+        release = ROOT / "release" / version
+        release.mkdir(parents=True, exist_ok=True)
         for name in (DMG_NAME, MANIFEST_NAME):
-            (staging / name).replace(DESTINATION / name)
-        (DESTINATION / "latest-macos.json").unlink(missing_ok=True)
-    else:
-        # Keep old update assets out of the current delivery folder.
-        for name in ("Codexio.dmg", "latest.json", "latest-macos.json"):
-            old_asset = DESTINATION / name
-            if old_asset.exists():
-                previous.parent.mkdir(parents=True, exist_ok=True)
-                old_asset.replace(previous.parent / name)
+            (staging / name).replace(release / name)
+        print(f"交付目录：{release}")
     print(f"\n已验证并打包 Codexio {version}: {target}")
     return 0
 

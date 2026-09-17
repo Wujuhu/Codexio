@@ -6,7 +6,7 @@
 
 安装 Python 3.12 或 3.13 后运行 `./run_macos.sh`。如果解释器不在 PATH，可运行 `CODEXIO_PYTHON="/path/to/python3.12" ./run_macos.sh`。开发依赖只安装到项目 `.venv`。
 
-构建使用 `./build_macos.sh --dmg`。打开生成的 `build/macos/Codexio.dmg`，将 Codexio 拖入 Applications，或直接打开 `build/macos/Codexio.app`。应用内已包含 Python 与 Qt，运行应用包不需要额外安装 Python。Codex 需要已安装且登录，Codexio 本身不包含 Codex CLI。
+构建使用 `./build_macos.sh --dmg`。打开生成的 `release/0.2.4/Codexio.dmg`，将 Codexio 拖入 Applications，或直接打开 `build/macos/Codexio.app`。应用内已包含 Python 与 Qt，运行应用包不需要额外安装 Python。Codex 需要已安装且登录，Codexio 本身不包含 Codex CLI。
 
 当前包在 Apple Silicon、macOS 27 上实测；Qt 依赖和应用清单以 macOS 12 为最低目标，其他系统版本尚未实机验证。按当前 Python 架构构建，未宣称提供 universal2 包。
 
@@ -40,11 +40,11 @@ Dock 图标由 `src/codexio/icons/app.svg` 直接渲染，ICNS 的各尺寸独�
 
 更新源为同一仓库 `Wujuhu/Codexio` 的正式 GitHub Release。Mac 读取与 Windows 共用的 `latest.json` 中的 `macos` 部分，只下载该版本的 `Codexio.dmg`，检查芯片架构、文件大小和 SHA-256，再验证应用标识、版本、macOS 签名及可执行架构。准备完成后通过正常退出流程重启，替换完整 `.app`，启动失败恢复旧版；无写入权限或应用未正常退出时保留当前版本。发布信任仍依赖 GitHub 仓库及 HTTPS，本地 ad-hoc 签名用于完整性检查。
 
-`./build_macos.sh --dmg` 会生成 `Codexio.dmg` 和统一的 `latest.json`。顶层 `version`、`url`、`size`、`sha256` 等 Windows 字段保持原格式，Mac 的完整版本与下载信息放在 `macos` 对象中，已发布的 Windows 客户端仍可读取。两个平台独立比较各自版本；缺少 `macos` 时 Mac 正常跳过更新，相同或更低版本也不更新。
+`./build_macos.sh --dmg` 会在 `release/<版本号>/` 生成 `Codexio.dmg` 和统一的 `latest.json`。完整版本目录包含同版本的 `Codexio.dmg`、`Codexio.exe`、`latest.json`，不同版本分别保留，临时文件仍放在 `build`。顶层 `version`、`url`、`size`、`sha256` 等 Windows 字段保持原格式，Mac 的完整版本与下载信息放在 `macos` 对象中，已发布的 Windows 客户端仍可读取。两个平台独立比较各自版本；缺少 `macos` 时 Mac 正常跳过更新，相同或更低版本也不更新。
 
-构建优先使用本地包含另一平台信息的 `latest.json`，首次构建会读取 GitHub 已发布清单；也可用 `./build_macos.sh --dmg --manifest /path/to/latest.json` 明确指定 Windows 或另一台机器生成的清单。Windows 对应 `./build_exe.ps1 -ManifestPath /path/to/latest.json`，只更新顶层 Windows 字段并保留 `macos`。同时发布两端时，让最后一次构建以另一端的新清单为基础，**只上传 `Codexio.exe`、`Codexio.dmg` 和最后合并的一份 `latest.json`**，不再上传 `latest-macos.json`。
+构建优先使用 `release/<当前版本>/latest.json` 中的另一平台信息，首次构建会读取 GitHub 已发布清单；也可用 `./build_macos.sh --dmg --manifest /path/to/latest.json` 明确指定 Windows 或另一台机器生成的清单。Windows 对应 `./build_exe.ps1 -ManifestPath /path/to/latest.json`，只更新顶层 Windows 字段并保留 `macos`。同时发布两端时，让最后一次构建以另一端的新清单为基础，**只上传 `Codexio.exe`、`Codexio.dmg` 和最后合并的一份 `latest.json`**，不再上传 `latest-macos.json`。
 
-清单在暂存区完成后才交付；读取或合并失败时保留已有交付文件。请勿手工修改版本、大小或 SHA-256。版本递增和远程发布仍须用户明确授权。
+跨机器构建后需将另一端的同版本安装包一并归集到该版本目录，再执行 `.venv/bin/python scripts/verify_release.py --version 0.2.4` 核验两端版本、大小和 SHA-256，缺包或不匹配时禁止发布。清单在暂存区完成后才交付；读取或合并失败时保留已有交付文件。请勿手工修改版本、大小或 SHA-256。版本递增和远程发布仍须用户明确授权。
 
 最新附件下载地址使用 [GitHub 官方的 Release 附件链接格式](https://docs.github.com/en/repositories/releasing-projects-on-github/linking-to-releases)。本次开发仅生成本地产物，不自动发布。
 
@@ -72,8 +72,8 @@ QT_QPA_PLATFORM=offscreen LOCALAPPDATA="$PWD/build/test-data" \
 
 冒烟检查使用 Cocoa 原生平台和模拟数据，逐页打开深浅主题，保存当前应用控件截图并检查设置持久化、关闭主窗口后服务继续运行、菜单栏只切换预览、明确点击后打开主窗口、日志详情数值、3 秒滚动条隐藏、SVG 高清图标以及未创建悬浮窗。输出位于指定目录的 `result.json` 与 PNG 文件中。`--smoke-test` 必须与 `--mock` 同用。
 
-构建流程先生成 `build/release-staging/macos/Codexio.app`，核对版本和签名，然后直接启动打包后的二进制完成同样的 Cocoa 冒烟检查。成功后移动至 `build/macos/Codexio.app`，旧包仅保存在 `build/macos-previous`。若目标仍在运行，新应用、DMG 和更新清单会留在暂存区；构建不会覆盖或终止目标或正在运行的暂存应用。DMG 包含该次构建的应用及 Applications 快捷方式，并经 `hdiutil verify` 验证。
+构建流程先生成 `build/release-staging/macos/Codexio.app`，核对版本和签名，然后直接启动打包后的二进制完成同样的 Cocoa 冒烟检查。成功后 `.app` 移动至 `build/macos/Codexio.app` 供本地验证，DMG 与清单交付到 `release/<版本号>/`；同版本旧应用仅保存在 `build/macos-previous`。若目标仍在运行，新应用、DMG 和更新清单会留在暂存区；构建不会覆盖或终止目标或正在运行的暂存应用。DMG 包含该次构建的应用及 Applications 快捷方式，并经 `hdiutil verify` 验证。
 
-如果旧暂存应用正在运行，可用 `./build_macos.sh --dmg --staging-subdir next` 在 `build/release-staging/macos/next` 中构建，保留运行中的旧文件；交付位置仍为 `build/macos`，目标应用运行时仍拒绝替换。
+如果旧暂存应用正在运行，可用 `./build_macos.sh --dmg --staging-subdir next` 在 `build/release-staging/macos/next` 中构建，保留运行中的旧文件；DMG 和清单的交付位置仍为 `release/<版本号>/`；本地 `build/macos/Codexio.app` 运行时仍拒绝替换。
 
 Qt 菜单栏行为参考 [QSystemTrayIcon 官方文档](https://doc.qt.io/qt-6/qsystemtrayicon.html)；应用包与本地签名使用 [PyInstaller 官方 macOS 打包说明](https://pyinstaller.org/en/stable/feature-notes.html#macos-binary-code-signing)。

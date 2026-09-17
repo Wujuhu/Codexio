@@ -3,8 +3,6 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidatePattern('^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$')]
     [string]$Version,
-    [string]$Notes = "Codexio update",
-    [string]$NotesFile,
     [switch]$SkipBuild,
     [switch]$PrepareOnly
 )
@@ -16,7 +14,6 @@ $Utf8 = New-Object System.Text.UTF8Encoding($false)
 foreach ($Part in $Version.Split('.')) {
     if ([long]$Part -gt 65535) { throw "Version numbers must be at most 65535." }
 }
-if ($NotesFile) { $Notes = Get-Content -LiteralPath $NotesFile -Encoding UTF8 -Raw }
 
 function Invoke-ReleaseGh {
     param([string[]]$Arguments)
@@ -59,66 +56,53 @@ if (-not $SkipBuild) {
     }
     & (Join-Path $ReleaseRoot 'build_exe.ps1') -Version $Version
 }
-$Exe = Join-Path $ReleaseRoot 'dist\Codexio.exe'
+$ReleaseDir = Join-Path (Join-Path $ReleaseRoot 'release') $Version
+$Exe = Join-Path $ReleaseDir 'Codexio.exe'
 if (-not (Test-Path -LiteralPath $Exe)) { throw "Build output is missing: $Exe" }
 if ((Get-Item -LiteralPath $Exe).VersionInfo.ProductVersion -ne $Version) {
     throw "EXE version does not match $Version. Run without -SkipBuild."
 }
+& (Join-Path $ReleaseRoot '.venv\Scripts\python.exe') (Join-Path $ReleaseRoot 'scripts\verify_release.py') `
+    --version $Version --directory $ReleaseDir
+if ($LASTEXITCODE -ne 0) { throw "Both platform packages and latest.json must match before publication." }
 $UploadDir = Join-Path $ReleaseRoot ('build\github-releases\' + $Version + '-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $UploadDir -Force | Out-Null
-$UploadExe = Join-Path $UploadDir 'Codexio.exe'
-Copy-Item -LiteralPath $Exe -Destination $UploadExe
-$Hash = (Get-FileHash -LiteralPath $UploadExe -Algorithm SHA256).Hash.ToLowerInvariant()
-$ManifestPath = Join-Path $UploadDir 'latest.json'
-$ReleaseNotes = Join-Path $UploadDir 'release-notes.md'
-$Manifest = [ordered]@{
-    version = $Version
-    url = "https://github.com/$Repository/releases/download/$Tag/Codexio.exe"
-    sha256 = $Hash
-    size = (Get-Item -LiteralPath $UploadExe).Length
-    notes = $Notes
+foreach ($Name in @('Codexio.exe', 'Codexio.dmg', 'latest.json')) {
+    Copy-Item -LiteralPath (Join-Path $ReleaseDir $Name) -Destination (Join-Path $UploadDir $Name)
 }
-[IO.File]::WriteAllText($ManifestPath, ($Manifest | ConvertTo-Json -Depth 4), $Utf8)
-[IO.File]::WriteAllText($ReleaseNotes, $Notes, $Utf8)
+$UploadExe = Join-Path $UploadDir 'Codexio.exe'
+$UploadDmg = Join-Path $UploadDir 'Codexio.dmg'
+$ManifestPath = Join-Path $UploadDir 'latest.json'
+$Hash = (Get-FileHash -LiteralPath $UploadExe -Algorithm SHA256).Hash.ToLowerInvariant()
+$DmgHash = (Get-FileHash -LiteralPath $UploadDmg -Algorithm SHA256).Hash.ToLowerInvariant()
+$ReleaseNotes = Join-Path $UploadDir 'release-notes.md'
+[IO.File]::WriteAllText($ReleaseNotes, '', $Utf8)
 if ($PrepareOnly) {
     Write-Host "Prepared: $UploadDir"
-    Write-Host "Upload Codexio.exe and latest.json together to a stable $Tag GitHub release."
+    Write-Host "Upload Codexio.exe, Codexio.dmg and latest.json together to a stable $Tag GitHub release."
     return
 }
 
-if ($RepoInfo.isEmpty) {
-    $Readme = @'
-# Codexio
-
-Windows Codex quota and usage monitor.
-
-[Download Codexio](https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.exe)
-
-Codexio 0.1.1 and later support automatic updates. Downloads and release notes are available under Releases.
-'@
-    $InitPath = Join-Path $UploadDir 'initialize-repository.json'
-    $Init = @{ message = 'Initialize Codexio release repository'; content = [Convert]::ToBase64String($Utf8.GetBytes($Readme)) }
-    [IO.File]::WriteAllText($InitPath, ($Init | ConvertTo-Json), $Utf8)
-    Invoke-ReleaseGh -Arguments @('api', '--method', 'PUT', "repos/$Repository/contents/README.md", '--input', $InitPath) | Out-Null
-}
+if ($RepoInfo.isEmpty) { throw "Push the verified source to main before publishing." }
 
 if ($Existing.Count -eq 0) {
-    Invoke-ReleaseGh -Arguments @('release', 'create', $Tag, '--repo', $Repository, '--draft', '--title', "Codexio $Version", '--notes-file', $ReleaseNotes) | Out-Host
+    Invoke-ReleaseGh -Arguments @('release', 'create', $Tag, '--repo', $Repository, '--draft', '--target', 'main', '--title', $Tag, '--notes-file', $ReleaseNotes) | Out-Host
 } else {
-    Invoke-ReleaseGh -Arguments @('release', 'edit', $Tag, '--repo', $Repository, '--draft=true', '--title', "Codexio $Version", '--notes-file', $ReleaseNotes) | Out-Host
+    Invoke-ReleaseGh -Arguments @('release', 'edit', $Tag, '--repo', $Repository, '--draft=true', '--title', $Tag, '--notes-file', $ReleaseNotes) | Out-Host
 }
 # Upload while still a draft. Only a complete, hash-verified release becomes latest.
 $DraftInfo = Invoke-ReleaseGh -Arguments @('api', "repos/$Repository/releases/tags/$Tag") | ConvertFrom-Json
 if (-not $DraftInfo.draft) { throw "The release was published elsewhere. Upload stopped." }
-Invoke-ReleaseGh -Arguments @('release', 'upload', $Tag, $UploadExe, $ManifestPath, '--repo', $Repository, '--clobber') | Out-Host
+Invoke-ReleaseGh -Arguments @('release', 'upload', $Tag, $UploadExe, $UploadDmg, $ManifestPath, '--repo', $Repository, '--clobber') | Out-Host
 $ManifestHash = (Get-FileHash -LiteralPath $ManifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
 $Verified = $false
 for ($Attempt = 0; $Attempt -lt 6; $Attempt++) {
     $Uploaded = Invoke-ReleaseGh -Arguments @('api', "repos/$Repository/releases/tags/$Tag") | ConvertFrom-Json
     $ExeAsset = @($Uploaded.assets | Where-Object { $_.name -eq 'Codexio.exe' })
+    $DmgAsset = @($Uploaded.assets | Where-Object { $_.name -eq 'Codexio.dmg' })
     $JsonAsset = @($Uploaded.assets | Where-Object { $_.name -eq 'latest.json' })
-    if ($ExeAsset.Count -eq 1 -and $JsonAsset.Count -eq 1 -and
-        $ExeAsset[0].digest -eq "sha256:$Hash" -and $JsonAsset[0].digest -eq "sha256:$ManifestHash") {
+    if ($Uploaded.assets.Count -eq 3 -and $ExeAsset.Count -eq 1 -and $DmgAsset.Count -eq 1 -and $JsonAsset.Count -eq 1 -and
+        $ExeAsset[0].digest -eq "sha256:$Hash" -and $DmgAsset[0].digest -eq "sha256:$DmgHash" -and $JsonAsset[0].digest -eq "sha256:$ManifestHash") {
         $Verified = $true
         break
     }

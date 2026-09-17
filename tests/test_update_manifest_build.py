@@ -5,6 +5,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 from codexio.updates import file_sha256, release_from_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,3 +59,61 @@ def test_invalid_base_preserves_previous_manifest(tmp_path):
     output.write_text("previous manifest", encoding="utf-8")
     assert build_manifest("macos", dmg, "0.2.4", output, base).returncode != 0
     assert output.read_text(encoding="utf-8") == "previous manifest"
+
+
+def test_default_manifest_comes_from_same_release_version(tmp_path, monkeypatch):
+    from scripts import update_manifest
+
+    monkeypatch.setattr(update_manifest, "ROOT", tmp_path)
+    old = tmp_path / "release/0.2.3/latest.json"
+    current = tmp_path / "release/0.2.4/latest.json"
+    legacy = tmp_path / "build/macos/latest.json"
+    for path, version in ((old, "0.2.3"), (current, "0.2.4"), (legacy, "0.2.2")):
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"version": version, "macos": {"version": version}}), encoding="utf-8")
+    for system in ("windows", "macos"):
+        assert update_manifest.load_base(system, version="0.2.4")["version"] == "0.2.4"
+    assert json.loads(old.read_text(encoding="utf-8"))["version"] == "0.2.3"
+
+
+@pytest.fixture
+def complete_release(tmp_path):
+    directory = tmp_path / "release/0.2.4"
+    directory.mkdir(parents=True)
+    exe = directory / "Codexio.exe"
+    exe.write_bytes(b"MZwindows fixture")
+    dmg = directory / "Codexio.dmg"
+    dmg.write_bytes(b"DMG fixture")
+    base = tmp_path / "base.json"
+    base.write_text("{}", encoding="utf-8")
+    manifest = directory / "latest.json"
+    assert build_manifest("windows", exe, "0.2.4", manifest, base).returncode == 0
+    assert build_manifest("macos", dmg, "0.2.4", manifest, manifest).returncode == 0
+    return directory
+
+
+def test_complete_release_accepts_matching_packages(complete_release):
+    from scripts.verify_release import verify_release
+
+    verify_release(complete_release, "0.2.4")
+    assert {p.name for p in complete_release.iterdir()} == {"Codexio.exe", "Codexio.dmg", "latest.json"}
+
+
+@pytest.mark.parametrize("failure", ["missing_dmg", "corrupt_exe", "wrong_macos_version"])
+def test_incomplete_or_mismatched_release_cannot_publish(complete_release, failure):
+    from codexio.updates import UpdateError
+    from scripts.verify_release import verify_release
+
+    if failure == "missing_dmg":
+        (complete_release / "Codexio.dmg").unlink()
+    elif failure == "corrupt_exe":
+        exe = complete_release / "Codexio.exe"
+        exe.write_bytes(b"MZ" + b"x" * (exe.stat().st_size - 2))
+    else:
+        path = complete_release / "latest.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["macos"]["version"] = "0.2.3"
+        data["macos"]["url"] = data["macos"]["url"].replace("v0.2.4", "v0.2.3")
+        path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(UpdateError):
+        verify_release(complete_release, "0.2.4")

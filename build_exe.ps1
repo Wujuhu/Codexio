@@ -30,7 +30,6 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $Spec = Join-Path $Root "packaging\codexio.spec"
-$Dist = Join-Path $Root "dist"
 $Staging = Join-Path $Root "build\release-staging"
 $Work = Join-Path $Root "build\pyinstaller"
 Write-Host "Building Codexio.exe..."
@@ -44,15 +43,16 @@ if (-not (Test-Path -LiteralPath $StagedExe)) {
     throw "Build finished but $StagedExe was not created."
 }
 $ReleaseVersion = (Get-Item -LiteralPath $StagedExe).VersionInfo.ProductVersion
+$ReleaseDir = Join-Path (Join-Path $Root "release") $ReleaseVersion
 $StagedManifest = Join-Path $Staging "latest.json"
 $ManifestArgs = @()
 if ($ManifestPath) { $ManifestArgs = @("--base", $ManifestPath) }
 & $VenvPython (Join-Path $Root "scripts\update_manifest.py") --platform windows `
     --asset $StagedExe --version $ReleaseVersion --output $StagedManifest @ManifestArgs
 if ($LASTEXITCODE -ne 0) { throw "Could not merge latest.json; the staged build is preserved." }
-& (Join-Path $Root "scripts\publish_exe.ps1") -StagedExe $StagedExe
-$Exe = Join-Path $Dist "Codexio.exe"
-Move-Item -LiteralPath $StagedManifest -Destination (Join-Path $Dist "latest.json") -Force
+& (Join-Path $Root "scripts\publish_exe.ps1") -StagedExe $StagedExe -Version $ReleaseVersion
+$Exe = Join-Path $ReleaseDir "Codexio.exe"
+Move-Item -LiteralPath $StagedManifest -Destination (Join-Path $ReleaseDir "latest.json") -Force
 
 Write-Host ""
 Write-Host "Built: $Exe"

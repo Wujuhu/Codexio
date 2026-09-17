@@ -37,7 +37,17 @@ Mac 端复用 Windows 主界面与计价、去重、请求分组和历史统计�
 open build/macos/Codexio.app
 ```
 
-构建先进入 `build/release-staging/macos`，通过原生界面冒烟检查和签名验证后交付至 `build/macos/Codexio.app`；`--dmg` 额外生成 `build/macos/Codexio.dmg` 和 `build/macos/latest.json`。保留 Windows 的 `dist/Codexio.exe` 交付约定。目标应用正在运行时保留原文件与暂存新版，不结束用户进程。
+构建先进入 `build/release-staging/macos`，通过原生界面冒烟检查和签名验证后，`.app` 留在 `build/macos/Codexio.app` 供本地运行；`--dmg` 将安装包和清单输出到 `release/<版本号>/`。Windows 打包也使用同一版本目录，完整交付结构为：
+
+```text
+release/
+└── 0.2.4/
+    ├── Codexio.dmg
+    ├── Codexio.exe
+    └── latest.json
+```
+
+历史版本各自保留；构建中间文件和同版本旧包留在 `build`。目标应用正在运行时保留原文件与暂存新版，不结束用户进程。跨机器构建时归集另一端的同版本安装包，并让最后一次构建合并其清单。
 
 Mac 包按构建机器的架构生成。当前在 Apple Silicon Mac 上验证，使用本地 ad-hoc 签名，尚未配置 Developer ID 签名或公证。Mac 新版需在获得发布授权后将 DMG 与更新清单一起上传到正式 GitHub Release；相同版本不触发更新。详细开发与验证说明见 [macOS 开发说明](docs/macos.md)。 两端同时发布时只上传 `Codexio.exe`、`Codexio.dmg` 和最终合并的 `latest.json`；跨机器构建可用 Mac 的 `--manifest` 或 Windows 的 `-ManifestPath` 传入另一端生成的清单。
 
@@ -204,7 +214,7 @@ v0.2.3 以当前登录账号的服务端日 Credits 为主依据，按同一账�
 
 ## 打包成 EXE
 
-`dist` 始终只保留 `Codexio.exe` 一个可执行文件。构建先暂存到 `build/release-staging`，成功后统一发布；旧包放在 `build/release-backups`，不再保留 `dist/update`、`dist/refined` 等多版本目录。若目标正在运行，先退出小组件再重试发布。
+`Codexio.exe` 输出到 `release/<版本号>/`，与 Mac DMG 和共用的 `latest.json` 放在一起。构建先暂存到 `build/release-staging`，成功后交付；同版本被替换的旧 EXE 放在 `build/release-backups`，其他版本目录保留。若目标正在运行，先退出小组件再重试交付。
 
 在已经能用 `.\run.ps1` 跑起来的电脑上执行：
 
@@ -212,7 +222,7 @@ v0.2.3 以当前登录账号的服务端日 Credits 为主依据，按同一账�
 .\build_exe.ps1
 ```
 
-构建前请先退出正在运行的旧版小组件。完成后得到 `dist\Codexio.exe`。把这个文件复制到其他 Windows 10/11（x64）电脑即可双击使用。
+构建前请先退出正在运行的旧版小组件。完成后得到 `release\0.2.4\Codexio.exe`（目录名随当前版本变化）。把这个文件复制到其他 Windows 10/11（x64）电脑即可双击使用。
 
 对方电脑仍需：
 
@@ -236,27 +246,16 @@ winget install --id GitHub.cli -e
 gh auth login --hostname github.com --web
 ```
 
-发布已准备的 0.2.1 包：
+两端分别打包后，把同版本的三个文件归集到 `release/<版本号>/`。发布前可仅做本地校验：
 
 ```powershell
-.\publish_release.ps1 -Version 0.2.1 -SkipBuild -Notes "统一悬浮画布，完善用量图表与请求预览"
+.venv\Scripts\python.exe scripts\verify_release.py --version 0.2.4
+.\publish_release.ps1 -Version 0.2.4 -SkipBuild -PrepareOnly
 ```
 
-以后修改代码后，一条命令构建并发布新版本：
+检查覆盖两端版本、下载地址、文件大小与 SHA-256；缺少任一安装包或清单不匹配时停止。发布脚本使用已有的合并清单，不会丢失 Mac 信息；上传的三个文件必须全部核验通过才转为正式 Release。
 
-```powershell
-.\publish_release.ps1 -Version 0.2.2 -Notes "填写本次更新说明"
-```
-
-脚本会检查登录和版本号、运行测试、构建 EXE、生成更新清单、上传草稿、核验 GitHub 附件哈希，最后发布为 Latest。首次使用空仓库时自动添加发布用 README；本地源码和个人配置不上传。失败的草稿可用同一条命令重试，已发布版本不会被覆盖。应用与 Windows 文件属性统一读取 `src/codexio/__init__.py` 的版本号。
-
-不使用 GitHub CLI 时，可先准备附件：
-
-```powershell
-.\publish_release.ps1 -Version 0.2.1 -SkipBuild -PrepareOnly
-```
-
-本次 0.2.1 交付为 `dist/Codexio.exe` 和 `dist/latest.json`。将两个文件一起上传到标签为 `v0.2.1` 的正式 Release，附件全部上传后再发布并设为 Latest。空仓库需先在 GitHub 创建一个 README。以后增加版本号前须经用户明确确认，再使用递增的三段版本号，例如 `0.2.2`；不使用预发布标签。每次 EXE 变化都必须重新生成清单。打包脚本先写入版本号，再构建并发布 EXE，确保程序与 Windows 文件属性一致。
+只有在用户明确授权发布后，先完成验证、打包、本地提交并推送 `main`，再运行 `publish_release.ps1 -Version <版本号> -SkipBuild`。Tag 与标题均为 `v<版本号>`，正文留空，新 Tag 基于远程 `main`；已有正式 Release 不覆盖。当前 `v0.2.4` 已发布，不应重复发布或覆盖。增加版本号也须先经用户明确确认。应用与 Windows 文件属性统一读取 `src/codexio/__init__.py` 的版本号，每次安装包变化都必须重新生成对应平台的清单字段。
 
 旧版 0.1.0 需要手动换上一次 0.1.1 或更高版本，此后即可自动更新。
 

@@ -23,11 +23,14 @@ def read_manifest(path):
     return data
 
 
-def load_base(system, explicit=None):
+def load_base(system, explicit=None, *, version=None):
     if explicit:
         return read_manifest(explicit)
     # Prefer a local shared manifest that already includes the other platform.
-    for path in (ROOT / "dist/latest.json", ROOT / "build/macos/latest.json"):
+    candidates = [ROOT / "release" / version / "latest.json"] if version else []
+    # Legacy locations are read only, to support the first build after migration.
+    candidates += [ROOT / "dist/latest.json", ROOT / "build/macos/latest.json"]
+    for path in candidates:
         if path.exists():
             data = read_manifest(path)
             if (system == "macos" and "version" in data) or (system == "windows" and "macos" in data):
@@ -56,7 +59,7 @@ def write_manifest(system, asset, version, output, *, base=None, architecture=No
     name = "Codexio.dmg" if system == "macos" else "Codexio.exe"
     if asset.name != name:
         raise UpdateError("更新文件名必须为 " + name)
-    data = load_base(system, base)
+    data = load_base(system, base, version=version)
     if system == "macos":
         # Keep every existing Windows field intact, including its own version.
         release_from_manifest(data, "0.0.0")
