@@ -54,6 +54,7 @@ def default_config() -> dict:
         "widget_visible": True,
         "auto_sync_prices": True,
         "auto_update": True,
+        "macos_auto_update": True,
         "server_estimates_enabled": True,
         "show_log_source": False,
         "codex_roots": [os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")],
@@ -92,7 +93,7 @@ def load_analytics_config(path: Path | None = None) -> dict:
     if not isinstance(config["codex_roots"], list):
         config["codex_roots"] = default_config()["codex_roots"]
     config["codex_roots"] = list(dict.fromkeys(str(v) for v in config["codex_roots"] if str(v).strip()))
-    for key in ("widget_visible", "auto_sync_prices", "auto_update", "show_log_source", "server_estimates_enabled"):
+    for key in ("widget_visible", "auto_sync_prices", "auto_update", "macos_auto_update", "show_log_source", "server_estimates_enabled"):
         config[key] = config[key] if isinstance(config[key], bool) else False
     try:
         datetime.fromisoformat(str(config["account_since"]).replace("Z", "+00:00"))

@@ -104,6 +104,12 @@ class SmokeRun(QObject):
                     window.resize(1180, 780)
                 if page == "settings":
                     assert [window._settings_sections.item(i).text() for i in range(4)] == ["外观", "菜单栏", "数据来源", "应用"]
+                    window._settings_sections.setCurrentRow(3)
+                    yield
+                    assert window._auto_update.text() == "自动下载更新"
+                    assert "预览模式不安装更新" in window._update_status.text()
+                    assert not window._check_update.isEnabled()
+                    self.capture(window, "settings-updates-" + theme)
                     window._settings_sections.setCurrentRow(1)
                     yield
                     self.capture(window, "settings-menu-bar-" + theme)

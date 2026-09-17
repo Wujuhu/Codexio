@@ -16,6 +16,9 @@ from codexio.update_installer import (
 )
 from codexio.updates import UpdateCancelled, UpdateError, download_release, fetch_release
 
+if sys.platform == "darwin":
+    from codexio.macos_updater import cleanup_updates, download_release, fetch_release, launch_installer
+
 
 class UpdateManager(QObject):
     status_changed = Signal(str, bool)
@@ -24,7 +27,7 @@ class UpdateManager(QObject):
     def __init__(self, parent: QObject, on_restart: Callable[[], None], *, available: bool | None = None) -> None:
         super().__init__(parent)
         self._on_restart = on_restart
-        self._available = bool(getattr(sys, "frozen", False) and os.name == "nt") if available is None else available
+        self._available = bool(getattr(sys, "frozen", False) and (os.name == "nt" or sys.platform == "darwin")) if available is None else available
         self._enabled = True
         self._busy = False
         self._manual = False

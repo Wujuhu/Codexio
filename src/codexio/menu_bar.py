@@ -314,14 +314,12 @@ QLabel#previewTokens { color: %(chart_tokens_ink)s; }
         colors = theme_colors(self._theme)
         self.latest_status.setStyleSheet("color: %s;" % colors["running" if request_status == "running" else "muted"])
         stamp = parse_timestamp(latest.get("timestamp"))
-        detail = (stamp.astimezone().strftime("%m/%d %H:%M") + " · " if stamp else "")
+        details = [stamp.astimezone().strftime("%m/%d %H:%M")] if stamp else []
         count = latest.get("model_call_count") or latest.get("call_count")
         if count:
-            detail += f"{count} 次模型调用 · "
-        detail += "本轮费用仍在更新" if request_status == "running" else "整轮费用"
-        if latest.get("pricing_status") == "partial":
-            detail += " · 部分未定价"
-        self.latest_note.setText(detail if latest else "尚无用户请求记录")
+            details.append(f"{count} 次模型调用")
+        self.latest_cost.setToolTip("部分未定价" if latest.get("pricing_status") == "partial" else "")
+        self.latest_note.setText(" · ".join(details) if latest else "尚无用户请求记录")
         updated = parse_timestamp(data.get("updated_at"))
         if self._loading.get("error"):
             usage_status = "用量读取失败 · " + str(self._loading["error"])
@@ -335,7 +333,9 @@ QLabel#previewTokens { color: %(chart_tokens_ink)s; }
             usage_status = "用量为上次缓存 · " + updated.astimezone().strftime("%H:%M:%S")
         else:
             usage_status = "用量更新 " + (updated.astimezone().strftime("%H:%M:%S") if updated else "—")
-        self.usage_status.setText(usage_status)
+        self.usage_status.setText(updated.astimezone().strftime("%H:%M:%S") if updated else "—")
+        self.usage_status.setToolTip(usage_status)
+        self.usage_status.setAccessibleDescription(usage_status)
 
     def show_at(self, anchor):
         self.render()

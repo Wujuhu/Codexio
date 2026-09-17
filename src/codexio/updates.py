@@ -1,4 +1,4 @@
-"""Read stable GitHub releases and download verified Windows updates."""
+"""Read stable GitHub releases and download verified update assets."""
 from __future__ import annotations
 
 import hashlib
@@ -51,7 +51,7 @@ def version_tuple(value: str) -> tuple[int, int, int]:
     return numbers
 
 
-def release_from_json(data: dict, current_version: str = __version__) -> Release | None:
+def release_from_json(data: dict, current_version: str = __version__, *, asset_name: str = EXE_NAME) -> Release | None:
     if not isinstance(data, dict):
         raise UpdateError("GitHub 返回了无效的版本信息")
     if data.get("draft") or data.get("prerelease"):
@@ -61,11 +61,11 @@ def release_from_json(data: dict, current_version: str = __version__) -> Release
     if parsed <= version_tuple(current_version):
         return None
     assets = data.get("assets")
-    matches = [item for item in assets if isinstance(item, dict) and item.get("name") == EXE_NAME] if isinstance(assets, list) else []
+    matches = [item for item in assets if isinstance(item, dict) and item.get("name") == asset_name] if isinstance(assets, list) else []
     if len(matches) != 1 or matches[0].get("state") != "uploaded":
-        raise UpdateError("新版尚未上传完整的 Codexio.exe")
+        raise UpdateError("新版尚未上传完整的 " + asset_name)
     asset = matches[0]
-    expected_url = "https://github.com/%s/releases/download/%s/%s" % (REPOSITORY, tag, EXE_NAME)
+    expected_url = "https://github.com/%s/releases/download/%s/%s" % (REPOSITORY, tag, asset_name)
     if asset.get("browser_download_url") != expected_url:
         raise UpdateError("更新文件不属于指定的 GitHub 发布版本")
     digest = _DIGEST.fullmatch(str(asset.get("digest") or ""))
@@ -79,33 +79,40 @@ def release_from_json(data: dict, current_version: str = __version__) -> Release
 
 
 def _request(url: str) -> Request:
-    return Request(url, headers={"Accept": "application/json" if url in (LATEST_API, LATEST_MANIFEST) else "application/octet-stream",
+    return Request(url, headers={"Accept": "application/json" if url == LATEST_API or url.endswith(".json") else "application/octet-stream",
                                  "User-Agent": "Codexio/" + __version__, "Cache-Control": "no-cache"})
 
 
-def release_from_manifest(data: dict, current_version: str = __version__) -> Release | None:
+def release_from_manifest(data: dict, current_version: str = __version__, *,
+                          asset_name: str = EXE_NAME, architecture: str | None = None) -> Release | None:
     if not isinstance(data, dict):
         raise UpdateError("更新清单格式无效")
     parsed = version_tuple(data.get("version", ""))
+    if parsed <= version_tuple(current_version):
+        return None
+    if architecture and data.get("architecture") != architecture:
+        raise UpdateError("新版尚未提供适合此 Mac 芯片的安装包")
     tag = "v" + ".".join(map(str, parsed))
     return release_from_json({
         "tag_name": tag, "body": data.get("notes", ""), "assets": [{
-            "name": EXE_NAME, "state": "uploaded", "browser_download_url": data.get("url"),
+            "name": asset_name, "state": "uploaded", "browser_download_url": data.get("url"),
             "digest": "sha256:" + str(data.get("sha256", "")), "size": data.get("size"),
         }],
-    }, current_version)
+    }, current_version, asset_name=asset_name)
 
 
-def fetch_release(current_version: str = __version__) -> Release | None:
+def fetch_release(current_version: str = __version__, *, manifest_url: str = LATEST_MANIFEST,
+                  asset_name: str = EXE_NAME, architecture: str | None = None) -> Release | None:
     try:
         # A release attachment avoids the anonymous GitHub API rate limit.
-        with urlopen(_request(LATEST_MANIFEST), timeout=20) as response:
+        with urlopen(_request(manifest_url), timeout=20) as response:
             if urlsplit(response.geturl()).scheme != "https":
                 raise UpdateError("更新清单必须通过 HTTPS 获取")
             payload = response.read(1024 * 1024 + 1)
         if len(payload) > 1024 * 1024:
             raise UpdateError("GitHub 返回的版本信息过大")
-        return release_from_manifest(json.loads(payload.decode("utf-8-sig")), current_version)
+        return release_from_manifest(json.loads(payload.decode("utf-8-sig")), current_version,
+                                     asset_name=asset_name, architecture=architecture)
     except HTTPError as exc:
         if exc.code == 404:
             return None  # A new public repository may not have a release yet.
@@ -127,7 +134,7 @@ def file_sha256(path: Path) -> str:
 
 
 def download_release(release: Release, target: Path, cancel: threading.Event,
-                     progress: Callable[[int], None] = lambda _value: None) -> Path:
+                     progress: Callable[[int], None] = lambda _value: None, *, windows_executable: bool = True) -> Path:
     partial = target.with_suffix(".part")
     digest = hashlib.sha256()
     received = 0
@@ -155,9 +162,10 @@ def download_release(release: Release, target: Path, cancel: threading.Event,
                     previous = percent
         if received != release.size or digest.hexdigest() != release.sha256:
             raise UpdateError("更新文件校验失败，已保留当前版本")
-        with partial.open("rb") as check:
-            if check.read(2) != b"MZ":
-                raise UpdateError("更新文件不是有效的 Windows 程序")
+        if windows_executable:
+            with partial.open("rb") as check:
+                if check.read(2) != b"MZ":
+                    raise UpdateError("更新文件不是有效的 Windows 程序")
         if cancel.is_set():
             raise UpdateCancelled("已取消更新")
         partial.replace(target)

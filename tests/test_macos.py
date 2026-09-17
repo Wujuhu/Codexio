@@ -121,8 +121,9 @@ def test_preview_renders_daily_totals_and_whole_running_request(preview):
     assert preview.today_cost.text() == "$12.34"
     assert preview.today_tokens.text() == "1.23M"
     assert preview.today_tokens.toolTip().startswith("1,234,567 Token\n")
+    assert preview.usage_status.text() == now.strftime("%H:%M:%S")
     assert preview.latest_cost.text() == "$1.56" and preview.latest_status.text() == "回复中"
-    assert "3 次模型调用" in preview.latest_note.text() and "仍在更新" in preview.latest_note.text()
+    assert preview.latest_note.text().endswith("3 次模型调用")
 
 
 def test_compact_preview_displays_filtered_message_without_session_title_fallback(preview, app):
@@ -156,7 +157,7 @@ def test_date_rollover_never_displays_yesterdays_totals_as_today(preview):
     preview.apply_data(usage(midnight - timedelta(seconds=1)))
     preview.render(midnight)
     assert preview.today_cost.text() == preview.today_tokens.text() == "—"
-    assert "日期已切换" in preview.usage_status.text()
+    assert "日期已切换" in preview.usage_status.toolTip()
     assert preview.latest_cost.text() == "$1.56"
     preview.apply_data(usage(midnight, menu_bar_today={"tokens": 42, "usd": 0.01}))
     preview.render(midnight)
@@ -170,10 +171,10 @@ def test_partial_unpriced_and_error_states_remain_explicit(preview):
     preview.apply_data(data)
     preview.render(now)
     assert preview.today_cost.text() == "$0.05" and preview.today_cost.toolTip() == "部分未定价"
-    assert preview.latest_cost.text() == "未定价" and "尚未同步" in preview.usage_status.text()
+    assert preview.latest_cost.text() == "未定价" and "尚未同步" in preview.usage_status.toolTip()
     preview.set_usage_loading({"error": "日志读取失败"})
     preview.render(now)
-    assert "用量读取失败" in preview.usage_status.text()
+    assert "用量读取失败" in preview.usage_status.toolTip()
     assert preview.today_cost.text() == "$0.05"
 
 
@@ -239,14 +240,14 @@ def test_click_actions_escape_and_hidden_timer(app):
         preview.deleteLater()
 
 
-def test_mac_dashboard_excludes_widget_and_windows_updater_and_saves_settings(app):
+def test_mac_dashboard_includes_app_updates_without_floating_widget_and_saves_settings(app):
     saved = []
     window = Dashboard(AppSettings(), {}, {"settings": saved.append}, desktop_platform="macos")
     try:
         window.open_page("settings")
         assert window._widget_toggle.isHidden()
         assert [window._settings_sections.item(i).text() for i in range(4)] == ["外观", "菜单栏", "数据来源", "应用"]
-        assert not hasattr(window, "_auto_update") and not hasattr(window, "_widget_preview")
+        assert hasattr(window, "_auto_update") and not hasattr(window, "_widget_preview")
         window._setting_widgets["refresh_interval_seconds"].setCurrentIndex(0)
         window._setting_widgets["menu_bar_preview_size"].setCurrentIndex(1)
         window._setting_widgets["show_main_on_startup"].setChecked(False)

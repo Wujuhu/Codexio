@@ -10,6 +10,10 @@ if __name__ == "__main__" and sys.platform == "win32" and len(sys.argv) == 3 and
     from codexio.update_installer import run_update_job
     sys.exit(run_update_job(sys.argv[2]))
 
+if __name__ == "__main__" and sys.platform == "darwin" and len(sys.argv) == 3 and sys.argv[1] == "--apply-mac-update":
+    from codexio.macos_updater import run_update_job
+    sys.exit(run_update_job(sys.argv[2]))
+
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QApplication, QMenu
 

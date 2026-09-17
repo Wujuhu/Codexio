@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 import plistlib
 import re
 import shutil
@@ -73,6 +74,23 @@ def main():
     env = {key: value for key, value in os.environ.items() if key not in ("PYTHONPATH", "PYTHONHOME", "QT_QPA_PLATFORM", "QT_PLUGIN_PATH")}
     run(bundle / "Contents/MacOS/Codexio", "--mock", "--smoke-test", smoke, env=env, timeout=100)
     assert json.loads((smoke / "result.json").read_text(encoding="utf-8"))["ok"]
+    if args.dmg:
+        from codexio.macos_updater import DMG_NAME, MANIFEST_NAME
+        from codexio.updates import REPOSITORY, file_sha256
+        disk = BUILD / "macos-disk"
+        refuse_running(disk / "Codexio.app")
+        if disk.exists():
+            shutil.rmtree(disk)
+        disk.mkdir(parents=True)
+        run("ditto", bundle, disk / "Codexio.app")
+        (disk / "Applications").symlink_to("/Applications")
+        image = staging / DMG_NAME
+        run("hdiutil", "create", "-volname", "Codexio", "-srcfolder", disk, "-ov", "-format", "UDZO", image)
+        run("hdiutil", "verify", image)
+        manifest = dict(version=version, architecture=platform.machine(), size=image.stat().st_size,
+                        sha256=file_sha256(image),
+                        url=f"https://github.com/{REPOSITORY}/releases/download/v{version}/{DMG_NAME}")
+        (staging / MANIFEST_NAME).write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     refuse_running(target)
     DESTINATION.mkdir(parents=True, exist_ok=True)
     previous = BUILD / "macos-previous/Codexio.app"
@@ -90,22 +108,15 @@ def main():
         raise
     run("codesign", "--verify", "--deep", "--strict", target)
     if args.dmg:
-        disk = BUILD / "macos-disk"
-        if disk.exists():
-            shutil.rmtree(disk)
-        disk.mkdir(parents=True)
-        run("ditto", target, disk / "Codexio.app")
-        (disk / "Applications").symlink_to("/Applications")
-        image = staging / "Codexio.dmg"
-        run("hdiutil", "create", "-volname", "Codexio", "-srcfolder", disk, "-ov", "-format", "UDZO", image)
-        run("hdiutil", "verify", image)
-        image.replace(DESTINATION / "Codexio.dmg")
+        for name in (DMG_NAME, MANIFEST_NAME):
+            (staging / name).replace(DESTINATION / name)
     else:
-        # Keep an old installer out of the current delivery folder.
-        old_disk = DESTINATION / "Codexio.dmg"
-        if old_disk.exists():
-            previous.parent.mkdir(parents=True, exist_ok=True)
-            old_disk.replace(previous.parent / "Codexio.dmg")
+        # Keep old update assets out of the current delivery folder.
+        for name in ("Codexio.dmg", "latest-macos.json"):
+            old_asset = DESTINATION / name
+            if old_asset.exists():
+                previous.parent.mkdir(parents=True, exist_ok=True)
+                old_asset.replace(previous.parent / name)
     print(f"\n已验证并打包 Codexio {version}: {target}")
     return 0
 

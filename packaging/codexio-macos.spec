@@ -17,8 +17,7 @@ a = Analysis(
     hiddenimports=["codexio.macos_smoke"],
     excludes=["pytest", "tkinter", "PySide6.QtTest", "PySide6.QtQml", "PySide6.QtQuick",
               "PySide6.QtPdf", "PySide6.QtOpenGL", "PySide6.QtOpenGLWidgets",
-              "codexio.window", "codexio.dock", "codexio.tray", "codexio.update_manager",
-              "codexio.update_installer", "codexio.updates"],
+              "codexio.window", "codexio.dock", "codexio.tray"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

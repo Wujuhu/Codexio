@@ -11,7 +11,7 @@ Windows / macOS 桌面额度与用量面板，通过 Codex `app-server` 读取�
 - 今日、近 7 天、近 30 天及历史 Token 和 美元费用
 - 小时／天／周用量趋势、逐次请求明细、模型价格和订阅周额度观测估值
 
-可用源码运行。Windows 打包成单个 `Codexio.exe`，保留原有自动更新流程；macOS 打包为 `Codexio.app`，当前在本地构建和更新。
+可用源码运行。Windows 打包成单个 `Codexio.exe`，保留原有自动更新流程；macOS 打包为 `Codexio.app`，通过 GitHub Release 的 DMG 与独立清单自动更新。
 
 ## macOS
 
@@ -20,6 +20,7 @@ Mac 端复用 Windows 主界面与计价、去重、请求分组和历史统计�
 - 点击菜单栏的 Codexio 图标，仅展开 253 px 宽的紧凑预览；可在设置中调整为 293 px。只有点击“主界面”或“设置”才打开相应窗口。
 - 预览显示 5 小时／每周额度、剩余百分比、当地重置时间与倒计时，以及今日 美元费用、今日 Token 总数、最近一轮用户请求的累计费用与最多三行用户消息。消息预先过滤系统／环境上下文和附件路径，只有图片时显示“未记录用户文字”。回复中的请求会持续更新；部分未定价、读取失败、缓存与跨日等待均有明确状态。
 - 预览最顶部的“主界面”按钮可打开主窗口，底部保留设置和退出。费用和 Token 卡片左右并排；采用 macOS 默认系统字体与较小字号，卡片之间保留 12 px 间距。点击外部区域或按 Esc 收起预览；关闭主窗口后仍继续采集。
+- 设置的“应用”页支持自动更新开关和“检查并更新”；Mac 使用同一 GitHub Release 中的 `Codexio.dmg` 与 `latest-macos.json`，下载校验后自动重启安装，源码与模拟模式不安装更新。
 - 设置支持主题、额度刷新间隔、预览尺寸与额度范围、启动时是否显示主界面、日志来源列、Codex 路径、本机／SSH 数据来源、模型定价与订阅资料。
 - 支持 ⌘K 搜索、⌘, 设置、⌘R 刷新、⌘W 关闭窗口、⌘Q 退出；重复启动会打开已有实例。
 - 自动发现 `/Applications`、`~/Applications` 下的 `Codex.app` 和 `ChatGPT.app` 内置 CLI，以及 Homebrew、常见 CLI 安装路径。也可在设置中指定 `.app` 或 CLI 路径。
@@ -36,9 +37,9 @@ Mac 端复用 Windows 主界面与计价、去重、请求分组和历史统计�
 open build/macos/Codexio.app
 ```
 
-构建先进入 `build/release-staging/macos`，通过原生界面冒烟检查和签名验证后交付至 `build/macos/Codexio.app`；`--dmg` 额外生成 `build/macos/Codexio.dmg`。保留 Windows 的 `dist/Codexio.exe` 交付约定。目标应用正在运行时保留原文件与暂存新版，不结束用户进程。
+构建先进入 `build/release-staging/macos`，通过原生界面冒烟检查和签名验证后交付至 `build/macos/Codexio.app`；`--dmg` 额外生成 `build/macos/Codexio.dmg` 和 `build/macos/latest-macos.json`。保留 Windows 的 `dist/Codexio.exe` 交付约定。目标应用正在运行时保留原文件与暂存新版，不结束用户进程。
 
-Mac 包按构建机器的架构生成。当前在 Apple Silicon Mac 上验证，使用本地 ad-hoc 签名，尚未配置 Developer ID 签名、公证或 Mac 自动更新。详细开发与验证说明见 [macOS 开发说明](docs/macos.md)。
+Mac 包按构建机器的架构生成。当前在 Apple Silicon Mac 上验证，使用本地 ad-hoc 签名，尚未配置 Developer ID 签名或公证。Mac 新版需在获得发布授权后将 DMG 与更新清单一起上传到正式 GitHub Release；相同版本不触发更新。详细开发与验证说明见 [macOS 开发说明](docs/macos.md)。
 
 ## Windows 环境要求
 

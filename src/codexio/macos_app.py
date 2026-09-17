@@ -8,7 +8,7 @@ import sys
 from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import QLockFile, QObject, Qt, QUrl
+from PySide6.QtCore import QLockFile, QObject, Qt, QTimer, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QFontDatabase, QKeySequence
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenuBar, QMessageBox
@@ -24,6 +24,8 @@ from codexio.server_usage_monitor import ServerUsageMonitor
 from codexio.settings import data_dir, load_settings, save_settings
 from codexio.usage_worker import UsageWorker
 from codexio.worker import QuotaWorker
+from codexio.update_manager import UpdateManager
+from codexio.update_installer import acknowledge_update
 
 
 class SingleInstance(QObject):
@@ -72,7 +74,7 @@ class MacController(QObject):
         self.closing = False
         self.settings = load_settings()
         self.config = load_analytics_config()
-        self.config.update(widget_visible=False, auto_update=False)
+        self.config.update(widget_visible=False)
         save_analytics_config(self.config)
         self.worker = QuotaWorker(self.settings, mock=mock)
         self.usage = UsageWorker(self.config, mock=mock)
@@ -82,7 +84,10 @@ class MacController(QObject):
             "sync_prices": self.usage.request_sync, "price_override": self.usage.set_price_override,
             "quit": self.quit, "rescan": self.usage.rescan, "assign_history": self.assign_history,
             "main_hidden": self.save_geometry, "open_data_directory": self.open_data_directory,
+            "check_update": lambda: self.updater.check(),
         }, app, factory=partial(Dashboard, desktop_platform="macos"))
+        self.updater = UpdateManager(app, self.quit, available=False if mock else None)
+        self.updater.status_changed.connect(self.dashboard_host.set_update_status)
         self.menu_bar = MenuBarController(app, self.settings, self.config,
                                           on_open=self.open_main, on_quit=self.quit)
         self._build_application_menu()
@@ -127,6 +132,13 @@ class MacController(QObject):
         self.usage.start()
         self.worker.start()
         self.server_usage.start()
+        self.updater.start(bool(self.config.get("macos_auto_update", True)))
+        QTimer.singleShot(1500, self.acknowledge_restart)
+
+    def acknowledge_restart(self):
+        message = acknowledge_update()
+        if message:
+            self.dashboard_host.set_update_status(message, False)
 
     def open_main(self, page="overview", period=None):
         if self.closing:
@@ -174,8 +186,9 @@ class MacController(QObject):
 
     def apply_config(self, config):
         self.config = copy.deepcopy(config)
-        self.config.update(widget_visible=False, auto_update=False)
+        self.config.update(widget_visible=False)
         save_analytics_config(self.config)
+        self.updater.set_enabled(bool(self.config.get("macos_auto_update", True)))
         self.usage.update_config(self.config)
         self.server_usage.update_config(self.config)
         self.dashboard_host.config_updated(self.config)
@@ -201,6 +214,7 @@ class MacController(QObject):
         if self.closing:
             return
         self.closing = True
+        self.updater.stop()
         self.menu_bar.stop()
         self.dashboard_host.save_geometry()
         save_settings(self.settings)

@@ -1447,17 +1447,15 @@ class Dashboard(QMainWindow):
         sources.addLayout(maintenance)
         sources.addStretch()
         updates = section("应用", "Codexio " + __version__ + (" · macOS" if self._is_macos else ""))
-        if not self._is_macos:
-            self._auto_update = QCheckBox("自动下载更新")
-            self._auto_update.toggled.connect(self._set_auto_update)
-            updates.addWidget(self._auto_update)
-            self._check_update = QPushButton("检查并更新")
-            self._check_update.clicked.connect(lambda: self._callback("check_update"))
-            updates.addWidget(self._check_update, alignment=Qt.AlignmentFlag.AlignLeft)
-            self._update_status = plain_label("", muted=True, wrap=True)
-            updates.addWidget(self._update_status)
-        else:
-            updates.addWidget(plain_label("本地开发版，重新构建 Codexio.app 即可更新。", muted=True, wrap=True))
+        self._auto_update = QCheckBox("自动下载更新")
+        self._auto_update.toggled.connect(self._set_auto_update)
+        updates.addWidget(self._auto_update)
+        self._check_update = QPushButton("检查并更新")
+        self._check_update.clicked.connect(lambda: self._callback("check_update"))
+        updates.addWidget(self._check_update, alignment=Qt.AlignmentFlag.AlignLeft)
+        self._update_status = plain_label("", muted=True, wrap=True)
+        updates.addWidget(self._update_status)
+        if self._is_macos:
             data_button = QPushButton("打开数据目录")
             data_button.clicked.connect(lambda: self._callback("open_data_directory"))
             updates.addWidget(data_button, alignment=Qt.AlignmentFlag.AlignLeft)
@@ -1748,7 +1746,7 @@ class Dashboard(QMainWindow):
                 self._restore_page_state(name)
                 self._preview_widget()
                 self._update_sources_status()
-                if self._update_message and not self._is_macos:
+                if self._update_message:
                     message, busy = self._update_message
                     self._update_status.setText(message)
                     self._check_update.setEnabled(not busy)
@@ -2008,10 +2006,9 @@ class Dashboard(QMainWindow):
             self._auto_sync.setChecked(bool(self._config.get("auto_sync_prices", True)))
             self._auto_sync.blockSignals(False)
         elif name == "settings":
-            if not self._is_macos:
-                self._auto_update.blockSignals(True)
-                self._auto_update.setChecked(bool(self._config.get("auto_update", True)))
-                self._auto_update.blockSignals(False)
+            self._auto_update.blockSignals(True)
+            self._auto_update.setChecked(bool(self._config.get("macos_auto_update" if self._is_macos else "auto_update", True)))
+            self._auto_update.blockSignals(False)
             self._theme_combo.blockSignals(True)
             self._theme_combo.setCurrentIndex(max(0, self._theme_combo.findData(self._theme)))
             self._theme_combo.blockSignals(False)
@@ -2072,7 +2069,7 @@ class Dashboard(QMainWindow):
     def _set_auto_update(self, value: bool) -> None:
         if self._loading:
             return
-        self._config["auto_update"] = value
+        self._config["macos_auto_update" if self._is_macos else "auto_update"] = value
         self._callback("config", copy.deepcopy(self._config))
 
     def _update_trend_filter_options(self) -> None:
