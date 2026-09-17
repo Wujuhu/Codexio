@@ -30,15 +30,18 @@ def refuse_running(bundle):
 
 
 def build_icon():
+    # Each ICNS representation is rendered directly from SVG, including the
+    # 1024-pixel Retina image. Never enlarge a pre-rendered PNG.
+    from codexio.app_icon import render_app_image
     resources = BUILD / "macos-resources"
     iconset = resources / "Codexio.iconset"
     iconset.mkdir(parents=True, exist_ok=True)
-    source = ROOT / "src/codexio/icons/app.png"
     for size in (16, 32, 128, 256, 512):
         for scale in (1, 2):
             suffix = "@2x" if scale == 2 else ""
             target = iconset / f"icon_{size}x{size}{suffix}.png"
-            run("sips", "-z", size * scale, size * scale, source, "--out", target, stdout=subprocess.DEVNULL)
+            if not render_app_image(size * scale).save(str(target), "PNG"):
+                raise RuntimeError(f"无法生成图标：{target}")
     run("iconutil", "-c", "icns", iconset, "-o", resources / "Codexio.icns")
 
 

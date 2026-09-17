@@ -42,14 +42,14 @@ def test_default_groups_full_request_and_can_switch_to_calls(app):
     assert window._log_mode.currentData() == "user_request"
     assert window._log_table.rowCount() == 1
     assert [window._log_table.horizontalHeaderItem(i).text() for i in range(8)] == [
-        "用户请求 / 发起时间", "模型", "档位", "输入 / 输出", "API 等价", "耗时", "状态", "来源"]
+        "用户请求 / 发起时间", "模型", "档位", "输入 / 输出", "费用", "耗时", "状态", "来源"]
     assert window._log_table.item(0, 2).text() == "Mixed"
     assert window._log_table.item(0, 4).text().splitlines()[0] == "$4.00"
     assert window._log_table.item(0, 6).text() == "回复中"
     window._log_mode.setCurrentIndex(window._log_mode.findData("model_call"))
     assert window._log_table.rowCount() == 2
     assert [window._log_table.horizontalHeaderItem(i).text() for i in range(7)] == [
-        "关联输入 / 计量时间", "模型", "档位", "输入 / 输出", "API 等价", "耗时", "来源"]
+        "关联输入 / 计量时间", "模型", "档位", "输入 / 输出", "费用", "耗时", "来源"]
     assert not hasattr(window, "_request_filter_hint")
     window.deleteLater()
 

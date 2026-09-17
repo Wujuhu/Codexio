@@ -149,14 +149,14 @@ QTableView#requestLogTable QHeaderView { background: %(header_bg)s; }
 QTableView#requestLogTable QHeaderView::section { padding: 10px 6px; }
 QTableView QTableCornerButton::section { background: %(header_bg)s; border: none; }
 QScrollArea { background: transparent; border: none; }
-QScrollBar:vertical { background: %(scroll_track)s; width: 16px; margin: 0; border: none; border-radius: 7px; }
-QScrollBar::handle:vertical { background: %(scroll_thumb)s; min-height: 48px; border: 2px solid %(scroll_track)s; border-radius: 7px; }
+QScrollBar:vertical { background: transparent; width: 10px; margin: 0; border: none; border-radius: 5px; }
+QScrollBar::handle:vertical { background: %(scroll_thumb)s; min-height: 32px; border: 2px solid transparent; border-radius: 5px; }
 QScrollBar::handle:vertical:hover { background: %(scroll_hover)s; }
 QScrollBar::handle:vertical:pressed { background: %(scroll_pressed)s; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; border: none; background: transparent; }
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
-QScrollBar:horizontal { background: %(scroll_track)s; height: 16px; margin: 0; border: none; border-radius: 7px; }
-QScrollBar::handle:horizontal { background: %(scroll_thumb)s; min-width: 48px; border: 2px solid %(scroll_track)s; border-radius: 7px; }
+QScrollBar:horizontal { background: transparent; height: 10px; margin: 0; border: none; border-radius: 5px; }
+QScrollBar::handle:horizontal { background: %(scroll_thumb)s; min-width: 32px; border: 2px solid transparent; border-radius: 5px; }
 QScrollBar::handle:horizontal:hover { background: %(scroll_hover)s; }
 QScrollBar::handle:horizontal:pressed { background: %(scroll_pressed)s; }
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; border: none; background: transparent; }
@@ -206,15 +206,13 @@ QFrame#requestInspector { background: %(inspector_surface)s; border: 1px solid %
 QFrame#requestInspector QWidget { background: transparent; }
 QWidget#inspectorSessionTitle { font-size: 20px; font-weight: 600; }
 QFrame#requestInspector QFrame[callSummary="true"] { border: none; border-bottom: 1px solid %(inspector_border)s; }
-QFrame#requestInspector QScrollBar:vertical { background: %(inspector_surface)s; }
-QFrame#requestInspector QScrollBar::handle:vertical { border-color: %(inspector_surface)s; }
 QListWidget#settingsSections { background: transparent; border: none; }
 QListWidget#settingsSections::item { padding: 11px 9px; border: none; border-radius: 7px; color: %(muted)s; }
 QListWidget#settingsSections::item:selected { background: %(raised)s; color: %(text)s; }
 QTableView#resetCreditTable { background: %(surface)s; border: none; border-radius: 0; }
 QTableView#resetCreditTable QHeaderView::section { background: %(surface)s; }
-QScrollBar:vertical { width: 10px; border-radius: 5px; }
-QScrollBar:horizontal { height: 10px; border-radius: 5px; }
+QScrollBar[scrollActive="false"]::handle:vertical,
+QScrollBar[scrollActive="false"]::handle:horizontal { background: transparent; border-color: transparent; }
 QProgressBar::chunk { background: %(accent)s; }
 
 """ % c
@@ -222,6 +220,8 @@ QProgressBar::chunk { background: %(accent)s; }
 
 def apply_theme(widget: QWidget, name: str = "system") -> dict[str, str]:
     ensure_ui_fonts()
+    from codexio.transient_scrollbars import install_transient_scrollbars
+    install_transient_scrollbars()
     colors = theme_colors(name)
     palette = widget.palette()
     for role, key in ((QPalette.ColorRole.Window, "bg"), (QPalette.ColorRole.WindowText, "text"),

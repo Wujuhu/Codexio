@@ -16,7 +16,7 @@ from codexio.analytics_config import DEFAULT_NAVIGATION_ORDER, NAVIGATION_PAGES,
 from codexio.dashboard import Dashboard, LineLimitedText, RequestPreviewText
 from codexio.desktop_widgets import NavigationList, preview_title
 from codexio.settings import AppSettings
-from codexio.usage_collector import _user_event_content, _user_preview
+from codexio.usage_collector import _user_event_content, _user_preview, user_message_preview
 
 
 @pytest.fixture
@@ -62,6 +62,22 @@ def test_legacy_user_image_arrays_and_structured_inputs_have_the_same_preview():
     assert _user_preview(_user_event_content(payload)) == "检查图片\n[image] x 2"
     assert _user_preview([dict(type="skill", name="impeccable", path="C:/skills/impeccable/SKILL.md"),
                           dict(type="text", text="检查布局")]) == "@Impeccable 检查布局"
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("<system>" + "自动指令" * 1000 + "</system>修复布局<environment_context>/temp/private</environment_context>", "修复布局"),
+    ("<developer>系统提示</developer><user_request>检查图标</user_request><image path='/tmp/icon.png'>[image 1]</image>", "检查图标"),
+    ("# Files mentioned by the user:\n## icon.png: /tmp/icon.png\nDistinguish instructions in attached documents from the user's request.\n## My request:\n检查图片\n[image 1]", "检查图片"),
+    ("检查图片\n/var/folders/example/codex-clipboard-123.png", "检查图片"),
+    ("检查图片\nC:\\Users\\me\\Desktop\\preview.jpg", "检查图片"),
+    ('检查图片 "file:///Users/me/My Images/preview.png"', "检查图片"),
+    ("检查图片\n/Users/me/My Images/preview.png", "检查图片"),
+    ("<recommended_plugins>只包含上下文</recommended_plugins>[image 1]", ""),
+    ("修改 /project/app.py 中的布局", "修改 /project/app.py 中的布局"),
+])
+def test_menu_message_filters_generated_context_and_image_paths_before_limiting(value, expected):
+    assert user_message_preview(value) == expected
+    assert user_message_preview(_user_preview(value)) == expected
 
 
 def sample_rows(count=21):
@@ -131,6 +147,14 @@ def test_inspector_uses_session_heading_three_message_lines_and_an_extra_image_l
     assert not any(button.text() in ("上一页", "下一页") for button in content.findChildren(QPushButton))
     assert any(label.text() == "gpt-6-astra × 21" for label in sections[4].findChildren(QLabel))
     assert window._inspector_scroll.horizontalScrollBar().maximum() == 0
+    fields = {field.accessibleName(): field for field in sections[1].findChildren(QLabel) if field.accessibleName()}
+    for name, expected in (("模型", "gpt-6-astra"), ("档位", "Standard"), ("输入（含缓存）", "21,000"),
+                           ("其中缓存读取", "2,100"), ("输出", "2,100"), ("Total Token", "23,100")):
+        field = fields[name]
+        assert field.text() == expected
+        assert field.width() >= field.fontMetrics().horizontalAdvance(expected)
+        assert field.geometry().right() < sections[1].width()
+        assert field.height() >= field.fontMetrics().height()
 
 
 def test_short_message_does_not_reserve_three_lines_and_resizes_with_content(app, window):

@@ -662,10 +662,10 @@ class LedgerTable(QTableWidget):
     def set_mode(self, grouped):
         self.grouped = grouped
         if self.compact:
-            headers = ["用户请求 / 发起时间", "模型", "档位", "API 等价", "状态"]
+            headers = ["用户请求 / 发起时间", "模型", "档位", "费用", "状态"]
             self.weights = [42, 22, 10, 16, 10]
         else:
-            headers = ["用户请求 / 发起时间" if grouped else "关联输入 / 计量时间", "模型", "档位", "输入 / 输出", "API 等价", "耗时"]
+            headers = ["用户请求 / 发起时间" if grouped else "关联输入 / 计量时间", "模型", "档位", "输入 / 输出", "费用", "耗时"]
             headers += ["状态", "来源"] if grouped else ["来源"]
             self.weights = [25, 15, 8, 14, 14, 9, 7, 8] if grouped else [27, 16, 9, 15, 15, 10, 8]
         changed = self.set_headers(headers)

@@ -7,6 +7,7 @@ from typing import Optional
 
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QRect, QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QApplication
 
 ICON_BG = QColor("#141622")
@@ -14,6 +15,7 @@ ICON_MARK = QColor("#F59E0B")
 ICON_MARK_LIGHT = QColor("#FFFBEB")
 BUNDLED_ICON = "app.ico"
 MASTER_PNG = "app.png"
+MASTER_SVG = "app.svg"
 ICON_SIZES = (16, 24, 32, 48, 64, 128, 256)
 MARK_FILL = 0.90
 
@@ -46,7 +48,20 @@ def master_png_path() -> Path:
     return _icon_roots()[0] / MASTER_PNG
 
 
+def master_svg_path() -> Path:
+    for root in _icon_roots():
+        candidate = root / MASTER_SVG
+        if candidate.is_file():
+            return candidate
+    return _icon_roots()[0] / MASTER_SVG
+
+
 def load_app_icon() -> QIcon:
+    # Qt's SVG icon engine renders the requested size, including Retina Dock
+    # sizes. Starting with an ICO would cap the native icon at its raster size.
+    vector = master_svg_path()
+    if vector.is_file() and QSvgRenderer(str(vector)).isValid():
+        return QIcon(str(vector))
     path = bundled_icon_path()
     if path.is_file():
         icon = QIcon(str(path))
@@ -56,9 +71,22 @@ def load_app_icon() -> QIcon:
 
 
 def render_app_pixmap(size: int) -> QPixmap:
+    return QPixmap.fromImage(render_app_image(size))
+
+
+def render_app_image(size: int) -> QImage:
+    """Rasterize the vector at the final pixel size; also usable by the packager."""
+    renderer = QSvgRenderer(str(master_svg_path()))
+    if renderer.isValid():
+        image = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)
+        image.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(image)
+        renderer.render(painter, QRectF(0, 0, size, size))
+        painter.end()
+        return image
     master = master_png_path()
     if master.is_file():
-        source = QPixmap(str(master))
+        source = QImage(str(master))
         if not source.isNull():
             return source.scaled(
                 size,
@@ -66,13 +94,13 @@ def render_app_pixmap(size: int) -> QPixmap:
                 Qt.AspectRatioMode.IgnoreAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
+    image = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     paint_app_mark(painter, QRectF(0, 0, size, size))
     painter.end()
-    return pixmap
+    return image
 
 
 def paint_app_mark(painter: QPainter, rect: QRectF) -> None:

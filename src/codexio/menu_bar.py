@@ -15,11 +15,13 @@ from PySide6.QtWidgets import (
 
 from codexio.app_icon import render_app_pixmap
 from codexio.charts import compact_number, parse_timestamp
+from codexio.dashboard import LineLimitedText
 from codexio.money import usd
 from codexio.rate_limits import QuotaState, QuotaStatus, format_reset_time, stale_after_seconds
 from codexio.settings import AppSettings
 from codexio.theme import apply_theme, theme_colors
 from codexio.user_requests import REQUEST_STATUSES
+from codexio.usage_collector import user_message_preview
 
 
 def label(text="", *, name="", muted=False):
@@ -78,8 +80,8 @@ class QuotaPreview(QFrame):
         super().__init__()
         self.setProperty("previewCard", True)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(7)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(5)
         row = QHBoxLayout()
         row.addWidget(label(title))
         self.value = label("—", name="quotaValue")
@@ -89,7 +91,7 @@ class QuotaPreview(QFrame):
         self.bar.setRange(0, 100)
         self.bar.setValue(0)
         self.bar.setTextVisible(False)
-        self.bar.setFixedHeight(8)
+        self.bar.setFixedHeight(6)
         layout.addWidget(self.bar)
         self.reset = label("重置时间待获取", muted=True)
         layout.addWidget(self.reset)
@@ -135,11 +137,11 @@ class MenuBarPreview(QFrame):
         surface.setObjectName("previewSurface")
         layout.addWidget(surface)
         self.body = QVBoxLayout(surface)
-        self.body.setContentsMargins(20, 18, 20, 18)
-        self.body.setSpacing(14)
+        self.body.setContentsMargins(16, 14, 16, 14)
+        self.body.setSpacing(10)
         header = QHBoxLayout()
         icon = label()
-        brand_pixmap = render_app_pixmap(64)
+        brand_pixmap = render_app_pixmap(48)
         brand_pixmap.setDevicePixelRatio(2)
         icon.setPixmap(brand_pixmap)
         header.addWidget(icon)
@@ -159,22 +161,25 @@ class MenuBarPreview(QFrame):
         self.today_heading = label("今日用量", name="previewHeading")
         self.body.addWidget(self.today_heading)
         stats = QHBoxLayout()
-        stats.setSpacing(12)
+        stats.setSpacing(10)
         self.today_cost, self.cost_note = self._stat(stats, "今日费用", "previewCost")
         self.today_tokens, self.token_note = self._stat(stats, "今日 Token 总数", "previewTokens")
         self.body.addLayout(stats)
         latest = QFrame()
         latest.setProperty("previewCard", True)
         last = QVBoxLayout(latest)
-        last.setContentsMargins(16, 12, 16, 12)
-        last.setSpacing(5)
+        last.setContentsMargins(12, 10, 12, 10)
+        last.setSpacing(7)
         row = QHBoxLayout()
-        row.addWidget(label("最近一次请求", muted=True), 1)
+        row.addWidget(label("最近一次请求", muted=True))
         self.latest_status = label("", muted=True)
-        row.addWidget(self.latest_status)
-        last.addLayout(row)
+        row.addWidget(self.latest_status, 1)
         self.latest_cost = label("—", name="previewLatestCost")
-        last.addWidget(self.latest_cost)
+        row.addWidget(self.latest_cost)
+        last.addLayout(row)
+        self.latest_message = LineLimitedText("等待用户消息", max_lines=3, fit_content=True)
+        self.latest_message.setObjectName("previewMessage")
+        last.addWidget(self.latest_message)
         self.latest_note = label("等待用量记录", muted=True)
         self.latest_note.setWordWrap(True)
         last.addWidget(self.latest_note)
@@ -183,7 +188,7 @@ class MenuBarPreview(QFrame):
         self.usage_status.setWordWrap(True)
         self.body.addWidget(self.usage_status)
         actions = QHBoxLayout()
-        self.open_button = QPushButton("显示主界面")
+        self.open_button = QPushButton("打开主界面")
         self.open_button.setProperty("primary", True)
         self.open_button.clicked.connect(lambda: self._open("overview"))
         actions.addWidget(self.open_button, 1)
@@ -203,8 +208,8 @@ class MenuBarPreview(QFrame):
         frame = QFrame()
         frame.setProperty("previewCard", True)
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(16, 13, 16, 13)
-        layout.setSpacing(7)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(4)
         layout.addWidget(label(title, muted=True))
         value = label("—", name=name)
         layout.addWidget(value)
@@ -220,14 +225,19 @@ class MenuBarPreview(QFrame):
     def configure(self, settings, config):
         self._settings = settings.normalized()
         self._theme = config.get("theme", "system")
-        self.setFixedWidth(520 if self._settings.menu_bar_preview_size == "large" else 460)
+        self.setFixedWidth(440 if self._settings.menu_bar_preview_size == "large" else 380)
         colors = apply_theme(self, self._theme)
         self.setStyleSheet(self.styleSheet() + """
-QFrame#previewSurface { background: %(bg)s; border: 1px solid %(border)s; border-radius: 16px; }
-QFrame[previewCard="true"] { background: %(surface)s; border: none; border-radius: 11px; }
-QLabel#previewBrand { font-size: 23px; font-weight: 600; }
-QLabel#previewHeading, QLabel#quotaValue { font-size: 13px; font-weight: 600; }
-QLabel#previewCost, QLabel#previewTokens, QLabel#previewLatestCost { font-size: 28px; font-weight: 600; }
+QWidget { font-size: 11px; }
+QPushButton { padding: 5px 9px; border-radius: 6px; }
+QProgressBar { min-height: 6px; max-height: 6px; }
+QFrame#previewSurface { background: %(bg)s; border: 1px solid %(border)s; border-radius: 13px; }
+QFrame[previewCard="true"] { background: %(surface)s; border: none; border-radius: 9px; }
+QLabel#previewBrand { font-size: 18px; font-weight: 600; }
+QLabel#previewHeading, QLabel#quotaValue { font-size: 11px; font-weight: 600; }
+QLabel#previewCost, QLabel#previewTokens { font-size: 23px; font-weight: 600; }
+QLabel#previewLatestCost { font-size: 20px; font-weight: 600; }
+QWidget#previewMessage { font-size: 12px; }
 QLabel#previewCost, QLabel#previewLatestCost { color: %(chart_cost_ink)s; }
 QLabel#previewTokens { color: %(chart_tokens_ink)s; }
 """ % colors)
@@ -243,6 +253,10 @@ QLabel#previewTokens { color: %(chart_tokens_ink)s; }
         # Keep only what the preview needs, not the full main-window snapshot.
         self._data = {key: copy.deepcopy(data.get(key)) for key in
                       ("menu_bar_today", "today_date", "latest_request", "updated_at", "sources_complete", "scan_status")}
+        latest = self._data.get("latest_request") or {}
+        message = user_message_preview(latest.get("prompt_preview"))
+        self.latest_message.set_text(message or ("未记录用户文字" if latest else "等待用户消息"))
+        self.latest_message.setToolTip(message)
         if self.isVisible():
             self.render()
 
@@ -282,7 +296,7 @@ QLabel#previewTokens { color: %(chart_tokens_ink)s; }
         skipped = today.get("skipped") or {}
         wholly_unpriced = amount is None and bool(skipped.get("usd"))
         self.today_cost.setText(cost_text(amount, "unpriced" if wholly_unpriced else "priced"))
-        self.cost_note.setText("等待价格数据" if wholly_unpriced else "部分未定价" if skipped.get("usd") else "API 等价费用")
+        self.cost_note.setText("等待价格数据" if wholly_unpriced else "部分未定价" if skipped.get("usd") else "USD")
         self.token_note.setToolTip("按已确认数据计算" if skipped.get("tokens") else "输入 + 输出，含缓存 Token")
         latest = data.get("latest_request") or {}
         self.latest_cost.setText(cost_text(latest.get("cost_usd"), latest.get("pricing_status", "priced")))
@@ -295,7 +309,7 @@ QLabel#previewTokens { color: %(chart_tokens_ink)s; }
         count = latest.get("model_call_count") or latest.get("call_count")
         if count:
             detail += f"{count} 次模型调用 · "
-        detail += "本轮累计，仍在更新" if request_status == "running" else "整轮 API 等价费用"
+        detail += "本轮费用仍在更新" if request_status == "running" else "整轮费用"
         if latest.get("pricing_status") == "partial":
             detail += " · 部分未定价"
         self.latest_note.setText(detail if latest else "尚无用户请求记录")

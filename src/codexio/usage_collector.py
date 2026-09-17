@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-PARSER_VERSION = 7
+PARSER_VERSION = 8
 PREVIEW_LIMIT = 600
 COUNTERS = ("input_tokens", "cached_input_tokens", "cache_write_input_tokens",
             "output_tokens", "reasoning_output_tokens", "total_tokens")
@@ -96,7 +96,14 @@ def _plain(value, limit=400) -> str:
 def _request_text(value):
     """Remove generated wrappers before formatting the actual user's words."""
     text = value.strip() if isinstance(value, str) else ""
-    envelope = re.compile(r"^<(recommended_plugins|environment_context|permissions|INSTRUCTIONS|user_instructions|developer_instructions|skills_instructions|skill_instructions|system|app-context)(?:\s[^>]*)?>")
+    # Context can be before or after the user's message, or in its own content
+    # block. Strip it before the preview limit so it cannot consume that budget.
+    tags = (r"recommended_plugins|environment_context|permissions(?: instructions)?|INSTRUCTIONS|"
+            r"user_instructions|developer_instructions|skills_instructions|skill_instructions|"
+            r"system|developer|system-reminder|app-context|collaboration_mode|multi_agent_role|multi_agent_mode")
+    text = re.sub(r"<(" + tags + r")(?:\s[^>]*)?>.*?</\1\s*>", " ", text,
+                  flags=re.DOTALL | re.IGNORECASE).strip()
+    envelope = re.compile(r"^<(" + tags + r")(?:\s[^>]*)?>", re.IGNORECASE)
     while True:
         match = envelope.match(text)
         if match is None:
@@ -118,7 +125,7 @@ def _request_text(value):
                  "# Files mentioned by the user:")
     if text.lstrip().startswith(wrappers):
         return ""
-    return text
+    return re.sub(r"(?m)^Distinguish instructions in attached documents from the user's request\.\s*", "", text).strip()
 
 
 def _short_mention(name):
@@ -150,7 +157,18 @@ def _user_preview(value) -> str:
         placeholder_images.append(int(match.group(1) or 1))
         return " "
     text = re.sub(r"\[image(?:\s*#?\s*\d+)?\](?:\s*[x×]\s*(\d+))?", image_marker, text, flags=re.IGNORECASE)
-    image_count = structured_images or (xml_images + markdown_images + sum(placeholder_images))
+    # Some older clients serialized local image attachments as bare paths.
+    # Keep ordinary source-code paths in the user's prose, but never image paths.
+    image_extension = r"\.(?:png|jpe?g|gif|webp|heic|heif|tiff?|bmp|avif)"
+    path_start = r"(?:file://(?:localhost)?/|[A-Za-z]:[\\/]|~/|/)"
+    text, quoted_images = re.subn(r"([\"'])" + path_start + r"[^\r\n]*?" + image_extension + r"\1",
+                                  " ", text, flags=re.IGNORECASE)
+    text, path_lines = re.subn(r"(?m)^\s*" + path_start + r"[^\r\n]*?" + image_extension + r"\s*$",
+                              " ", text, flags=re.IGNORECASE)
+    text, path_images = re.subn(
+        r"(?<![\w:/])" + path_start + r"[^\s<>\"\n]*?" + image_extension + r"(?=$|[\s\]\)>,，。])",
+        " ", text, flags=re.IGNORECASE)
+    image_count = structured_images or (xml_images + markdown_images + quoted_images + path_lines + path_images + sum(placeholder_images))
 
     def mention_link(match):
         label, target = match.group(1), match.group(2).strip("<>")
@@ -168,6 +186,11 @@ def _user_preview(value) -> str:
     if len(body) > budget:
         body = body[:max(0, budget - 1)].rstrip() + "…"
     return (body + "\n" + footer).strip() if footer else body
+
+
+def user_message_preview(value) -> str:
+    """Only the user's words, without generated context or attachment metadata."""
+    return re.sub(r"(?:^|\n)\[image\] x \d+$", "", _user_preview(value)).strip()
 
 
 def _user_event_content(payload):

@@ -10,16 +10,13 @@
       <stop offset="70%" stop-color="#F59E0B" />
       <stop offset="100%" stop-color="#D97706" />
     </linearGradient>
-    <filter id="core-glow" x="-100%" y="-100%" width="300%" height="300%">
-      <feDropShadow dx="0" dy="8" stdDeviation="16" flood-color="#F59E0B" flood-opacity="0.35" />
-    </filter>
   </defs>
   <rect x="32" y="32" width="448" height="448" rx="120" fill="url(#bg-grad)" stroke="#2D3248" stroke-width="6" />
   <rect x="48" y="48" width="416" height="416" rx="104" fill="none" stroke="#1A1E2E" stroke-width="3" />
   <g transform="translate(256, 256)">
     <path d="M -60,-120 L -136,0 L -60,120" fill="none" stroke="#FFFFFF" stroke-width="38" stroke-linecap="round" stroke-linejoin="round"/>
     <path d="M 60,-120 L 136,0 L 60,120" fill="none" stroke="#FFFFFF" stroke-width="38" stroke-linecap="round" stroke-linejoin="round"/>
-    <g filter="url(#core-glow)">
+    <g>
       <line x1="-32" y1="-32" x2="32" y2="32" stroke="url(#amber-x)" stroke-width="14" stroke-linecap="round"/>
       <line x1="-32" y1="32" x2="32" y2="-32" stroke="url(#amber-x)" stroke-width="14" stroke-linecap="round"/>
       <circle cx="0" cy="0" r="6.5" fill="#FFFFFF"/>

@@ -6,7 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
-from codexio.app_icon import bundled_icon_path, load_app_icon, master_png_path
+from codexio.app_icon import bundled_icon_path, load_app_icon, master_png_path, master_svg_path, render_app_image
 from codexio.rate_limits import QuotaState
 from codexio.tray import TrayController
 
@@ -42,3 +42,20 @@ def test_tray_keeps_app_icon() -> None:
     tray.update_state(QuotaState.empty(), show_five=True)
     assert tray._tray.icon().isNull() is False
     assert tray._tray.icon().pixmap(32, 32).isNull() is False
+
+
+def test_svg_icon_renders_real_retina_sizes_without_upscaling():
+    from PySide6.QtCore import Qt
+    QApplication.instance() or QApplication([])
+    assert master_svg_path().is_file()
+    icon = load_app_icon()
+    for size in (16, 32, 64, 128, 256, 512, 1024):
+        rendered = render_app_image(size)
+        assert rendered.width() == rendered.height() == size
+        assert rendered.pixelColor(0, 0).alpha() == 0
+        assert icon.pixmap(size, size).width() == size
+    # A rendered 1024-pixel vector must not equal an enlargement of the 256px
+    # image. This guards both the runtime icon and the shared ICNS build path.
+    enlarged = render_app_image(256).scaled(1024, 1024, Qt.AspectRatioMode.IgnoreAspectRatio,
+                                          Qt.TransformationMode.SmoothTransformation)
+    assert render_app_image(1024) != enlarged

@@ -1092,7 +1092,7 @@ class Dashboard(QMainWindow):
         self._overview_tokens = plain_label("—")
         self._overview_calls = plain_label("—")
         self._overview_comparisons = {}
-        for key, label, value in (("usd", "API 等价费用", self._overview_cost),
+        for key, label, value in (("usd", "费用", self._overview_cost),
                                  ("tokens", "Total Token", self._overview_tokens),
                                  ("requests", "模型调用", self._overview_calls)):
             box, content = card()
@@ -1186,7 +1186,7 @@ class Dashboard(QMainWindow):
         metrics.setContentsMargins(0, 0, 0, 0)
         metrics.setSpacing(16)
         self._trend_metric_values, self._trend_comparisons = {}, {}
-        for key, title in (("usd", "API 等价费用"), ("tokens", "Total Token"), ("requests", "模型调用")):
+        for key, title in (("usd", "费用"), ("tokens", "Total Token"), ("requests", "模型调用")):
             box, content = card()
             content.setSpacing(9)
             content.addWidget(plain_label(title, muted=True))
@@ -1389,7 +1389,7 @@ class Dashboard(QMainWindow):
             for key, label, choices in (
                 ("refresh_interval_seconds", "额度刷新", (("30 秒", 30), ("1 分钟", 60), ("5 分钟", 300))),
                 ("quota_scope", "预览额度", (("自动", "auto"), ("5 小时与周额度", "both"), ("仅周额度", "week"))),
-                ("menu_bar_preview_size", "预览大小", (("舒适 · 460 px", "comfortable"), ("宽敞 · 520 px", "large"))),
+                ("menu_bar_preview_size", "预览大小", (("紧凑 · 380 px", "comfortable"), ("宽敞 · 440 px", "large"))),
             ):
                 field = combo(choices, getattr(self._settings, key))
                 field.setMaximumWidth(280)
@@ -1400,7 +1400,7 @@ class Dashboard(QMainWindow):
             self._setting_widgets["show_main_on_startup"] = startup
             form.addRow("启动行为", startup)
             menu_bar.addLayout(form)
-            menu_bar.addWidget(plain_label("用量按本机日期统计；金额沿用主界面的 API 等价费用。", muted=True, wrap=True))
+            menu_bar.addWidget(plain_label("用量按本机日期统计；费用与主界面一致。", muted=True, wrap=True))
             menu_bar.addStretch()
         else:
             self._build_floating_settings(section)
@@ -2941,12 +2941,15 @@ class Dashboard(QMainWindow):
         value = plain_label(cost_lines[0], wrap=True)
         value.setProperty("metric", True)
         summary.addWidget(value)
-        caption = "API 等价 · " + ("整轮累计" if grouped else "本次调用")
+        caption = "费用 · " + ("整轮累计" if grouped else "本次调用")
         if len(cost_lines) > 1:
             caption += " · " + " · ".join(cost_lines[1:])
         summary.addWidget(plain_label(caption, muted=True, wrap=True))
-        form = QFormLayout()
+        form = QGridLayout()
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setHorizontalSpacing(12)
         form.setVerticalSpacing(12)
+        form.setColumnStretch(1, 1)
         fields = [("模型", record.get("model") or "未知模型"), ("档位", tier_label(record)),
                   ("输入（含缓存）", format(int(record.get("input_tokens") or 0), ",")),
                   ("其中缓存读取", format(int(record.get("cached_input_tokens") or 0), ",")),
@@ -2955,12 +2958,15 @@ class Dashboard(QMainWindow):
                   ("整轮耗时" if grouped else "调用耗时", duration_text(record)),
                   ("来源", record.get("source_name") or record.get("source_id") or "—")]
         self._inspector_duration = None
-        for label, text in fields:
+        for index, (label, text) in enumerate(fields):
             field = plain_label(text, wrap=True)
+            field.setAccessibleName(label)
             field.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             field.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
             field.setMinimumWidth(0)
-            form.addRow(plain_label(label, muted=True), field)
+            field.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            form.addWidget(plain_label(label, muted=True), index, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            form.addWidget(field, index, 1)
             if "耗时" in label:
                 field.setToolTip(duration_tooltip(record))
                 self._inspector_duration = field

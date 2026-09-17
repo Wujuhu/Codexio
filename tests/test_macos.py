@@ -125,6 +125,30 @@ def test_preview_renders_daily_totals_and_whole_running_request(preview):
     assert "3 次模型调用" in preview.latest_note.text() and "仍在更新" in preview.latest_note.text()
 
 
+def test_compact_preview_displays_filtered_message_without_session_title_fallback(preview, app):
+    now = datetime.now().astimezone()
+    data = usage(now)
+    prompt = ("<system>系统内容</system>\n# Files mentioned by the user:\n"
+              "## screenshot.png: /var/folders/private.png\n## My request:\n")
+    data["latest_request"].update(prompt_preview=prompt + "请缩小菜单栏预览 " * 30 + "[image 1]",
+                                 session_title="不能当作用户输入")
+    preview.apply_data(data)
+    preview.show_at(QRect(100, 0, 20, 22))
+    app.processEvents()
+    assert preview.width() == 380
+    assert preview.today_cost.font().pixelSize() == 23
+    assert preview.latest_message.text.startswith("请缩小菜单栏预览")
+    assert all(value not in preview.latest_message.text for value in ("系统内容", "Files mentioned", "/var/", "[image]"))
+    assert 1 <= preview.latest_message.last_line_count <= 3
+    assert preview.height() < 600
+    preview.configure(replace(AppSettings(), menu_bar_preview_size="large"), {"theme": "dark"})
+    assert preview.width() == 440
+    data["latest_request"]["prompt_preview"] = "<system>系统内容</system>[image 1]"
+    preview.apply_data(data)
+    assert preview.latest_message.text == "未记录用户文字"
+    assert preview.latest_message.toolTip() == ""
+
+
 def test_date_rollover_never_displays_yesterdays_totals_as_today(preview):
     midnight = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
     preview.apply_data(usage(midnight - timedelta(seconds=1)))

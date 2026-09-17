@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import json
+import gc
 import sys
 import time
 import traceback
 from dataclasses import replace
 
-from PySide6.QtCore import QObject, QRect, Qt, QTimer
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QObject, QRect, QSize, Qt, QTimer
+from PySide6.QtWidgets import QApplication, QLabel, QSystemTrayIcon
 
 from codexio.settings import load_settings
 
@@ -66,13 +67,41 @@ class SmokeRun(QObject):
         popup = controller.menu_bar.preview
         assert host._data["menu_bar_today"]["tokens"] is not None
         assert host._data["latest_request"] is not None
+        icon = controller.app.windowIcon().pixmap(QSize(1024, 1024), 1.0)
+        assert icon.width() == icon.height() == 1024, icon.size()
+        self.checks.append("svg-dock-icon-retina-resolution")
         for theme in ("light", "dark"):
             controller.apply_config(dict(controller.config, theme=theme))
             for page in ("overview", "logs", "trends", "subscription", "pricing", "settings"):
                 window = controller.open_main(page)
+                gc.collect()
                 yield
                 assert window.isVisible() and not window._widget_toggle.isVisible()
                 self.capture(window, page + "-" + theme)
+                if page == "logs":
+                    window.resize(920, 740)
+                    yield
+                    fields = {field.accessibleName(): field for field in window._inspector_scroll.widget().findChildren(QLabel)
+                              if field.accessibleName()}
+                    for name in ("模型", "档位", "输入（含缓存）", "其中缓存读取", "输出", "Total Token"):
+                        field = fields[name]
+                        assert field.text() and field.width() >= 60, (name, field.geometry())
+                        assert field.geometry().right() < field.parentWidget().width()
+                    self.capture(window._log_drawer.inspector, "log-inspector-" + theme)
+                    bar = window._inspector_scroll.verticalScrollBar()
+                    assert bar.maximum() > 0 and bar.property("scrollActive") is False
+                    bar.setValue(min(bar.value() + 30, bar.maximum()) if bar.value() < bar.maximum() else 0)
+                    yield
+                    assert bar.property("scrollActive") is True
+                    self.capture(window._log_drawer.inspector, "log-scrolling-" + theme)
+                    geometry = window._inspector_scroll.viewport().geometry()
+                    deadline = time.monotonic() + 3.1
+                    while time.monotonic() < deadline:
+                        yield
+                    assert bar.property("scrollActive") is False
+                    assert window._inspector_scroll.viewport().geometry() == geometry
+                    self.capture(window._log_drawer.inspector, "log-scroll-idle-" + theme)
+                    window.resize(1180, 780)
                 if page == "settings":
                     assert [window._settings_sections.item(i).text() for i in range(4)] == ["外观", "菜单栏", "数据来源", "应用"]
                     window._settings_sections.setCurrentRow(1)
@@ -96,7 +125,7 @@ class SmokeRun(QObject):
         yield
         saved = load_settings()
         assert saved.refresh_interval_seconds == 30 and saved.menu_bar_preview_size == "large"
-        assert saved.show_main_on_startup is False and popup.width() == 520
+        assert saved.show_main_on_startup is False and popup.width() == 440
         self.checks.append("settings-roundtrip")
         controller.apply_settings(replace(saved, refresh_interval_seconds=60, menu_bar_preview_size="comfortable", show_main_on_startup=True))
         controller.close_window()
@@ -104,7 +133,25 @@ class SmokeRun(QObject):
         assert host.dashboard is None and controller.usage.isRunning() and controller.worker.isRunning()
         assert not any(type(w).__name__ == "QuotaWindow" for w in QApplication.topLevelWidgets())
         self.checks.append("close-keeps-background-without-floating-widget")
-        popup.show_at(QRect(600, 0, 22, 22))
+        # Activation used to schedule a main-window reopen after 150 ms and race
+        # with menu-bar mouse events. Exercise activation before and after clicks.
+        controller.app.applicationStateChanged.emit(Qt.ApplicationState.ApplicationActive)
+        yield
+        yield
+        assert host.dashboard is None
+        controller.menu_bar.tray.activated.emit(QSystemTrayIcon.ActivationReason.Trigger)
+        yield
+        assert popup.isVisible() and host.dashboard is None
+        controller.menu_bar.tray.activated.emit(QSystemTrayIcon.ActivationReason.Trigger)
+        controller.app.applicationStateChanged.emit(Qt.ApplicationState.ApplicationActive)
+        yield
+        yield
+        assert not popup.isVisible() and host.dashboard is None
+        controller.menu_bar.tray.activated.emit(QSystemTrayIcon.ActivationReason.Context)
+        yield
+        yield
+        assert popup.isVisible() and host.dashboard is None
+        self.checks.append("menu-bar-clicks-only-toggle-preview")
         yield
         popup.open_button.click()
         yield

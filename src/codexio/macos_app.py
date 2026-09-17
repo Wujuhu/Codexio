@@ -8,7 +8,7 @@ import sys
 from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import QLockFile, QObject, Qt, QTimer, QUrl
+from PySide6.QtCore import QLockFile, QObject, Qt, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QFontDatabase, QKeySequence
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenuBar, QMessageBox
@@ -94,8 +94,8 @@ class MacController(QObject):
         self.server_usage.updated.connect(self.usage.request_estimate_refresh)
         self.app.styleHints().colorSchemeChanged.connect(self.update_theme)
         self.app.aboutToQuit.connect(self.stop)
-        self._initial_activation_done = False
-        self.app.applicationStateChanged.connect(self._application_state_changed)
+        # A status-item popup also activates the application on macOS. Window
+        # creation must only follow an explicit action, never activation timing.
 
     def _build_application_menu(self):
         # A parentless bar is the macOS default even after the main window closes.
@@ -104,7 +104,7 @@ class MacController(QObject):
         about = app_menu.addAction("关于 Codexio")
         about.setMenuRole(QAction.MenuRole.AboutRole)
         about.triggered.connect(lambda: QMessageBox.about(self.dashboard_host.dashboard, "关于 Codexio",
-            "Codexio %s\n\nmacOS 额度与用量面板\n金额为 API 等价费用。" % __version__))
+            "Codexio %s\n\nmacOS 额度与用量面板\n费用按模型定价计算。" % __version__))
         preferences = app_menu.addAction("设置…")
         preferences.setMenuRole(QAction.MenuRole.PreferencesRole)
         preferences.setShortcut(QKeySequence("Ctrl+,"))
@@ -127,20 +127,6 @@ class MacController(QObject):
         self.usage.start()
         self.worker.start()
         self.server_usage.start()
-        QTimer.singleShot(800, self._finish_initial_activation)
-
-    def _finish_initial_activation(self):
-        self._initial_activation_done = True
-
-    def _application_state_changed(self, state):
-        if state == Qt.ApplicationState.ApplicationActive and self._initial_activation_done:
-            # Delay until a status-item activation has had time to show its
-            # popup; switching back to the app can then restore a closed window.
-            QTimer.singleShot(150, self._restore_on_activation)
-
-    def _restore_on_activation(self):
-        if not self.closing and self.dashboard_host.dashboard is None and not self.menu_bar.preview.isVisible():
-            self.open_main()
 
     def open_main(self, page="overview", period=None):
         if self.closing:
