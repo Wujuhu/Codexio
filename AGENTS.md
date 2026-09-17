@@ -5,6 +5,12 @@
 - 使用 `build_exe.ps1` 完成构建和发布。目标被运行进程占用时保留原文件及暂存新版，不为绕过占用新增 `dist` 副本，不自动结束用户进程。
 - 读取文本文件显式指定 UTF-8。
 
+## macOS 交付
+
+- macOS 使用 `build_macos.sh` 构建，先进入 `build/release-staging/macos`，版本、签名及原生界面冒烟检查通过后交付至 `build/macos/Codexio.app`；可用 `--dmg` 同时生成 `build/macos/Codexio.dmg`。
+- Mac 产物、旧包、验证数据和临时文件只放在 `build` 下，不改变 Windows 的 `dist/Codexio.exe` 约定。目标或暂存应用正在运行时保留原文件，不自动结束用户进程。
+- Mac 端暂不创建悬浮窗，不运行 Windows EXE 更新器。版本号与本地提交、远程发布约定继续共用。
+
 # 版本管理
 
 - 修改功能或修复问题时默认保持当前版本号。新增或递增版本号前，必须先取得用户明确确认。

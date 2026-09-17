@@ -70,6 +70,30 @@ def test_mock_publish_delivers_ready_estimate_even_when_local_sources_disabled(t
                for row in queries.page("model_call", page=page)["rows"])
 
 
+def test_menu_bar_publication_obeys_local_midnight_and_unknown_prices(tmp_path, monkeypatch):
+    import codexio.usage_worker as module
+    local_noon = datetime(2026, 9, 17, 12).astimezone()
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return local_noon if tz is None else local_noon.astimezone(tz)
+    monkeypatch.setattr(module, "datetime", Clock)
+    worker = worker_at(tmp_path, server_estimates_enabled=False)
+    midnight = local_noon.replace(hour=0)
+    worker._store.upsert_records([
+        record(midnight - timedelta(seconds=1), id="yesterday"),
+        record(midnight, id="today"),
+        record(midnight + timedelta(seconds=1), id="unknown-price", model="model-with-no-price"),
+        record(local_noon + timedelta(days=1), id="future"),
+    ], "local")
+    data = publish(worker)
+    assert data["today_date"] == "2026-09-17"
+    assert data["menu_bar_today"]["tokens"] == 2200
+    assert data["menu_bar_today"]["requests"] == 2
+    assert data["menu_bar_today"]["usd"] > 0
+    assert data["menu_bar_today"]["skipped"]["usd"] == 1
+
+
 def test_server_history_survives_local_rescan_and_reloads_for_publication(tmp_path):
     from codexio.server_usage_store import ServerUsageStore
     worker = worker_at(tmp_path)
@@ -241,5 +265,4 @@ def test_mock_background_worker_stops_and_never_syncs_network(tmp_path, monkeypa
     finally:
         assert worker.stop(3000)
     assert not worker.isRunning()
-
 

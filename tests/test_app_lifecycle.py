@@ -32,6 +32,9 @@ class TestApp(BaseApp):
         return super().exec()
 dashboard_module.Dashboard = create
 entry.QApplication = TestApp
+if entry.sys.platform == "darwin":
+    import codexio.macos_app as macos_entry
+    macos_entry.QApplication = TestApp
 assert entry.main(["--mock"]) == 0
 print("lifecycle-ok")
 '''

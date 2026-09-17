@@ -335,6 +335,7 @@ class UsageWorker(QThread):
                 or now < getattr(self, "_summary_at", now)
                 or next_summary_at is not None and now >= next_summary_at):
             self._summaries = queries.summaries(now)
+            self._menu_bar_today = queries.confirmed_summary(start=now.replace(hour=0, minute=0, second=0, microsecond=0), end=now)
             self._summary_key = summary_key
             self._summary_at = now
             self._next_summary_at = parse_time(queries.next_record_at(now))
@@ -372,6 +373,7 @@ class UsageWorker(QThread):
         data = {
             "query_path": str(self._store.path), "query_generation": generation,
             "summaries": self._summaries, "latest_request": queries.latest_request(), "filters": queries.filters(),
+            "menu_bar_today": self._menu_bar_today, "today_date": now.date().isoformat(),
             "prices": self._catalog.rows(),
             "standard_prices": self._catalog.standard_rows(),
             "pricing_status": copy.deepcopy(self._catalog.status), "sources": sources, "weekly_estimates": self._estimates,

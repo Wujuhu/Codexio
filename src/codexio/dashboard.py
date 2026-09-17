@@ -301,18 +301,20 @@ class LineLimitedText(QWidget):
         self.update()
 
     def _sync_height(self):
+        _, lines = self.layout_lines()
         if self.fit_content:
-            _, lines = self.layout_lines()
             height = math.ceil(sum(line.height() for line in lines)) + 2
         else:
-            height = QFontMetrics(self.font()).lineSpacing() * self.max_lines + 2
+            # CJK/emoji fallback glyphs can be taller than the Latin font on
+            # macOS. Reserve the actual shaped line height to avoid clipping.
+            line_height = max([QFontMetrics(self.font()).lineSpacing(), *(line.height() for line in lines)])
+            height = math.ceil(line_height * self.max_lines) + 2
         if self.minimumHeight() != height or self.maximumHeight() != height:
             self.setFixedHeight(height)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if self.fit_content:
-            self._sync_height()
+        self._sync_height()
 
     def layout_lines(self, width: Optional[float] = None) -> tuple[QTextLayout, list]:
         layout = QTextLayout(self.text, self.font())
@@ -864,8 +866,9 @@ class PriceEditor(QDialog):
 
 class Dashboard(QMainWindow):
 
-    def __init__(self, settings: AppSettings, analytics_config: dict, callbacks: dict) -> None:
+    def __init__(self, settings: AppSettings, analytics_config: dict, callbacks: dict, *, desktop_platform="windows") -> None:
         super().__init__()
+        self._is_macos = desktop_platform == "macos"
         self._settings = settings.normalized()
         self._config = copy.deepcopy(analytics_config)
         self._callbacks = callbacks
@@ -914,7 +917,7 @@ class Dashboard(QMainWindow):
         self._tier_preferences = {"user_request": "", "model_call": ""}
         self._last_log_mode = "user_request"
         self.setWindowTitle("Codexio")
-        self.resize(1280, 850)
+        self.resize(1180 if self._is_macos else 1280, 780 if self._is_macos else 850)
         self.setMinimumSize(920, 660)
         self._build()
         self.config_updated(self._config)
@@ -949,7 +952,10 @@ class Dashboard(QMainWindow):
         brand_row.setSpacing(4)
         brand_icon = QLabel()
         brand_icon.setObjectName("brandIcon")
-        brand_icon.setPixmap(render_app_pixmap(32))
+        brand_pixmap = render_app_pixmap(64 if self._is_macos else 32)
+        if self._is_macos:
+            brand_pixmap.setDevicePixelRatio(2)
+        brand_icon.setPixmap(brand_pixmap)
         brand_icon.setFixedSize(32, 32)
         brand_icon.setAccessibleName("Codexio")
         brand_row.addWidget(brand_icon)
@@ -959,7 +965,7 @@ class Dashboard(QMainWindow):
         side.addLayout(brand_row)
         self._search_button = QPushButton("搜索")
         self._search_button.setObjectName("navigationSearch")
-        self._search_button.setToolTip("搜索请求、会话或 ID（Ctrl+K）")
+        self._search_button.setToolTip("搜索请求、会话或 ID（%s）" % ("⌘K" if self._is_macos else "Ctrl+K"))
         self._search_button.clicked.connect(self._focus_request_search)
         side.addWidget(self._search_button)
         self._search_shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
@@ -996,6 +1002,7 @@ class Dashboard(QMainWindow):
         self._widget_toggle.setProperty("quiet", True)
         self._widget_toggle.toggled.connect(self._toggle_widget)
         header.addWidget(self._widget_toggle)
+        self._widget_toggle.setVisible(not self._is_macos)
         self._refresh_button = QPushButton()
         self._refresh_button.setAccessibleName("刷新数据")
         self._refresh_button.setToolTip("刷新额度与用量")
@@ -1344,7 +1351,7 @@ class Dashboard(QMainWindow):
         self._settings_sections = QListWidget()
         self._settings_sections.setObjectName("settingsSections")
         self._settings_sections.setFixedWidth(118)
-        self._settings_sections.addItems(["外观", "悬浮窗", "数据来源", "应用"])
+        self._settings_sections.addItems(["外观", "菜单栏" if self._is_macos else "悬浮窗", "数据来源", "应用"])
         self._settings_stack = QStackedWidget()
         body.addWidget(self._settings_sections)
         body.addWidget(self._settings_stack, 1)
@@ -1362,6 +1369,8 @@ class Dashboard(QMainWindow):
         appearance = section("外观", "设置主界面的阅读环境。")
         form = QFormLayout()
         form.setVerticalSpacing(18)
+        if self._is_macos:
+            form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         self._theme_combo = combo((("跟随系统", "system"), ("浅色", "light"), ("深色", "dark")), self._theme)
         self._theme_combo.setMaximumWidth(220)
         self._theme_combo.currentIndexChanged.connect(self._preview_theme)
@@ -1372,6 +1381,97 @@ class Dashboard(QMainWindow):
         appearance.addLayout(form)
         appearance.addWidget(plain_label("导航栏可直接拖动排序，概览固定第一。", muted=True, wrap=True))
         appearance.addStretch()
+        if self._is_macos:
+            menu_bar = section("菜单栏", "点击菜单栏图标查看额度、今日用量和最近请求，关闭主窗口后继续统计。")
+            form = QFormLayout()
+            form.setVerticalSpacing(18)
+            form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+            for key, label, choices in (
+                ("refresh_interval_seconds", "额度刷新", (("30 秒", 30), ("1 分钟", 60), ("5 分钟", 300))),
+                ("quota_scope", "预览额度", (("自动", "auto"), ("5 小时与周额度", "both"), ("仅周额度", "week"))),
+                ("menu_bar_preview_size", "预览大小", (("舒适 · 460 px", "comfortable"), ("宽敞 · 520 px", "large"))),
+            ):
+                field = combo(choices, getattr(self._settings, key))
+                field.setMaximumWidth(280)
+                self._setting_widgets[key] = field
+                form.addRow(label, field)
+            startup = QCheckBox("启动时显示主界面")
+            startup.setChecked(self._settings.show_main_on_startup)
+            self._setting_widgets["show_main_on_startup"] = startup
+            form.addRow("启动行为", startup)
+            menu_bar.addLayout(form)
+            menu_bar.addWidget(plain_label("用量按本机日期统计；金额沿用主界面的 API 等价费用。", muted=True, wrap=True))
+            menu_bar.addStretch()
+        else:
+            self._build_floating_settings(section)
+        sources = section("数据来源", "本机与远程来源分别读取，原始记录保持不变。")
+        self._source_list = QListWidget()
+        self._source_list.setMinimumHeight(150)
+        self._source_list.itemDoubleClicked.connect(lambda *_: self._edit_source())
+        sources.addWidget(self._source_list)
+        buttons = QHBoxLayout()
+        for kind, label in (("local", "+ 本机目录"), ("ssh", "+ SSH")):
+            button = QPushButton(label)
+            button.clicked.connect(lambda checked=False, source_kind=kind: self._edit_source(source_kind))
+            buttons.addWidget(button)
+        edit = QPushButton("编辑")
+        edit.clicked.connect(lambda: self._edit_source())
+        buttons.addWidget(edit)
+        remove = QPushButton("移除")
+        remove.clicked.connect(self._remove_source)
+        buttons.addWidget(remove)
+        sources.addLayout(buttons)
+        self._sources_status = plain_label("", muted=True, wrap=True)
+        sources.addWidget(self._sources_status)
+        codex = QLineEdit(self._settings.codex_path or "")
+        codex.setPlaceholderText("自动发现 Codex / ChatGPT.app" if self._is_macos else "自动发现 Codex")
+        self._setting_widgets["codex_path"] = codex
+        sources.addWidget(plain_label("Codex 可执行文件或 .app 路径" if self._is_macos else "Codex 可执行文件", muted=True))
+        sources.addWidget(codex)
+        self._account_since = plain_label("", muted=True, wrap=True)
+        sources.addWidget(self._account_since)
+        maintenance = QHBoxLayout()
+        assign = QPushButton("历史归属")
+        assign.clicked.connect(self._assign_history)
+        maintenance.addWidget(assign)
+        rescan = QPushButton("重新扫描")
+        rescan.clicked.connect(lambda: self._callback("rescan"))
+        maintenance.addWidget(rescan)
+        maintenance.addStretch()
+        sources.addLayout(maintenance)
+        sources.addStretch()
+        updates = section("应用", "Codexio " + __version__ + (" · macOS" if self._is_macos else ""))
+        if not self._is_macos:
+            self._auto_update = QCheckBox("自动下载更新")
+            self._auto_update.toggled.connect(self._set_auto_update)
+            updates.addWidget(self._auto_update)
+            self._check_update = QPushButton("检查并更新")
+            self._check_update.clicked.connect(lambda: self._callback("check_update"))
+            updates.addWidget(self._check_update, alignment=Qt.AlignmentFlag.AlignLeft)
+            self._update_status = plain_label("", muted=True, wrap=True)
+            updates.addWidget(self._update_status)
+        else:
+            updates.addWidget(plain_label("本地开发版，重新构建 Codexio.app 即可更新。", muted=True, wrap=True))
+            data_button = QPushButton("打开数据目录")
+            data_button.clicked.connect(lambda: self._callback("open_data_directory"))
+            updates.addWidget(data_button, alignment=Qt.AlignmentFlag.AlignLeft)
+        self._server_estimates_enabled = QCheckBox("用服务端多日数据估算周额度")
+        updates.addWidget(self._server_estimates_enabled)
+        updates.addWidget(plain_label("服务端日数据允许延迟，补齐后自动重算；无须每天 08:00 在线。", muted=True, wrap=True))
+        updates.addStretch()
+        layout.addLayout(body, 1)
+        save_row = QHBoxLayout()
+        self._settings_message = plain_label("", muted=True)
+        save_row.addWidget(self._settings_message, 1)
+        save = QPushButton("保存设置")
+        save.setProperty("primary", True)
+        save.clicked.connect(self._save_settings)
+        save_row.addWidget(save)
+        layout.addLayout(save_row)
+        self._settings_sections.setCurrentRow(0)
+        return page
+
+    def _build_floating_settings(self, section):
         floating = section("悬浮窗", "保留当前外观与停靠行为，保存后应用。")
         form = QFormLayout()
         form.setVerticalSpacing(13)
@@ -1413,66 +1513,6 @@ class Dashboard(QMainWindow):
         border.textChanged.connect(self._preview_widget)
         self._preview_widget()
         floating.addStretch()
-        sources = section("数据来源", "本机与远程来源分别读取，原始记录保持不变。")
-        self._source_list = QListWidget()
-        self._source_list.setMinimumHeight(150)
-        self._source_list.itemDoubleClicked.connect(lambda *_: self._edit_source())
-        sources.addWidget(self._source_list)
-        buttons = QHBoxLayout()
-        for kind, label in (("local", "+ 本机目录"), ("ssh", "+ SSH")):
-            button = QPushButton(label)
-            button.clicked.connect(lambda checked=False, source_kind=kind: self._edit_source(source_kind))
-            buttons.addWidget(button)
-        edit = QPushButton("编辑")
-        edit.clicked.connect(lambda: self._edit_source())
-        buttons.addWidget(edit)
-        remove = QPushButton("移除")
-        remove.clicked.connect(self._remove_source)
-        buttons.addWidget(remove)
-        sources.addLayout(buttons)
-        self._sources_status = plain_label("", muted=True, wrap=True)
-        sources.addWidget(self._sources_status)
-        codex = QLineEdit(self._settings.codex_path or "")
-        codex.setPlaceholderText("自动发现 Codex")
-        self._setting_widgets["codex_path"] = codex
-        sources.addWidget(plain_label("Codex 可执行文件", muted=True))
-        sources.addWidget(codex)
-        self._account_since = plain_label("", muted=True, wrap=True)
-        sources.addWidget(self._account_since)
-        maintenance = QHBoxLayout()
-        assign = QPushButton("历史归属")
-        assign.clicked.connect(self._assign_history)
-        maintenance.addWidget(assign)
-        rescan = QPushButton("重新扫描")
-        rescan.clicked.connect(lambda: self._callback("rescan"))
-        maintenance.addWidget(rescan)
-        maintenance.addStretch()
-        sources.addLayout(maintenance)
-        sources.addStretch()
-        updates = section("应用", "Codexio " + __version__)
-        self._auto_update = QCheckBox("自动下载更新")
-        self._auto_update.toggled.connect(self._set_auto_update)
-        updates.addWidget(self._auto_update)
-        self._check_update = QPushButton("检查并更新")
-        self._check_update.clicked.connect(lambda: self._callback("check_update"))
-        updates.addWidget(self._check_update, alignment=Qt.AlignmentFlag.AlignLeft)
-        self._update_status = plain_label("", muted=True, wrap=True)
-        updates.addWidget(self._update_status)
-        self._server_estimates_enabled = QCheckBox("用服务端多日数据估算周额度")
-        updates.addWidget(self._server_estimates_enabled)
-        updates.addWidget(plain_label("服务端日数据允许延迟，补齐后自动重算；无须每天 08:00 在线。", muted=True, wrap=True))
-        updates.addStretch()
-        layout.addLayout(body, 1)
-        save_row = QHBoxLayout()
-        self._settings_message = plain_label("", muted=True)
-        save_row.addWidget(self._settings_message, 1)
-        save = QPushButton("保存设置")
-        save.setProperty("primary", True)
-        save.clicked.connect(self._save_settings)
-        save_row.addWidget(save)
-        layout.addLayout(save_row)
-        self._settings_sections.setCurrentRow(0)
-        return page
 
     @staticmethod
     def _control_value(widget):
@@ -1702,7 +1742,7 @@ class Dashboard(QMainWindow):
                 self._restore_page_state(name)
                 self._preview_widget()
                 self._update_sources_status()
-                if self._update_message:
+                if self._update_message and not self._is_macos:
                     message, busy = self._update_message
                     self._update_status.setText(message)
                     self._check_update.setEnabled(not busy)
@@ -1962,9 +2002,10 @@ class Dashboard(QMainWindow):
             self._auto_sync.setChecked(bool(self._config.get("auto_sync_prices", True)))
             self._auto_sync.blockSignals(False)
         elif name == "settings":
-            self._auto_update.blockSignals(True)
-            self._auto_update.setChecked(bool(self._config.get("auto_update", True)))
-            self._auto_update.blockSignals(False)
+            if not self._is_macos:
+                self._auto_update.blockSignals(True)
+                self._auto_update.setChecked(bool(self._config.get("auto_update", True)))
+                self._auto_update.blockSignals(False)
             self._theme_combo.blockSignals(True)
             self._theme_combo.setCurrentIndex(max(0, self._theme_combo.findData(self._theme)))
             self._theme_combo.blockSignals(False)
@@ -2518,7 +2559,7 @@ class Dashboard(QMainWindow):
         values = {}
         for key, widget in self._setting_widgets.items():
             values[key] = widget.currentData() if isinstance(widget, QComboBox) else widget.isChecked() if isinstance(widget, QCheckBox) else widget.value() if isinstance(widget, QSpinBox) else widget.text().strip()
-        if not QColor(str(values["border_color"])).isValid():
+        if "border_color" in values and not QColor(str(values["border_color"])).isValid():
             self._settings_message.setText("边框颜色无效，请使用 #RRGGBB。")
             return
         self._settings = replace(self._settings, **values).normalized()
@@ -3018,5 +3059,7 @@ class Dashboard(QMainWindow):
             self._log_table.setFocus()
 
     def _preview_widget(self, *args):
+        if self._is_macos:
+            return
         values = {key: self._control_value(widget) for key, widget in self._setting_widgets.items()}
         self._widget_preview.configure(replace(self._settings, **values).normalized(), self._quota_state)

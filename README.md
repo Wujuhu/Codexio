@@ -1,8 +1,8 @@
 # Codexio
 
-当前本地开发版本为 **0.2.3**。本阶段完成修改、验证和打包后提交到本地 Git；推送和 GitHub 发布需另行明确授权。
+当前本地开发版本为 **0.2.4**。本阶段完成修改、验证和打包后提交到本地 Git；推送和 GitHub 发布需另行明确授权。
 
-Windows 桌面额度与用量面板，通过 Codex `app-server` 读取当前账户额度，并增量扫描会话计量记录，显示：
+Windows / macOS 桌面额度与用量面板，通过 Codex `app-server` 读取当前账户额度，并增量扫描会话计量记录，显示：
 
 - 5 小时剩余百分比和重置时间
 - 1 周剩余百分比和重置时间
@@ -11,9 +11,34 @@ Windows 桌面额度与用量面板，通过 Codex `app-server` 读取当前账�
 - 今日、近 7 天、近 30 天及历史 Token 和 API 等价美元
 - 小时／天／周用量趋势、逐次请求明细、模型价格和订阅周额度观测估值
 
-可用源码运行，也可以打包成单个 `Codexio.exe` 发给其他 Windows 用户。0.1.1 起支持从 GitHub 自动下载安装新版，完成后自动重启。
+可用源码运行。Windows 打包成单个 `Codexio.exe`，保留原有自动更新流程；macOS 打包为 `Codexio.app`，当前在本地构建和更新。
 
-## 环境要求
+## macOS
+
+Mac 端复用 Windows 主界面与计价、去重、请求分组和历史统计逻辑，保留概览、日志、用量、订阅、定价、设置六个页面，使用 Mac 系统字体与原生窗口标题栏。此端不创建悬浮窗。
+
+- 点击菜单栏的 Codexio 图标，打开 460 px 宽的用量预览；可在设置中调整为 520 px。
+- 预览显示 5 小时／每周额度、剩余百分比、当地重置时间与倒计时，以及今日 API 等价美元、今日 Token 总数、最近一轮用户请求的累计费用。回复中的请求会持续更新；部分未定价、读取失败、缓存与跨日等待均有明确状态。
+- 预览底部可打开主界面、设置或退出。点击外部区域或按 Esc 收起预览；关闭主窗口后仍继续采集。
+- 设置支持主题、额度刷新间隔、预览尺寸与额度范围、启动时是否显示主界面、日志来源列、Codex 路径、本机／SSH 数据来源、模型定价与订阅资料。
+- 支持 ⌘K 搜索、⌘, 设置、⌘R 刷新、⌘W 关闭窗口、⌘Q 退出；重复启动会打开已有实例。
+- 自动发现 `/Applications`、`~/Applications` 下的 `Codex.app` 和 `ChatGPT.app` 内置 CLI，以及 Homebrew、常见 CLI 安装路径。也可在设置中指定 `.app` 或 CLI 路径。
+- 默认数据目录为 `~/Library/Application Support/Codexio`。读取 Codex 本机日志，写入独立的 Codexio 索引；模拟预览使用独立目录。
+
+开发需要 Python 3.12 或 3.13。首次运行自动创建项目内 `.venv` 并安装依赖：
+
+```bash
+./run_macos.sh                 # 读取真实本机用量
+./run_macos.sh --mock          # 独立模拟数据预览
+./build_macos.sh --dmg         # 构建、验证并生成本地安装镜像
+open build/macos/Codexio.app
+```
+
+构建先进入 `build/release-staging/macos`，通过原生界面冒烟检查和签名验证后交付至 `build/macos/Codexio.app`；`--dmg` 额外生成 `build/macos/Codexio.dmg`。保留 Windows 的 `dist/Codexio.exe` 交付约定。目标应用正在运行时保留原文件与暂存新版，不结束用户进程。
+
+Mac 包按构建机器的架构生成。当前在 Apple Silicon Mac 上验证，使用本地 ad-hoc 签名，尚未配置 Developer ID 签名、公证或 Mac 自动更新。详细开发与验证说明见 [macOS 开发说明](docs/macos.md)。
+
+## Windows 环境要求
 
 - Windows 10/11（x64）
 - 本地开发与打包使用 Python 3.13.15（64 位）。现有 PySide6 6.9 依赖支持 Python 3.9–3.13，暂不支持 3.14。

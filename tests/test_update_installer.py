@@ -27,6 +27,7 @@ def prepare(tmp_path, monkeypatch):
     return directory, target, job
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows EXE replacement and native process APIs")
 def test_install_replaces_only_target_and_restarts_with_original_arguments(tmp_path, monkeypatch):
     directory, target, job = prepare(tmp_path, monkeypatch)
     restarts = []
@@ -43,6 +44,7 @@ def test_install_replaces_only_target_and_restarts_with_original_arguments(tmp_p
     assert list(target.parent.iterdir()) == [target]
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows EXE replacement and native process APIs")
 def test_failed_new_program_launch_restores_old_binary_before_restart(tmp_path, monkeypatch):
     directory, target, job = prepare(tmp_path, monkeypatch)
     contents = []
@@ -68,6 +70,7 @@ def test_tampering_after_download_never_exits_or_replaces_current_app(tmp_path, 
     assert installer.read_state(directory).get("state") != "ready"
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows EXE replacement and native process APIs")
 def test_changed_current_exe_is_not_overwritten(tmp_path, monkeypatch):
     directory, target, job = prepare(tmp_path, monkeypatch)
     target.write_bytes(b"MZsomeone updated the app already")
@@ -84,6 +87,7 @@ def test_update_job_must_be_in_its_own_staging_area(tmp_path, monkeypatch):
         installer._job_dir(outside)
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows native process wait")
 def test_native_wait_requires_commit_and_does_not_terminate_parent(tmp_path):
     process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1)"],
                                creationflags=subprocess.CREATE_NO_WINDOW)
@@ -111,7 +115,8 @@ def test_restart_gets_fresh_pyinstaller_environment(tmp_path, monkeypatch):
     assert captured["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
     assert captured["env"]["CODEXIO_SKIP_UPDATE_ONCE"] == "1"
     assert captured["arguments"] == [str(tmp_path / "Codexio.exe"), "--mock"]
-    assert captured["creationflags"] & subprocess.CREATE_NO_WINDOW
+    if sys.platform == "win32":
+        assert captured["creationflags"] & subprocess.CREATE_NO_WINDOW
 
 
 def test_auto_update_can_be_cancelled_after_download_before_restart(tmp_path, monkeypatch):

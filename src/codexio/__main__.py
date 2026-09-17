@@ -6,7 +6,7 @@ import copy
 import sys
 
 # The copied updater executable must run independently of the Qt application.
-if __name__ == "__main__" and len(sys.argv) == 3 and sys.argv[1] == "--apply-update":
+if __name__ == "__main__" and sys.platform == "win32" and len(sys.argv) == 3 and sys.argv[1] == "--apply-update":
     from codexio.update_installer import run_update_job
     sys.exit(run_update_job(sys.argv[2]))
 
@@ -15,22 +15,25 @@ from PySide6.QtWidgets import QApplication, QMenu
 
 from codexio.logging_setup import get_logger, setup_logging
 from codexio.settings import load_settings
-from codexio.tray import TrayController
 from codexio.visuals import display_font, register_bundled_fonts
 from codexio.app_icon import load_app_icon
-from codexio.window import QuotaWindow
 from codexio.worker import QuotaWorker
 from codexio.analytics_config import load_analytics_config, save_analytics_config
 from codexio.usage_worker import UsageWorker
 from codexio.dashboard_host import DashboardHost
-from codexio.update_manager import UpdateManager
 from codexio.server_usage_monitor import ServerUsageMonitor
 from codexio.settings import data_dir
-from codexio.update_installer import acknowledge_update
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    if sys.platform == "darwin":
+        from codexio.macos_app import run_macos
+        return run_macos(args)
+    from codexio.tray import TrayController
+    from codexio.window import QuotaWindow
+    from codexio.update_manager import UpdateManager
+    from codexio.update_installer import acknowledge_update
     setup_logging()
     logger = get_logger("main")
     settings = load_settings()
@@ -207,7 +210,11 @@ def main(argv: list[str] | None = None) -> int:
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Codexio：本机 Codex 额度与用量统计")
     parser.add_argument("--mock", action="store_true", help="使用模拟额度数据，不启动 app-server")
-    return parser.parse_args(sys.argv[1:] if argv is None else argv)
+    parser.add_argument("--smoke-test", metavar="OUTPUT_DIR", help=argparse.SUPPRESS)
+    args = parser.parse_args(sys.argv[1:] if argv is None else argv)
+    if args.smoke_test and (not args.mock or sys.platform != "darwin"):
+        parser.error("--smoke-test 仅用于 macOS 的 --mock 验证")
+    return args
 
 
 if __name__ == "__main__":

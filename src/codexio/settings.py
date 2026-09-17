@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -38,9 +39,16 @@ _HEX_COLOR = re.compile(r"^#([0-9A-Fa-f]{6})$")
 
 
 def data_dir() -> Path:
+    override = os.environ.get("CODEXIO_DATA_DIR")
+    if override:
+        path = Path(override).expanduser()
+        path.mkdir(parents=True, exist_ok=True)
+        return path
     local_appdata = os.environ.get("LOCALAPPDATA")
     if local_appdata:
         root = Path(local_appdata)
+    elif sys.platform == "darwin":
+        root = Path.home() / "Library" / "Application Support"
     else:
         root = Path.home() / "AppData" / "Local"
     path = root / APP_DIR_NAME
@@ -82,6 +90,8 @@ class AppSettings:
     dock_side_height: Optional[int] = None
     quota_scope: str = DEFAULT_QUOTA_SCOPE
     codex_path: Optional[str] = None
+    menu_bar_preview_size: str = "comfortable"
+    show_main_on_startup: bool = True
 
     def normalized(self) -> "AppSettings":
         interval = self.refresh_interval_seconds
@@ -114,6 +124,8 @@ class AppSettings:
             dock_side_height=_clamp_int(self.dock_side_height, 32, MAX_WINDOW_HEIGHT),
             quota_scope=scope,
             codex_path=path,
+            menu_bar_preview_size=self.menu_bar_preview_size if self.menu_bar_preview_size in ("comfortable", "large") else "comfortable",
+            show_main_on_startup=bool(self.show_main_on_startup),
         )
 
     def background_alpha(self) -> int:
@@ -162,6 +174,8 @@ def load_settings(path: Optional[Path] = None) -> AppSettings:
         dock_side_height=_optional_int(raw.get("dock_side_height")),
         quota_scope=str(raw.get("quota_scope", DEFAULT_QUOTA_SCOPE)),
         codex_path=raw.get("codex_path") if isinstance(raw.get("codex_path"), str) else None,
+        menu_bar_preview_size=str(raw.get("menu_bar_preview_size", "comfortable")),
+        show_main_on_startup=_optional_bool(raw.get("show_main_on_startup"), True),
     )
     return settings.normalized()
 

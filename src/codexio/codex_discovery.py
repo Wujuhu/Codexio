@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Iterator
 
 _PROBES: dict = {}
+IS_MACOS = sys.platform == "darwin"
 _SKIP_DIRS = {"cache", "code cache", "gpucache", "logs", "crashpad", ".git", "sessions"}
 
 
@@ -48,7 +49,7 @@ def _scan(root: Path) -> Iterator[Path]:
             try:
                 if entry.is_symlink():
                     continue
-                if entry.is_file() and entry.name.lower() == "codex.exe":
+                if entry.is_file() and entry.name.lower() in ("codex.exe", "codex"):
                     found.append(entry)
                 elif entry.is_dir() and depth < 8 and entry.name.lower() not in _SKIP_DIRS:
                     # Do not follow directory junctions into unrelated trees.
@@ -68,6 +69,10 @@ def _hint_candidates(hint: str) -> Iterator[Path]:
     try:
         path = _path(hint)
         if path.is_dir():
+            if path.suffix.lower() == ".app":
+                # Only probe the bundled CLI, never Contents/MacOS (the UI).
+                yield path / "Contents" / "Resources" / "codex"
+                return
             for name in ("codex.exe", "codex.cmd", "codex"):
                 yield path / name
             yield from _scan(path)
@@ -98,6 +103,19 @@ def _standard_app_roots() -> Iterator[Path]:
         if value:
             yield Path(value) / "OpenAI" / "Codex"
             yield Path(value) / "Codex"
+
+
+def _macos_candidates() -> Iterator[Path]:
+    # Finder does not inherit the interactive shell's PATH. Both standalone
+    # Codex and the ChatGPT app can provide the same native app-server binary.
+    for root in (Path("/Applications"), Path.home() / "Applications"):
+        for name in ("Codex.app", "ChatGPT.app"):
+            yield root / name / "Contents" / "Resources" / "codex"
+    for root in (Path("/opt/homebrew/bin"), Path("/usr/local/bin"), Path.home() / ".local" / "bin",
+                 Path.home() / ".volta" / "bin", Path.home() / ".npm-global" / "bin"):
+        yield root / "codex"
+    for node in _recent((Path.home() / ".nvm" / "versions" / "node").glob("*/bin")):
+        yield node / "codex"
 
 
 def _registry_app_roots() -> Iterator[Path]:
@@ -168,6 +186,9 @@ def candidates(explicit: str | None = None) -> Iterator[Path]:
         found = shutil.which(name)
         if found:
             yield from _hint_candidates(found)
+    if IS_MACOS:
+        yield from _macos_candidates()
+        return
     for root in _standard_app_roots():
         yield from _scan(root)
     for root in _registry_app_roots():
@@ -188,6 +209,8 @@ def is_usable(path: Path) -> bool:
     try:
         info = path.stat()
         if not path.is_file() or info.st_size == 0:
+            return False
+        if IS_MACOS and (path.parent.name == "MacOS" or not os.access(path, os.X_OK)):
             return False
         # Never launch the Electron desktop UI while probing for its backend.
         if (path.parent / "resources" / "app.asar").exists() or (path.parent / "chrome_100_percent.pak").exists():

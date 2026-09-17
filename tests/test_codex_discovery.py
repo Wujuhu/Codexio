@@ -11,6 +11,7 @@ from codexio import codex_discovery as discovery
 
 @pytest.fixture
 def isolated(tmp_path, monkeypatch):
+    monkeypatch.setattr(discovery, "IS_MACOS", False)
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "Local"))
     monkeypatch.setenv("APPDATA", str(tmp_path / "Roaming"))
     monkeypatch.delenv("CODEX_CLI_PATH", raising=False)

@@ -30,8 +30,8 @@ def buckets(tokens=102_214_286, usd=164.553571):
 
 
 def geometry(chart):
-    token_max = max(1, max((row["tokens"] for row in chart.buckets), default=0) * 1.12)
-    usd_max = max(0.01, max((row["usd"] or 0 for row in chart.buckets), default=0) * 1.12)
+    # Use the displayed dual-axis scale (Token has additional headroom).
+    token_max, usd_max = chart.scale_maxima()
     return chart._chart_geometry(chart.fontMetrics(), token_max, usd_max)
 
 
@@ -87,7 +87,7 @@ def test_scaled_fonts_keep_axis_titles_values_dates_and_legends_separate(app, wi
     assert chart.font().pixelSize() == font_pixels
     layout = geometry(chart)
     assert_readable_geometry(chart, layout)
-    assert layout.token_ticks[-1][1] == "114.48M"
+    assert layout.token_ticks[-1][1] == "224.87M"
     assert layout.plot == chart._plot
     assert not chart.grab().isNull()
     chart.close()

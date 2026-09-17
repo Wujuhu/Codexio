@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -87,11 +88,12 @@ def theme_colors(name: str = "system") -> dict[str, str]:
 
 def dashboard_stylesheet(name: str = "system") -> str:
     c = theme_colors(name)
+    c["ui_font"] = "'.AppleSystemUIFont', 'PingFang SC', 'Helvetica Neue'" if sys.platform == "darwin" else "'Microsoft YaHei UI', 'Segoe UI'"
     for direction in ("up", "down"):
         c["arrow_" + direction] = (Path(__file__).with_name("icons") / ("chevron-%s-%s.svg" % (direction, resolve_theme(name)))).as_posix()
     return """
 QMainWindow, QDialog, QWidget#dashboardRoot, QWidget#page { background: %(bg)s; }
-QWidget { color: %(text)s; font-family: 'Microsoft YaHei UI', 'Segoe UI'; font-size: 13px; }
+QWidget { color: %(text)s; font-family: %(ui_font)s; font-size: 13px; }
 QFrame#sidebar { background: %(sidebar_start)s; border-right: 1px solid %(border)s; }
 QFrame[card="true"] { background: %(surface)s; border: 1px solid %(border)s; border-radius: 12px; }
 QFrame[card="true"][tone="blue"] { background: %(surface)s; border-top: 3px solid %(blue_edge)s; }

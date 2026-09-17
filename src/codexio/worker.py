@@ -43,6 +43,7 @@ class QuotaWorker(QThread):
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._refresh_requested = threading.Event()
+        self._reconnect_requested = threading.Event()
         self._notification: Optional[JsonRpcMessage] = None
         self._notification_lock = threading.Lock()
         self._client: Optional[AppServerClient] = None
@@ -86,10 +87,15 @@ class QuotaWorker(QThread):
         self._wake.set()
 
     def update_settings(self, settings: AppSettings) -> None:
+        if self._settings.codex_path != settings.codex_path:
+            self._reconnect_requested.set()
         self._settings = settings.normalized()
         self.request_refresh()
 
     def _run_live_cycle(self) -> None:
+        if self._reconnect_requested.is_set():
+            self._reconnect_requested.clear()
+            self._close_client()
         self._fetch_local()
 
     def _fetch_local(self) -> None:
