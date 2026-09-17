@@ -84,7 +84,7 @@ class MacController(QObject):
             "main_hidden": self.save_geometry, "open_data_directory": self.open_data_directory,
         }, app, factory=partial(Dashboard, desktop_platform="macos"))
         self.menu_bar = MenuBarController(app, self.settings, self.config,
-                                          on_open=self.open_main, on_refresh=self.refresh, on_quit=self.quit)
+                                          on_open=self.open_main, on_quit=self.quit)
         self._build_application_menu()
         self.worker.state_changed.connect(self.on_quota)
         self.worker.snapshot_changed.connect(self.usage.add_snapshot)

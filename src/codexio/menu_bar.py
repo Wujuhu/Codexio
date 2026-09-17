@@ -120,7 +120,7 @@ class QuotaPreview(QFrame):
 
 
 class MenuBarPreview(QFrame):
-    def __init__(self, settings, config, *, on_open, on_refresh, on_quit):
+    def __init__(self, settings, config, *, on_open, on_quit):
         super().__init__(None, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
         self.setObjectName("menuBarPreview")
         self.setWindowTitle("Codexio 用量预览")
@@ -152,10 +152,6 @@ class MenuBarPreview(QFrame):
         self.open_button.setProperty("primary", True)
         self.open_button.clicked.connect(lambda: self._open("overview"))
         header.addWidget(self.open_button)
-        self.refresh_button = QPushButton("刷新")
-        self.refresh_button.setAccessibleName("刷新额度与用量")
-        self.refresh_button.clicked.connect(on_refresh)
-        header.addWidget(self.refresh_button)
         self.body.addLayout(header)
         self.quota_status = label("正在连接 Codex", muted=True)
         self.quota_status.setWordWrap(True)
@@ -168,8 +164,8 @@ class MenuBarPreview(QFrame):
         self.body.addWidget(self.today_heading)
         stats = QHBoxLayout()
         stats.setSpacing(12)
-        self.today_cost, self.cost_note = self._stat(stats, "今日费用", "previewCost")
-        self.today_tokens, self.token_note = self._stat(stats, "今日 Token 总数", "previewTokens")
+        self.today_cost = self._stat(stats, "今日费用", "previewCost")
+        self.today_tokens = self._stat(stats, "今日 Token 总数", "previewTokens")
         self.body.addLayout(stats)
         latest = QFrame()
         latest.setProperty("previewCard", True)
@@ -217,11 +213,8 @@ class MenuBarPreview(QFrame):
         value.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         value.setWordWrap(True)
         layout.addWidget(value)
-        note = label("等待记录", muted=True)
-        note.setWordWrap(True)
-        layout.addWidget(note)
         row.addWidget(frame, 1)
-        return value, note
+        return value
 
     def _open(self, page):
         self.hide()
@@ -304,12 +297,16 @@ QLabel#previewTokens { color: %(chart_tokens_ink)s; }
         today = (data.get("menu_bar_today") or {}) if same_day else {}
         tokens, amount = today.get("tokens"), today.get("usd")
         self.today_tokens.setText(compact_number(tokens) if isinstance(tokens, int) and tokens >= 0 else "—")
-        self.token_note.setText(format(tokens, ",") + " Token" if isinstance(tokens, int) and tokens >= 0 else "今日暂无计量" if same_day else "等待今日记录")
+        token_detail = format(tokens, ",") + " Token" if isinstance(tokens, int) and tokens >= 0 else "今日暂无计量" if same_day else "等待今日记录"
         skipped = today.get("skipped") or {}
         wholly_unpriced = amount is None and bool(skipped.get("usd"))
         self.today_cost.setText(cost_text(amount, "unpriced" if wholly_unpriced else "priced"))
-        self.cost_note.setText("等待价格数据" if wholly_unpriced else "部分未定价" if skipped.get("usd") else "USD")
-        self.token_note.setToolTip("按已确认数据计算" if skipped.get("tokens") else "输入 + 输出，含缓存 Token")
+        cost_detail = "等待价格数据" if wholly_unpriced else "部分未定价" if skipped.get("usd") else "USD"
+        self.today_cost.setToolTip(cost_detail)
+        self.today_cost.setAccessibleDescription(cost_detail)
+        token_detail += "\n" + ("按已确认数据计算" if skipped.get("tokens") else "输入 + 输出，含缓存 Token")
+        self.today_tokens.setToolTip(token_detail)
+        self.today_tokens.setAccessibleDescription(token_detail)
         latest = data.get("latest_request") or {}
         self.latest_cost.setText(cost_text(latest.get("cost_usd"), latest.get("pricing_status", "priced")))
         request_status = latest.get("request_status", latest.get("status"))
@@ -337,7 +334,7 @@ QLabel#previewTokens { color: %(chart_tokens_ink)s; }
         elif updated and (now - updated).total_seconds() > 120:
             usage_status = "用量为上次缓存 · " + updated.astimezone().strftime("%H:%M:%S")
         else:
-            usage_status = "用量更新 " + (updated.astimezone().strftime("%H:%M:%S") if updated else "—") + " · 本机时区"
+            usage_status = "用量更新 " + (updated.astimezone().strftime("%H:%M:%S") if updated else "—")
         self.usage_status.setText(usage_status)
 
     def show_at(self, anchor):
@@ -377,9 +374,9 @@ QLabel#previewTokens { color: %(chart_tokens_ink)s; }
 
 
 class MenuBarController(QObject):
-    def __init__(self, parent, settings: AppSettings, config, *, on_open, on_refresh, on_quit):
+    def __init__(self, parent, settings: AppSettings, config, *, on_open, on_quit):
         super().__init__(parent)
-        self.preview = MenuBarPreview(settings, config, on_open=on_open, on_refresh=on_refresh, on_quit=on_quit)
+        self.preview = MenuBarPreview(settings, config, on_open=on_open, on_quit=on_quit)
         self.tray = QSystemTrayIcon(menu_bar_icon(), self)
         self.tray.setToolTip("Codexio · 点击查看额度与用量")
         # macOS opens a native context menu on mouse-down if one is attached;

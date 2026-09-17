@@ -98,7 +98,7 @@ def test_mac_discovery_does_not_launch_desktop_or_nonexecutable_files(tmp_path, 
 @pytest.fixture
 def preview(app):
     value = MenuBarPreview(AppSettings(), {"theme": "dark"}, on_open=lambda *_: None,
-                           on_refresh=lambda: None, on_quit=lambda: None)
+                           on_quit=lambda: None)
     yield value
     value.hide()
     value.deleteLater()
@@ -120,7 +120,7 @@ def test_preview_renders_daily_totals_and_whole_running_request(preview):
     preview.render(now)
     assert preview.today_cost.text() == "$12.34"
     assert preview.today_tokens.text() == "1.23M"
-    assert preview.token_note.text() == "1,234,567 Token"
+    assert preview.today_tokens.toolTip().startswith("1,234,567 Token\n")
     assert preview.latest_cost.text() == "$1.56" and preview.latest_status.text() == "回复中"
     assert "3 次模型调用" in preview.latest_note.text() and "仍在更新" in preview.latest_note.text()
 
@@ -169,7 +169,7 @@ def test_partial_unpriced_and_error_states_remain_explicit(preview):
     data["latest_request"].update(cost_usd=None, pricing_status="unpriced")
     preview.apply_data(data)
     preview.render(now)
-    assert preview.today_cost.text() == "$0.05" and preview.cost_note.text() == "部分未定价"
+    assert preview.today_cost.text() == "$0.05" and preview.today_cost.toolTip() == "部分未定价"
     assert preview.latest_cost.text() == "未定价" and "尚未同步" in preview.usage_status.text()
     preview.set_usage_loading({"error": "日志读取失败"})
     preview.render(now)
@@ -222,7 +222,7 @@ def test_preview_stays_within_each_screen(screen, anchor):
 def test_click_actions_escape_and_hidden_timer(app):
     events = []
     preview = MenuBarPreview(AppSettings(), {}, on_open=lambda page: events.append(page),
-                             on_refresh=lambda: events.append("refresh"), on_quit=lambda: events.append("quit"))
+                             on_quit=lambda: events.append("quit"))
     try:
         preview.show_at(QRect(100, 0, 20, 22))
         app.processEvents()
@@ -232,9 +232,8 @@ def test_click_actions_escape_and_hidden_timer(app):
         preview.show_at(QRect(100, 0, 20, 22))
         QTest.keyClick(preview, Qt.Key.Key_Escape)
         assert not preview.isVisible() and not preview._timer.isActive()
-        preview.refresh_button.click()
         preview.quit_button.click()
-        assert events[-2:] == ["refresh", "quit"]
+        assert events == ["settings", "quit"]
         assert menu_bar_icon().isMask()
     finally:
         preview.deleteLater()
