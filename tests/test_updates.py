@@ -33,6 +33,13 @@ def test_update_version_order_and_no_downgrades():
     assert updates.release_from_manifest(manifest(), "0.1.1").version == "0.1.2"
 
 
+def test_windows_uses_legacy_fields_in_a_shared_manifest():
+    original = manifest()
+    combined = dict(original, macos={"version": "9.0.0", "url": "not-a-windows-asset"})
+    assert updates.release_from_manifest(combined, "0.1.1") == updates.release_from_manifest(original, "0.1.1")
+    assert updates.release_from_manifest(combined, "0.1.2") is None
+
+
 @pytest.mark.parametrize("version", ["0.1", "v1.2.3-beta", "01.2.3", "1.2.65536", "https://example.com", None, "9" * 10000])
 def test_rejects_invalid_versions(version):
     with pytest.raises(updates.UpdateError):

@@ -9,6 +9,7 @@
 
 - macOS 使用 `build_macos.sh` 构建，先进入 `build/release-staging/macos`，版本、签名及原生界面冒烟检查通过后交付至 `build/macos/Codexio.app`；可用 `--dmg` 同时生成 `build/macos/Codexio.dmg`。
 - Mac 产物、旧包、验证数据和临时文件只放在 `build` 下，不改变 Windows 的 `dist/Codexio.exe` 约定。目标或暂存应用正在运行时保留原文件，不自动结束用户进程。
+- Windows 与 Mac 共用一份 `latest.json`：Windows 字段保留在顶层，Mac 信息放在 `macos` 对象中；构建更新本平台字段时必须保留另一平台字段。不再生成独立的 `latest-macos.json`。
 - Mac 端暂不创建悬浮窗，不运行 Windows EXE 更新器。版本号与本地提交、远程发布约定继续共用。
 
 # 版本管理
@@ -24,9 +25,9 @@
 # GitHub Release 发布约定
 
 - 仅在用户明确授权发布后执行。Tag 和 Release 标题统一为 `v<版本号>`，例如 `v0.2.4`；正文留空，不添加更新说明或附件描述。
-- 附件仅上传本次构建的 `dist/Codexio.exe` 和 `dist/latest.json`，确保程序版本、JSON 版本、文件大小及 SHA-256 一致。
+- Windows 附件为本次构建的 `dist/Codexio.exe`；Mac 附件为本次构建的 `Codexio.dmg`。两端共用且只上传最后合并的一份 `latest.json`，分别核对各平台程序与对应清单中的版本、文件大小及 SHA-256。一并发布两端时共三个附件。
 - 先验证、打包、提交，再推送 `main`，确认远程包含本次发布的提交。新 Tag 基于远程 `main` 创建；已有 Tag 或正式 Release 不自动覆盖。
-- 项目当前目录为 `C:\CodeWJH\Projects\Codexio`。PowerShell 示例（替换版本号，保留空正文）：
+- 项目当前目录为 `C:\CodeWJH\Projects\Codexio`。Windows 单端 PowerShell 示例（替换版本号，保留空正文）：
 
 ```powershell
 "" | gh release create v0.2.4 `
@@ -38,5 +39,5 @@
   "C:\CodeWJH\Projects\Codexio\dist\latest.json"
 ```
 
-- 若需先核验附件，在创建命令中加 `--draft`，检查两份附件后执行 `gh release edit v0.2.4 --repo Wujuhu/Codexio --draft=false --latest`。严格空正文也可用 UTF-8 零字节文件配合 `--notes-file`，避免管道引入换行。
-- 发布后核验 Tag 对应提交、标题、空正文及两份附件；使用 `git fetch origin tag v0.2.4` 将 Tag 同步到本地。
+- 若需先核验附件，在创建命令中加 `--draft`，检查本次附件后执行 `gh release edit v0.2.4 --repo Wujuhu/Codexio --draft=false --latest`。严格空正文也可用 UTF-8 零字节文件配合 `--notes-file`，避免管道引入换行。
+- 发布后核验 Tag 对应提交、标题、空正文及本次附件；使用 `git fetch origin tag v0.2.4` 将 Tag 同步到本地。

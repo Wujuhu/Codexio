@@ -84,9 +84,16 @@ def _request(url: str) -> Request:
 
 
 def release_from_manifest(data: dict, current_version: str = __version__, *,
-                          asset_name: str = EXE_NAME, architecture: str | None = None) -> Release | None:
+                          asset_name: str = EXE_NAME, architecture: str | None = None,
+                          manifest_key: str | None = None) -> Release | None:
     if not isinstance(data, dict):
         raise UpdateError("更新清单格式无效")
+    if manifest_key:
+        if manifest_key not in data:
+            return None
+        data = data[manifest_key]
+        if not isinstance(data, dict):
+            raise UpdateError("平台更新清单格式无效")
     parsed = version_tuple(data.get("version", ""))
     if parsed <= version_tuple(current_version):
         return None
@@ -102,7 +109,8 @@ def release_from_manifest(data: dict, current_version: str = __version__, *,
 
 
 def fetch_release(current_version: str = __version__, *, manifest_url: str = LATEST_MANIFEST,
-                  asset_name: str = EXE_NAME, architecture: str | None = None) -> Release | None:
+                  asset_name: str = EXE_NAME, architecture: str | None = None,
+                  manifest_key: str | None = None) -> Release | None:
     try:
         # A release attachment avoids the anonymous GitHub API rate limit.
         with urlopen(_request(manifest_url), timeout=20) as response:
@@ -112,7 +120,7 @@ def fetch_release(current_version: str = __version__, *, manifest_url: str = LAT
         if len(payload) > 1024 * 1024:
             raise UpdateError("GitHub 返回的版本信息过大")
         return release_from_manifest(json.loads(payload.decode("utf-8-sig")), current_version,
-                                     asset_name=asset_name, architecture=architecture)
+                                     asset_name=asset_name, architecture=architecture, manifest_key=manifest_key)
     except HTTPError as exc:
         if exc.code == 404:
             return None  # A new public repository may not have a release yet.

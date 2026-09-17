@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import platform
 import plistlib
 import re
 import shutil
@@ -50,6 +49,7 @@ def main():
     parser = argparse.ArgumentParser(description="本地构建并验证 Codexio.app；可选生成安装镜像。")
     parser.add_argument("--dmg", action="store_true", help="同时生成 build/macos/Codexio.dmg")
     parser.add_argument("--staging-subdir", help="在构建暂存区使用独立子目录，保留正在运行的旧暂存应用")
+    parser.add_argument("--manifest", type=Path, help="待合并的现有 latest.json；默认查找本地或已发布的清单")
     args = parser.parse_args()
     if sys.platform != "darwin":
         parser.error("只能在 macOS 上构建 .app")
@@ -76,7 +76,6 @@ def main():
     assert json.loads((smoke / "result.json").read_text(encoding="utf-8"))["ok"]
     if args.dmg:
         from codexio.macos_updater import DMG_NAME, MANIFEST_NAME
-        from codexio.updates import REPOSITORY, file_sha256
         disk = BUILD / "macos-disk"
         refuse_running(disk / "Codexio.app")
         if disk.exists():
@@ -87,10 +86,10 @@ def main():
         image = staging / DMG_NAME
         run("hdiutil", "create", "-volname", "Codexio", "-srcfolder", disk, "-ov", "-format", "UDZO", image)
         run("hdiutil", "verify", image)
-        manifest = dict(version=version, architecture=platform.machine(), size=image.stat().st_size,
-                        sha256=file_sha256(image),
-                        url=f"https://github.com/{REPOSITORY}/releases/download/v{version}/{DMG_NAME}")
-        (staging / MANIFEST_NAME).write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        manifest_args = ["--base", args.manifest] if args.manifest else []
+        run(sys.executable, ROOT / "scripts/update_manifest.py", "--platform", "macos",
+            "--asset", image, "--version", version, "--output", staging / MANIFEST_NAME, *manifest_args)
+        (staging / "latest-macos.json").unlink(missing_ok=True)
     refuse_running(target)
     DESTINATION.mkdir(parents=True, exist_ok=True)
     previous = BUILD / "macos-previous/Codexio.app"
@@ -110,9 +109,10 @@ def main():
     if args.dmg:
         for name in (DMG_NAME, MANIFEST_NAME):
             (staging / name).replace(DESTINATION / name)
+        (DESTINATION / "latest-macos.json").unlink(missing_ok=True)
     else:
         # Keep old update assets out of the current delivery folder.
-        for name in ("Codexio.dmg", "latest-macos.json"):
+        for name in ("Codexio.dmg", "latest.json", "latest-macos.json"):
             old_asset = DESTINATION / name
             if old_asset.exists():
                 previous.parent.mkdir(parents=True, exist_ok=True)

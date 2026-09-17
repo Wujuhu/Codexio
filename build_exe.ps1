@@ -1,6 +1,6 @@
 # Build a standalone Codexio.exe for Windows.
 # ASCII-only so Windows PowerShell 5.x can parse this file without a UTF-8 BOM.
-param([string]$Version)
+param([string]$Version, [string]$ManifestPath)
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $Root
@@ -43,18 +43,16 @@ $StagedExe = Join-Path $Staging "Codexio.exe"
 if (-not (Test-Path -LiteralPath $StagedExe)) {
     throw "Build finished but $StagedExe was not created."
 }
+$ReleaseVersion = (Get-Item -LiteralPath $StagedExe).VersionInfo.ProductVersion
+$StagedManifest = Join-Path $Staging "latest.json"
+$ManifestArgs = @()
+if ($ManifestPath) { $ManifestArgs = @("--base", $ManifestPath) }
+& $VenvPython (Join-Path $Root "scripts\update_manifest.py") --platform windows `
+    --asset $StagedExe --version $ReleaseVersion --output $StagedManifest @ManifestArgs
+if ($LASTEXITCODE -ne 0) { throw "Could not merge latest.json; the staged build is preserved." }
 & (Join-Path $Root "scripts\publish_exe.ps1") -StagedExe $StagedExe
 $Exe = Join-Path $Dist "Codexio.exe"
-$ReleaseVersion = (Get-Item -LiteralPath $Exe).VersionInfo.ProductVersion
-$Manifest = [ordered]@{
-    version = $ReleaseVersion
-    url = "https://github.com/Wujuhu/Codexio/releases/download/v$ReleaseVersion/Codexio.exe"
-    sha256 = (Get-FileHash -LiteralPath $Exe -Algorithm SHA256).Hash.ToLowerInvariant()
-    size = (Get-Item -LiteralPath $Exe).Length
-    notes = "Codexio $ReleaseVersion"
-}
-$Utf8 = New-Object System.Text.UTF8Encoding($false)
-[IO.File]::WriteAllText((Join-Path $Dist "latest.json"), ($Manifest | ConvertTo-Json -Depth 4), $Utf8)
+Move-Item -LiteralPath $StagedManifest -Destination (Join-Path $Dist "latest.json") -Force
 
 Write-Host ""
 Write-Host "Built: $Exe"

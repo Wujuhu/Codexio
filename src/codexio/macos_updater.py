@@ -21,14 +21,14 @@ from codexio.update_installer import (
 from codexio.updates import Release, UpdateCancelled, UpdateError, file_sha256, version_tuple
 
 DMG_NAME = "Codexio.dmg"
-MANIFEST_NAME = "latest-macos.json"
-LATEST_MANIFEST = updates.RELEASES_URL + "/latest/download/" + MANIFEST_NAME
+MANIFEST_NAME = "latest.json"
+LATEST_MANIFEST = updates.LATEST_MANIFEST
 BUNDLE_ID = "com.wujuhu.codexio"
 
 
 def fetch_release(current_version=__version__):
     return updates.fetch_release(current_version, manifest_url=LATEST_MANIFEST,
-                                 asset_name=DMG_NAME, architecture=platform.machine())
+                                 asset_name=DMG_NAME, architecture=platform.machine(), manifest_key="macos")
 
 
 def download_release(release, target, cancel, progress=lambda _value: None):

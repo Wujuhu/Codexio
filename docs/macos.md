@@ -38,9 +38,13 @@ Dock 图标由 `src/codexio/icons/app.svg` 直接渲染，ICNS 的各尺寸独�
 
 “设置 → 应用”提供“自动下载更新”和“检查并更新”。打包应用默认在启动 5 秒后检查，运行期间每 6 小时检查一次；源码、模拟和冒烟检查模式不安装更新。Mac 使用独立偏好，升级到支持自动更新的版本后默认开启，用户关闭后会保留选择。
 
-更新源为同一仓库 `Wujuhu/Codexio` 的正式 GitHub Release。Mac 读取 `latest-macos.json`，只下载该版本的 `Codexio.dmg`，检查芯片架构、文件大小和 SHA-256，再验证应用标识、版本、macOS 签名及可执行架构。准备完成后通过正常退出流程重启，替换完整 `.app`，启动失败恢复旧版；无写入权限或应用未正常退出时保留当前版本。发布信任仍依赖 GitHub 仓库及 HTTPS，本地 ad-hoc 签名用于完整性检查。
+更新源为同一仓库 `Wujuhu/Codexio` 的正式 GitHub Release。Mac 读取与 Windows 共用的 `latest.json` 中的 `macos` 部分，只下载该版本的 `Codexio.dmg`，检查芯片架构、文件大小和 SHA-256，再验证应用标识、版本、macOS 签名及可执行架构。准备完成后通过正常退出流程重启，替换完整 `.app`，启动失败恢复旧版；无写入权限或应用未正常退出时保留当前版本。发布信任仍依赖 GitHub 仓库及 HTTPS，本地 ad-hoc 签名用于完整性检查。
 
-`./build_macos.sh --dmg` 会同时生成 `Codexio.dmg` 和 `latest-macos.json`。**将来经授权发布 Mac 新版时，需要把这两份本次构建的文件放进同一正式 Release，并设为 Latest**；它们与 Windows 的 `Codexio.exe`、`latest.json` 分开。未提供 Mac 清单时不安装；相同或更低版本不更新。不要手工修改清单中的版本、大小或 SHA-256。版本递增和远程发布仍须用户明确授权。
+`./build_macos.sh --dmg` 会生成 `Codexio.dmg` 和统一的 `latest.json`。顶层 `version`、`url`、`size`、`sha256` 等 Windows 字段保持原格式，Mac 的完整版本与下载信息放在 `macos` 对象中，已发布的 Windows 客户端仍可读取。两个平台独立比较各自版本；缺少 `macos` 时 Mac 正常跳过更新，相同或更低版本也不更新。
+
+构建优先使用本地包含另一平台信息的 `latest.json`，首次构建会读取 GitHub 已发布清单；也可用 `./build_macos.sh --dmg --manifest /path/to/latest.json` 明确指定 Windows 或另一台机器生成的清单。Windows 对应 `./build_exe.ps1 -ManifestPath /path/to/latest.json`，只更新顶层 Windows 字段并保留 `macos`。同时发布两端时，让最后一次构建以另一端的新清单为基础，**只上传 `Codexio.exe`、`Codexio.dmg` 和最后合并的一份 `latest.json`**，不再上传 `latest-macos.json`。
+
+清单在暂存区完成后才交付；读取或合并失败时保留已有交付文件。请勿手工修改版本、大小或 SHA-256。版本递增和远程发布仍须用户明确授权。
 
 最新附件下载地址使用 [GitHub 官方的 Release 附件链接格式](https://docs.github.com/en/repositories/releasing-projects-on-github/linking-to-releases)。本次开发仅生成本地产物，不自动发布。
 

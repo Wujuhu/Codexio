@@ -30,15 +30,15 @@ def manifest(**changes):
     return data
 
 
-def test_mac_checks_its_own_release_manifest_and_never_uses_windows_asset(monkeypatch):
+def test_mac_checks_shared_manifest_and_never_uses_windows_asset(monkeypatch):
     requested = []
     def fetch(request, **kwargs):
         requested.append(request.full_url)
-        return Response(json.dumps(manifest()).encode("utf-8"))
+        return Response(json.dumps(dict(version="9.0.0", macos=manifest())).encode("utf-8"))
     monkeypatch.setattr(updates, "urlopen", fetch)
     release = mac.fetch_release("0.2.4")
     assert release.url.endswith("/v0.2.5/Codexio.dmg")
-    assert requested == [mac.LATEST_MANIFEST]
+    assert requested == [updates.LATEST_MANIFEST] == [mac.LATEST_MANIFEST]
     assert mac.fetch_release("0.2.5") is None
 
 
@@ -49,7 +49,20 @@ def test_mac_checks_its_own_release_manifest_and_never_uses_windows_asset(monkey
     {"sha256": "bad"},
 ])
 def test_mac_rejects_wrong_platform_source_or_digest(monkeypatch, changes):
-    monkeypatch.setattr(updates, "urlopen", lambda *a, **k: Response(json.dumps(manifest(**changes)).encode()))
+    monkeypatch.setattr(updates, "urlopen", lambda *a, **k: Response(json.dumps({"macos": manifest(**changes)}).encode()))
+    with pytest.raises(UpdateError):
+        mac.fetch_release("0.2.4")
+
+
+def test_windows_only_release_has_no_mac_update(monkeypatch):
+    data = dict(version="9.0.0", url="https://github.com/Wujuhu/Codexio/releases/download/v9.0.0/Codexio.exe")
+    monkeypatch.setattr(updates, "urlopen", lambda *a, **k: Response(json.dumps(data).encode()))
+    assert mac.fetch_release("0.2.4") is None
+
+
+@pytest.mark.parametrize("value", [None, "Codexio.dmg", []])
+def test_mac_rejects_invalid_platform_entry(monkeypatch, value):
+    monkeypatch.setattr(updates, "urlopen", lambda *a, **k: Response(json.dumps({"macos": value}).encode()))
     with pytest.raises(UpdateError):
         mac.fetch_release("0.2.4")
 
