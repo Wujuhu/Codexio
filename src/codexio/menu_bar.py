@@ -80,8 +80,8 @@ class QuotaPreview(QFrame):
         super().__init__()
         self.setProperty("previewCard", True)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 7, 8, 7)
-        layout.setSpacing(4)
+        layout.setContentsMargins(8, 9, 8, 9)
+        layout.setSpacing(5)
         row = QHBoxLayout()
         row.addWidget(label(title))
         self.value = label("—", name="quotaValue")
@@ -138,8 +138,8 @@ class MenuBarPreview(QFrame):
         surface.setObjectName("previewSurface")
         layout.addWidget(surface)
         self.body = QVBoxLayout(surface)
-        self.body.setContentsMargins(10, 8, 10, 8)
-        self.body.setSpacing(7)
+        self.body.setContentsMargins(10, 12, 10, 12)
+        self.body.setSpacing(12)
         header = QHBoxLayout()
         header.setSpacing(5)
         icon = label()
@@ -167,15 +167,15 @@ class MenuBarPreview(QFrame):
         self.today_heading = label("今日用量", name="previewHeading")
         self.body.addWidget(self.today_heading)
         stats = QHBoxLayout()
-        stats.setSpacing(7)
+        stats.setSpacing(12)
         self.today_cost, self.cost_note = self._stat(stats, "今日费用", "previewCost")
         self.today_tokens, self.token_note = self._stat(stats, "今日 Token 总数", "previewTokens")
         self.body.addLayout(stats)
         latest = QFrame()
         latest.setProperty("previewCard", True)
         last = QVBoxLayout(latest)
-        last.setContentsMargins(8, 7, 8, 7)
-        last.setSpacing(6)
+        last.setContentsMargins(8, 9, 8, 9)
+        last.setSpacing(8)
         row = QHBoxLayout()
         row.addWidget(label("最近一次请求", muted=True))
         self.latest_status = label("", muted=True)
@@ -210,8 +210,8 @@ class MenuBarPreview(QFrame):
         frame = QFrame()
         frame.setProperty("previewCard", True)
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(8, 7, 8, 7)
-        layout.setSpacing(3)
+        layout.setContentsMargins(8, 9, 8, 9)
+        layout.setSpacing(4)
         layout.addWidget(label(title, muted=True))
         value = label("—", name=name)
         value.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
@@ -247,7 +247,14 @@ QLabel#previewCost, QLabel#previewLatestCost { color: %(chart_cost_ink)s; }
 QLabel#previewTokens { color: %(chart_tokens_ink)s; }
 """ % colors)
         self.render()
-        self.adjustSize()
+        self._fit_contents()
+
+    def _fit_contents(self):
+        # Measure at the fixed preview width. QWidget.adjustSize() can cap the
+        # height at two-thirds of the screen and compress wrapped rows.
+        layout = self.layout()
+        height = layout.totalHeightForWidth(self.width())
+        self.resize(self.width(), height if height >= 0 else layout.totalSizeHint().height())
 
     def apply_quota(self, state):
         self._quota = state
@@ -335,7 +342,7 @@ QLabel#previewTokens { color: %(chart_tokens_ink)s; }
 
     def show_at(self, anchor):
         self.render()
-        self.adjustSize()
+        self._fit_contents()
         screen = QApplication.screenAt(anchor.center()) or QApplication.primaryScreen()
         if screen:
             self.move(popup_position(anchor, self.size(), screen.availableGeometry()))
@@ -349,7 +356,7 @@ QLabel#previewTokens { color: %(chart_tokens_ink)s; }
         if event.type() == QEvent.Type.LayoutRequest and self.isVisible():
             # Popup windows do not always grow when a child wraps after the
             # first layout pass. Refit after that pass, and on live updates.
-            self.adjustSize()
+            self._fit_contents()
         return handled
 
     def showEvent(self, event):
