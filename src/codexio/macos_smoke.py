@@ -112,6 +112,7 @@ class SmokeRun(QObject):
             assert popup.isVisible() and popup._timer.isActive()
             assert popup.today_tokens.text() != "—" and popup.today_cost.text().startswith("$")
             assert popup.latest_cost.text().startswith("$")
+            assert popup.latest_message.geometry().bottom() < popup.latest_note.geometry().top()
             self.capture(popup, "menu-bar-" + theme)
             popup.settings_button.click()
             yield
@@ -125,7 +126,7 @@ class SmokeRun(QObject):
         yield
         saved = load_settings()
         assert saved.refresh_interval_seconds == 30 and saved.menu_bar_preview_size == "large"
-        assert saved.show_main_on_startup is False and popup.width() == 440
+        assert saved.show_main_on_startup is False and popup.width() == 293
         self.checks.append("settings-roundtrip")
         controller.apply_settings(replace(saved, refresh_interval_seconds=60, menu_bar_preview_size="comfortable", show_main_on_startup=True))
         controller.close_window()

@@ -2,11 +2,12 @@
 import copy
 import os
 import re
+import sys
 from datetime import datetime, timedelta
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
-from PySide6.QtGui import QFontInfo
+from PySide6.QtGui import QFontDatabase, QFontInfo
 from PySide6.QtWidgets import QApplication, QDialogButtonBox, QLabel, QLineEdit
 
 from codexio.activity import UsageActivity
@@ -119,14 +120,15 @@ def test_standard_row_is_bold_in_all_six_columns_and_api_base_rows_are_absent(ap
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])
-def test_main_brand_uses_times_new_roman_in_both_themes(app, theme):
+def test_main_brand_uses_platform_font_in_both_themes(app, theme):
     window = Dashboard(AppSettings(), {"theme": theme}, {})
     try:
         window.open_page("logs")
         app.processEvents()
         name = window.findChild(QLabel, "brandName")
         icon = window.findChild(QLabel, "brandIcon")
-        assert QFontInfo(name.font()).family() == "Times New Roman"
+        expected = QFontInfo(QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)).family() if sys.platform == "darwin" else "Times New Roman"
+        assert QFontInfo(name.font()).family() == expected
         assert icon.width() == icon.height() == 32
         assert name.contentsRect().left() == 4 and name.contentsRect().top() == 4
     finally:

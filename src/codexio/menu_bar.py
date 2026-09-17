@@ -6,11 +6,11 @@ import math
 import time
 from datetime import datetime
 
-from PySide6.QtCore import QObject, QPoint, QRect, QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QCursor, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QFrame, QHBoxLayout, QLabel, QProgressBar, QPushButton,
-    QSystemTrayIcon, QVBoxLayout,
+    QSizePolicy, QSystemTrayIcon, QVBoxLayout,
 )
 
 from codexio.app_icon import render_app_pixmap
@@ -80,8 +80,8 @@ class QuotaPreview(QFrame):
         super().__init__()
         self.setProperty("previewCard", True)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(5)
+        layout.setContentsMargins(8, 7, 8, 7)
+        layout.setSpacing(4)
         row = QHBoxLayout()
         row.addWidget(label(title))
         self.value = label("—", name="quotaValue")
@@ -91,9 +91,10 @@ class QuotaPreview(QFrame):
         self.bar.setRange(0, 100)
         self.bar.setValue(0)
         self.bar.setTextVisible(False)
-        self.bar.setFixedHeight(6)
+        self.bar.setFixedHeight(5)
         layout.addWidget(self.bar)
         self.reset = label("重置时间待获取", muted=True)
+        self.reset.setWordWrap(True)
         layout.addWidget(self.reset)
 
     def render(self, view, now, theme):
@@ -137,15 +138,20 @@ class MenuBarPreview(QFrame):
         surface.setObjectName("previewSurface")
         layout.addWidget(surface)
         self.body = QVBoxLayout(surface)
-        self.body.setContentsMargins(16, 14, 16, 14)
-        self.body.setSpacing(10)
+        self.body.setContentsMargins(10, 8, 10, 8)
+        self.body.setSpacing(7)
         header = QHBoxLayout()
+        header.setSpacing(5)
         icon = label()
-        brand_pixmap = render_app_pixmap(48)
+        brand_pixmap = render_app_pixmap(40)
         brand_pixmap.setDevicePixelRatio(2)
         icon.setPixmap(brand_pixmap)
         header.addWidget(icon)
         header.addWidget(label("Codexio", name="previewBrand"), 1)
+        self.open_button = QPushButton("主界面")
+        self.open_button.setProperty("primary", True)
+        self.open_button.clicked.connect(lambda: self._open("overview"))
+        header.addWidget(self.open_button)
         self.refresh_button = QPushButton("刷新")
         self.refresh_button.setAccessibleName("刷新额度与用量")
         self.refresh_button.clicked.connect(on_refresh)
@@ -161,15 +167,15 @@ class MenuBarPreview(QFrame):
         self.today_heading = label("今日用量", name="previewHeading")
         self.body.addWidget(self.today_heading)
         stats = QHBoxLayout()
-        stats.setSpacing(10)
+        stats.setSpacing(7)
         self.today_cost, self.cost_note = self._stat(stats, "今日费用", "previewCost")
         self.today_tokens, self.token_note = self._stat(stats, "今日 Token 总数", "previewTokens")
         self.body.addLayout(stats)
         latest = QFrame()
         latest.setProperty("previewCard", True)
         last = QVBoxLayout(latest)
-        last.setContentsMargins(12, 10, 12, 10)
-        last.setSpacing(7)
+        last.setContentsMargins(8, 7, 8, 7)
+        last.setSpacing(6)
         row = QHBoxLayout()
         row.addWidget(label("最近一次请求", muted=True))
         self.latest_status = label("", muted=True)
@@ -188,13 +194,9 @@ class MenuBarPreview(QFrame):
         self.usage_status.setWordWrap(True)
         self.body.addWidget(self.usage_status)
         actions = QHBoxLayout()
-        self.open_button = QPushButton("打开主界面")
-        self.open_button.setProperty("primary", True)
-        self.open_button.clicked.connect(lambda: self._open("overview"))
-        actions.addWidget(self.open_button, 1)
         self.settings_button = QPushButton("设置…")
         self.settings_button.clicked.connect(lambda: self._open("settings"))
-        actions.addWidget(self.settings_button)
+        actions.addWidget(self.settings_button, 1)
         self.quit_button = QPushButton("退出")
         self.quit_button.clicked.connect(on_quit)
         actions.addWidget(self.quit_button)
@@ -208,12 +210,15 @@ class MenuBarPreview(QFrame):
         frame = QFrame()
         frame.setProperty("previewCard", True)
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(4)
+        layout.setContentsMargins(8, 7, 8, 7)
+        layout.setSpacing(3)
         layout.addWidget(label(title, muted=True))
         value = label("—", name=name)
+        value.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        value.setWordWrap(True)
         layout.addWidget(value)
         note = label("等待记录", muted=True)
+        note.setWordWrap(True)
         layout.addWidget(note)
         row.addWidget(frame, 1)
         return value, note
@@ -225,19 +230,19 @@ class MenuBarPreview(QFrame):
     def configure(self, settings, config):
         self._settings = settings.normalized()
         self._theme = config.get("theme", "system")
-        self.setFixedWidth(440 if self._settings.menu_bar_preview_size == "large" else 380)
+        self.setFixedWidth(293 if self._settings.menu_bar_preview_size == "large" else 253)
         colors = apply_theme(self, self._theme)
         self.setStyleSheet(self.styleSheet() + """
-QWidget { font-size: 11px; }
-QPushButton { padding: 5px 9px; border-radius: 6px; }
-QProgressBar { min-height: 6px; max-height: 6px; }
+QWidget { font-size: 10px; }
+QPushButton { padding: 4px 7px; border-radius: 5px; }
+QProgressBar { min-height: 5px; max-height: 5px; }
 QFrame#previewSurface { background: %(bg)s; border: 1px solid %(border)s; border-radius: 13px; }
 QFrame[previewCard="true"] { background: %(surface)s; border: none; border-radius: 9px; }
-QLabel#previewBrand { font-size: 18px; font-weight: 600; }
-QLabel#previewHeading, QLabel#quotaValue { font-size: 11px; font-weight: 600; }
-QLabel#previewCost, QLabel#previewTokens { font-size: 23px; font-weight: 600; }
-QLabel#previewLatestCost { font-size: 20px; font-weight: 600; }
-QWidget#previewMessage { font-size: 12px; }
+QLabel#previewBrand { font-size: 16px; font-weight: 600; }
+QLabel#previewHeading, QLabel#quotaValue { font-size: 10px; font-weight: 600; }
+QLabel#previewCost, QLabel#previewTokens { font-size: 19px; font-weight: 600; }
+QLabel#previewLatestCost { font-size: 18px; font-weight: 600; }
+QWidget#previewMessage { font-size: 11px; }
 QLabel#previewCost, QLabel#previewLatestCost { color: %(chart_cost_ink)s; }
 QLabel#previewTokens { color: %(chart_tokens_ink)s; }
 """ % colors)
@@ -338,6 +343,14 @@ QLabel#previewTokens { color: %(chart_tokens_ink)s; }
         self.raise_()
         self.activateWindow()
         self.open_button.setFocus()
+
+    def event(self, event):
+        handled = super().event(event)
+        if event.type() == QEvent.Type.LayoutRequest and self.isVisible():
+            # Popup windows do not always grow when a child wraps after the
+            # first layout pass. Refit after that pass, and on live updates.
+            self.adjustSize()
+        return handled
 
     def showEvent(self, event):
         super().showEvent(event)

@@ -135,14 +135,16 @@ def test_compact_preview_displays_filtered_message_without_session_title_fallbac
     preview.apply_data(data)
     preview.show_at(QRect(100, 0, 20, 22))
     app.processEvents()
-    assert preview.width() == 380
-    assert preview.today_cost.font().pixelSize() == 23
+    assert preview.width() == 253
+    assert preview.today_cost.font().pixelSize() == 19
     assert preview.latest_message.text.startswith("请缩小菜单栏预览")
     assert all(value not in preview.latest_message.text for value in ("系统内容", "Files mentioned", "/var/", "[image]"))
     assert 1 <= preview.latest_message.last_line_count <= 3
     assert preview.height() < 600
+    QTest.qWait(10)
+    assert preview.latest_message.geometry().bottom() < preview.latest_note.geometry().top()
     preview.configure(replace(AppSettings(), menu_bar_preview_size="large"), {"theme": "dark"})
-    assert preview.width() == 440
+    assert preview.width() == 293
     data["latest_request"]["prompt_preview"] = "<system>系统内容</system>[image 1]"
     preview.apply_data(data)
     assert preview.latest_message.text == "未记录用户文字"

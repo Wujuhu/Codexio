@@ -48,14 +48,18 @@ def build_icon():
 def main():
     parser = argparse.ArgumentParser(description="本地构建并验证 Codexio.app；可选生成安装镜像。")
     parser.add_argument("--dmg", action="store_true", help="同时生成 build/macos/Codexio.dmg")
+    parser.add_argument("--staging-subdir", help="在构建暂存区使用独立子目录，保留正在运行的旧暂存应用")
     args = parser.parse_args()
     if sys.platform != "darwin":
         parser.error("只能在 macOS 上构建 .app")
-    bundle = STAGING / "Codexio.app"
+    if args.staging_subdir and not re.fullmatch(r"[A-Za-z0-9_-]+", args.staging_subdir):
+        parser.error("暂存子目录只能包含字母、数字、下划线和连字符")
+    staging = STAGING / args.staging_subdir if args.staging_subdir else STAGING
+    bundle = staging / "Codexio.app"
     target = DESTINATION / "Codexio.app"
     refuse_running(bundle)
     build_icon()
-    run(sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--distpath", STAGING,
+    run(sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--distpath", staging,
         "--workpath", BUILD / "pyinstaller-macos", ROOT / "packaging/codexio-macos.spec")
     with (bundle / "Contents/Info.plist").open("rb") as stream:
         info = plistlib.load(stream)
@@ -92,7 +96,7 @@ def main():
         disk.mkdir(parents=True)
         run("ditto", target, disk / "Codexio.app")
         (disk / "Applications").symlink_to("/Applications")
-        image = STAGING / "Codexio.dmg"
+        image = staging / "Codexio.dmg"
         run("hdiutil", "create", "-volname", "Codexio", "-srcfolder", disk, "-ov", "-format", "UDZO", image)
         run("hdiutil", "verify", image)
         image.replace(DESTINATION / "Codexio.dmg")

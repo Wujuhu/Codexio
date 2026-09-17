@@ -88,7 +88,12 @@ def theme_colors(name: str = "system") -> dict[str, str]:
 
 def dashboard_stylesheet(name: str = "system") -> str:
     c = theme_colors(name)
-    c["ui_font"] = "'.AppleSystemUIFont', 'PingFang SC', 'Helvetica Neue'" if sys.platform == "darwin" else "'Microsoft YaHei UI', 'Segoe UI'"
+    if sys.platform == "darwin":
+        c["ui_font"] = '"%s"' % QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont).family()
+        c["brand_font"] = c["ui_font"]
+    else:
+        c["ui_font"] = "'Microsoft YaHei UI', 'Segoe UI'"
+        c["brand_font"] = '"Times New Roman"'
     for direction in ("up", "down"):
         c["arrow_" + direction] = (Path(__file__).with_name("icons") / ("chevron-%s-%s.svg" % (direction, resolve_theme(name)))).as_posix()
     return """
@@ -181,7 +186,7 @@ QFrame#sidebar { background: %(sidebar_start)s; border: none; }
 QFrame#contentSurface { background: %(bg)s; border: 1px solid %(border)s; border-radius: 18px; }
 QFrame[card="true"] { background: %(surface)s; border: none; border-radius: 14px; }
 QFrame[card="true"][tone] { background: %(surface)s; border: none; }
-QLabel#brandName { font-family: "Times New Roman"; font-size: 22px; font-weight: 600; padding: 4px 4px 0; }
+QLabel#brandName { font-family: %(brand_font)s; font-size: 22px; font-weight: 600; padding: 4px 4px 0; }
 QLabel#statusText, QLabel#sidebarStatus { font-size: 11px; color: %(muted)s; }
 QPushButton { padding: 7px 11px; border-radius: 8px; }
 QPushButton[quiet="true"] { background: transparent; border: none; color: %(muted)s; padding: 6px 9px; }

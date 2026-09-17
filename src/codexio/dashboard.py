@@ -311,10 +311,16 @@ class LineLimitedText(QWidget):
             height = math.ceil(line_height * self.max_lines) + 2
         if self.minimumHeight() != height or self.maximumHeight() != height:
             self.setFixedHeight(height)
+            return True
+        return False
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._sync_height()
+        if self._sync_height():
+            # A width change can add wrapped lines while the parent layout is
+            # already assigning geometry. Re-measure after that pass so the
+            # next row does not overlap the newly taller message.
+            QTimer.singleShot(0, self, self.updateGeometry)
 
     def layout_lines(self, width: Optional[float] = None) -> tuple[QTextLayout, list]:
         layout = QTextLayout(self.text, self.font())
@@ -1389,7 +1395,7 @@ class Dashboard(QMainWindow):
             for key, label, choices in (
                 ("refresh_interval_seconds", "额度刷新", (("30 秒", 30), ("1 分钟", 60), ("5 分钟", 300))),
                 ("quota_scope", "预览额度", (("自动", "auto"), ("5 小时与周额度", "both"), ("仅周额度", "week"))),
-                ("menu_bar_preview_size", "预览大小", (("紧凑 · 380 px", "comfortable"), ("宽敞 · 440 px", "large"))),
+                ("menu_bar_preview_size", "预览大小", (("紧凑 · 253 px", "comfortable"), ("宽敞 · 293 px", "large"))),
             ):
                 field = combo(choices, getattr(self._settings, key))
                 field.setMaximumWidth(280)

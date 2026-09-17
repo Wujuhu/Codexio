@@ -16,7 +16,7 @@
 
 主界面保留概览、日志、用量、订阅、定价、设置，并使用原生标题栏和 Mac 系统字体。⌘K 搜索、⌘, 设置、⌘R 刷新、⌘W 关闭窗口、⌘Q 退出。关闭窗口不会停止后台统计，可从菜单栏再次打开。单实例锁以当前数据目录为边界，重复启动激活已有实例。
 
-菜单栏图标使用原有 Quantum X 标志的单色模板，在系统深浅菜单栏中自动着色。左右点击只切换预览，主界面由“打开主界面”按钮打开；应用激活不再自动创建窗口。点击外部区域或按 Esc 关闭。预览宽度为 380 / 440 逻辑像素，跟随应用主题；默认显示两种可用额度。隐藏预览时停止界面计时器，后台采集仍继续。
+菜单栏图标使用原有 Quantum X 标志的单色模板，在系统深浅菜单栏中自动着色。左右点击只切换预览，主窗口由预览最顶部的“主界面”按钮打开；应用激活不再自动创建窗口。点击外部区域或按 Esc 关闭。预览宽度为 253 / 293 逻辑像素，费用和 Token 卡片保持左右并排，使用 macOS 默认系统字体与紧凑字号、间距，跟随应用主题；默认显示两种可用额度。隐藏预览时停止界面计时器，后台采集仍继续。
 
 菜单栏最近请求预览只取用户消息，最多显示三行，长文本省略并可悬停查看已过滤的短预览；不回退到会话标题、系统提示或图片路径。解析器在截断前移除生成上下文与图片附件信息，旧索引会自动回填预览，不重复计量。
 
@@ -56,5 +56,7 @@ QT_QPA_PLATFORM=offscreen LOCALAPPDATA="$PWD/build/test-data" \
 冒烟检查使用 Cocoa 原生平台和模拟数据，逐页打开深浅主题，保存当前应用控件截图并检查设置持久化、关闭主窗口后服务继续运行、菜单栏只切换预览、明确点击后打开主窗口、日志详情数值、3 秒滚动条隐藏、SVG 高清图标以及未创建悬浮窗。输出位于指定目录的 `result.json` 与 PNG 文件中。`--smoke-test` 必须与 `--mock` 同用。
 
 构建流程先生成 `build/release-staging/macos/Codexio.app`，核对版本和签名，然后直接启动打包后的二进制完成同样的 Cocoa 冒烟检查。成功后移动至 `build/macos/Codexio.app`，旧包仅保存在 `build/macos-previous`。若目标或暂存应用仍在运行，构建不会覆盖或终止它。DMG 包含该次构建的应用及 Applications 快捷方式，并经 `hdiutil verify` 验证。
+
+如果旧暂存应用正在运行，可用 `./build_macos.sh --dmg --staging-subdir next` 在 `build/release-staging/macos/next` 中构建，保留运行中的旧文件；交付位置仍为 `build/macos`，目标应用运行时仍拒绝替换。
 
 Qt 菜单栏行为参考 [QSystemTrayIcon 官方文档](https://doc.qt.io/qt-6/qsystemtrayicon.html)；应用包与本地签名使用 [PyInstaller 官方 macOS 打包说明](https://pyinstaller.org/en/stable/feature-notes.html#macos-binary-code-signing)。
