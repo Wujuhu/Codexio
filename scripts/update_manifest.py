@@ -6,14 +6,12 @@ import json
 import platform
 import sys
 from pathlib import Path
-from urllib.error import HTTPError
-from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from codexio.updates import LATEST_MANIFEST, REPOSITORY, UpdateError, file_sha256, release_from_manifest, version_tuple
+from codexio.app_archive import APP_ARCHIVE_NAME
+from codexio.updates import REPOSITORY, UpdateError, file_sha256, release_from_manifest, version_tuple
 
 
 def read_manifest(path):
@@ -26,45 +24,38 @@ def read_manifest(path):
 def load_base(system, explicit=None, *, version=None):
     if explicit:
         return read_manifest(explicit)
-    # Prefer a local shared manifest that already includes the other platform.
-    candidates = [ROOT / "release" / version / "latest.json"] if version else []
-    # Legacy locations are read only, to support the first build after migration.
-    candidates += [ROOT / "dist/latest.json", ROOT / "build/macos/latest.json"]
+    # Development builds stay offline and prefer the other platform's current build.
+    other = "windows" if system == "macos" else "macos"
+    candidates = [ROOT / "build/dev" / other / "latest.json"]
+    if version:
+        candidates.append(ROOT / "release" / version / "latest.json")
     for path in candidates:
         if path.exists():
             data = read_manifest(path)
-            if (system == "macos" and "version" in data) or (system == "windows" and "macos" in data):
+            entry = data if system == "macos" else data.get("macos", {})
+            if not isinstance(entry, dict):
+                raise UpdateError("平台更新清单格式无效")
+            if entry.get("version") == version:
                 return data
-    # The first Mac build on a new checkout preserves the published EXE metadata.
-    try:
-        request = Request(LATEST_MANIFEST, headers={"User-Agent": "Codexio-build", "Accept": "application/json"})
-        with urlopen(request, timeout=20) as response:
-            if urlsplit(response.geturl()).scheme != "https":
-                raise UpdateError("更新清单必须通过 HTTPS 获取")
-            payload = response.read(1024 * 1024 + 1)
-        if len(payload) > 1024 * 1024:
-            raise UpdateError("更新清单过大")
-        data = json.loads(payload.decode("utf-8-sig"))
-        if not isinstance(data, dict):
-            raise UpdateError("更新清单格式无效")
-        return data
-    except HTTPError as exc:
-        if exc.code == 404 and system == "windows":
-            return {}
-        raise UpdateError("无法获取现有 latest.json，请用 --base 指定清单文件") from exc
+    return {}
 
 
 def write_manifest(system, asset, version, output, *, base=None, architecture=None):
     version = ".".join(map(str, version_tuple(version)))
-    name = "Codexio.dmg" if system == "macos" else "Codexio.exe"
+    name = APP_ARCHIVE_NAME if system == "macos" else "Codexio.exe"
     if asset.name != name:
         raise UpdateError("更新文件名必须为 " + name)
     data = load_base(system, base, version=version)
     if system == "macos":
         # Keep every existing Windows field intact, including its own version.
-        release_from_manifest(data, "0.0.0")
+        if "version" in data:
+            release_from_manifest(data, "0.0.0")
     elif "macos" in data:
-        release_from_manifest(data, "0.0.0", asset_name="Codexio.dmg", manifest_key="macos")
+        # An old release can serve as a base while Mac migrates from DMG to APP ZIP.
+        if not isinstance(data["macos"], dict):
+            raise UpdateError("平台更新清单格式无效")
+        name_in_base = "Codexio.dmg" if str(data["macos"].get("url", "")).endswith("/Codexio.dmg") else APP_ARCHIVE_NAME
+        release_from_manifest(data, "0.0.0", asset_name=name_in_base, manifest_key="macos")
     entry = dict(version=version, url=f"https://github.com/{REPOSITORY}/releases/download/v{version}/{name}",
                  sha256=file_sha256(asset), size=asset.stat().st_size)
     if system == "macos":

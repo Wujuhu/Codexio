@@ -30,7 +30,7 @@ exe = EXE(
 )
 collection = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="Codexio")
 app = BUNDLE(
-    collection, name="Codexio.app", icon=str(ROOT / "build/macos-resources/Codexio.icns"),
+    collection, name="Codexio.app", icon=str(ROOT / "build/cache/macos-resources/Codexio.icns"),
     bundle_identifier="com.wujuhu.codexio", version=VERSION,
     info_plist={
         "CFBundleDisplayName": "Codexio",

@@ -11,7 +11,7 @@ Windows / macOS 桌面额度与用量面板，通过 Codex `app-server` 读取�
 - 今日、近 7 天、近 30 天及历史 Token 和 美元费用
 - 小时／天／周用量趋势、逐次请求明细、模型价格和订阅周额度观测估值
 
-可用源码运行。Windows 打包成单个 `Codexio.exe`，保留原有自动更新流程；macOS 打包为 `Codexio.app`，通过 GitHub Release 的 DMG 与统一清单自动更新。
+可用源码运行。Windows 打包成单个 `Codexio.exe`，保留原有自动更新流程；macOS 打包为 `Codexio.app`，通过 GitHub Release 的 APP ZIP 与统一清单自动更新。
 
 ## macOS
 
@@ -20,7 +20,7 @@ Mac 端复用 Windows 主界面与计价、去重、请求分组和历史统计�
 - 点击菜单栏的 Codexio 图标，仅展开 253 px 宽的紧凑预览；可在设置中调整为 293 px。只有点击“主界面”或“设置”才打开相应窗口。
 - 预览显示 5 小时／每周额度、剩余百分比、当地重置时间与倒计时，以及今日 美元费用、今日 Token 总数、最近一轮用户请求的累计费用与最多三行用户消息。消息预先过滤系统／环境上下文和附件路径，只有图片时显示“未记录用户文字”。回复中的请求会持续更新；部分未定价、读取失败、缓存与跨日等待均有明确状态。
 - 预览最顶部的“主界面”按钮可打开主窗口，底部保留设置和退出。费用和 Token 卡片左右并排；采用 macOS 默认系统字体与较小字号，卡片之间保留 12 px 间距。点击外部区域或按 Esc 收起预览；关闭主窗口后仍继续采集。
-- 设置的“应用”页支持自动更新开关和“检查并更新”；Mac 使用同一 GitHub Release 中的 `Codexio.dmg` 与统一的 `latest.json` 中的 `macos` 部分，下载校验后自动重启安装，源码与模拟模式不安装更新。
+- 设置的“应用”页支持自动更新开关和“检查并更新”；Mac 使用同一 GitHub Release 中的 `Codexio.app.zip` 与统一的 `latest.json` 中的 `macos` 部分，下载校验后自动重启安装，源码与模拟模式不安装更新。
 - 设置支持主题、额度刷新间隔、预览尺寸与额度范围、启动时是否显示主界面、日志来源列、Codex 路径、本机／SSH 数据来源、模型定价与订阅资料。
 - 支持 ⌘K 搜索、⌘, 设置、⌘R 刷新、⌘W 关闭窗口、⌘Q 退出；重复启动会打开已有实例。
 - 自动发现 `/Applications`、`~/Applications` 下的 `Codex.app` 和 `ChatGPT.app` 内置 CLI，以及 Homebrew、常见 CLI 安装路径。也可在设置中指定 `.app` 或 CLI 路径。
@@ -33,23 +33,36 @@ Mac 端复用 Windows 主界面与计价、去重、请求分组和历史统计�
 ```bash
 ./run_macos.sh                 # 读取真实本机用量
 ./run_macos.sh --mock          # 独立模拟数据预览
-./build_macos.sh --dmg         # 构建、验证并生成本地安装镜像
-open build/macos/Codexio.app
+./build_macos.sh               # 构建、验证开发 APP 和 APP ZIP，仅写入 build
+open build/dev/macos/Codexio.app
 ```
 
-构建先进入 `build/release-staging/macos`，通过原生界面冒烟检查和签名验证后，`.app` 留在 `build/macos/Codexio.app` 供本地运行；`--dmg` 将安装包和清单输出到 `release/<版本号>/`。Windows 打包也使用同一版本目录，完整交付结构为：
+日常构建仅写入 `build`。开发包通过原生界面检查、签名和 ZIP 解压校验后放入 `build/dev/macos/`，包含可直接打开的 `Codexio.app`、用于传输的 `Codexio.app.zip` 和清单。目录结构为：
+
+```text
+build/
+├── dev/          # macos 与 windows 的最新开发包
+├── staging/      # 构建和上传暂存文件
+├── cache/        # PyInstaller 与图标缓存
+├── checks/       # 测试、截图和更新流程验证结果
+├── logs/         # 构建与测试日志
+├── backups/      # 替换开发包时的临时备份
+└── tools/        # 本地临时工具
+```
+
+只有在用户明确确认发布及版本号后，执行 `scripts/prepare_release.py --version <确认的版本号>`，归集两端已验证的开发包并生成正式目录：
 
 ```text
 release/
-└── 0.2.4/
-    ├── Codexio.dmg
+└── <确认的版本号>/
     ├── Codexio.exe
+    ├── Codexio.app.zip
     └── latest.json
 ```
 
-历史版本各自保留；构建中间文件和同版本旧包留在 `build`。目标应用正在运行时保留原文件与暂存新版，不结束用户进程。跨机器构建时归集另一端的同版本安装包，并让最后一次构建合并其清单。
+归档要求两端版本、文件大小和 SHA-256 一致；ZIP 内的 APP 版本也必须一致。已有版本不自动覆盖，历史发布保留原样。跨机器构建可用 Mac 的 `--manifest` 或 Windows 的 `-ManifestPath` 合并另一端清单，并把另一端的开发包放入对应 `build/dev` 目录。
 
-Mac 包按构建机器的架构生成。当前在 Apple Silicon Mac 上验证，使用本地 ad-hoc 签名，尚未配置 Developer ID 签名或公证。Mac 新版需在获得发布授权后将 DMG 与更新清单一起上传到正式 GitHub Release；相同版本不触发更新。详细开发与验证说明见 [macOS 开发说明](docs/macos.md)。 两端同时发布时只上传 `Codexio.exe`、`Codexio.dmg` 和最终合并的 `latest.json`；跨机器构建可用 Mac 的 `--manifest` 或 Windows 的 `-ManifestPath` 传入另一端生成的清单。
+Mac 包按构建机器架构生成，目前在 Apple Silicon 上验证，使用本地 ad-hoc 签名。ZIP 解压后是可移动的 `Codexio.app`，无需 DMG。更新会等待正常退出、原位替换并启动新版，收到新进程的启动确认后删除旧 APP；启动失败则回滚。旧的 DMG 更新器无法识别新的 ZIP 地址，已安装旧版的用户需要手动更换一次支持 ZIP 更新的 APP。详细说明见 [macOS 开发说明](docs/macos.md)。
 
 ## Windows 环境要求
 
@@ -214,7 +227,7 @@ v0.2.3 以当前登录账号的服务端日 Credits 为主依据，按同一账�
 
 ## 打包成 EXE
 
-`Codexio.exe` 输出到 `release/<版本号>/`，与 Mac DMG 和共用的 `latest.json` 放在一起。构建先暂存到 `build/release-staging`，成功后交付；同版本被替换的旧 EXE 放在 `build/release-backups`，其他版本目录保留。若目标正在运行，先退出小组件再重试交付。
+`Codexio.exe` 和开发清单输出到 `build/dev/windows/`。构建暂存在 `build/staging/windows`，通过后移入开发目录；同版本旧 EXE 暂存在 `build/backups/windows`。正式归档需要单独确认发布及版本号。目标运行时保留旧文件及暂存新版，不自动结束进程。
 
 在已经能用 `.\run.ps1` 跑起来的电脑上执行：
 
@@ -222,7 +235,7 @@ v0.2.3 以当前登录账号的服务端日 Credits 为主依据，按同一账�
 .\build_exe.ps1
 ```
 
-构建前请先退出正在运行的旧版小组件。完成后得到 `release\0.2.4\Codexio.exe`（目录名随当前版本变化）。把这个文件复制到其他 Windows 10/11（x64）电脑即可双击使用。
+构建前请先退出正在运行的旧版小组件。完成后得到 `build\dev\windows\Codexio.exe`。把这个文件复制到其他 Windows 10/11（x64）电脑即可双击使用。
 
 对方电脑仍需：
 
@@ -235,7 +248,7 @@ v0.2.3 以当前登录账号的服务端日 Credits 为主依据，按同一账�
 
 更新源固定为 [Wujuhu/Codexio](https://github.com/Wujuhu/Codexio)。EXE 启动 5 秒后检查新版，运行期间每 6 小时检查一次；默认自动下载、校验、安装并重启。可在“设置 → 应用更新”关闭自动更新，或从设置及托盘点击“检查并更新”。源码和 `--mock` 预览模式不自动安装更新。
 
-Windows 与 Mac 共用 Release 附件 `latest.json`：顶层字段保持 Windows 旧格式，`macos` 部分记录 Mac 的 DMG 信息，避免公共 API 限流。仅接受固定仓库对应版本的 HTTPS 下载地址，并校验文件大小、SHA-256 和 Windows 程序头。发布者身份依赖 GitHub 仓库与 HTTPS，当前未使用独立的发布签名。客户端不需要 GitHub 令牌。
+Windows 与 Mac 共用 Release 附件 `latest.json`：顶层字段保持 Windows 旧格式，`macos` 部分记录 Mac 的 APP ZIP 信息，避免公共 API 限流。仅接受固定仓库对应版本的 HTTPS 下载地址，并校验文件大小、SHA-256 和 Windows 程序头。发布者身份依赖 GitHub 仓库与 HTTPS，当前未使用独立的发布签名。客户端不需要 GitHub 令牌。
 
 下载成功后，独立更新程序先验证文件和目标目录可写性，再等待 Codexio 保存设置、停止后台工作并正常退出；随后原位替换 EXE 并自动启动。文件占用时不会结束其他进程。新版启动失败时恢复并启动旧版。更新暂存及最近两份备份保存在 `%LOCALAPPDATA%\Codexio\updates`，配置和用量数据库沿用原目录。
 
@@ -246,11 +259,12 @@ winget install --id GitHub.cli -e
 gh auth login --hostname github.com --web
 ```
 
-两端分别打包后，把同版本的三个文件归集到 `release/<版本号>/`。发布前可仅做本地校验：
+两端日常打包完成后留在 `build/dev`。只有明确确认发布版本后才归档；例如确认某版本后（下例的版本号须替换为用户确认的版本）可执行：
 
 ```powershell
-.venv\Scripts\python.exe scripts\verify_release.py --version 0.2.4
-.\publish_release.ps1 -Version 0.2.4 -SkipBuild -PrepareOnly
+.venv\Scripts\python.exe scripts\prepare_release.py --version <确认的版本号>
+.venv\Scripts\python.exe scripts\verify_release.py --version <确认的版本号>
+.\publish_release.ps1 -Version <确认的版本号> -SkipBuild -PrepareOnly
 ```
 
 检查覆盖两端版本、下载地址、文件大小与 SHA-256；缺少任一安装包或清单不匹配时停止。发布脚本使用已有的合并清单，不会丢失 Mac 信息；上传的三个文件必须全部核验通过才转为正式 Release。

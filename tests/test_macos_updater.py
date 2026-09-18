@@ -25,7 +25,7 @@ class Response(io.BytesIO):
 
 def manifest(**changes):
     data = dict(version="0.2.5", architecture=platform.machine(), size=12, sha256="a" * 64,
-                url="https://github.com/Wujuhu/Codexio/releases/download/v0.2.5/Codexio.dmg")
+                url="https://github.com/Wujuhu/Codexio/releases/download/v0.2.5/Codexio.app.zip")
     data.update(changes)
     return data
 
@@ -37,7 +37,7 @@ def test_mac_checks_shared_manifest_and_never_uses_windows_asset(monkeypatch):
         return Response(json.dumps(dict(version="9.0.0", macos=manifest())).encode("utf-8"))
     monkeypatch.setattr(updates, "urlopen", fetch)
     release = mac.fetch_release("0.2.4")
-    assert release.url.endswith("/v0.2.5/Codexio.dmg")
+    assert release.url.endswith("/v0.2.5/Codexio.app.zip")
     assert requested == [updates.LATEST_MANIFEST] == [mac.LATEST_MANIFEST]
     assert mac.fetch_release("0.2.5") is None
 
@@ -45,7 +45,8 @@ def test_mac_checks_shared_manifest_and_never_uses_windows_asset(monkeypatch):
 @pytest.mark.parametrize("changes", [
     {"architecture": "wrong-chip"},
     {"url": "https://github.com/Wujuhu/Codexio/releases/download/v0.2.5/Codexio.exe"},
-    {"url": "https://github.com/Other/Codexio/releases/download/v0.2.5/Codexio.dmg"},
+    {"url": "https://github.com/Wujuhu/Codexio/releases/download/v0.2.5/Codexio.dmg"},
+    {"url": "https://github.com/Other/Codexio/releases/download/v0.2.5/Codexio.app.zip"},
     {"sha256": "bad"},
 ])
 def test_mac_rejects_wrong_platform_source_or_digest(monkeypatch, changes):
@@ -60,15 +61,15 @@ def test_windows_only_release_has_no_mac_update(monkeypatch):
     assert mac.fetch_release("0.2.4") is None
 
 
-@pytest.mark.parametrize("value", [None, "Codexio.dmg", []])
+@pytest.mark.parametrize("value", [None, "Codexio.app.zip", []])
 def test_mac_rejects_invalid_platform_entry(monkeypatch, value):
     monkeypatch.setattr(updates, "urlopen", lambda *a, **k: Response(json.dumps({"macos": value}).encode()))
     with pytest.raises(UpdateError):
         mac.fetch_release("0.2.4")
 
 
-def test_dmg_download_uses_shared_size_and_hash_verification(tmp_path, monkeypatch):
-    payload = b"DMG payload with no Windows header"
+def test_app_zip_download_uses_shared_size_and_hash_verification(tmp_path, monkeypatch):
+    payload = b"ZIP payload with no Windows header"
     release = updates.Release("0.2.5", manifest()["url"], hashlib.sha256(payload).hexdigest(), len(payload))
     monkeypatch.setattr(updates, "urlopen", lambda *a, **k: Response(payload))
     target = tmp_path / "package.bin"
@@ -88,7 +89,7 @@ def prepare(tmp_path, monkeypatch):
     executable = target / "Contents/MacOS/Codexio"
     executable.parent.mkdir(parents=True)
     executable.write_bytes(b"old executable")
-    (directory / "package.bin").write_bytes(b"DMG test")
+    (directory / "package.bin").write_bytes(b"ZIP test")
     job = dict(target=str(target), old_sha256=file_sha256(executable),
                sha256=file_sha256(directory / "package.bin"), version="0.2.5",
                parent_pid=os.getppid(), arguments=["--mock"])
@@ -102,17 +103,19 @@ def prepare(tmp_path, monkeypatch):
     return directory, target, executable, job
 
 
-def test_install_preserves_old_bundle_and_requires_launch_ack(tmp_path, monkeypatch):
+def test_install_removes_old_bundle_only_after_launch_ack(tmp_path, monkeypatch):
     directory, target, executable, job = prepare(tmp_path, monkeypatch)
     def restart(path, arguments, directory):
         assert path == target and arguments == ["--mock"]
         assert executable.read_bytes() == b"new executable"
-        _write_json(directory / "ack.json", {"version": "0.2.5"})
-        return type("Process", (), {"poll": lambda self: None})()
+        _write_json(directory / "ack.json", {"version": "0.2.5", "pid": 12345})
+        return type("Process", (), {"pid": 12345, "poll": lambda self: None})()
     monkeypatch.setattr(mac, "_restart", restart)
     mac._install(directory, job)
     assert read_state(directory)["state"] == "done"
-    assert (directory / "previous.app/Contents/MacOS/Codexio").read_bytes() == b"old executable"
+    assert not (directory / "previous.app").exists()
+    assert not list(target.parent.glob("*.previous.app"))
+    assert not (directory / "package.bin").exists()
     assert not list(target.parent.glob("*.pending.app"))
 
 
@@ -128,6 +131,21 @@ def test_failed_launch_rolls_back_before_restarting_old_app(tmp_path, monkeypatc
     assert calls == [b"new executable", b"old executable"]
     assert read_state(directory)["state"] == "rolled_back"
     assert executable.read_bytes() == b"old executable"
+
+
+def test_old_app_remains_when_receipt_belongs_to_another_process(tmp_path, monkeypatch):
+    directory, target, executable, job = prepare(tmp_path, monkeypatch)
+    _write_json(directory / "ack.json", {"version": "0.2.5", "pid": 99999})
+    monkeypatch.setattr(mac, "_restart", lambda *args: type("Process", (), {
+        "pid": 12345, "poll": lambda self: None})())
+    clock = iter([0, 1, 42])
+    monkeypatch.setattr(mac.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(mac.time, "sleep", lambda *args: None)
+    mac._install(directory, job)
+    assert read_state(directory)["state"] == "unconfirmed"
+    backup = next(target.parent.glob("*.previous.app"))
+    assert (backup / "Contents/MacOS/Codexio").read_bytes() == b"old executable"
+    assert executable.read_bytes() == b"new executable"
 
 
 @pytest.mark.parametrize("reason", ["cancel", "hash", "changed", "wait"])

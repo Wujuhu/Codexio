@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from codexio.app_archive import APP_ARCHIVE_NAME, validate_app_archive
 from codexio.updates import UpdateError, file_sha256, release_from_manifest, version_tuple
 
 
@@ -17,7 +18,7 @@ def verify_release(directory: Path, version: str) -> None:
     manifest = json.loads((directory / "latest.json").read_text(encoding="utf-8-sig"))
     if not isinstance(manifest, dict):
         raise UpdateError("更新清单格式无效")
-    for name, key in (("Codexio.exe", None), ("Codexio.dmg", "macos")):
+    for name, key in (("Codexio.exe", None), (APP_ARCHIVE_NAME, "macos")):
         release = release_from_manifest(manifest, "0.0.0", asset_name=name, manifest_key=key)
         if release is None or release.version != version:
             raise UpdateError(f"{name} 的清单版本与交付版本 {version} 不一致")
@@ -26,6 +27,7 @@ def verify_release(directory: Path, version: str) -> None:
             raise UpdateError(f"缺少 {asset}，请先归集另一平台的同版本安装包")
         if asset.stat().st_size != release.size or file_sha256(asset) != release.sha256:
             raise UpdateError(f"{name} 与 latest.json 的大小或 SHA-256 不一致")
+    validate_app_archive(directory / APP_ARCHIVE_NAME, version)
     with (directory / "Codexio.exe").open("rb") as stream:
         if stream.read(2) != b"MZ":
             raise UpdateError("Codexio.exe 不是 Windows 可执行文件")
@@ -39,7 +41,7 @@ def main():
     version = ".".join(map(str, version_tuple(args.version)))
     directory = args.directory or ROOT / "release" / version
     verify_release(directory, version)
-    print(f"Verified {directory}: Codexio.exe, Codexio.dmg, latest.json")
+    print(f"Verified {directory}: Codexio.exe, Codexio.app.zip, latest.json")
 
 
 if __name__ == "__main__":

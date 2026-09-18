@@ -1,4 +1,4 @@
-"""Stage and verify a Mac application, then deliver its DMG under release/<version>/."""
+"""Build a verified Mac development app and ZIP under build/dev/macos only."""
 from __future__ import annotations
 
 import argparse
@@ -13,8 +13,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
-STAGING = BUILD / "release-staging/macos"
-DESTINATION = BUILD / "macos"
+STAGING = BUILD / "staging/macos"
+DESTINATION = BUILD / "dev/macos"
 
 
 def run(*args, **kwargs):
@@ -33,7 +33,7 @@ def build_icon():
     # Each ICNS representation is rendered directly from SVG, including the
     # 1024-pixel Retina image. Never enlarge a pre-rendered PNG.
     from codexio.app_icon import render_app_image
-    resources = BUILD / "macos-resources"
+    resources = BUILD / "cache/macos-resources"
     iconset = resources / "Codexio.iconset"
     iconset.mkdir(parents=True, exist_ok=True)
     for size in (16, 32, 128, 256, 512):
@@ -46,10 +46,9 @@ def build_icon():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="本地构建并验证 Codexio.app；可选生成安装镜像。")
-    parser.add_argument("--dmg", action="store_true", help="同时生成 release/<版本号>/Codexio.dmg 和共用的 latest.json")
+    parser = argparse.ArgumentParser(description="构建开发版 APP、APP ZIP 和清单，仅输出到 build/dev/macos。")
     parser.add_argument("--staging-subdir", help="在构建暂存区使用独立子目录，保留正在运行的旧暂存应用")
-    parser.add_argument("--manifest", type=Path, help="待合并的现有 latest.json；默认查找本地或已发布的清单")
+    parser.add_argument("--manifest", type=Path, help="待合并的现有 latest.json；默认查找本地开发包或正式版清单")
     args = parser.parse_args()
     if sys.platform != "darwin":
         parser.error("只能在 macOS 上构建 .app")
@@ -59,40 +58,44 @@ def main():
     bundle = staging / "Codexio.app"
     target = DESTINATION / "Codexio.app"
     refuse_running(bundle)
+    refuse_running(target)
     build_icon()
     run(sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--distpath", staging,
-        "--workpath", BUILD / "pyinstaller-macos", ROOT / "packaging/codexio-macos.spec")
+        "--workpath", BUILD / "cache/pyinstaller/macos", ROOT / "packaging/codexio-macos.spec")
     with (bundle / "Contents/Info.plist").open("rb") as stream:
         info = plistlib.load(stream)
     version = re.search(r'__version__ = "([^"]+)"', (ROOT / "src/codexio/__init__.py").read_text(encoding="utf-8")).group(1)
     assert info["CFBundleShortVersionString"] == info["CFBundleVersion"] == version
     run("codesign", "--verify", "--deep", "--strict", bundle)
-    smoke = BUILD / "macos-bundle-check"
+    smoke = BUILD / "checks/macos-smoke"
     (smoke / "result.json").unlink(missing_ok=True)
     # Validate the new binary in a separate data directory, without the shell's
     # import paths or development interpreter influencing the bundled runtime.
     env = {key: value for key, value in os.environ.items() if key not in ("PYTHONPATH", "PYTHONHOME", "QT_QPA_PLATFORM", "QT_PLUGIN_PATH")}
     run(bundle / "Contents/MacOS/Codexio", "--mock", "--smoke-test", smoke, env=env, timeout=100)
     assert json.loads((smoke / "result.json").read_text(encoding="utf-8"))["ok"]
-    if args.dmg:
-        from codexio.macos_updater import DMG_NAME, MANIFEST_NAME
-        disk = BUILD / "macos-disk"
-        refuse_running(disk / "Codexio.app")
-        if disk.exists():
-            shutil.rmtree(disk)
-        disk.mkdir(parents=True)
-        run("ditto", bundle, disk / "Codexio.app")
-        (disk / "Applications").symlink_to("/Applications")
-        image = staging / DMG_NAME
-        run("hdiutil", "create", "-volname", "Codexio", "-srcfolder", disk, "-ov", "-format", "UDZO", image)
-        run("hdiutil", "verify", image)
-        manifest_args = ["--base", args.manifest] if args.manifest else []
-        run(sys.executable, ROOT / "scripts/update_manifest.py", "--platform", "macos",
-            "--asset", image, "--version", version, "--output", staging / MANIFEST_NAME, *manifest_args)
-        (staging / "latest-macos.json").unlink(missing_ok=True)
+    from codexio.app_archive import APP_ARCHIVE_NAME
+    from codexio.macos_updater import MANIFEST_NAME, _prepare_bundle
+    archive = staging / APP_ARCHIVE_NAME
+    archive.unlink(missing_ok=True)
+    run("ditto", "-c", "-k", "--keepParent", "--norsrc", "--noextattr", bundle, archive)
+    # Exercise the same extraction, signature and architecture checks as the updater.
+    archive_check = BUILD / "checks/macos-archive"
+    refuse_running(archive_check / "Codexio.app")
+    if archive_check.exists():
+        shutil.rmtree(archive_check)
+    archive_check.mkdir(parents=True)
+    shutil.copy2(archive, archive_check / "package.bin")
+    try:
+        _prepare_bundle(archive_check, archive_check / "Codexio.app", version)
+    finally:
+        shutil.rmtree(archive_check)
+    manifest_args = ["--base", args.manifest] if args.manifest else []
+    run(sys.executable, ROOT / "scripts/update_manifest.py", "--platform", "macos",
+        "--asset", archive, "--version", version, "--output", staging / MANIFEST_NAME, *manifest_args)
     refuse_running(target)
     DESTINATION.mkdir(parents=True, exist_ok=True)
-    previous = BUILD / "macos-previous/Codexio.app"
+    previous = BUILD / "backups/macos/Codexio.app"
     refuse_running(previous)
     if previous.exists():
         shutil.rmtree(previous)
@@ -106,13 +109,13 @@ def main():
             previous.rename(target)
         raise
     run("codesign", "--verify", "--deep", "--strict", target)
-    if args.dmg:
-        release = ROOT / "release" / version
-        release.mkdir(parents=True, exist_ok=True)
-        for name in (DMG_NAME, MANIFEST_NAME):
-            (staging / name).replace(release / name)
-        print(f"交付目录：{release}")
-    print(f"\n已验证并打包 Codexio {version}: {target}")
+    for name in (APP_ARCHIVE_NAME, MANIFEST_NAME):
+        (staging / name).replace(DESTINATION / name)
+    collection = staging / "Codexio"
+    if collection.exists():
+        shutil.rmtree(collection)
+    print(f"\n开发包已验证，Codexio {version}: {DESTINATION}")
+    print("正式归档仅在确认发布版本后执行 scripts/prepare_release.py --version <版本号>。")
     return 0
 
 

@@ -1,4 +1,4 @@
-"""GitHub DMG updates using the shared download and shutdown protocol."""
+"""GitHub APP ZIP updates using the shared download and shutdown protocol."""
 from __future__ import annotations
 
 import fcntl
@@ -15,20 +15,19 @@ import time
 from pathlib import Path
 
 from codexio import __version__, updates
+from codexio.app_archive import APP_ARCHIVE_NAME, BUNDLE_ID, extract_app_archive
 from codexio.update_installer import (
     _job_dir, _state, _write_json, cancel_job, read_state, spawn_independent, updates_dir,
 )
 from codexio.updates import Release, UpdateCancelled, UpdateError, file_sha256, version_tuple
 
-DMG_NAME = "Codexio.dmg"
 MANIFEST_NAME = "latest.json"
 LATEST_MANIFEST = updates.LATEST_MANIFEST
-BUNDLE_ID = "com.wujuhu.codexio"
 
 
 def fetch_release(current_version=__version__):
     return updates.fetch_release(current_version, manifest_url=LATEST_MANIFEST,
-                                 asset_name=DMG_NAME, architecture=platform.machine(), manifest_key="macos")
+                                 asset_name=APP_ARCHIVE_NAME, architecture=platform.machine(), manifest_key="macos")
 
 
 def download_release(release, target, cancel, progress=lambda _value: None):
@@ -95,21 +94,12 @@ def launch_installer(directory: Path, release: Release, cancel: threading.Event,
 
 
 def _prepare_bundle(directory, pending, version):
-    mount = directory / "mount"
-    mount.mkdir()
-    mounted = False
+    extract_app_archive(directory / "package.bin", pending, version)
     try:
-        _run("/usr/bin/hdiutil", "attach", directory / "package.bin", "-readonly", "-nobrowse",
-             "-mountpoint", mount, "-plist")
-        mounted = True
-        source = mount / "Codexio.app"
-        _validate_bundle(source, version)
-        _run("/usr/bin/ditto", source, pending)
         _validate_bundle(pending, version)
-    finally:
-        if mounted:
-            _run("/usr/bin/hdiutil", "detach", mount)
-        mount.rmdir()
+    except Exception:
+        shutil.rmtree(pending)
+        raise
 
 
 def _wait_for_exit(pid, directory, timeout=90):
@@ -180,8 +170,12 @@ def _install(directory, job):
             deadline = time.monotonic() + 40
             while time.monotonic() < deadline:
                 ack = directory / "ack.json"
-                if ack.exists() and json.loads(ack.read_text(encoding="utf-8")).get("version") == job["version"]:
-                    shutil.move(str(backup), directory / "previous.app")
+                receipt = json.loads(ack.read_text(encoding="utf-8")) if ack.exists() else {}
+                if (receipt.get("version") == job["version"] and receipt.get("pid") == process.pid
+                        and process.poll() is None):
+                    # Only remove the old app after the new process confirms startup.
+                    shutil.rmtree(backup)
+                    (directory / "package.bin").unlink(missing_ok=True)
                     _state(directory, "done", "已更新至 " + job["version"])
                     return
                 if process.poll() is not None:

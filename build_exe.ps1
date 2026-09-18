@@ -1,4 +1,4 @@
-# Build a standalone Codexio.exe for Windows.
+# Build a development Codexio.exe under build/dev/windows; never write release/.
 # ASCII-only so Windows PowerShell 5.x can parse this file without a UTF-8 BOM.
 param([string]$Version, [string]$ManifestPath)
 $ErrorActionPreference = "Stop"
@@ -30,8 +30,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $Spec = Join-Path $Root "packaging\codexio.spec"
-$Staging = Join-Path $Root "build\release-staging"
-$Work = Join-Path $Root "build\pyinstaller"
+$Staging = Join-Path $Root "build\staging\windows"
+$Work = Join-Path $Root "build\cache\pyinstaller\windows"
 Write-Host "Building Codexio.exe..."
 & $VenvPython -m PyInstaller --noconfirm --clean --distpath $Staging --workpath $Work $Spec
 if ($LASTEXITCODE -ne 0) {
@@ -43,7 +43,7 @@ if (-not (Test-Path -LiteralPath $StagedExe)) {
     throw "Build finished but $StagedExe was not created."
 }
 $ReleaseVersion = (Get-Item -LiteralPath $StagedExe).VersionInfo.ProductVersion
-$ReleaseDir = Join-Path (Join-Path $Root "release") $ReleaseVersion
+$DevelopmentDir = Join-Path $Root "build\dev\windows"
 $StagedManifest = Join-Path $Staging "latest.json"
 $ManifestArgs = @()
 if ($ManifestPath) { $ManifestArgs = @("--base", $ManifestPath) }
@@ -51,8 +51,8 @@ if ($ManifestPath) { $ManifestArgs = @("--base", $ManifestPath) }
     --asset $StagedExe --version $ReleaseVersion --output $StagedManifest @ManifestArgs
 if ($LASTEXITCODE -ne 0) { throw "Could not merge latest.json; the staged build is preserved." }
 & (Join-Path $Root "scripts\publish_exe.ps1") -StagedExe $StagedExe -Version $ReleaseVersion
-$Exe = Join-Path $ReleaseDir "Codexio.exe"
-Move-Item -LiteralPath $StagedManifest -Destination (Join-Path $ReleaseDir "latest.json") -Force
+$Exe = Join-Path $DevelopmentDir "Codexio.exe"
+Move-Item -LiteralPath $StagedManifest -Destination (Join-Path $DevelopmentDir "latest.json") -Force
 
 Write-Host ""
 Write-Host "Built: $Exe"

@@ -57,6 +57,10 @@ if (-not $SkipBuild) {
     & (Join-Path $ReleaseRoot 'build_exe.ps1') -Version $Version
 }
 $ReleaseDir = Join-Path (Join-Path $ReleaseRoot 'release') $Version
+if (-not (Test-Path -LiteralPath $ReleaseDir)) {
+    & (Join-Path $ReleaseRoot '.venv\Scripts\python.exe') (Join-Path $ReleaseRoot 'scripts\prepare_release.py') --version $Version
+    if ($LASTEXITCODE -ne 0) { throw "Could not prepare the confirmed release; development builds are preserved." }
+}
 $Exe = Join-Path $ReleaseDir 'Codexio.exe'
 if (-not (Test-Path -LiteralPath $Exe)) { throw "Build output is missing: $Exe" }
 if ((Get-Item -LiteralPath $Exe).VersionInfo.ProductVersion -ne $Version) {
@@ -65,21 +69,21 @@ if ((Get-Item -LiteralPath $Exe).VersionInfo.ProductVersion -ne $Version) {
 & (Join-Path $ReleaseRoot '.venv\Scripts\python.exe') (Join-Path $ReleaseRoot 'scripts\verify_release.py') `
     --version $Version --directory $ReleaseDir
 if ($LASTEXITCODE -ne 0) { throw "Both platform packages and latest.json must match before publication." }
-$UploadDir = Join-Path $ReleaseRoot ('build\github-releases\' + $Version + '-' + [Guid]::NewGuid().ToString('N'))
+$UploadDir = Join-Path $ReleaseRoot ('build\staging\upload\' + $Version + '-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $UploadDir -Force | Out-Null
-foreach ($Name in @('Codexio.exe', 'Codexio.dmg', 'latest.json')) {
+foreach ($Name in @('Codexio.exe', 'Codexio.app.zip', 'latest.json')) {
     Copy-Item -LiteralPath (Join-Path $ReleaseDir $Name) -Destination (Join-Path $UploadDir $Name)
 }
 $UploadExe = Join-Path $UploadDir 'Codexio.exe'
-$UploadDmg = Join-Path $UploadDir 'Codexio.dmg'
+$UploadApp = Join-Path $UploadDir 'Codexio.app.zip'
 $ManifestPath = Join-Path $UploadDir 'latest.json'
 $Hash = (Get-FileHash -LiteralPath $UploadExe -Algorithm SHA256).Hash.ToLowerInvariant()
-$DmgHash = (Get-FileHash -LiteralPath $UploadDmg -Algorithm SHA256).Hash.ToLowerInvariant()
+$AppHash = (Get-FileHash -LiteralPath $UploadApp -Algorithm SHA256).Hash.ToLowerInvariant()
 $ReleaseNotes = Join-Path $UploadDir 'release-notes.md'
 [IO.File]::WriteAllText($ReleaseNotes, '', $Utf8)
 if ($PrepareOnly) {
     Write-Host "Prepared: $UploadDir"
-    Write-Host "Upload Codexio.exe, Codexio.dmg and latest.json together to a stable $Tag GitHub release."
+    Write-Host "Upload Codexio.exe, Codexio.app.zip and latest.json together to a stable $Tag GitHub release."
     return
 }
 
@@ -93,16 +97,16 @@ if ($Existing.Count -eq 0) {
 # Upload while still a draft. Only a complete, hash-verified release becomes latest.
 $DraftInfo = Invoke-ReleaseGh -Arguments @('api', "repos/$Repository/releases/tags/$Tag") | ConvertFrom-Json
 if (-not $DraftInfo.draft) { throw "The release was published elsewhere. Upload stopped." }
-Invoke-ReleaseGh -Arguments @('release', 'upload', $Tag, $UploadExe, $UploadDmg, $ManifestPath, '--repo', $Repository, '--clobber') | Out-Host
+Invoke-ReleaseGh -Arguments @('release', 'upload', $Tag, $UploadExe, $UploadApp, $ManifestPath, '--repo', $Repository, '--clobber') | Out-Host
 $ManifestHash = (Get-FileHash -LiteralPath $ManifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
 $Verified = $false
 for ($Attempt = 0; $Attempt -lt 6; $Attempt++) {
     $Uploaded = Invoke-ReleaseGh -Arguments @('api', "repos/$Repository/releases/tags/$Tag") | ConvertFrom-Json
     $ExeAsset = @($Uploaded.assets | Where-Object { $_.name -eq 'Codexio.exe' })
-    $DmgAsset = @($Uploaded.assets | Where-Object { $_.name -eq 'Codexio.dmg' })
+    $AppAsset = @($Uploaded.assets | Where-Object { $_.name -eq 'Codexio.app.zip' })
     $JsonAsset = @($Uploaded.assets | Where-Object { $_.name -eq 'latest.json' })
-    if ($Uploaded.assets.Count -eq 3 -and $ExeAsset.Count -eq 1 -and $DmgAsset.Count -eq 1 -and $JsonAsset.Count -eq 1 -and
-        $ExeAsset[0].digest -eq "sha256:$Hash" -and $DmgAsset[0].digest -eq "sha256:$DmgHash" -and $JsonAsset[0].digest -eq "sha256:$ManifestHash") {
+    if ($Uploaded.assets.Count -eq 3 -and $ExeAsset.Count -eq 1 -and $AppAsset.Count -eq 1 -and $JsonAsset.Count -eq 1 -and
+        $ExeAsset[0].digest -eq "sha256:$Hash" -and $AppAsset[0].digest -eq "sha256:$AppHash" -and $JsonAsset[0].digest -eq "sha256:$ManifestHash") {
         $Verified = $true
         break
     }
