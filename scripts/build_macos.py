@@ -22,10 +22,14 @@ def run(*args, **kwargs):
     return subprocess.run(list(map(str, args)), check=True, cwd=ROOT, **kwargs)
 
 
-def refuse_running(bundle):
+def bundle_running(bundle):
     result = subprocess.run(["ps", "-axo", "comm="], check=True, capture_output=True, text=True, encoding="utf-8")
     prefix = str(bundle.resolve()) + "/"
-    if any(line.strip().startswith(prefix) for line in result.stdout.splitlines()):
+    return any(line.strip().startswith(prefix) for line in result.stdout.splitlines())
+
+
+def refuse_running(bundle):
+    if bundle_running(bundle):
         raise RuntimeError(f"{bundle} 正在运行。原文件与暂存版本均已保留；请退出 Codexio 后重新构建。")
 
 
@@ -58,7 +62,6 @@ def main():
     bundle = staging / "Codexio.app"
     target = DESTINATION / "Codexio.app"
     refuse_running(bundle)
-    refuse_running(target)
     build_icon()
     run(sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--distpath", staging,
         "--workpath", BUILD / "cache/pyinstaller/macos", ROOT / "packaging/codexio-macos.spec")
@@ -93,6 +96,13 @@ def main():
     manifest_args = ["--base", args.manifest] if args.manifest else []
     run(sys.executable, ROOT / "scripts/update_manifest.py", "--platform", "macos",
         "--asset", archive, "--version", version, "--output", staging / MANIFEST_NAME, *manifest_args)
+    if bundle_running(target):
+        collection = staging / "Codexio"
+        if collection.exists():
+            shutil.rmtree(collection)
+        print(f"\n开发包已验证，Codexio {version}: {staging}")
+        print(f"{target} 正在运行，保留原文件；新版 APP、ZIP 和清单已留在暂存区。")
+        return 0
     refuse_running(target)
     DESTINATION.mkdir(parents=True, exist_ok=True)
     previous = BUILD / "backups/macos/Codexio.app"

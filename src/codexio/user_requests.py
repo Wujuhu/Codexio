@@ -15,10 +15,11 @@ def turn_key(session_id, turn_id):
 
 
 def normalized_tier(value):
-    value = str(value or "").lower()
+    value = str(value or "").strip().lower()
     if value in ("priority", "fast"):
         return "priority"
-    if value in ("default", "standard"):
+    # Missing metadata follows the app's Standard default; retain raw ledger values.
+    if value in ("", "default", "standard"):
         return "default"
     return "unknown"
 

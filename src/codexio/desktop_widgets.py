@@ -20,6 +20,7 @@ from codexio.durations import elapsed_milliseconds, duration_text, duration_tool
 from codexio.theme import theme_colors
 from codexio.money import usd
 from codexio.usage_collector import _user_preview
+from codexio.user_requests import normalized_tier
 
 PAGE_TITLES = dict(overview="概览", subscription="订阅额度", trends="用量趋势", logs="请求日志", pricing="模型定价", settings="设置")
 NAVIGATION_LABELS = dict(overview="概览", logs="日志", trends="用量", subscription="订阅", pricing="定价", settings="设置")
@@ -597,7 +598,10 @@ def preview_title(record):
 
 
 def tier_label(record):
-    return {"priority": "Fast", "fast": "Fast", "default": "Standard", "standard": "Standard", "mixed": "Mixed"}.get(str(record.get("service_tier") or "").lower(), "未记录")
+    value = str(record.get("service_tier") or "").strip().lower()
+    if value == "mixed":
+        return "Mixed"
+    return {"priority": "Fast", "default": "Standard"}.get(normalized_tier(value), "未记录")
 
 
 def ledger_duration_text(record, now=None):
@@ -777,7 +781,7 @@ class LedgerTable(QTableWidget):
             # Full request text is available in the persistent details pane.
             self.item(index, 0).setToolTip("")
             self.item(index, 1).setToolTip("\n".join(models or [row.get("model") or "未知模型"]))
-            self.item(index, 2).setToolTip("Mixed：整轮包含不同档位的调用；未记录：不推断为 Standard。")
+            self.item(index, 2).setToolTip("未记录服务档位时默认 Standard；Mixed 表示整轮包含不同档位的调用。")
             if not self.compact:
                 self.item(index, self.duration_column).setToolTip(duration_tooltip(row))
             if self.grouped and row.get("request_status") == "running":

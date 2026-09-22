@@ -72,6 +72,21 @@ def test_database_composition_covers_entire_request_and_parent_child_calls(tmp_p
     assert queries.request_composition("missing") == []
 
 
+def test_missing_tier_is_standard_in_both_query_modes_and_composition(tmp_path):
+    store, catalog, queries = setup(tmp_path)
+    store.upsert_records([record("missing", service_tier=None), record("standard")], "local")
+    store.upsert_turns([turn()])
+    queries.rebuild(catalog)
+    for mode in ("user_request", "model_call"):
+        result = queries.page(mode=mode, tier="default")
+        assert result["rows"]
+        assert queries.page(mode=mode, tier="priority")["rows"] == []
+    request = queries.page()["rows"][0]
+    assert request["service_tier"] == "default"
+    assert queries.request_composition(request["id"])[0]["service_tier"] == "default"
+    assert next(r for r in store.records() if r["id"] == "missing")["service_tier"] is None
+
+
 def test_cached_generated_turn_preview_falls_back_to_the_real_call_question(tmp_path):
     store, catalog, queries = setup(tmp_path)
     store.upsert_records([record("question", prompt_preview="[$impeccable](C:/skills/impeccable/SKILL.md) 检查布局 [image 1]")], "local")

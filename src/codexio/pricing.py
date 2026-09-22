@@ -310,7 +310,7 @@ class PricingCatalog:
         model_rows = [r for r in self._rows if r["model"] == model]
         if not model_rows:
             return dict(result, reason="该模型尚无价格")
-        raw_tier = record.get("service_tier")
+        raw_tier = str(record.get("service_tier") or "").strip().lower()
         missing_tier = not raw_tier or raw_tier == "auto"
         aggregate = str(record.get("quality", "")).split(":", 1)[0] in (
             "aggregate", "cumulative", "cumulative_observation", "unresolved")
@@ -337,7 +337,7 @@ class PricingCatalog:
             reasons = [PRICING_BASIS_LABEL + "；输入/缓存读取 ×%g，输出 ×%g；缓存创建按普通输入价，无写入附加费" %
                        (multipliers["input"], multipliers["output"])]
         if missing_tier:
-            reasons.append("服务档位缺失，按标准价估计")
+            reasons.append("原始记录未提供明确服务档位，按默认 Standard 标准价估计")
         if aggregate:
             reasons.append("累计观测不能证明单次请求上下文与模型归属，仅供消费参考")
         return dict(result, usd=usd, pricing_status="estimated" if estimated else "priced", rates=dict(rates),

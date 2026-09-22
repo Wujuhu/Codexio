@@ -17,7 +17,7 @@ from codexio.confirmed_usage import ConfirmedUsage, METRICS, _add_cost, summariz
 from codexio.user_requests import COUNTERS, _merge_turns, iter_user_requests, normalized_tier, turn_key
 from codexio.usage_collector import _user_preview
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 METRIC_FIELDS = ("id", "timestamp", "model", "service_tier", "source_id", "source_name", "source_ids",
                  "session_id", "turn_id", "request_turn_id", "total_tokens", "cost_usd", "pricing_status",
                  "provider", "account_key", "limit_id", "quality", "duration_ms") + COUNTERS

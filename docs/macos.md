@@ -72,7 +72,7 @@ QT_QPA_PLATFORM=offscreen LOCALAPPDATA="$PWD/build/checks/test-data" \
 
 冒烟检查使用 Cocoa 原生平台和模拟数据，逐页打开深浅主题，保存当前应用控件截图并检查设置持久化、关闭主窗口后服务继续运行、菜单栏只切换预览、明确点击后打开主窗口、日志详情数值、3 秒滚动条隐藏、SVG 高清图标以及未创建悬浮窗。输出位于指定目录的 `result.json` 与 PNG 文件中。`--smoke-test` 必须与 `--mock` 同用。
 
-构建流程先生成 `build/staging/macos/Codexio.app`，核对版本与签名，启动打包后二进制完成 Cocoa 冒烟检查，再验证 APP ZIP，成功后移入 `build/dev/macos`。构建缓存在 `build/cache`，测试与截图在 `build/checks`，日志在 `build/logs`，被替换的开发 APP 暂存在 `build/backups/macos`。目标或暂存应用运行时不覆盖、不结束进程。
+构建流程先生成 `build/staging/macos/Codexio.app`，核对版本与签名，启动打包后二进制完成 Cocoa 冒烟检查，再验证 APP ZIP，成功后移入 `build/dev/macos`。构建缓存在 `build/cache`，测试与截图在 `build/checks`，日志在 `build/logs`，被替换的开发 APP 暂存在 `build/backups/macos`。目标开发 APP 正在运行时，仍完成构建和验证，将新版 APP、ZIP 与清单留在 `build/staging/macos`，不覆盖或结束运行中的应用；暂存应用正在运行时拒绝在其位置重新构建。
 
 可以运行 `.venv/bin/python scripts/check_macos_update.py`，在 `build/checks/macos-updater` 的隔离副本上验证完整更新过程：校验 ZIP、等待正常退出、同路径替换、重新启动并确认、删除旧 APP。成功后清除大体积测试副本，只留下结果文件。
 

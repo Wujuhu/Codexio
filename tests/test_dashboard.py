@@ -296,8 +296,9 @@ def test_trends_open_to_today_and_model_column_has_no_tier(app):
 
 
 @pytest.mark.parametrize("tier,expected", [("priority", "Fast"), ("fast", "Fast"), ("default", "Standard"),
-                                           ("standard", "Standard"), (None, "未记录"), ("auto", "未记录"), ("flex", "未记录")])
-def test_fast_column_never_infers_missing_tier(tier, expected):
+                                           ("standard", "Standard"), (None, "Standard"), ("", "Standard"),
+                                           ("  ", "Standard"), ("auto", "未记录"), ("flex", "未记录")])
+def test_fast_column_defaults_missing_tier_to_standard(tier, expected):
     from codexio.dashboard import fast_mode_label
     assert fast_mode_label(record(service_tier=tier)) == expected
 

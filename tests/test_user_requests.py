@@ -45,6 +45,17 @@ def test_whole_turn_prices_each_call_then_sums_without_double_counting_subsets()
     assert group["status_label"] == "完成" and group["timestamp"] == "2026-09-07T23:59:00Z"
 
 
+def test_missing_tiers_default_to_standard_without_overwriting_original_records():
+    rows = [record("missing", service_tier=None), record("standard")]
+    group = aggregate_user_requests(rows, [metadata()])[0]
+    assert group["service_tier"] == "default" and group["service_tiers"] == ["default"]
+    assert rows[0]["service_tier"] is None
+    assert matches_call(rows[0], tier="default")
+    assert not matches_call(rows[0], tier="priority")
+    rows.append(record("fast", service_tier="priority"))
+    assert aggregate_user_requests(rows, [metadata()])[0]["service_tier"] == "mixed"
+
+
 def test_same_prompt_in_different_turns_is_not_merged_and_unassigned_is_retained():
     rows = [record("a", "t1"), record("b", "t2"), record("c", "")]
     groups = aggregate_user_requests(rows, [metadata("t1"), metadata("t2")])
