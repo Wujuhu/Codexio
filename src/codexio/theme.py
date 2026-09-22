@@ -88,6 +88,8 @@ def theme_colors(name: str = "system") -> dict[str, str]:
 
 def dashboard_stylesheet(name: str = "system") -> str:
     c = theme_colors(name)
+    c["checkbox_border"] = "#111111" if resolve_theme(name) == "light" else c["muted"]
+    c["checkbox_check"] = (Path(__file__).with_name("icons") / "checkbox-check.svg").as_posix()
     if sys.platform == "darwin":
         c["ui_font"] = '"%s"' % QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont).family()
         c["brand_font"] = c["ui_font"]
@@ -171,6 +173,9 @@ QSlider::sub-page:horizontal { background: %(accent)s; border-radius: 4px; }
 QSlider::handle:horizontal { background: %(accent)s; width: 20px; margin: -6px 0; border: 2px solid %(surface)s; border-radius: 10px; }
 QSlider::handle:horizontal:hover { background: %(scroll_hover)s; }
 QCheckBox { spacing: 8px; padding: 4px 0; }
+QCheckBox::indicator { width: 14px; height: 14px; border: 1px solid %(checkbox_border)s; border-radius: 3px; background: %(inspector_surface)s; }
+QCheckBox::indicator:checked { background: #1677EF; image: url("%(checkbox_check)s"); }
+QCheckBox::indicator:disabled { border-color: %(muted)s; background: %(raised)s; }
 QGroupBox { border: 1px solid %(border)s; border-radius: 12px; margin-top: 20px; padding: 16px; }
 QGroupBox::title { subcontrol-origin: margin; left: 15px; padding: 0 5px; font-weight: 600; }
 QProgressBar { background: %(raised)s; border: none; border-radius: 4px; min-height: 7px; max-height: 7px; }

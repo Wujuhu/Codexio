@@ -1451,7 +1451,6 @@ class Dashboard(QMainWindow):
             form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         self._theme_combo = combo((("跟随系统", "system"), ("浅色", "light"), ("深色", "dark")), self._theme)
         self._theme_combo.setMaximumWidth(220)
-        self._theme_combo.currentIndexChanged.connect(self._preview_theme)
         form.addRow("主界面主题", self._theme_combo)
         self._show_log_source = QCheckBox("显示来源列")
         self._show_log_source.setChecked(self._config.get("show_log_source") is True)
@@ -1519,26 +1518,31 @@ class Dashboard(QMainWindow):
         sources.addLayout(maintenance)
         sources.addStretch()
         updates = section("应用", "Codexio " + __version__ + (" · macOS" if self._is_macos else ""))
-        def settings_card(title, badge, hint):
+        def settings_card(title, badge, hint=None):
             frame, content = card()
             frame.setProperty("settingsCard", True)
             content.setContentsMargins(16, 14, 16, 14)
             content.setSpacing(9)
             header = QHBoxLayout()
-            header.setSpacing(8)
+            header.setSpacing(10)
             heading = title if isinstance(title, QWidget) else plain_label(title)
             heading.setProperty("settingsCardTitle", True)
+            # Cocoa's checkbox layout margins otherwise eat into the title/help
+            # gap. Use the visible widget rectangle for all card headings.
+            heading.setAttribute(Qt.WidgetAttribute.WA_LayoutUsesWidgetRect)
+            heading.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
             header.addWidget(heading)
-            help_button = QToolButton()
-            help_button.setProperty("settingsHelp", True)
-            help_button.setText("?")
-            help_button.setFixedSize(20, 20)
-            help_button.setCursor(Qt.CursorShape.PointingHandCursor)
-            help_button.setToolTip(hint)
-            help_button.setAccessibleName("查看" + (title.text() if isinstance(title, QWidget) else title) + "说明")
-            help_button.clicked.connect(lambda checked=False: QToolTip.showText(
-                help_button.mapToGlobal(QPoint(0, help_button.height() + 6)), hint, help_button))
-            header.addWidget(help_button)
+            if hint:
+                help_button = QToolButton()
+                help_button.setProperty("settingsHelp", True)
+                help_button.setText("?")
+                help_button.setFixedSize(20, 20)
+                help_button.setCursor(Qt.CursorShape.PointingHandCursor)
+                help_button.setToolTip(hint)
+                help_button.setAccessibleName("查看" + (title.text() if isinstance(title, QWidget) else title) + "说明")
+                help_button.clicked.connect(lambda checked=False: QToolTip.showText(
+                    help_button.mapToGlobal(QPoint(0, help_button.height() + 6)), hint, help_button))
+                header.addWidget(help_button)
             header.addStretch()
             status = plain_label(badge)
             status.setProperty("settingsBadge", True)
@@ -1548,7 +1552,7 @@ class Dashboard(QMainWindow):
             updates.addWidget(frame)
             return content, status
 
-        update_card, _ = settings_card("应用更新", "GitHub Release", "从 GitHub Release 下载本平台更新包，校验后自动重启 Codexio。")
+        update_card, _ = settings_card("应用更新", "GitHub Release")
         self._auto_update = QCheckBox("自动下载更新")
         self._auto_update.toggled.connect(self._set_auto_update)
         update_row = QHBoxLayout()
@@ -1585,14 +1589,22 @@ class Dashboard(QMainWindow):
         self.set_upstream_status(*getattr(self, "_upstream_state", ("已关闭 · 官方直连", False, False)))
         updates.addStretch()
         layout.addLayout(body, 1)
-        save_row = QHBoxLayout()
-        self._settings_message = plain_label("", muted=True)
-        save_row.addWidget(self._settings_message, 1)
-        save = QPushButton("保存设置")
-        save.setProperty("primary", True)
-        save.clicked.connect(self._save_settings)
-        save_row.addWidget(save)
-        layout.addLayout(save_row)
+        self._settings_message = plain_label("", muted=True, wrap=True)
+        self._settings_message.hide()
+        layout.addWidget(self._settings_message)
+        controls = dict(self._setting_widgets, theme=self._theme_combo,
+                        show_log_source=self._show_log_source, server_estimates_enabled=self._server_estimates_enabled)
+        for key, widget in controls.items():
+            if isinstance(widget, QComboBox):
+                signal = widget.currentIndexChanged
+            elif isinstance(widget, QCheckBox):
+                signal = widget.clicked
+            elif isinstance(widget, QSpinBox):
+                widget.setKeyboardTracking(False)
+                signal = widget.valueChanged
+            else:
+                signal = widget.editingFinished
+            signal.connect(lambda *args, key=key, widget=widget: self._save_setting(key, self._control_value(widget)))
         self._settings_sections.setCurrentRow(0)
         return page
 
@@ -1615,7 +1627,7 @@ class Dashboard(QMainWindow):
             self._render_log_page()
 
     def _build_floating_settings(self, section):
-        floating = section("悬浮窗", "保留当前外观与停靠行为，保存后应用。")
+        floating = section("悬浮窗", "更改后自动保存并立即应用。")
         form = QFormLayout()
         form.setVerticalSpacing(13)
         fields = [("display_mode", "显示模式", (("始终置顶", "top"), ("桌面底层", "bottom"))),
@@ -1717,22 +1729,7 @@ class Dashboard(QMainWindow):
                              selected=rows[selected].get("id") if 0 <= selected < len(rows) else None,
                              preview_dismissed=self._log_preview_dismissed)
             elif name == "settings":
-                # Preserve unsaved edits only; unchanged controls should reflect
-                # fresh floating-window settings when the page is recreated.
-                draft = {}
-                for key, widget in self._setting_widgets.items():
-                    current = self._control_value(widget)
-                    saved = getattr(self._settings, key)
-                    if isinstance(widget, QLineEdit):
-                        saved = saved or ""
-                    if current != saved:
-                        draft[key] = current
-                value["draft"] = draft
-                theme = self._theme_combo.currentData()
-                if theme != self._config.get("theme", "system"):
-                    value["theme_draft"] = theme
-                if self._show_log_source.isChecked() != (self._config.get("show_log_source") is True):
-                    value["show_log_source_draft"] = self._show_log_source.isChecked()
+                value["section"] = self._settings_sections.currentRow()
             state[name] = value
         return state
 
@@ -1758,13 +1755,7 @@ class Dashboard(QMainWindow):
         elif name == "trends":
             self._trend_date_row.setVisible(self._trend_period.currentData() == "custom")
         elif name == "settings":
-            for key, value in state.get("draft", {}).items():
-                if key in self._setting_widgets:
-                    self._restore_control(self._setting_widgets[key], value)
-            if "theme_draft" in state:
-                self._restore_control(self._theme_combo, state["theme_draft"])
-            if "show_log_source_draft" in state:
-                self._restore_control(self._show_log_source, state["show_log_source_draft"])
+            self._settings_sections.setCurrentRow(int(state.get("section", 0)))
 
     def _apply_requested_period(self, name: str) -> None:
         period = self._period_overrides.pop(name, None)
@@ -2717,24 +2708,32 @@ class Dashboard(QMainWindow):
         layout.addWidget(plain_label("服务端为已入账数据估值，本地算法单列参考；非订阅实际扣款。", muted=True, wrap=True))
         self._dialog(dialog)
 
-    def _save_settings(self) -> None:
-        values = {}
-        for key, widget in self._setting_widgets.items():
-            values[key] = widget.currentData() if isinstance(widget, QComboBox) else widget.isChecked() if isinstance(widget, QCheckBox) else widget.value() if isinstance(widget, QSpinBox) else widget.text().strip()
-        if "border_color" in values and not QColor(str(values["border_color"])).isValid():
-            self._settings_message.setText("边框颜色无效，请使用 #RRGGBB。")
+    def _save_setting(self, key, value) -> None:
+        if self._loading:
             return
-        self._settings = replace(self._settings, **values).normalized()
-        self._config["theme"] = self._theme_combo.currentData()
-        self._config["show_log_source"] = self._show_log_source.isChecked()
-        self._config["server_estimates_enabled"] = self._server_estimates_enabled.isChecked()
-        self._theme = self._config["theme"]
-        self._callback("settings", self._settings)
-        self._callback("config", copy.deepcopy(self._config))
-        if "logs" in self._pages:
-            self._log_table.set_source_visible(self._config["show_log_source"])
-        self._apply_theme()
-        self._settings_message.setText("设置已保存")
+        if isinstance(value, str):
+            value = value.strip()
+        if key == "border_color" and not re.fullmatch(r"#[0-9a-fA-F]{6}", str(value)):
+            self._settings_message.setText("边框颜色无效，请使用 #RRGGBB。")
+            self._settings_message.show()
+            return
+        if key == "border_color":
+            self._settings_message.hide()
+        if key in ("theme", "show_log_source", "server_estimates_enabled"):
+            if self._config.get(key) == value:
+                return
+            self._config[key] = value
+            if key == "theme":
+                self._theme = value
+                self._apply_theme()
+            if key == "show_log_source" and "logs" in self._pages:
+                self._log_table.set_source_visible(value)
+            self._callback("config", copy.deepcopy(self._config))
+        else:
+            updated = replace(self._settings, **{key: value}).normalized()
+            if updated != self._settings:
+                self._settings = updated
+                self._callback("settings", self._settings)
 
     def _refresh_source_list(self) -> None:
         self._source_list.clear()
@@ -2808,6 +2807,10 @@ class Dashboard(QMainWindow):
         self._dialog(dialog)
 
     def closeEvent(self, event) -> None:
+        if "settings" in self._pages:
+            for key, widget in self._setting_widgets.items():
+                if isinstance(widget, QLineEdit):
+                    self._save_setting(key, widget.text())
         self._callback("main_hidden", bytes(self.saveGeometry()).hex())
         self._callback("main_closed", self)
         event.accept()
@@ -3022,12 +3025,6 @@ class Dashboard(QMainWindow):
         buttons.accepted.connect(save)
         apply_theme(dialog, self._theme)
         self._dialog(dialog)
-
-    def _preview_theme(self, *args):
-        if self._loading:
-            return
-        self._theme = self._theme_combo.currentData()
-        self._apply_theme()
 
     def _create_inspector(self):
         frame = QFrame()

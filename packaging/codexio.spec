@@ -27,6 +27,7 @@ datas = [
     (str(ICON), "codexio/icons"),
     (str(SRC / "codexio" / "icons" / "app.png"), "codexio/icons"),
     (str(SRC / "codexio" / "icons" / "app.svg"), "codexio/icons"),
+    (str(SRC / "codexio" / "icons" / "checkbox-check.svg"), "codexio/icons"),
     (str(SRC / "codexio" / "pricing_seed.json"), "codexio"),
     (str(SRC / "codexio" / "usage_collector.py"), "codexio"),
 ]
