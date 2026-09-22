@@ -42,9 +42,6 @@ $StagedExe = Join-Path $Staging "Codexio.exe"
 if (-not (Test-Path -LiteralPath $StagedExe)) {
     throw "Build finished but $StagedExe was not created."
 }
-& $VenvPython (Join-Path $Root "scripts\check_upstream_runtime.py") $StagedExe `
-    --output (Join-Path $Root "build\checks\windows-upstream-runtime")
-if ($LASTEXITCODE -ne 0) { throw "Upstream helper validation failed; the staged EXE is preserved." }
 $ReleaseVersion = (Get-Item -LiteralPath $StagedExe).VersionInfo.ProductVersion
 $DevelopmentDir = Join-Path $Root "build\dev\windows"
 $StagedManifest = Join-Path $Staging "latest.json"

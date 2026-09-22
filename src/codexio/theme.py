@@ -218,6 +218,13 @@ QFrame#requestInspector QFrame[callSummary="true"] { border: none; border-bottom
 QListWidget#settingsSections { background: transparent; border: none; }
 QListWidget#settingsSections::item { padding: 11px 9px; border: none; border-radius: 7px; color: %(muted)s; }
 QListWidget#settingsSections::item:selected { background: %(raised)s; color: %(text)s; }
+QFrame[settingsCard="true"] { background: %(surface)s; border: 1px solid %(border)s; border-radius: 12px; }
+QLabel[settingsCardTitle="true"], QCheckBox[settingsCardTitle="true"] { font-size: 14px; font-weight: 600; }
+QLabel[settingsBadge="true"] { background: %(raised)s; color: %(muted)s; border-radius: 9px; padding: 3px 8px; font-size: 11px; }
+QLabel[settingsBadge="true"][detecting="true"] { color: %(chart_cache_read_ink)s; }
+QToolButton[settingsHelp="true"] { background: transparent; border: 1px solid %(control_border)s; color: %(muted)s; border-radius: 10px; padding: 0; font-size: 11px; }
+QToolButton[settingsHelp="true"]:hover { background: %(raised)s; color: %(text)s; }
+QFrame[settingsDivider="true"] { background: %(border)s; border: none; }
 QTableView#resetCreditTable { background: %(surface)s; border: none; border-radius: 0; }
 QTableView#resetCreditTable QHeaderView::section { background: %(surface)s; }
 QScrollBar[scrollActive="false"]::handle:vertical,

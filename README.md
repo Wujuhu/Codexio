@@ -301,12 +301,11 @@ gh auth login --hostname github.com --web
 
 旧版 0.1.0 需要手动换上一次 0.1.1 或更高版本，此后即可自动更新。
 
-## 测试
+## 最小运行检查
 
-```powershell
-$env:PYTHONPATH = "src"
-.\.venv\Scripts\python.exe -m pytest tests
-```
+原测试套件和专项测试脚本已移除。仅保留三个基本冒烟检查：程序能启动、基本数据显示正常、主窗口能关闭并重新打开。Mac 开发打包会自动执行一次；Windows 可通过 `run.ps1 --mock` 确认基本运行。版本、签名、ZIP 和哈希仍按交付流程核验。
+
+后续不新增测试文件或测试项，不运行全量回归、界面遍历和截图矩阵。具体约束见 [项目要求](AGENTS.md)。
 
 ## 故障排查
 

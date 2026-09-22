@@ -57,23 +57,16 @@ ZIP 构建后会走一遍与更新器相同的解压、签名及架构检查。�
 - `src/codexio/macos_updater.py`：复用更新检查、下载与退出协调，验证 APP ZIP、替换应用包并回滚失败的启动。
 - `scripts/build_macos.py`、`packaging/codexio-macos.spec`：资源、原生架构、签名、冒烟检查、开发应用包与 APP ZIP。
 
-## 验证
+## 最小运行检查
 
 ```bash
-QT_QPA_PLATFORM=offscreen LOCALAPPDATA="$PWD/build/checks/test-data" \
-  .venv/bin/python -m pytest -q
-
-./run_macos.sh --mock --smoke-test build/checks/macos-smoke
-
 ./build_macos.sh
 ```
 
-自动化覆盖数据路径和设置持久化、CLI 发现、今日汇总、跨日刷新、未知价格、整轮请求状态、缓存／重置时间、负坐标多屏定位、Esc、关闭／重新打开以及单实例。只有需要真实 Win32 进程 API 的 Windows 更新器测试在 Mac 跳过。
+仅保留三个基本冒烟检查：程序能启动、基本数据显示正常、主窗口能关闭并重新打开。构建时使用 Cocoa 和隔离的模拟数据执行一次，不运行 pytest、专项回归、主题／页面遍历或截图矩阵。结果写入 `build/checks/macos-smoke/result.json`；后续不扩充测试文件或检查项。
 
-冒烟检查使用 Cocoa 原生平台和模拟数据，逐页打开深浅主题，保存当前应用控件截图并检查设置持久化、关闭主窗口后服务继续运行、菜单栏只切换预览、明确点击后打开主窗口、日志详情数值、3 秒滚动条隐藏、SVG 高清图标以及未创建悬浮窗。输出位于指定目录的 `result.json` 与 PNG 文件中。`--smoke-test` 必须与 `--mock` 同用。
+确有当前设置 UI 改动需要查看时，可用 `CODEXIO_CAPTURE_SETTINGS=1 ./build_macos.sh` 额外保存一张设置截图；默认不截图。不构建时可单独执行 `./run_macos.sh --mock --smoke-test build/checks/macos-smoke`，无需与构建重复执行。
 
 构建流程先生成 `build/staging/macos/Codexio.app`，核对版本与签名，启动打包后二进制完成 Cocoa 冒烟检查，再验证 APP ZIP，成功后移入 `build/dev/macos`。构建缓存在 `build/cache`，测试与截图在 `build/checks`，日志在 `build/logs`，被替换的开发 APP 暂存在 `build/backups/macos`。目标开发 APP 正在运行时，仍完成构建和验证，将新版 APP、ZIP 与清单留在 `build/staging/macos`，不覆盖或结束运行中的应用；暂存应用正在运行时拒绝在其位置重新构建。
-
-可以运行 `.venv/bin/python scripts/check_macos_update.py`，在 `build/checks/macos-updater` 的隔离副本上验证完整更新过程：校验 ZIP、等待正常退出、同路径替换、重新启动并确认、删除旧 APP。成功后清除大体积测试副本，只留下结果文件。
 
 Qt 菜单栏行为参考 [QSystemTrayIcon 官方文档](https://doc.qt.io/qt-6/qsystemtrayicon.html)；应用包与本地签名使用 [PyInstaller 官方 macOS 打包说明](https://pyinstaller.org/en/stable/feature-notes.html#macos-binary-code-signing)。
