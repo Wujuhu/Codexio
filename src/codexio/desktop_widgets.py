@@ -13,7 +13,8 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem, QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget,
 )
 
-from codexio.analytics_config import NAVIGATION_PAGES, normalize_navigation_order
+from codexio.analytics_config import (NAVIGATION_PAGES, normalize_navigation_order,
+                                      PREVIEW_DEFAULT_WIDTH, PREVIEW_MIN_WIDTH, PREVIEW_MAX_WIDTH)
 from codexio.charts import compact_number, parse_timestamp
 from codexio.durations import elapsed_milliseconds, duration_text, duration_tooltip
 from codexio.theme import theme_colors
@@ -40,6 +41,8 @@ ICON_PATHS = {
     "decrease": '<path d="m3 7 6 6 4-4 8 10M14 19h7v-7"/>',
     "previous_month": '<path d="m15 5-7 7 7 7"/>',
     "next_month": '<path d="m9 5 7 7-7 7"/>',
+    "collapse_sidebar": '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16m7-11-3 3 3 3"/>',
+    "expand_sidebar": '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16m4-11 3 3-3 3"/>',
 }
 
 
@@ -119,6 +122,8 @@ class NavigationList(QListWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._collapsed = False
+        self.setMinimumWidth(0)
         self.setObjectName("navigationList")
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setSpacing(4)
@@ -155,6 +160,17 @@ class NavigationList(QListWidget):
                 item.setToolTip("拖动调整顺序；右键可上移或下移")
             self.addItem(item)
         self.select_page(selected)
+        self.set_collapsed(self._collapsed)
+
+    def set_collapsed(self, collapsed):
+        self._collapsed = bool(collapsed)
+        for index in range(self.count()):
+            item = self.item(index)
+            label = NAVIGATION_LABELS[item.data(Qt.ItemDataRole.UserRole)]
+            item.setText("" if collapsed else label)
+            item.setData(Qt.ItemDataRole.AccessibleTextRole, label)
+            item.setToolTip(label + (" · 概览固定第一" if index == 0 else " · 拖动调整顺序"))
+            item.setSizeHint(QSize(36 if collapsed else 80, 39))
 
     def select_page(self, name):
         for index in range(self.count()):
@@ -774,23 +790,87 @@ class LedgerTable(QTableWidget):
         self.fit_columns()
 
 
+class PanelResizeHandle(QFrame):
+    """A narrow draggable divider; arrow keys also adjust the adjacent panel."""
+    drag_started = Signal()
+    drag_delta = Signal(int)
+    drag_finished = Signal()
+
+    def __init__(self, label, parent=None):
+        super().__init__(parent)
+        self.setObjectName("panelResizeHandle")
+        self.setFixedWidth(6)
+        self.setCursor(Qt.CursorShape.SplitHCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAccessibleName(label)
+        self.setToolTip(label + "；也可用左右方向键调整")
+        self._origin = None
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._origin = event.globalPosition().x()
+            self.drag_started.emit()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._origin is not None:
+            self.drag_delta.emit(round(event.globalPosition().x() - self._origin))
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._origin is not None:
+            self._origin = None
+            self.drag_finished.emit()
+            event.accept()
+        else:
+            super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key.Key_Left, Qt.Key.Key_Right):
+            self.drag_started.emit()
+            self.drag_delta.emit(-8 if event.key() == Qt.Key.Key_Left else 8)
+            self.drag_finished.emit()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
+
 class DrawerHost(QWidget):
     """Permanent side-by-side request table and details; never an overlay."""
 
-    def __init__(self, primary, inspector, parent=None):
+    width_changed = Signal(int)
+
+    def __init__(self, primary, inspector, parent=None, *, preview_width=PREVIEW_DEFAULT_WIDTH):
         super().__init__(parent)
         self.primary, self.inspector = primary, inspector
         primary.setParent(self)
         inspector.setParent(self)
+        self.preview_width = preview_width
+        self.handle = PanelResizeHandle("拖动调整请求预览宽度", self)
+        self.handle.drag_started.connect(self._begin_resize)
+        self.handle.drag_delta.connect(lambda delta: self.set_preview_width(self._drag_width - delta))
+        self.handle.drag_finished.connect(lambda: self.width_changed.emit(self.preview_width))
         self.setMinimumHeight(180)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
     def _place(self):
         width, height = self.width(), self.height()
-        detail = min(320, max(260, round(width * .30)))
-        inset = detail + 20
+        detail = min(self.preview_width, max(PREVIEW_MIN_WIDTH, width - 246), width)
+        inset = detail + self.handle.width()
         self.primary.setGeometry(0, 0, max(0, width - inset), height)
+        self.handle.setGeometry(max(0, width - inset), 0, self.handle.width(), height)
         self.inspector.setGeometry(max(0, width - detail), 0, min(detail, width), height)
+
+    def _begin_resize(self):
+        self._drag_width = self.inspector.width()
+
+    def set_preview_width(self, width):
+        self.preview_width = max(PREVIEW_MIN_WIDTH, min(PREVIEW_MAX_WIDTH, int(width)))
+        self._place()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

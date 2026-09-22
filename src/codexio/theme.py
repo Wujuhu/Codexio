@@ -183,10 +183,14 @@ QPlainTextEdit { background: %(surface)s; border: 1px solid %(border)s; border-r
 
 QWidget#dashboardRoot { background: %(sidebar_start)s; }
 QFrame#sidebar { background: %(sidebar_start)s; border: none; }
+QFrame#panelResizeHandle { background: transparent; border: none; }
+QFrame#panelResizeHandle:hover, QFrame#panelResizeHandle:focus { background: %(border)s; border-radius: 3px; }
+QToolButton#sidebarToggle { background: transparent; border: none; padding: 0; border-radius: 5px; }
+QToolButton#sidebarToggle:hover { background: %(hover)s; }
 QFrame#contentSurface { background: %(bg)s; border: 1px solid %(border)s; border-radius: 18px; }
 QFrame[card="true"] { background: %(surface)s; border: none; border-radius: 14px; }
 QFrame[card="true"][tone] { background: %(surface)s; border: none; }
-QLabel#brandName { font-family: %(brand_font)s; font-size: 22px; font-weight: 600; padding: 4px 4px 0; }
+QLabel#brandName { font-family: %(brand_font)s; font-size: 20px; font-weight: 600; padding: 4px 4px 0; }
 QLabel#statusText, QLabel#sidebarStatus { font-size: 11px; color: %(muted)s; }
 QPushButton { padding: 7px 11px; border-radius: 8px; }
 QPushButton[quiet="true"] { background: transparent; border: none; color: %(muted)s; padding: 6px 9px; }

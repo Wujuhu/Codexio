@@ -37,6 +37,10 @@ class ScrollIndicator(QObject):
     @Slot()
     @Slot(int)
     def reveal(self, *_):
+        if self.bar.property("scrollPersistent") is True:
+            self.timer.stop()
+            self._set_active(True)
+            return
         if not self.bar.isVisible() or self.bar.maximum() <= self.bar.minimum():
             return
         self._set_active(True)
@@ -51,7 +55,7 @@ class ScrollIndicator(QObject):
         if self.bar.isSliderDown():
             return
         self.timer.stop()
-        self._set_active(False)
+        self._set_active(self.bar.property("scrollPersistent") is True)
 
     @Slot(int, int)
     def _range_changed(self, minimum, maximum):

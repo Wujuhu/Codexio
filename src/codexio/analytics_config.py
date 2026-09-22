@@ -11,6 +11,23 @@ from codexio.settings import data_dir
 
 NAVIGATION_PAGES = ("overview", "subscription", "trends", "logs", "pricing", "settings")
 DEFAULT_NAVIGATION_ORDER = ("overview", "logs", "trends", "subscription", "pricing", "settings")
+SIDEBAR_MAX_WIDTH = 180
+SIDEBAR_MIN_WIDTH = 120
+SIDEBAR_COLLAPSED_WIDTH = 60
+PREVIEW_DEFAULT_WIDTH = 240
+PREVIEW_MIN_WIDTH = 220
+PREVIEW_MAX_WIDTH = 480
+
+
+def normalize_panel_layout(config):
+    result = {"sidebar_collapsed": config.get("sidebar_collapsed") is True}
+    for key, default, low, high in (
+        ("sidebar_width", SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH),
+        ("log_preview_width", PREVIEW_DEFAULT_WIDTH, PREVIEW_MIN_WIDTH, PREVIEW_MAX_WIDTH),
+    ):
+        value = config.get(key, default)
+        result[key] = max(low, min(high, value)) if isinstance(value, int) and not isinstance(value, bool) else default
+    return result
 
 
 def normalize_navigation_order(value) -> list[str]:
@@ -64,6 +81,7 @@ def default_config() -> dict:
         "main_geometry": None,
         "navigation_order": list(DEFAULT_NAVIGATION_ORDER),
         "navigation_order_version": 1,
+        **normalize_panel_layout({}),
         "subscription_profile": normalize_subscription_profile(None),
     }
 
@@ -85,6 +103,7 @@ def load_analytics_config(path: Path | None = None) -> dict:
     if config["theme"] not in ("system", "dark", "light"):
         config["theme"] = "system"
     config["navigation_order"] = normalize_navigation_order(config.get("navigation_order"))
+    config.update(normalize_panel_layout(config))
     config["subscription_profile"] = normalize_subscription_profile(config.get("subscription_profile"))
     for key in ("ssh_sources", "history_assignments"):
         if not isinstance(config[key], list):
@@ -105,6 +124,7 @@ def load_analytics_config(path: Path | None = None) -> dict:
 def save_analytics_config(config: dict, path: Path | None = None) -> None:
     config = {key: value for key, value in config.items() if key not in ("lan_sources", "share_tokens", "usd_per_credit")}
     config["navigation_order"] = normalize_navigation_order(config.get("navigation_order"))
+    config.update(normalize_panel_layout(config))
     config["subscription_profile"] = normalize_subscription_profile(config.get("subscription_profile"))
     config["show_log_source"] = config.get("show_log_source") is True
     config["server_estimates_enabled"] = config.get("server_estimates_enabled", True) is True

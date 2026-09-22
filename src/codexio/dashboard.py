@@ -9,7 +9,7 @@ from dataclasses import replace
 from datetime import datetime, time, timedelta, timezone
 from typing import Callable, Optional
 
-from PySide6.QtCore import QDate, QEvent, QPoint, QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QDate, QEvent, QPoint, QPointF, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QKeySequence, QPainter, QShortcut, QTextLayout, QTextOption
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QColorDialog, QComboBox, QDateEdit,
@@ -34,8 +34,9 @@ from codexio.usage_queries import summarize_model_calls, compare_usage
 from codexio.confirmed_usage import summarize_confirmed_usage
 from codexio.estimate_display import (ESTIMATE_HEADERS, estimate_amount, estimate_detail, estimate_history,
                                       method_label, select_estimates)
-from codexio.analytics_config import NAVIGATION_PAGES, normalize_navigation_order, normalize_subscription_profile
-from codexio.desktop_widgets import (DatePicker, DrawerHost, LedgerTable, NavigationList, PAGE_TITLES, PeriodChange, QuotaMeter,
+from codexio.analytics_config import (NAVIGATION_PAGES, normalize_navigation_order, normalize_subscription_profile,
+                                     normalize_panel_layout, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, SIDEBAR_COLLAPSED_WIDTH)
+from codexio.desktop_widgets import (DatePicker, DrawerHost, LedgerTable, NavigationList, PanelResizeHandle, PAGE_TITLES, PeriodChange, QuotaMeter,
                                     SegmentedControl, TokenComposition, WidgetStylePreview, ledger_duration_text, preview_title, tier_label, ui_icon)
 
 PAGE_NAMES = NAVIGATION_PAGES
@@ -877,6 +878,7 @@ class Dashboard(QMainWindow):
         self._is_macos = desktop_platform == "macos"
         self._settings = settings.normalized()
         self._config = copy.deepcopy(analytics_config)
+        self._config.update(normalize_panel_layout(self._config))
         self._callbacks = callbacks
         self._theme = str(self._config.get("theme") or "system")
         self._data: dict = {}
@@ -947,9 +949,11 @@ class Dashboard(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         sidebar = QFrame()
+        self._sidebar = sidebar
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(180)
+        sidebar.setFixedWidth(SIDEBAR_MAX_WIDTH)
         side = QVBoxLayout(sidebar)
+        self._sidebar_layout = side
         side.setContentsMargins(12, 20, 12, 16)
         side.setSpacing(14)
         from codexio.app_icon import render_app_pixmap
@@ -957,6 +961,7 @@ class Dashboard(QMainWindow):
         brand_row.setContentsMargins(4, 0, 0, 0)
         brand_row.setSpacing(4)
         brand_icon = QLabel()
+        self._brand_icon = brand_icon
         brand_icon.setObjectName("brandIcon")
         brand_pixmap = render_app_pixmap(64 if self._is_macos else 32)
         if self._is_macos:
@@ -966,8 +971,17 @@ class Dashboard(QMainWindow):
         brand_icon.setAccessibleName("Codexio")
         brand_row.addWidget(brand_icon)
         brand = plain_label("Codexio")
+        self._brand_name = brand
         brand.setObjectName("brandName")
+        brand.setMinimumWidth(0)
+        brand.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         brand_row.addWidget(brand, 1)
+        self._sidebar_toggle = QToolButton()
+        self._sidebar_toggle.setObjectName("sidebarToggle")
+        self._sidebar_toggle.setFixedSize(24, 32)
+        self._sidebar_toggle.setIconSize(QSize(18, 18))
+        self._sidebar_toggle.clicked.connect(self._toggle_sidebar)
+        brand_row.addWidget(self._sidebar_toggle)
         side.addLayout(brand_row)
         self._search_button = QPushButton("搜索")
         self._search_button.setObjectName("navigationSearch")
@@ -989,6 +1003,11 @@ class Dashboard(QMainWindow):
         self._account_button.clicked.connect(lambda: self.open_page("subscription"))
         side.addWidget(self._account_button)
         layout.addWidget(sidebar)
+        self._sidebar_handle = PanelResizeHandle("拖动调整导航栏宽度")
+        self._sidebar_handle.drag_started.connect(self._begin_sidebar_resize)
+        self._sidebar_handle.drag_delta.connect(self._resize_sidebar)
+        self._sidebar_handle.drag_finished.connect(self._save_panel_layout)
+        layout.addWidget(self._sidebar_handle)
         outer = QVBoxLayout()
         outer.setContentsMargins(0, 10, 10, 10)
         surface = QFrame()
@@ -1041,6 +1060,48 @@ class Dashboard(QMainWindow):
         self._fee_caption.setObjectName("statusText")
         footer.addWidget(self._fee_caption)
         main.addLayout(footer)
+
+    def _apply_sidebar_layout(self):
+        collapsed = self._config["sidebar_collapsed"]
+        width = SIDEBAR_COLLAPSED_WIDTH if collapsed else self._config["sidebar_width"]
+        self._sidebar.setFixedWidth(width)
+        self._sidebar_layout.setContentsMargins(8 if collapsed else 12, 20, 8 if collapsed else 12, 16)
+        self._brand_icon.setVisible(not collapsed)
+        self._brand_name.setVisible(not collapsed and width >= 170)
+        self._navigation.set_collapsed(collapsed)
+        self._search_button.setText("" if collapsed else "搜索")
+        self._search_button.setAccessibleName("搜索请求、会话或 ID")
+        self._sidebar_status.setVisible(not collapsed)
+        account = "个人订阅\n" + self._profile_plan_text().replace("&", "&&")
+        self._account_button.setText("" if collapsed else account)
+        self._account_button.setToolTip(account.replace("&&", "&"))
+        self._account_button.setAccessibleName("个人订阅")
+        action = "展开导航栏" if collapsed else "收起导航栏"
+        self._sidebar_toggle.setToolTip(action)
+        self._sidebar_toggle.setAccessibleName(action)
+        self._sidebar_toggle.setIcon(ui_icon("expand_sidebar" if collapsed else "collapse_sidebar", theme_colors(self._theme)["text"]))
+
+    def _toggle_sidebar(self):
+        self._config["sidebar_collapsed"] = not self._config["sidebar_collapsed"]
+        self._apply_sidebar_layout()
+        self._save_panel_layout()
+
+    def _begin_sidebar_resize(self):
+        self._sidebar_drag_width = self._sidebar.width()
+
+    def _resize_sidebar(self, delta):
+        width = self._sidebar_drag_width + delta
+        self._config["sidebar_collapsed"] = width < SIDEBAR_MIN_WIDTH
+        if width >= SIDEBAR_MIN_WIDTH:
+            self._config["sidebar_width"] = min(SIDEBAR_MAX_WIDTH, width)
+        self._apply_sidebar_layout()
+
+    def _save_panel_layout(self):
+        self._callback("config", copy.deepcopy(self._config))
+
+    def _preview_width_changed(self, width):
+        self._config["log_preview_width"] = width
+        self._save_panel_layout()
 
     def _navigation_reordered(self, order):
         self._config["navigation_order"] = normalize_navigation_order(order)
@@ -1183,10 +1244,9 @@ class Dashboard(QMainWindow):
         content.addWidget(self._trend_chart)
         graph.setMinimumHeight(380)
         graph.setMaximumHeight(500)
-        layout.addWidget(graph, 1)
+        self._trend_graph = graph
         self._trend_note = plain_label("", muted=True, wrap=True)
         self._trend_note.hide()
-        layout.addWidget(self._trend_note)
         self._trend_metrics_box = QWidget()
         metrics = QHBoxLayout(self._trend_metrics_box)
         metrics.setContentsMargins(0, 0, 0, 0)
@@ -1216,7 +1276,10 @@ class Dashboard(QMainWindow):
         self._activity_chart = UsageActivity()
         self._activity_chart.day_clicked.connect(self._activity_day_open)
         content.addWidget(self._activity_chart)
-        layout.addWidget(activity)
+        self._activity_card = activity
+        layout.insertWidget(layout.indexOf(self._trend_metrics_box), activity)
+        layout.addWidget(graph, 1)
+        layout.addWidget(self._trend_note)
         return page
 
     def _build_logs(self) -> QWidget:
@@ -1271,10 +1334,15 @@ class Dashboard(QMainWindow):
         self._date_row.hide()
         layout.addWidget(self._date_row)
         self._log_table = LedgerTable()
+        self._log_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self._log_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self._log_table.horizontalScrollBar().setProperty("scrollPersistent", True)
+        self._log_table.horizontalScrollBar().setProperty("scrollActive", True)
         self._log_table.cellClicked.connect(self._inspect_log_row)
         self._log_table.cellActivated.connect(self._inspect_log_row)
         inspector = self._create_inspector()
-        self._log_drawer = DrawerHost(self._log_table, inspector)
+        self._log_drawer = DrawerHost(self._log_table, inspector, preview_width=self._config["log_preview_width"])
+        self._log_drawer.width_changed.connect(self._preview_width_changed)
         self._log_canvas, records_layout = card()
         self._log_canvas.setObjectName("logCanvas")
         records_layout.setContentsMargins(22, 20, 4, 20)
@@ -1765,7 +1833,9 @@ class Dashboard(QMainWindow):
             self._sidebar_status.setText(self._progress_message)
         if self._usage_error:
             self._sidebar_status.setText(self._usage_error)
-        self._account_button.setText("个人订阅\n" + self._profile_plan_text().replace("&", "&&"))
+        account = "个人订阅\n" + self._profile_plan_text().replace("&", "&&")
+        self._account_button.setText("" if self._config["sidebar_collapsed"] else account)
+        self._account_button.setToolTip(account.replace("&&", "&"))
         self._update_startup_progress()
 
     def set_update_status(self, message: str, busy: bool = False) -> None:
@@ -1987,9 +2057,13 @@ class Dashboard(QMainWindow):
 
     def config_updated(self, config: dict) -> None:
         self._config = copy.deepcopy(config)
+        self._config.update(normalize_panel_layout(self._config))
         self._theme = str(self._config.get("theme") or "system")
         self._navigation.set_order(self._config.get("navigation_order"))
         self._navigation.select_page(self._active_page)
+        self._apply_sidebar_layout()
+        if "logs" in self._pages:
+            self._log_drawer.set_preview_width(self._config["log_preview_width"])
         self._widget_toggle.blockSignals(True)
         self._widget_toggle.setChecked(bool(config.get("widget_visible", True)))
         self._widget_toggle.blockSignals(False)
@@ -2024,6 +2098,8 @@ class Dashboard(QMainWindow):
         for field in self.findChildren(DatePicker):
             field.set_theme(self._theme)
         self._navigation.set_theme(self._theme)
+        self._apply_sidebar_layout()
+        self._account_button.setIcon(ui_icon("subscription", colors["muted"]))
         self._search_button.setIcon(ui_icon("search", colors["muted"]))
         self._refresh_button.setIcon(ui_icon("refresh", colors["text"]))
         self._widget_toggle.setIcon(ui_icon("widget", colors["text"]))
@@ -2885,6 +2961,8 @@ class Dashboard(QMainWindow):
         layout.addLayout(header)
         self._inspector_scroll = QScrollArea()
         self._inspector_scroll.setWidgetResizable(True)
+        self._inspector_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self._inspector_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._inspector_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._inspector_stack = QStackedWidget()
         self._inspector_empty = plain_label("点击左侧请求\n在这里查看详情", muted=True, wrap=True)

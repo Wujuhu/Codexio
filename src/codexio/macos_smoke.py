@@ -8,7 +8,8 @@ import time
 import traceback
 from dataclasses import replace
 
-from PySide6.QtCore import QObject, QRect, QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, QSize, Qt, QTimer
+from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication, QLabel, QSystemTrayIcon
 
 from codexio.settings import load_settings
@@ -61,6 +62,18 @@ class SmokeRun(QObject):
         assert widget.grab().save(str(self.output / (name + ".png")))
         self.checks.append(name)
 
+    def drag_panel(self, handle, delta):
+        origin = handle.mapToGlobal(handle.rect().center())
+        target = origin + QPoint(delta, 0)
+        for kind, position, button, buttons in (
+            (QEvent.Type.MouseButtonPress, origin, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton),
+            (QEvent.Type.MouseMove, target, Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton),
+            (QEvent.Type.MouseButtonRelease, target, Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton),
+        ):
+            QApplication.sendEvent(handle, QMouseEvent(kind, QPointF(handle.mapFromGlobal(position)), QPointF(position),
+                                                       button, buttons, Qt.KeyboardModifier.NoModifier))
+            QApplication.processEvents()
+
     def run_checks(self):
         controller = self.controller
         host = controller.dashboard_host
@@ -79,6 +92,31 @@ class SmokeRun(QObject):
                 assert window.isVisible() and not window._widget_toggle.isVisible()
                 self.capture(window, page + "-" + theme)
                 if page == "logs":
+                    assert window._log_table.horizontalScrollBar().property("scrollActive") is True
+                    self.drag_panel(window._sidebar_handle, -40)
+                    yield
+                    assert window._sidebar.width() == 140
+                    self.capture(window, "sidebar-resized-" + theme)
+                    window._sidebar_toggle.click()
+                    yield
+                    assert window._sidebar.width() == 60
+                    self.capture(window, "sidebar-collapsed-" + theme)
+                    window._sidebar_toggle.click()
+                    yield
+                    assert window._sidebar.width() == 140
+                    self.drag_panel(window._sidebar_handle, -30)
+                    yield
+                    assert window._sidebar.width() == 60
+                    self.drag_panel(window._sidebar_handle, 150)
+                    yield
+                    assert window._sidebar.width() == 180
+                    self.drag_panel(window._log_drawer.handle, -80)
+                    yield
+                    assert window._log_drawer.inspector.width() == 320
+                    self.capture(window, "log-preview-resized-" + theme)
+                    self.drag_panel(window._log_drawer.handle, 80)
+                    yield
+                    assert window._log_drawer.inspector.width() == 240
                     window.resize(920, 740)
                     yield
                     fields = {field.accessibleName(): field for field in window._inspector_scroll.widget().findChildren(QLabel)
@@ -99,9 +137,13 @@ class SmokeRun(QObject):
                     while time.monotonic() < deadline:
                         yield
                     assert bar.property("scrollActive") is False
+                    assert window._log_table.horizontalScrollBar().property("scrollActive") is True
                     assert window._inspector_scroll.viewport().geometry() == geometry
                     self.capture(window._log_drawer.inspector, "log-scroll-idle-" + theme)
                     window.resize(1180, 780)
+                if page == "trends":
+                    assert window._activity_card.y() < window._trend_metrics_box.y() < window._trend_graph.y()
+                    self.checks.append("usage-calendar-metrics-lines-" + theme)
                 if page == "settings":
                     assert [window._settings_sections.item(i).text() for i in range(4)] == ["外观", "菜单栏", "数据来源", "应用"]
                     window._settings_sections.setCurrentRow(3)
