@@ -85,6 +85,8 @@ release/
 
 归档要求两端版本、文件大小和 SHA-256 一致；ZIP 内的 APP 版本也必须一致。已有版本不自动覆盖，历史发布保留原样。跨机器构建可用 Mac 的 `--manifest` 或 Windows 的 `-ManifestPath` 合并另一端清单，并把另一端的开发包放入对应 `build/dev` 目录。
 
+用户明确要求仅发布 Mac 时，使用 `scripts/prepare_release.py --version <版本号> --platform macos --base release/<上一已发布版本>/latest.json`，必要时通过 `--macos` 指定已验证的新包目录。该次目录与 Release 仅包含 `Codexio.app.zip` 和 `latest.json`，清单保留已发布的 Windows 版本、下载地址和校验信息；默认双平台发布流程不变。
+
 Mac 包按构建机器架构生成，目前在 Apple Silicon 上验证，使用本地 ad-hoc 签名。ZIP 解压后是可移动的 `Codexio.app`，无需 DMG。更新会等待正常退出、原位替换并启动新版，收到新进程的启动确认后删除旧 APP；启动失败则回滚。旧的 DMG 更新器无法识别新的 ZIP 地址，已安装旧版的用户需要手动更换一次支持 ZIP 更新的 APP。详细说明见 [macOS 开发说明](docs/macos.md)。
 
 ## Windows 环境要求
