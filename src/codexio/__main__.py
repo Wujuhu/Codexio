@@ -5,6 +5,11 @@ import atexit
 import copy
 import sys
 
+# This copied helper must stay alive after the Qt application exits or updates.
+if __name__ == "__main__" and len(sys.argv) == 3 and sys.argv[1] == "--upstream-proxy":
+    from codexio.upstream_proxy import run_helper
+    sys.exit(run_helper(sys.argv[2]))
+
 # The copied updater executable must run independently of the Qt application.
 if __name__ == "__main__" and sys.platform == "win32" and len(sys.argv) == 3 and sys.argv[1] == "--apply-update":
     from codexio.update_installer import run_update_job
@@ -27,6 +32,7 @@ from codexio.usage_worker import UsageWorker
 from codexio.dashboard_host import DashboardHost
 from codexio.server_usage_monitor import ServerUsageMonitor
 from codexio.settings import data_dir
+from codexio.upstream_manager import UpstreamManager
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -66,12 +72,15 @@ def main(argv: list[str] | None = None) -> int:
     server_usage = ServerUsageMonitor(analytics_config, data_dir(), app, mock=args.mock)
     closing = False
     updater = None
+    upstream = None
 
     def cleanup() -> None:
         nonlocal closing
         if closing:
             return
         closing = True
+        if upstream is not None:
+            upstream.stop()
         server_usage.stop()
         if updater is not None:
             updater.stop()
@@ -81,6 +90,12 @@ def main(argv: list[str] | None = None) -> int:
         usage.stop()
 
     def quit_app() -> None:
+        if upstream is not None:
+            upstream.request_quit(finish_quit)
+        else:
+            finish_quit()
+
+    def finish_quit() -> None:
         logger.info("退出 Codexio")
         cleanup()
         # An explicit exit must bypass the main window's close-to-tray veto.
@@ -145,7 +160,14 @@ def main(argv: list[str] | None = None) -> int:
         "assign_history": assign_history,
         "main_hidden": save_main_geometry,
         "check_update": lambda: updater.check() if updater is not None else None,
+        "upstream_toggle": lambda value: upstream.toggle(value),
+        "upstream_exit_prompt": lambda value: upstream.set_exit_prompt(value),
     }, app)
+    upstream = UpstreamManager(app, data_dir(), lambda: analytics_config, apply_config,
+                               lambda: dashboard_host.dashboard, mock=args.mock)
+    upstream.on_quit = finish_quit
+    upstream.status_changed.connect(dashboard_host.set_upstream_status)
+    upstream.observations_changed.connect(dashboard_host.refresh_upstream)
     menu = QMenu()
     menu.addAction("打开主界面").triggered.connect(lambda: open_main())
     widget_action = menu.addAction("显示悬浮窗")
@@ -163,7 +185,7 @@ def main(argv: list[str] | None = None) -> int:
         on_activated=lambda: open_main(),
         icon=load_app_icon(),
     )
-    updater = UpdateManager(app, quit_app, available=False if args.mock else None)
+    updater = UpdateManager(app, lambda: upstream.quit_for_update(finish_quit), available=False if args.mock else None)
 
     def update_status(message: str, busy: bool) -> None:
         dashboard_host.set_update_status(message, busy)
@@ -205,6 +227,7 @@ def main(argv: list[str] | None = None) -> int:
     worker.start()
     server_usage.start()
     updater.start(bool(analytics_config.get("auto_update", True)))
+    QTimer.singleShot(0, upstream.start)
     QTimer.singleShot(1500, acknowledge_restart)
     atexit.register(cleanup)
     app.aboutToQuit.connect(cleanup)

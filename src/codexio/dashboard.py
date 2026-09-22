@@ -1534,6 +1534,18 @@ class Dashboard(QMainWindow):
         self._server_estimates_enabled = QCheckBox("用服务端多日数据估算周额度")
         updates.addWidget(self._server_estimates_enabled)
         updates.addWidget(plain_label("服务端日数据允许延迟，补齐后自动重算；无须每天 08:00 在线。", muted=True, wrap=True))
+        updates.addSpacing(18)
+        self._upstream_toggle = QCheckBox("上游检测")
+        self._upstream_toggle.clicked.connect(lambda value: self._callback("upstream_toggle", value))
+        updates.addWidget(self._upstream_toggle)
+        updates.addWidget(plain_label("保留官方登录，显示响应返回的模型名称。开启和关闭会自动重启正在运行的 ChatGPT。", muted=True, wrap=True))
+        self._upstream_status = plain_label("已关闭 · 官方直连", muted=True, wrap=True)
+        updates.addWidget(self._upstream_status)
+        self._upstream_exit_prompt = QCheckBox("退出时提示恢复直连并重启 ChatGPT")
+        self._upstream_exit_prompt.setChecked(self._config.get("upstream_exit_prompt", True))
+        self._upstream_exit_prompt.clicked.connect(lambda value: self._callback("upstream_exit_prompt", value))
+        updates.addWidget(self._upstream_exit_prompt)
+        self.set_upstream_status(*getattr(self, "_upstream_state", ("已关闭 · 官方直连", False, False)))
         updates.addStretch()
         layout.addLayout(body, 1)
         save_row = QHBoxLayout()
@@ -1546,6 +1558,19 @@ class Dashboard(QMainWindow):
         layout.addLayout(save_row)
         self._settings_sections.setCurrentRow(0)
         return page
+
+    def set_upstream_status(self, message, active=False, busy=False):
+        self._upstream_state = message, active, busy
+        if hasattr(self, "_upstream_toggle"):
+            self._restore_control(self._upstream_toggle, active or self._config.get("upstream_detection_enabled", False))
+            self._upstream_toggle.setEnabled(not busy)
+            self._upstream_status.setText(message)
+            self._restore_control(self._upstream_exit_prompt, self._config.get("upstream_exit_prompt", True))
+
+    def refresh_upstream(self):
+        self._dirty_pages.add("logs")
+        if self._page_is_active("logs"):
+            self._render_log_page()
 
     def _build_floating_settings(self, section):
         floating = section("悬浮窗", "保留当前外观与停靠行为，保存后应用。")
@@ -2084,6 +2109,7 @@ class Dashboard(QMainWindow):
             self._auto_sync.setChecked(bool(self._config.get("auto_sync_prices", True)))
             self._auto_sync.blockSignals(False)
         elif name == "settings":
+            self.set_upstream_status(*getattr(self, "_upstream_state", ("已关闭 · 官方直连", False, False)))
             self._auto_update.blockSignals(True)
             self._auto_update.setChecked(bool(self._config.get("macos_auto_update" if self._is_macos else "auto_update", True)))
             self._auto_update.blockSignals(False)

@@ -15,7 +15,7 @@ if ($Version) {
 }
 
 Write-Host "Installing PyInstaller..."
-& $VenvPython -m pip install -q "pyinstaller>=6.3,<7"
+& $VenvPython -m pip install -q -r (Join-Path $Root "requirements.txt") "pyinstaller>=6.3,<7"
 if ($LASTEXITCODE -ne 0) {
     Write-Host "pip failed; retrying without proxy..."
     foreach ($name in @("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy")) {
@@ -23,7 +23,7 @@ if ($LASTEXITCODE -ne 0) {
     }
     $env:NO_PROXY = "*"
     $env:no_proxy = "*"
-    & $VenvPython -m pip install -q "pyinstaller>=6.3,<7"
+    & $VenvPython -m pip install -q -r (Join-Path $Root "requirements.txt") "pyinstaller>=6.3,<7"
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to install PyInstaller. Check network or proxy, then retry."
     }
@@ -42,6 +42,9 @@ $StagedExe = Join-Path $Staging "Codexio.exe"
 if (-not (Test-Path -LiteralPath $StagedExe)) {
     throw "Build finished but $StagedExe was not created."
 }
+& $VenvPython (Join-Path $Root "scripts\check_upstream_runtime.py") $StagedExe `
+    --output (Join-Path $Root "build\checks\windows-upstream-runtime")
+if ($LASTEXITCODE -ne 0) { throw "Upstream helper validation failed; the staged EXE is preserved." }
 $ReleaseVersion = (Get-Item -LiteralPath $StagedExe).VersionInfo.ProductVersion
 $DevelopmentDir = Join-Path $Root "build\dev\windows"
 $StagedManifest = Join-Path $Staging "latest.json"

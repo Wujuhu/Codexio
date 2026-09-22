@@ -26,6 +26,7 @@ from codexio.usage_worker import UsageWorker
 from codexio.worker import QuotaWorker
 from codexio.update_manager import UpdateManager
 from codexio.update_installer import acknowledge_update
+from codexio.upstream_manager import UpstreamManager
 
 
 class SingleInstance(QObject):
@@ -85,8 +86,15 @@ class MacController(QObject):
             "quit": self.quit, "rescan": self.usage.rescan, "assign_history": self.assign_history,
             "main_hidden": self.save_geometry, "open_data_directory": self.open_data_directory,
             "check_update": lambda: self.updater.check(),
+            "upstream_toggle": lambda value: self.upstream.toggle(value),
+            "upstream_exit_prompt": lambda value: self.upstream.set_exit_prompt(value),
         }, app, factory=partial(Dashboard, desktop_platform="macos"))
-        self.updater = UpdateManager(app, self.quit, available=False if mock else None)
+        self.upstream = UpstreamManager(app, data_dir(), lambda: self.config, self.apply_config,
+                                        lambda: self.dashboard_host.dashboard, mock=mock)
+        self.upstream.on_quit = self._finish_quit
+        self.upstream.status_changed.connect(self.dashboard_host.set_upstream_status)
+        self.upstream.observations_changed.connect(self.dashboard_host.refresh_upstream)
+        self.updater = UpdateManager(app, lambda: self.upstream.quit_for_update(self._finish_quit), available=False if mock else None)
         self.updater.status_changed.connect(self.dashboard_host.set_update_status)
         self.menu_bar = MenuBarController(app, self.settings, self.config,
                                           on_open=self.open_main, on_quit=self.quit)
@@ -133,6 +141,7 @@ class MacController(QObject):
         self.worker.start()
         self.server_usage.start()
         self.updater.start(bool(self.config.get("macos_auto_update", True)))
+        QTimer.singleShot(0, self.upstream.start)
         QTimer.singleShot(1500, self.acknowledge_restart)
 
     def acknowledge_restart(self):
@@ -214,6 +223,7 @@ class MacController(QObject):
         if self.closing:
             return
         self.closing = True
+        self.upstream.stop()
         self.updater.stop()
         self.menu_bar.stop()
         self.dashboard_host.save_geometry()
@@ -223,6 +233,9 @@ class MacController(QObject):
         self.usage.stop()
 
     def quit(self):
+        self.upstream.request_quit(self._finish_quit)
+
+    def _finish_quit(self):
         self.stop()
         self.app.exit(0)
 

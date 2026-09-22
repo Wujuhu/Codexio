@@ -78,6 +78,9 @@ class SmokeRun(QObject):
         controller = self.controller
         host = controller.dashboard_host
         popup = controller.menu_bar.preview
+        # Isolated mock-only observations exercise the complete DB-to-table join.
+        for index, model in enumerate(("gpt-5.6-luna", "gpt-6-astra", "gpt-5.6-terra", "gpt-5.6-terra")):
+            controller.upstream.store.record("resp_preview_%04d" % index, model)
         assert host._data["menu_bar_today"]["tokens"] is not None
         assert host._data["latest_request"] is not None
         icon = controller.app.windowIcon().pixmap(QSize(1024, 1024), 1.0)
@@ -93,6 +96,8 @@ class SmokeRun(QObject):
                 self.capture(window, page + "-" + theme)
                 if page == "logs":
                     table = window._log_table
+                    from codexio.desktop_widgets import UPSTREAM_ROLE
+                    assert table.item(0, 1).data(UPSTREAM_ROLE) == "多上游（2）"
                     headers = [table.horizontalHeaderItem(i).text() for i in range(table.columnCount())]
                     assert "档位" not in headers and headers[2:7] == ["输入 / 输出", "缓存命中率", "费用", "速度", "耗时"]
                     assert table.item(0, table.cache_column).text().endswith("%")
@@ -101,6 +106,7 @@ class SmokeRun(QObject):
                     yield
                     assert "ID " not in table.item(0, 0).text().split("\n")[-1]
                     assert table.item(0, table.speed_column).text().endswith("Token/s")
+                    assert table.item(0, 1).data(UPSTREAM_ROLE) == "gpt-5.6-luna"
                     self.capture(window, "log-model-calls-" + theme)
                     window._log_mode.setCurrentIndex(window._log_mode.findData("user_request"))
                     yield
@@ -169,6 +175,8 @@ class SmokeRun(QObject):
                     assert window._auto_update.text() == "自动下载更新"
                     assert "预览模式不安装更新" in window._update_status.text()
                     assert not window._check_update.isEnabled()
+                    assert window._upstream_toggle.text() == "上游检测" and not window._upstream_toggle.isChecked()
+                    assert "预览模式" in window._upstream_status.text()
                     self.capture(window, "settings-updates-" + theme)
                     window._settings_sections.setCurrentRow(1)
                     yield

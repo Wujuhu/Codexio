@@ -131,7 +131,7 @@ def estimate_weeks(records: list[dict], observations: list[dict], account_since,
     seen = set()
     for record in records:
         stamp = _time(record.get("timestamp"))
-        if not stamp or stamp > current or str(record.get("provider", "openai")).lower() != "openai":
+        if not stamp or stamp > current or str(record.get("provider", "openai")).lower() not in ("openai", "codexio-upstream"):
             continue
         identity = record.get("id") or record.get("response_id")
         if identity and identity in seen:

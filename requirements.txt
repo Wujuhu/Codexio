@@ -1,2 +1,6 @@
 PySide6-Essentials>=6.6,<6.10
 pytest>=7.4
+aiohttp>=3.10,<4
+tomlkit>=0.13,<1
+psutil>=6,<8
+certifi>=2024.8.30

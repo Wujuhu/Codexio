@@ -75,6 +75,8 @@ def main():
     # Validate the new binary in a separate data directory, without the shell's
     # import paths or development interpreter influencing the bundled runtime.
     env = {key: value for key, value in os.environ.items() if key not in ("PYTHONPATH", "PYTHONHOME", "QT_QPA_PLATFORM", "QT_PLUGIN_PATH")}
+    run(sys.executable, ROOT / "scripts/check_upstream_runtime.py", bundle / "Contents/MacOS/Codexio",
+        "--output", BUILD / "checks/macos-upstream-runtime", env=env, timeout=50)
     run(bundle / "Contents/MacOS/Codexio", "--mock", "--smoke-test", smoke, env=env, timeout=100)
     assert json.loads((smoke / "result.json").read_text(encoding="utf-8"))["ok"]
     from codexio.app_archive import APP_ARCHIVE_NAME

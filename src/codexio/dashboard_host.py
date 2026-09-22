@@ -17,6 +17,7 @@ class DashboardHost(QObject):
         self._loading = None
         self._progress = None
         self._update = None
+        self._upstream = None
         self._generation = 0
         self._view_state = {}
 
@@ -50,6 +51,8 @@ class DashboardHost(QObject):
                 window.set_progress(self._progress)
             if self._update is not None:
                 window.set_update_status(*self._update)
+            if self._upstream is not None:
+                window.set_upstream_status(*self._upstream)
         self.dashboard.open_page(page, period)
         return self.dashboard
 
@@ -96,3 +99,12 @@ class DashboardHost(QObject):
     def config_updated(self, config):
         if self.dashboard is not None:
             self.dashboard.config_updated(config)
+
+    def set_upstream_status(self, message, active=False, busy=False):
+        self._upstream = message, active, busy
+        if self.dashboard is not None:
+            self.dashboard.set_upstream_status(*self._upstream)
+
+    def refresh_upstream(self):
+        if self.dashboard is not None:
+            self.dashboard.refresh_upstream()

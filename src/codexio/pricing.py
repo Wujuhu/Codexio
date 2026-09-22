@@ -304,7 +304,7 @@ class PricingCatalog:
                 or ("total_tokens" in record and _number(record["total_tokens"]) != total)
                 or str(record.get("quality", "")).lower().startswith("invalid")):
             return dict(result, pricing_status="invalid", reason="Token 分项不一致，未计算金额")
-        if str(record.get("provider", "unknown")).lower() != "openai":
+        if str(record.get("provider", "unknown")).lower() not in ("openai", "codexio-upstream"):
             return dict(result, reason="供应商未确认为 OpenAI")
         model = str(record.get("model", "")).removeprefix("openai/")
         model_rows = [r for r in self._rows if r["model"] == model]

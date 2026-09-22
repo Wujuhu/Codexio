@@ -5,7 +5,7 @@ import math
 from functools import lru_cache
 
 from PySide6.QtCore import QByteArray, QDate, QPointF, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPen, QPixmap, QTextCharFormat
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPainterPath, QPen, QPixmap, QTextCharFormat
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QButtonGroup, QCalendarWidget, QDateEdit, QFrame, QHBoxLayout, QHeaderView, QLabel, QListWidget,
@@ -622,6 +622,7 @@ def ledger_duration_text(record, now=None):
 
 SECONDARY_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 PRIMARY_COLOR_ROLE = int(Qt.ItemDataRole.UserRole) + 2
+UPSTREAM_ROLE = int(Qt.ItemDataRole.UserRole) + 3
 
 
 class LedgerDelegate(QStyledItemDelegate):
@@ -644,6 +645,33 @@ class LedgerDelegate(QStyledItemDelegate):
         total = fm.height() + (sm.height() + 5 if len(lines) > 1 else 0)
         y = rect.center().y() - total / 2
         colors = theme_colors(self.parent()._theme)
+        upstream = index.data(UPSTREAM_ROLE)
+        if upstream:
+            total = fm.height() + sm.height() + 5
+            y = rect.center().y() - total / 2
+            text_width = max(0, int(rect.width() - 15))
+            painter.setFont(small)
+            painter.setPen(QColor(colors["chart_cache_read_ink"]))
+            painter.drawText(QRectF(rect.left(), y, text_width, sm.height()), Qt.AlignmentFlag.AlignCenter,
+                             sm.elidedText(upstream, Qt.TextElideMode.ElideRight, text_width))
+            painter.setFont(font)
+            painter.setPen(QColor(colors["text"]))
+            requested = fm.elidedText(lines[0], Qt.TextElideMode.ElideRight, text_width)
+            lower_y = y + sm.height() + 5
+            painter.drawText(QRectF(rect.left(), lower_y, text_width, fm.height()), Qt.AlignmentFlag.AlignCenter, requested)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(QPen(QColor(colors["chart_cache_read_ink"]), 1.2))
+            x, tip = rect.right() - 3, y + sm.height() / 2
+            arrow = QPainterPath()
+            arrow.moveTo(rect.left() + (text_width + fm.horizontalAdvance(requested)) / 2 + 2, lower_y + fm.height() / 2)
+            arrow.lineTo(x, lower_y + fm.height() / 2)
+            arrow.lineTo(x, tip)
+            arrow.moveTo(x - 3, tip + 4)
+            arrow.lineTo(x, tip)
+            arrow.lineTo(x + 3, tip + 4)
+            painter.drawPath(arrow)
+            painter.restore()
+            return
         color = colors.get(index.data(PRIMARY_COLOR_ROLE), colors["text"])
         painter.setFont(font)
         painter.setPen(QColor(color))
@@ -793,6 +821,16 @@ class LedgerTable(QTableWidget):
             # Full request text is available in the persistent details pane.
             self.item(index, 0).setToolTip("")
             self.item(index, 1).setToolTip("\n".join(models or [row.get("model") or "未知模型"]))
+            upstreams = row.get("upstream_models") or []
+            if upstreams and not self.compact:
+                item = self.item(index, 1)
+                title = upstreams[0] if len(upstreams) == 1 else f"多上游（{len(upstreams)}）"
+                item.setData(UPSTREAM_ROLE, title)
+                counts = row.get("upstream_model_counts") or {}
+                detail = "\n".join(f"{value} · {counts.get(value, 1)} 次" for value in upstreams)
+                item.setToolTip("响应返回的上游模型\n" + detail + "\n已检测 %s / %s 次调用\n请求模型：%s" % (
+                    row.get("upstream_detected_calls", 1), row.get("upstream_total_calls", 1), " / ".join(models or [model])))
+                item.setData(Qt.ItemDataRole.AccessibleDescriptionRole, item.toolTip())
             if not self.compact:
                 self.item(index, self.cache_column).setToolTip(cache_tooltip(row))
                 self.item(index, self.speed_column).setToolTip(output_speed_tooltip(row))

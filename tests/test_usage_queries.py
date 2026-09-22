@@ -41,6 +41,30 @@ def setup(tmp_path):
     return store, catalog, queries
 
 
+def test_response_models_join_both_log_modes_without_repricing_or_changing_filters(tmp_path):
+    from codexio.upstream_store import UpstreamStore
+    store, catalog, queries = setup(tmp_path)
+    calls = [record('one', response_id='resp_1', provider='codexio-upstream'), record('two', response_id='resp_2')]
+    assert catalog.price(calls[0]) == catalog.price(dict(calls[0], provider='openai'))
+    store.upsert_records(calls, 'local')
+    store.upsert_turns([turn()])
+    queries.rebuild(catalog)
+    before = queries.page()['rows'][0]
+    metadata = UpstreamStore(tmp_path / 'upstream.sqlite')
+    metadata.record('resp_1', 'gpt-5.6-luna')
+    after = queries.page()['rows'][0]
+    assert after['upstream_models'] == ['gpt-5.6-luna']
+    assert after['upstream_detected_calls'] == 1 and after['upstream_total_calls'] == 2
+    assert after['model'] == before['model'] and after['cost_usd'] == before['cost_usd']
+    assert queries.page(mode='model_call', model='gpt-5.6-luna')['total'] == 0
+    by_id = {row['response_id']: row for row in queries.page(mode='model_call')['rows']}
+    assert by_id['resp_1']['upstream_model'] == 'gpt-5.6-luna'
+    assert 'upstream_model' not in by_id['resp_2']
+    assert queries.record(by_id['resp_1']['id'])['upstream_model'] == 'gpt-5.6-luna'
+    assert queries.request(after['id'])['upstream_detected_calls'] == 1
+    assert len(queries.request_members(after['id'])['rows']) == 2
+
+
 def test_model_call_composition_combines_tiers_counts_and_prices_and_keeps_missing_values():
     rows = [dict(model="gpt-6-astra", service_tier="default", cost_usd=.1, pricing_status="priced") for _ in range(24)]
     rows.append(dict(model="gpt-6-astra", service_tier="priority", cost_usd=.6, pricing_status="priced"))

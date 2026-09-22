@@ -125,6 +125,7 @@ class MenuBarPreview(QFrame):
         self.setObjectName("menuBarPreview")
         self.setWindowTitle("Codexio 用量预览")
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self._settings = settings.normalized()
         self._theme = config.get("theme", "system")
         self._quota = QuotaState.empty()
@@ -344,9 +345,9 @@ QLabel#previewTokens { color: %(chart_tokens_ink)s; }
         if screen:
             self.move(popup_position(anchor, self.size(), screen.availableGeometry()))
         self.show()
-        self.raise_()
-        self.activateWindow()
-        self.open_button.setFocus()
+        # On Cocoa, QWidget.raise_() activates the whole process and brings
+        # existing main windows forward. Qt's native popup already orders itself
+        # above the status item and dismisses on outside clicks without that.
 
     def event(self, event):
         handled = super().event(event)

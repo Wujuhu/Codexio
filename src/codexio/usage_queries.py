@@ -17,8 +17,9 @@ from codexio.confirmed_usage import ConfirmedUsage, METRICS, _add_cost, summariz
 from codexio.user_requests import COUNTERS, _merge_turns, iter_user_requests, normalized_tier, turn_key
 from codexio.usage_collector import _user_preview
 from codexio.usage_metrics import dashboard_summary
+from codexio.upstream_store import UpstreamStore, enrich_rows
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 METRIC_FIELDS = ("id", "timestamp", "model", "service_tier", "source_id", "source_name", "source_ids",
                  "session_id", "turn_id", "request_turn_id", "total_tokens", "cost_usd", "pricing_status",
                  "provider", "account_key", "limit_id", "quality", "duration_ms") + COUNTERS
@@ -345,6 +346,7 @@ class UsageQueries:
             index, size, pages = self._pagination(page, page_size, total)
             rows = [json.loads(row[0]) for row in db.execute("SELECT " + alias + ".data FROM " + table + " " + alias + where
                     + " ORDER BY " + alias + ".timestamp DESC," + alias + ".id DESC LIMIT ? OFFSET ?", args + [size, index * size])]
+            enrich_rows(db, rows, UpstreamStore(self.path.parent / "upstream.sqlite"), grouped=grouped)
             return dict(rows=rows, total=total, page=index, pages=pages, counts=counts)
 
     def request_members(self, request_id, page=0, page_size=100):
@@ -353,6 +355,7 @@ class UsageQueries:
             index, size, pages = self._pagination(page, page_size, total)
             rows = [json.loads(row[0]) for row in db.execute("SELECT c.data FROM usage_request_members m JOIN usage_priced_calls c ON c.id=m.record_id "
                     "WHERE m.request_id=? ORDER BY c.timestamp ASC,c.id ASC LIMIT ? OFFSET ?", (request_id, size, index * size))]
+            enrich_rows(db, rows, UpstreamStore(self.path.parent / "upstream.sqlite"))
             return dict(rows=rows, total=total, page=index, pages=pages, counts=dict(requests=total, subagents=0, unassigned=0))
 
     def request_composition(self, request_id):
@@ -364,7 +367,9 @@ class UsageQueries:
     def _one(self, table, ident):
         with self._connect() as db:
             row = db.execute("SELECT data FROM " + table + " WHERE id=?", (ident,)).fetchone()
-            return json.loads(row[0]) if row else None
+            rows = [json.loads(row[0])] if row else []
+            enrich_rows(db, rows, UpstreamStore(self.path.parent / "upstream.sqlite"), grouped=table == "usage_request_groups")
+            return rows[0] if rows else None
 
     def record(self, ident):
         return self._one("usage_priced_calls", ident)
