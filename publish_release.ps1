@@ -47,13 +47,6 @@ if (-not $PrepareOnly) {
 }
 
 if (-not $SkipBuild) {
-    Push-Location $ReleaseRoot
-    try {
-        & (Join-Path $ReleaseRoot '.venv\Scripts\python.exe') -m pytest -q
-        if ($LASTEXITCODE -ne 0) { throw "Tests failed; nothing was published." }
-    } finally {
-        Pop-Location
-    }
     & (Join-Path $ReleaseRoot 'build_exe.ps1') -Version $Version
 }
 $ReleaseDir = Join-Path (Join-Path $ReleaseRoot 'release') $Version

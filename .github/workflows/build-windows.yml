@@ -1,0 +1,49 @@
+name: Build Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'codex/build-*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.13'
+          architecture: x64
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Build the current source version
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          if ($LASTEXITCODE -ne 0) { throw 'Could not create the build environment.' }
+          ./build_exe.ps1
+      - name: Verify executable version and manifest
+        shell: pwsh
+        run: |
+          $Asset = Get-Item 'build/dev/windows/Codexio.exe'
+          $Manifest = Get-Content 'build/dev/windows/latest.json' -Raw -Encoding UTF8 | ConvertFrom-Json
+          $SourceVersion = (Select-String -Path 'src/codexio/__init__.py' -Pattern '^__version__ = "([^"]+)"$').Matches[0].Groups[1].Value
+          if ($Asset.VersionInfo.ProductVersion -ne $SourceVersion -or $Manifest.version -ne $SourceVersion) { throw 'Version mismatch.' }
+          if ($Asset.Length -ne $Manifest.size) { throw 'Size mismatch.' }
+          if ((Get-FileHash $Asset.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -ne $Manifest.sha256) { throw 'SHA-256 mismatch.' }
+          Write-Host "Verified Codexio $SourceVersion from $env:GITHUB_SHA"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: codexio-windows-${{ github.sha }}
+          path: |
+            build/dev/windows/Codexio.exe
+            build/dev/windows/latest.json
+          if-no-files-found: error
+          retention-days: 7
