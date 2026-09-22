@@ -175,10 +175,12 @@ class Relay:
                                             allow_redirects=False) as upstream:
                 response = web.StreamResponse(status=upstream.status, headers=relay_headers(upstream.headers))
                 await response.prepare(request)
-                kind = upstream.headers.get("Content-Type", "").lower()
                 observable = upstream.status == 200 and upstream.headers.get("Content-Encoding", "identity") == "identity"
-                observer = ResponseObserver(self.observe, sse="text/event-stream" in kind) if observable and (
-                    "text/event-stream" in kind or "application/json" in kind) else None
+                # The official Codex endpoint can omit Content-Type or return
+                # application/octet-stream for SSE. Inspect response bytes rather
+                # than trusting a MIME label that the client itself ignores.
+                is_response = request.match_info["path"].split("/", 1)[0] == "responses"
+                observer = ResponseObserver(self.observe, sse=None) if observable and is_response else None
                 async for chunk in upstream.content.iter_any():
                     await response.write(chunk)
                     if observer:

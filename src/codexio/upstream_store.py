@@ -102,6 +102,25 @@ class ResponseObserver:
             pass
 
     def feed(self, chunk):
+        if self.sse is None:
+            if self.dropping:
+                return
+            if len(self.buffer) + len(chunk) > self.MAX_EVENT:
+                self.buffer.clear()
+                self.dropping = True
+                return
+            self.buffer.extend(chunk)
+            probe = bytes(self.buffer).lstrip(b" \t\r\n")
+            bom = b"\xef\xbb\xbf"
+            if not probe or probe in (bom[:1], bom[:2]):
+                return
+            if probe.startswith(bom):
+                probe = probe[len(bom):].lstrip(b" \t\r\n")
+            if not probe:
+                return
+            self.sse = not probe.startswith((b"{", b"["))
+            self.buffer.clear()
+            chunk = probe
         if not self.sse:
             if len(self.buffer) + len(chunk) <= self.MAX_EVENT and not self.dropping:
                 self.buffer.extend(chunk)

@@ -8,7 +8,7 @@
 
 只监听 `127.0.0.1`，配置中加入随机路由令牌；控制接口使用独立令牌。恢复日志和运行描述文件位于 Codexio 数据目录的 `upstream/`，按当前用户权限保存。仅接管默认官方路由；不覆盖第三方 provider、修改路由的 profile 或 API 登录配置。配置写入使用临时文件和原子替换。恢复时比较归属，保留用户在期间作出的模型、功能等其他修改；冲突时保留转发和恢复日志，不盲目覆盖。
 
-从 `response.created`、`response.completed`、`response.incomplete`、`response.failed` 或普通 JSON 响应提取响应 ID 与 `model`，最终响应优先。SSE 观察缓冲上限为 2 MiB，落库由独立队列处理；解析、数据库或磁盘错误不改变转发的响应。`upstream.sqlite` 仅保存响应 ID、模型、事件类型、优先级和观察时间，不记录请求正文、响应正文、OAuth 凭据或认证头。
+从 `response.created`、`response.completed`、`response.incomplete`、`response.failed` 或普通 JSON 响应提取响应 ID 与 `model`，最终响应优先。根据响应内容识别 SSE／JSON，兼容官方响应没有 Content-Type 或标为 `application/octet-stream` 的情况。SSE 观察缓冲上限为 2 MiB，落库由独立队列处理；解析、数据库或磁盘错误不改变转发的响应。`upstream.sqlite` 仅保存响应 ID、模型、事件类型、优先级和观察时间，不记录请求正文、响应正文、OAuth 凭据或认证头。
 
 界面通过响应 ID 将记录关联到原始调用，按用户请求展示时聚合其成员。没有关联就不显示检测标签。子代理只有经过同一路由、且有可关联响应 ID 才会显示。HTTP/SSE 会承接原先可用 WebSocket 的调用；不宣称获取未在官方响应中披露的真正内部模型。
 
