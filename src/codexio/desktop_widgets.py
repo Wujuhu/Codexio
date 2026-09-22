@@ -21,6 +21,7 @@ from codexio.theme import theme_colors
 from codexio.money import usd
 from codexio.usage_collector import _user_preview
 from codexio.user_requests import normalized_tier
+from codexio.usage_metrics import cache_hit_rate, cache_percentage, cache_tooltip, output_speed_text, output_speed_tooltip
 
 PAGE_TITLES = dict(overview="概览", subscription="订阅额度", trends="用量趋势", logs="请求日志", pricing="模型定价", settings="设置")
 NAVIGATION_LABELS = dict(overview="概览", logs="日志", trends="用量", subscription="订阅", pricing="定价", settings="设置")
@@ -514,7 +515,8 @@ class PeriodChange(QWidget):
         self.caption.setStyleSheet("color: %s; font-size: 12px;" % c["muted"])
         self.caption.setText(data["label"])
         def amount(value):
-            return "暂无有效数据" if value is None else usd(value) if metric == "usd" else format(int(value), ",")
+            return ("暂无有效数据" if value is None else usd(value) if metric == "usd" else
+                    cache_percentage(value) if metric == "cache_hit_rate" else format(int(value), ","))
         def when(value):
             stamp = parse_timestamp(value)
             return stamp.strftime("%Y/%m/%d %H:%M") if stamp else "—"
@@ -523,6 +525,8 @@ class PeriodChange(QWidget):
             when(data["previous_start"]), when(data["previous_end"]), amount(data["previous"][metric]))
         if any(data[period].get("skipped", {}).get(metric) for period in ("current", "previous")):
             tooltip += "\n按已确认数据计算"
+        if metric == "cache_hit_rate":
+            tooltip += "\n对比为缓存命中率的相对变化。"
         self.setToolTip(tooltip)
         direction_text = "增加 " if percent is not None and percent > 0 else "减少 " if percent is not None and percent < 0 else ""
         self.setAccessibleName(direction_text + self.value.text() + " · " + self.caption.text())
@@ -654,7 +658,9 @@ class LedgerDelegate(QStyledItemDelegate):
 
 
 class LedgerTable(QTableWidget):
-    duration_column = 5
+    duration_column = 6
+    speed_column = 5
+    cache_column = 3
 
     def __init__(self, grouped=True, compact=False, parent=None):
         super().__init__(parent)
@@ -682,12 +688,12 @@ class LedgerTable(QTableWidget):
     def set_mode(self, grouped):
         self.grouped = grouped
         if self.compact:
-            headers = ["用户请求 / 发起时间", "模型", "档位", "费用", "状态"]
-            self.weights = [42, 22, 10, 16, 10]
+            headers = ["用户请求 / 发起时间", "模型", "费用", "状态"]
+            self.weights = [46, 24, 20, 10]
         else:
-            headers = ["用户请求 / 发起时间" if grouped else "关联输入 / 计量时间", "模型", "档位", "输入 / 输出", "费用", "耗时"]
+            headers = ["用户请求 / 发起时间" if grouped else "关联输入 / 计量时间", "模型", "输入 / 输出", "缓存命中率", "费用", "速度", "耗时"]
             headers += ["状态", "来源"] if grouped else ["来源"]
-            self.weights = [25, 15, 8, 14, 14, 9, 7, 8] if grouped else [27, 16, 9, 15, 15, 10, 8]
+            self.weights = [26, 14, 13, 10, 12, 10, 8, 7, 8] if grouped else [28, 15, 14, 11, 13, 11, 9, 8]
         changed = self.set_headers(headers)
         self._apply_source_visibility()
         return changed
@@ -722,12 +728,12 @@ class LedgerTable(QTableWidget):
     def fit_columns(self):
         if not getattr(self, "weights", None):
             return
-        minimum = 650 if self.compact else 760
+        minimum = 580 if self.compact else 810
         font = QFont(self.font())
         font.setPixelSize(12)
         fm = QFontMetrics(font)
-        base = [200, 125, 78, 110, 58] if self.compact else ([178, 110, 72, 88, 105, 68, 64, 72] if self.grouped else [198, 120, 72, 95, 110, 75, 78])
-        for column in ([3] if self.compact else [3, 4, 5]):
+        base = [200, 125, 110, 58] if self.compact else ([170, 100, 82, 78, 82, 85, 56, 56, 72] if self.grouped else [190, 110, 90, 78, 90, 85, 64, 78])
+        for column in ([2] if self.compact else [2, 3, 4, 5, 6]):
             for row in range(self.rowCount()):
                 item = self.item(row, column)
                 if item:
@@ -756,18 +762,24 @@ class LedgerTable(QTableWidget):
         c = theme_colors(theme)
         for index, row in enumerate(rows):
             stamp = parse_timestamp(row.get("timestamp"))
-            date = stamp.strftime("%m/%d %H:%M:%S") if stamp else "—"
-            identity = (("未归属调用" if row.get("record_kind") == "unassigned" else "%s 次调用" % row.get("call_count", 0))
-                        if self.grouped else ("ID " + str(row.get("id") or "")[-8:]))
+            date = "%d.%d %s" % (stamp.month, stamp.day, stamp.strftime("%H:%M")) if stamp else "—"
+            subtitle = [date]
+            if self.grouped:
+                subtitle.append("%s 次调用" % row.get("call_count", 0))
+            tier = tier_label(row)
+            if tier != "Standard":
+                subtitle.append(tier)
             model = row.get("model") or "未知模型"
             models = row.get("models") or []
             if len(models) > 1:
                 model += "\n" + " / ".join(models)
-            values = [preview_title(row) + "\n" + date + " · " + identity, model, tier_label(row)]
+            values = [preview_title(row) + "\n" + " · ".join(subtitle), model]
             if not self.compact:
                 values.append(compact_number(row.get("input_tokens")) + "\n" + compact_number(row.get("output_tokens")))
+                values.append(cache_percentage(cache_hit_rate(row)))
             values.append(cost_formatter(row))
             if not self.compact:
+                values.append(output_speed_text(row))
                 values.append(ledger_duration_text(row))
             if self.grouped:
                 values.append({"running": "回复中", "completed": "完成", "aborted": "已中断"}.get(row.get("request_status"), "未知"))
@@ -781,11 +793,12 @@ class LedgerTable(QTableWidget):
             # Full request text is available in the persistent details pane.
             self.item(index, 0).setToolTip("")
             self.item(index, 1).setToolTip("\n".join(models or [row.get("model") or "未知模型"]))
-            self.item(index, 2).setToolTip("未记录服务档位时默认 Standard；Mixed 表示整轮包含不同档位的调用。")
             if not self.compact:
+                self.item(index, self.cache_column).setToolTip(cache_tooltip(row))
+                self.item(index, self.speed_column).setToolTip(output_speed_tooltip(row))
                 self.item(index, self.duration_column).setToolTip(duration_tooltip(row))
             if self.grouped and row.get("request_status") == "running":
-                status = self.item(index, 4 if self.compact else 6)
+                status = self.item(index, 3 if self.compact else 7)
                 status.setData(PRIMARY_COLOR_ROLE, "running")
                 emphasis = QFont(self.font())
                 emphasis.setBold(True)

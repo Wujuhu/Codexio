@@ -30,8 +30,9 @@ from codexio.rate_limits import format_reset_time, format_reset_date
 from codexio.theme import apply_theme, theme_colors
 from codexio.user_requests import aggregate_user_requests, matches_call, REQUEST_STATUSES
 from codexio.usage_collector import _user_preview
-from codexio.usage_queries import summarize_model_calls, compare_usage
-from codexio.confirmed_usage import summarize_confirmed_usage
+from codexio.usage_queries import summarize_model_calls, comparison_bounds
+from codexio.usage_metrics import (dashboard_summary, dashboard_comparison, cache_percentage, cache_tooltip,
+                                  output_speed_text, output_speed_tooltip)
 from codexio.estimate_display import (ESTIMATE_HEADERS, estimate_amount, estimate_detail, estimate_history,
                                       method_label, select_estimates)
 from codexio.analytics_config import (NAVIGATION_PAGES, normalize_navigation_order, normalize_subscription_profile,
@@ -1157,11 +1158,13 @@ class Dashboard(QMainWindow):
         metrics.setSpacing(16)
         self._overview_cost = plain_label("—")
         self._overview_tokens = plain_label("—")
-        self._overview_calls = plain_label("—")
+        self._overview_requests = plain_label("—")
+        self._overview_cache = plain_label("—")
         self._overview_comparisons = {}
         for key, label, value in (("usd", "费用", self._overview_cost),
                                  ("tokens", "Total Token", self._overview_tokens),
-                                 ("requests", "模型调用", self._overview_calls)):
+                                 ("user_requests", "用户请求数", self._overview_requests),
+                                 ("cache_hit_rate", "缓存命中率", self._overview_cache)):
             box, content = card()
             content.setSpacing(9)
             content.addWidget(plain_label(label, muted=True))
@@ -1252,7 +1255,8 @@ class Dashboard(QMainWindow):
         metrics.setContentsMargins(0, 0, 0, 0)
         metrics.setSpacing(16)
         self._trend_metric_values, self._trend_comparisons = {}, {}
-        for key, title in (("usd", "费用"), ("tokens", "Total Token"), ("requests", "模型调用")):
+        for key, title in (("usd", "费用"), ("tokens", "Total Token"), ("user_requests", "用户请求数"),
+                           ("cache_hit_rate", "缓存命中率")):
             box, content = card()
             content.setSpacing(9)
             content.addWidget(plain_label(title, muted=True))
@@ -1740,6 +1744,10 @@ class Dashboard(QMainWindow):
                         item.setToolTip(duration_text(row, now) + "\n" + duration_tooltip(row))
                         if self._log_table.fontMetrics().horizontalAdvance(text) + 16 > self._log_table.columnWidth(column):
                             self._log_table.queue_columns()
+                speed = self._log_table.item(index, self._log_table.speed_column)
+                if speed is not None:
+                    speed.setText(output_speed_text(row, now))
+                    speed.setToolTip(output_speed_tooltip(row))
         if self._inspected_record and getattr(self, "_inspector_duration", None) is not None:
             self._inspector_duration.setText(duration_text(self._inspected_record, now))
 
@@ -1785,7 +1793,7 @@ class Dashboard(QMainWindow):
                 if self._quota_state is not None:
                     self._render_quota(self._quota_state)
                 if self._usage_error and not self._data:
-                    for value in (self._overview_tokens, self._overview_calls):
+                    for value in (self._overview_tokens, self._overview_requests, self._overview_cache):
                         value.setText("—")
                     self._overview_cost.setText("未加载")
                     for key, change in self._overview_comparisons.items():
@@ -1874,31 +1882,27 @@ class Dashboard(QMainWindow):
         if self._queries:
             result = self._queries.page(mode="user_request", start=lower, end=upper, page_size=4)
             recent = result["rows"]
-            request_count = result.get("counts", {}).get("requests", result["total"])
             buckets = self._queries.chart_buckets(period, granularity)
         else:
             buckets = bucket_records(self._records, period, granularity)
             candidates = [row for row in self._user_requests if (stamp := parse_timestamp(row.get("timestamp"))) is not None
                           and stamp <= upper and (lower is None or stamp >= lower)]
             recent = candidates[:4]
-            request_count = sum(row.get("record_kind") == "user_request" and not row.get("is_subagent") for row in candidates)
         self._overview_chart.set_buckets(buckets, granularity)
         self._token_composition.set_buckets(buckets)
         comparison = self._period_comparison(period)
         if comparison:
             summary = comparison["current"]
-        elif self._queries:
-            summary = self._queries.confirmed_summary(upper)
         else:
-            summary = summarize_confirmed_usage(row for row in self._records
-                if (stamp := parse_timestamp(row.get("timestamp"))) is not None and stamp <= upper)
+            summary = self._dashboard_summary(lower, upper)
         self._overview_tokens.setText("—" if summary["tokens"] is None else compact_number(summary["tokens"]))
         self._overview_cost.setText("—" if summary["usd"] is None else usd(summary["usd"]))
-        self._overview_calls.setText("—" if summary["requests"] is None else format(summary["requests"], ","))
+        self._overview_requests.setText(format(summary["user_requests"], ","))
+        self._overview_cache.setText(cache_percentage(summary["cache_hit_rate"]))
         for metric, widget in self._overview_comparisons.items():
             widget.set_comparison(comparison, metric, self._theme)
-        self._overview_calls.setToolTip("%s 次用户请求" % format(request_count, ",") +
-                                       ("\n按已确认数据计算" if summary["skipped"]["requests"] else ""))
+        self._overview_requests.setToolTip("按主请求发起时间统计；关联子代理不重复计入，未归属调用不计为用户请求。")
+        self._overview_cache.setToolTip(cache_tooltip(summary))
         self._overview_tokens.setToolTip("输入 + 输出" + ("\n按已确认数据计算" if summary["skipped"]["tokens"] else ""))
         unpriced = int(summary.get("unpriced_tokens") or 0)
         price_note = "%s Token 未定价；当前金额仅含已定价调用" % compact_number(unpriced) if unpriced else ""
@@ -2386,12 +2390,7 @@ class Dashboard(QMainWindow):
             else:
                 lower, upper = period_bounds(self._trend_period.currentData())
                 lower, upper = start or lower, end or upper
-                if self._queries:
-                    summary = self._queries.confirmed_summary(start=lower, end=upper, model=model or "")
-                else:
-                    summary = summarize_confirmed_usage(row for row in rows
-                        if (stamp := parse_timestamp(row.get("timestamp"))) is not None
-                        and stamp <= upper and (lower is None or stamp >= lower))
+                summary = self._dashboard_summary(lower, upper, model or "")
             self._set_trend_metrics(summary, comparison)
             if hasattr(self, "_trend_note"):
                 self._trend_note.clear()
@@ -2403,8 +2402,24 @@ class Dashboard(QMainWindow):
             value = summary.get(metric)
             label = self._trend_metric_values[metric]
             label.setText("—" if value is None else
-                usd(value) if metric == "usd" else compact_number(value) if metric == "tokens" else format(value, ","))
-            label.setToolTip("按已确认数据计算" if summary.get("skipped", {}).get(metric) else "")
+                usd(value) if metric == "usd" else compact_number(value) if metric == "tokens" else
+                cache_percentage(value) if metric == "cache_hit_rate" else format(value, ","))
+            label.setToolTip(cache_tooltip(summary) if metric == "cache_hit_rate" else
+                            "按主请求发起时间统计；关联子代理不重复计入。" if metric == "user_requests" else
+                            "按已确认数据计算" if summary.get("skipped", {}).get(metric) else "")
+
+    def _dashboard_summary(self, start, end, model=""):
+        if self._queries:
+            return self._queries.dashboard_summary(start=start, end=end, model=model)
+        count = sum(row.get("record_kind") == "user_request" and not row.get("is_subagent")
+                    for row in self._user_requests
+                    if (stamp := parse_timestamp(row.get("timestamp"))) is not None
+                    and (start is None or stamp >= start) and stamp <= end
+                    and (not model or model in row.get("models", [])))
+        return dashboard_summary((row for row in self._records
+                                  if (stamp := parse_timestamp(row.get("timestamp"))) is not None
+                                  and (start is None or stamp >= start) and stamp <= end
+                                  and (not model or row.get("model") == model)), count)
 
     def _period_comparison(self, period, model=""):
         if period not in ("today", "week", "month"):
@@ -2412,10 +2427,10 @@ class Dashboard(QMainWindow):
         now = datetime.now().astimezone()
         key = (period, model, now.replace(second=0, microsecond=0))
         if key not in self._comparison_cache:
-            if self._queries and hasattr(self._queries, "period_comparison"):
-                result = self._queries.period_comparison(period, now=now, model=model)
-            else:
-                result = compare_usage((row for row in self._records if not model or row.get("model") == model), period, now)
+            bounds = comparison_bounds(period, now)
+            start, end, previous_start, previous_end = bounds
+            result = dashboard_comparison(self._dashboard_summary(start, end, model),
+                                          self._dashboard_summary(previous_start, previous_end, model), period, bounds)
             if len(self._comparison_cache) >= 16:
                 self._comparison_cache.clear()
             self._comparison_cache[key] = result

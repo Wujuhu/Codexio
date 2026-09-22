@@ -153,17 +153,17 @@ def test_existing_ledger_colors_follow_theme_without_new_data(app):
         started_at=row["timestamp"], status="running", started_inferred=False)]})
     window.open_page("logs", "all")
     table = window._log_table
-    assert table.item(0, 6).data(PRIMARY_COLOR_ROLE) == "running"
-    assert table.item(0, 6).font().bold()
+    assert table.item(0, 7).data(PRIMARY_COLOR_ROLE) == "running"
+    assert table.item(0, 7).font().bold()
     window.config_updated({"theme": "light"})
     app.processEvents()
     assert table._theme == "light"
     image = table.viewport().grab().toImage()
-    table.scrollToItem(table.item(0, 6))
+    table.scrollToItem(table.item(0, 7))
     app.processEvents()
     image = table.viewport().grab().toImage()
     ink = theme_colors("light")["running"].lower()
-    rect = table.visualItemRect(table.item(0, 6))
+    rect = table.visualItemRect(table.item(0, 7))
     assert any(image.pixelColor(x, y).name() == ink for y in range(rect.top(), rect.bottom())
                for x in range(rect.left(), rect.right()))
     def luminance(color):
@@ -284,28 +284,28 @@ def test_source_column_defaults_hidden_and_saved_setting_applies_to_both_modes(a
     window.open_page("logs")
     app.processEvents()
     table = window._log_table
-    assert table.isColumnHidden(7) and not table.isColumnHidden(6)
+    assert table.isColumnHidden(8) and not table.isColumnHidden(7)
     initial_width = table.columnWidth(0)
     assert sum(table.columnWidth(i) for i in range(table.columnCount())) == table.viewport().width()
     window._log_mode.setCurrentIndex(window._log_mode.findData("model_call"))
-    assert table.isColumnHidden(6) and not table.isColumnHidden(5)
+    assert table.isColumnHidden(7) and not table.isColumnHidden(5)
     window._log_mode.setCurrentIndex(window._log_mode.findData("user_request"))
-    assert table.isColumnHidden(7) and not table.isColumnHidden(6)
+    assert table.isColumnHidden(8) and not table.isColumnHidden(7)
     window.open_page("settings")
     assert not window._show_log_source.isChecked()
     window._show_log_source.setChecked(True)
-    assert table.isColumnHidden(7)
+    assert table.isColumnHidden(8)
     window._save_settings()
     window.open_page("logs")
     app.processEvents()
-    assert not table.isColumnHidden(7) and table.columnWidth(0) < initial_width
+    assert not table.isColumnHidden(8) and table.columnWidth(0) < initial_width
     assert load_analytics_config(path)["show_log_source"] is True
     window._log_mode.setCurrentIndex(window._log_mode.findData("model_call"))
-    assert not table.isColumnHidden(6)
+    assert not table.isColumnHidden(7)
     window.close()
     reopened = Dashboard(AppSettings(), load_analytics_config(path), {})
     reopened.open_page("logs")
-    assert not reopened._log_table.isColumnHidden(7)
+    assert not reopened._log_table.isColumnHidden(8)
     reopened.close()
 
 
@@ -321,5 +321,5 @@ def test_source_visibility_draft_survives_window_recreation_without_saving(app):
     restored.open_page("settings")
     assert restored._show_log_source.isChecked()
     restored.open_page("logs")
-    assert restored._log_table.isColumnHidden(7)
+    assert restored._log_table.isColumnHidden(8)
     restored.close()

@@ -142,6 +142,9 @@ def test_activity_query_is_bounded_cached_across_periods_and_only_runs_on_visibl
             calls.append((period, granularity, kwargs))
             return []
         def filters(self): return dict(models=[], sources=[])
+        def dashboard_summary(self, **kwargs):
+            from codexio.usage_metrics import dashboard_summary
+            return dashboard_summary([], 0)
     monkeypatch.setattr(usage_queries, "UsageQueries", Queries)
     data = dict(query_path="unused", query_generation=1, available_models=["model-a", "model-b"], prices=[])
     window = Dashboard(AppSettings(), {}, {})

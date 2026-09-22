@@ -16,8 +16,9 @@ from pathlib import Path
 from codexio.confirmed_usage import ConfirmedUsage, METRICS, _add_cost, summarize_confirmed_usage
 from codexio.user_requests import COUNTERS, _merge_turns, iter_user_requests, normalized_tier, turn_key
 from codexio.usage_collector import _user_preview
+from codexio.usage_metrics import dashboard_summary
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 METRIC_FIELDS = ("id", "timestamp", "model", "service_tier", "source_id", "source_name", "source_ids",
                  "session_id", "turn_id", "request_turn_id", "total_tokens", "cost_usd", "pricing_status",
                  "provider", "account_key", "limit_id", "quality", "duration_ms") + COUNTERS
@@ -424,6 +425,21 @@ class UsageQueries:
         """Confirmed cards for a selected range, independent of comparisons."""
         return summarize_confirmed_usage(self._metrics(start=start,
             end=end or now or datetime.now().astimezone(), model=model))
+
+    def user_request_count(self, *, start=None, end=None, model=""):
+        clauses, args = self._dates("g", start, end)
+        clauses.extend(["g.record_kind='user_request'", "g.is_subagent=0"])
+        if model:
+            clauses.append("g.id IN (SELECT m.request_id FROM usage_request_members m "
+                           "JOIN usage_priced_calls c ON c.id=m.record_id WHERE c.model=?)")
+            args.append(model)
+        with self._connect() as db:
+            return db.execute("SELECT COUNT(*) FROM usage_request_groups g WHERE " + " AND ".join(clauses), args).fetchone()[0]
+
+    def dashboard_summary(self, *, start=None, end=None, model=""):
+        end = end or datetime.now().astimezone()
+        return dashboard_summary(self._metrics(start, end, model),
+                                 self.user_request_count(start=start, end=end, model=model))
 
     def summaries(self, now=None):
         local = (now or datetime.now().astimezone()).astimezone()

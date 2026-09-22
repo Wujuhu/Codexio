@@ -85,6 +85,10 @@ def test_page_queries_run_only_for_current_visible_page(app, monkeypatch):
             calls.append(("chart", period, granularity))
             return []
         def filters(self): return dict(models=[], sources=[])
+        def dashboard_summary(self, **kwargs):
+            from codexio.usage_metrics import dashboard_summary
+            calls.append(("summary",))
+            return dashboard_summary([], 0)
     monkeypatch.setattr(usage_queries, "UsageQueries", Queries)
     window = Dashboard(AppSettings(), {}, {})
     data = dict(query_path="unused", query_generation=1, summaries={}, latest_request=None,
@@ -101,7 +105,7 @@ def test_page_queries_run_only_for_current_visible_page(app, monkeypatch):
     window.apply_data(dict(data, query_generation=3))
     assert len(calls) == before
     window.open_page("overview")
-    assert calls[-1] == ("chart", "today", "hour")
+    assert calls[-3:] == [("chart", "today", "hour"), ("summary",), ("summary",)]
     window.hide()
     before = len(calls)
     window.apply_data(dict(data, query_generation=4))
@@ -109,7 +113,7 @@ def test_page_queries_run_only_for_current_visible_page(app, monkeypatch):
     assert len(calls) == before
     window.show()
     app.processEvents()
-    assert calls[before:] == [("page", "user_request"), ("chart", "today", "hour")]
+    assert calls[before:] == [("page", "user_request"), ("chart", "today", "hour"), ("summary",), ("summary",)]
     window.showMinimized()
     app.processEvents()
     before = len(calls)
@@ -117,7 +121,7 @@ def test_page_queries_run_only_for_current_visible_page(app, monkeypatch):
     assert len(calls) == before
     window.showNormal()
     app.processEvents()
-    assert calls[before:] == [("page", "user_request"), ("chart", "today", "hour")]
+    assert calls[before:] == [("page", "user_request"), ("chart", "today", "hour"), ("summary",), ("summary",)]
     window.close()
     delete_pending(app)
 

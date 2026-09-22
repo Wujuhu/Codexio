@@ -211,8 +211,8 @@ def test_overview_and_filtered_trend_cards_use_the_comparison_current_totals(app
     comparison = window._period_comparison(period)
     assert window._overview_tokens.text() == compact_number(comparison["current"]["tokens"])
     assert window._overview_cost.text() == usd(comparison["current"]["usd"])
-    assert window._overview_calls.text() == format(comparison["current"]["requests"], ",")
-    assert all("按已确认数据计算" in widget.toolTip() for widget in window._overview_comparisons.values())
+    assert window._overview_requests.text() == "0"  # All calls belong to a turn that started before this range.
+    assert all("按已确认数据计算" in window._overview_comparisons[key].toolTip() for key in ("tokens", "usd"))
     assert all(widget.value.text() != "数据同步中" for widget in window._overview_comparisons.values())
     window.open_page("trends", period)
     window._trend_model.setCurrentIndex(window._trend_model.findData("gpt-6-astra"))
@@ -220,22 +220,24 @@ def test_overview_and_filtered_trend_cards_use_the_comparison_current_totals(app
     assert tuple(result["current"][key] for key in ("tokens", "usd", "requests")) == pytest.approx((300, 2.3, 5))
     assert window._trend_metric_values["tokens"].text() == "300"
     assert window._trend_metric_values["usd"].text() == "$2.30"
-    assert window._trend_metric_values["requests"].text() == "5"
-    assert tuple(window._trend_comparisons[key].value.text() for key in ("tokens", "usd", "requests")) == ("+50.0%", "+76.9%", "+25.0%")
+    assert window._trend_metric_values["user_requests"].text() == "0"
+    assert tuple(window._trend_comparisons[key].value.text() for key in ("tokens", "usd", "user_requests")) == ("+50.0%", "+76.9%", "0.0%")
     window.close()
 
 
-def test_empty_and_unconfirmed_card_values_do_not_display_zero(app):
+def test_empty_money_and_tokens_stay_unknown_but_user_requests_are_counted(app):
     now = datetime.now().astimezone()
     window = Dashboard(AppSettings(), {}, {})
     for rows in ([], [record(now, total_tokens=None, cost_usd=None, pricing_status="invalid", quality="unresolved")]):
         window.apply_data(dict(records=rows, sources_complete=False))
         window.open_page("overview", "today")
-        assert all(widget.text() == "—" for widget in (window._overview_cost, window._overview_tokens, window._overview_calls))
-        assert all(widget.value.text() == "暂无对比" for widget in window._overview_comparisons.values())
+        assert all(widget.text() == "—" for widget in (window._overview_cost, window._overview_tokens, window._overview_cache))
+        assert window._overview_requests.text() == str(int(bool(rows)))
+        assert all(window._overview_comparisons[key].value.text() == "暂无对比" for key in ("tokens", "usd", "cache_hit_rate"))
         window.open_page("trends", "today")
-        assert all(widget.text() == "—" for widget in window._trend_metric_values.values())
-        assert all(widget.value.text() == "暂无对比" for widget in window._trend_comparisons.values())
+        assert all(window._trend_metric_values[key].text() == "—" for key in ("tokens", "usd", "cache_hit_rate"))
+        assert window._trend_metric_values["user_requests"].text() == str(int(bool(rows)))
+        assert all(window._trend_comparisons[key].value.text() == "暂无对比" for key in ("tokens", "usd", "cache_hit_rate"))
     window.close()
 
 
@@ -252,7 +254,7 @@ def test_malformed_records_do_not_prevent_overview_or_trends_from_rendering(app,
             app.processEvents()
             comparisons = window._overview_comparisons if page == "overview" else window._trend_comparisons
             assert comparisons["tokens"].value.text() == comparisons["usd"].value.text() == "0.0%"
-            assert comparisons["requests"].value.text() == "+100.0%"
+            assert comparisons["user_requests"].value.text() == "−100.0%"  # Same turn started yesterday.
     finally:
         window.close()
 
@@ -309,12 +311,12 @@ def test_database_overview_cards_read_confirmed_totals_instead_of_worker_summari
     totals = comparison["current"] if comparison else queries.confirmed_summary(now)
     assert window._overview_tokens.text() == compact_number(totals["tokens"])
     assert window._overview_cost.text() == usd(totals["usd"])
-    assert window._overview_calls.text() == format(totals["requests"], ",")
+    assert window._overview_requests.text() == str(int(period == "all"))
     if period != "all":
         window.open_page("trends", period)
         assert window._trend_metric_values["tokens"].text() == compact_number(totals["tokens"])
         assert window._trend_metric_values["usd"].text() == usd(totals["usd"])
-        assert window._trend_metric_values["requests"].text() == format(totals["requests"], ",")
+        assert window._trend_metric_values["user_requests"].text() == "0"
     else:
         assert not any(widget.isVisible() for widget in window._overview_comparisons.values())
     window.close()
@@ -352,20 +354,21 @@ def test_custom_and_all_trend_totals_follow_dates_models_and_clear_invalid_range
     window._trend_end.setDate(selected)
     window._trend_period.setCurrentIndex(window._trend_period.findData("custom"))
     assert not window._trend_metrics_box.isHidden()
-    assert tuple(window._trend_metric_values[k].text() for k in ("tokens", "usd", "requests")) == ("300", "$2.00", "3")
+    assert tuple(window._trend_metric_values[k].text() for k in ("tokens", "usd", "user_requests")) == ("300", "$2.00", "0")
     assert all(w.isHidden() for w in window._trend_comparisons.values())
     assert "按已确认数据计算" in window._trend_metric_values["usd"].toolTip()
     window._trend_model.setCurrentIndex(window._trend_model.findData("gpt-5.6-terra"))
-    assert tuple(window._trend_metric_values[k].text() for k in ("tokens", "usd", "requests")) == ("100", "$1.00", "1")
+    assert tuple(window._trend_metric_values[k].text() for k in ("tokens", "usd", "user_requests")) == ("100", "$1.00", "0")
     window._trend_model.setCurrentIndex(window._trend_model.findData("gpt-6-astra"))
     window._trend_period.setCurrentIndex(window._trend_period.findData("all"))
-    assert tuple(window._trend_metric_values[k].text() for k in ("tokens", "usd", "requests")) == ("500", "$4.00", "5")
+    assert tuple(window._trend_metric_values[k].text() for k in ("tokens", "usd", "user_requests")) == ("500", "$4.00", "1")
     window._trend_period.setCurrentIndex(window._trend_period.findData("custom"))
     window._trend_start.setDate(selected.addDays(1))
     assert all(w.text() == "—" for w in window._trend_metric_values.values())
     assert not window._trend_note.isHidden()
     window._trend_end.setDate(selected.addDays(2))
     window._trend_start.setDate(selected.addDays(2))
-    assert all(w.text() == "—" for w in window._trend_metric_values.values())
+    assert all(window._trend_metric_values[k].text() == "—" for k in ("tokens", "usd", "cache_hit_rate"))
+    assert window._trend_metric_values["user_requests"].text() == "0"
     assert window._trend_note.isHidden()
     window.close()

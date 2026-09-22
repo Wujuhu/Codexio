@@ -92,6 +92,18 @@ class SmokeRun(QObject):
                 assert window.isVisible() and not window._widget_toggle.isVisible()
                 self.capture(window, page + "-" + theme)
                 if page == "logs":
+                    table = window._log_table
+                    headers = [table.horizontalHeaderItem(i).text() for i in range(table.columnCount())]
+                    assert "档位" not in headers and headers[2:7] == ["输入 / 输出", "缓存命中率", "费用", "速度", "耗时"]
+                    assert table.item(0, table.cache_column).text().endswith("%")
+                    assert table.item(0, table.speed_column).text().endswith("Token/s")
+                    window._log_mode.setCurrentIndex(window._log_mode.findData("model_call"))
+                    yield
+                    assert "ID " not in table.item(0, 0).text().split("\n")[-1]
+                    assert table.item(0, table.speed_column).text().endswith("Token/s")
+                    self.capture(window, "log-model-calls-" + theme)
+                    window._log_mode.setCurrentIndex(window._log_mode.findData("user_request"))
+                    yield
                     assert window._log_table.horizontalScrollBar().property("scrollActive") is True
                     self.drag_panel(window._sidebar_handle, -40)
                     yield
@@ -143,7 +155,13 @@ class SmokeRun(QObject):
                     window.resize(1180, 780)
                 if page == "trends":
                     assert window._activity_card.y() < window._trend_metrics_box.y() < window._trend_graph.y()
+                    assert list(window._trend_metric_values) == ["usd", "tokens", "user_requests", "cache_hit_rate"]
+                    assert window._trend_metric_values["cache_hit_rate"].text().endswith("%")
                     self.checks.append("usage-calendar-metrics-lines-" + theme)
+                if page == "overview":
+                    assert list(window._overview_comparisons) == ["usd", "tokens", "user_requests", "cache_hit_rate"]
+                    assert window._overview_cache.text().endswith("%")
+                    self.checks.append("overview-user-requests-cache-" + theme)
                 if page == "settings":
                     assert [window._settings_sections.item(i).text() for i in range(4)] == ["外观", "菜单栏", "数据来源", "应用"]
                     window._settings_sections.setCurrentRow(3)

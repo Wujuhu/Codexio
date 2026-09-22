@@ -290,8 +290,8 @@ def test_trends_open_to_today_and_model_column_has_no_tier(app):
     assert dashboard._log_table.horizontalHeaderItem(1).text() == "模型"
     assert dashboard._log_table.item(0, 1).text().splitlines()[0] == "gpt-6-astra"
     assert dashboard._log_table.columnWidth(1) < 185
-    assert dashboard._log_table.horizontalHeaderItem(2).text() == "档位"
-    assert dashboard._log_table.item(0, 2).text() == "Fast"
+    assert dashboard._log_table.horizontalHeaderItem(2).text() == "输入 / 输出"
+    assert dashboard._log_table.item(0, 0).text().endswith(" · 1 次调用 · Fast")
     dashboard.deleteLater()
 
 
@@ -351,10 +351,10 @@ def test_log_short_columns_are_compact_and_preview_icon_stays_visible(app):
     dashboard.resize(1100, 800)
     dashboard.open_page("logs")
     app.processEvents()
-    widths = [dashboard._log_table.columnWidth(i) for i in range(8)]
-    assert widths[2] < widths[1] and widths[6] < widths[7]
-    assert dashboard._log_table.horizontalHeaderItem(6).text() == "状态"
-    assert dashboard._log_table.horizontalHeaderItem(7).text() == "来源"
+    widths = [dashboard._log_table.columnWidth(i) for i in range(9)]
+    assert widths[2] < widths[1] and widths[7] < widths[8]
+    assert dashboard._log_table.horizontalHeaderItem(7).text() == "状态"
+    assert dashboard._log_table.horizontalHeaderItem(8).text() == "来源"
     dashboard._inspect_log_row(0)
     fields = dashboard._inspector_scroll.findChildren(QLineEdit)
     assert any(field.text() == "01234567-89ab-cdef-0123-456789abcdef" and field.isReadOnly() for field in fields)

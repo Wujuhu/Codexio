@@ -81,7 +81,7 @@ def test_database_filters_preserve_whole_request_and_raw_mode_totals(app, worker
     window._log_model.setCurrentIndex(0)
     window._log_mode.setCurrentIndex(window._log_mode.findData("model_call"))
     assert window._query_page["total"] == 420
-    assert window._log_table.columnCount() == 7
+    assert window._log_table.columnCount() == 8
     assert len(window._filtered_records) == 100
     window._change_page(4)
     assert window._log_table.rowCount() == 20

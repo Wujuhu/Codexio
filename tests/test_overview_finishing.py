@@ -29,11 +29,13 @@ def test_overview_metrics_keep_percentages_without_bottom_annotation_labels(app)
     window.apply_data(dict(records=rows, sources_complete=True))
     window.open_page("overview")
     app.processEvents()
-    for value in (window._overview_cost, window._overview_tokens, window._overview_calls):
+    for value in (window._overview_cost, window._overview_tokens, window._overview_requests, window._overview_cache):
         labels = [label.text() for label in value.parentWidget().findChildren(QLabel)]
         assert "按当前模型价格" not in labels and "输入 + 输出" not in labels
         assert not any("次用户请求" in label for label in labels)
-    assert all(widget.isVisible() and widget.value.text() == "0.0%" for widget in window._overview_comparisons.values())
+    assert all(window._overview_comparisons[key].isVisible() and window._overview_comparisons[key].value.text() == "0.0%"
+               for key in ("usd", "tokens", "user_requests"))
+    assert window._overview_cache.text() == "—"
     window.close()
 
 

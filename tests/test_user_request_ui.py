@@ -41,15 +41,15 @@ def test_default_groups_full_request_and_can_switch_to_calls(app):
     window.apply_data(data())
     assert window._log_mode.currentData() == "user_request"
     assert window._log_table.rowCount() == 1
-    assert [window._log_table.horizontalHeaderItem(i).text() for i in range(8)] == [
-        "用户请求 / 发起时间", "模型", "档位", "输入 / 输出", "费用", "耗时", "状态", "来源"]
-    assert window._log_table.item(0, 2).text() == "Mixed"
+    assert [window._log_table.horizontalHeaderItem(i).text() for i in range(9)] == [
+        "用户请求 / 发起时间", "模型", "输入 / 输出", "缓存命中率", "费用", "速度", "耗时", "状态", "来源"]
+    assert window._log_table.item(0, 0).text().endswith(" · 2 次调用 · Mixed")
     assert window._log_table.item(0, 4).text().splitlines()[0] == "$4.00"
-    assert window._log_table.item(0, 6).text() == "回复中"
+    assert window._log_table.item(0, 7).text() == "回复中"
     window._log_mode.setCurrentIndex(window._log_mode.findData("model_call"))
     assert window._log_table.rowCount() == 2
-    assert [window._log_table.horizontalHeaderItem(i).text() for i in range(7)] == [
-        "关联输入 / 计量时间", "模型", "档位", "输入 / 输出", "费用", "耗时", "来源"]
+    assert [window._log_table.horizontalHeaderItem(i).text() for i in range(8)] == [
+        "关联输入 / 计量时间", "模型", "输入 / 输出", "缓存命中率", "费用", "速度", "耗时", "来源"]
     assert not hasattr(window, "_request_filter_hint")
     window.deleteLater()
 
@@ -88,11 +88,11 @@ def test_request_status_text_and_home_share_the_same_aggregate(app, status, labe
     window.open_page("logs")
     payload = data(status=status)
     window.apply_data(payload)
-    assert window._log_table.item(0, 6).text() == label
+    assert window._log_table.item(0, 7).text() == label
     window.open_page("overview")
     assert window._latest_record["cost_usd"] == 4
     assert window._latest_record["status_label"] == label
-    assert window._recent_table.item(0, 4).text() == label
+    assert window._recent_table.item(0, 3).text() == label
     assert "2 次调用" in window._recent_table.item(0, 0).text()
     window.deleteLater()
 
@@ -107,7 +107,7 @@ def test_completed_state_and_late_cost_update_existing_row(app):
     payload["records"][1]["cost_usd"] = 3.75
     window.apply_data(payload)
     assert window._log_table.rowCount() == 1 and window._filtered_records[0]["id"] == identity
-    assert window._log_table.item(0, 6).text() == "完成"
+    assert window._log_table.item(0, 7).text() == "完成"
     window.open_page("overview")
     assert window._latest_record["cost_usd"] == 5
     window.deleteLater()
@@ -130,7 +130,7 @@ def test_group_details_expose_member_calls_and_short_update_label(app):
 
 @pytest.mark.parametrize("theme", ["dark", "light"])
 @pytest.mark.parametrize("width", [920, 1190, 1600])
-def test_compact_status_and_fast_columns_stay_legible(app, theme, width):
+def test_cache_speed_and_status_columns_stay_legible(app, theme, width):
     window = Dashboard(AppSettings(), {"theme": theme, "show_log_source": True}, {})
     window.apply_data(data())
     window.resize(width, 800)
@@ -141,11 +141,12 @@ def test_compact_status_and_fast_columns_stay_legible(app, theme, width):
     font = QFont(table.font())
     font.setPixelSize(12)
     fm = QFontMetrics(font)
-    assert table.columnWidth(2) >= fm.horizontalAdvance("Standard") + 18
-    assert table.columnWidth(6) >= fm.horizontalAdvance("回复中") + 18
+    assert table.columnWidth(3) >= fm.horizontalAdvance("100.0%") + 18
+    assert table.columnWidth(5) >= fm.horizontalAdvance("24 Token/s") + 18
+    assert table.columnWidth(7) >= fm.horizontalAdvance("回复中") + 18
     assert table.columnWidth(2) < table.columnWidth(1)
-    assert table.columnWidth(6) < table.columnWidth(7)
-    assert table.horizontalHeaderItem(7).text() == "来源"
+    assert table.columnWidth(7) < table.columnWidth(8)
+    assert table.horizontalHeaderItem(8).text() == "来源"
     for column in range(table.columnCount()):
         assert table.horizontalHeaderItem(column).textAlignment() == Qt.AlignmentFlag.AlignCenter
         assert table.item(0, column).textAlignment() == Qt.AlignmentFlag.AlignCenter

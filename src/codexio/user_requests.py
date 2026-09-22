@@ -5,6 +5,7 @@ import math
 from collections import defaultdict
 
 from codexio.durations import request_duration_fields, valid_milliseconds
+from codexio.usage_metrics import CacheUsage
 
 COUNTERS = ("input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens")
 REQUEST_STATUSES = {"completed": "完成", "running": "回复中", "aborted": "已中断", "unknown": "未知"}
@@ -185,6 +186,9 @@ def iter_user_requests(records, turns=(), agent_links=(), sources=(), *, detail_
             status = "unknown"
         models = sorted({str(row.get("model") or "未知模型") for row in rows})
         tiers = sorted({normalized_tier(row.get("service_tier")) for row in rows})
+        cache = CacheUsage()
+        for row in rows:
+            cache.add(row)
         source_ids = set() if rows else set(meta.get("source_ids") or [])
         for row in rows:
             source_ids.update(row.get("source_ids") or ([row["source_id"]] if row.get("source_id") else []))
@@ -217,6 +221,7 @@ def iter_user_requests(records, turns=(), agent_links=(), sources=(), *, detail_
             "call_count": len(rows), "member_ids": [row["id"] for row in rows],
             "models": models, "model": models[0] if len(models) == 1 else "多模型（%d）" % len(models) if models else "等待调用",
             "service_tiers": tiers, "service_tier": tiers[0] if len(tiers) == 1 else "mixed" if tiers else None,
+            **cache.summary(),
             "source_ids": source_ids, "source_names": source_names,
             "source_id": source_ids[0] if len(source_ids) == 1 else "multiple" if source_ids else "",
             "source_name": source_names[0] if len(source_names) == 1 else "多来源（%d）" % len(source_names) if source_names else "—",
