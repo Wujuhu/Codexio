@@ -57,20 +57,24 @@ class UpstreamStore:
 def enrich_rows(db, rows, store: UpstreamStore, *, grouped=False):
     if not rows or not store.path.is_file():
         return rows
-    members = {row["id"]: [row.get("response_id")] for row in rows}
+    members = {row["id"]: [(row.get("response_id"), row.get("model"))] for row in rows}
     if grouped:
         members = {row["id"]: [] for row in rows}
         ids = list(members)
-        for request_id, response_id in db.execute(
-                "SELECT m.request_id,json_extract(c.data,'$.response_id') FROM usage_request_members m "
+        for request_id, response_id, requested_model in db.execute(
+                "SELECT m.request_id,json_extract(c.data,'$.response_id'),json_extract(c.data,'$.model') FROM usage_request_members m "
                 "JOIN usage_priced_calls c ON c.id=m.record_id WHERE m.request_id IN (" + ",".join("?" for _ in ids) + ")", ids):
-            members[request_id].append(response_id)
-    detected = store.lookup(value for values in members.values() for value in values)
+            members[request_id].append((response_id, requested_model))
+    detected = store.lookup(response_id for values in members.values() for response_id, _ in values)
     for row in rows:
-        counts = Counter(detected[value] for value in members[row["id"]] if value in detected)
+        calls = members[row["id"]]
+        counts = Counter(detected[response_id] for response_id, _ in calls if response_id in detected)
         if counts:
+            mismatches = sum(1 for response_id, requested in calls
+                             if response_id in detected and requested and requested != detected[response_id])
             row.update(upstream_models=sorted(counts), upstream_model_counts=dict(counts),
                        upstream_detected_calls=sum(counts.values()),
+                       upstream_mismatched_calls=mismatches,
                        upstream_total_calls=row.get("call_count", 1) if grouped else 1)
             if len(counts) == 1:
                 row["upstream_model"] = next(iter(counts))

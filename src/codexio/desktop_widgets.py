@@ -623,6 +623,7 @@ def ledger_duration_text(record, now=None):
 SECONDARY_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 PRIMARY_COLOR_ROLE = int(Qt.ItemDataRole.UserRole) + 2
 UPSTREAM_ROLE = int(Qt.ItemDataRole.UserRole) + 3
+UPSTREAM_MISMATCH_ROLE = int(Qt.ItemDataRole.UserRole) + 4
 
 
 class LedgerDelegate(QStyledItemDelegate):
@@ -647,28 +648,35 @@ class LedgerDelegate(QStyledItemDelegate):
         colors = theme_colors(self.parent()._theme)
         upstream = index.data(UPSTREAM_ROLE)
         if upstream:
-            total = fm.height() + sm.height() + 5
+            total = fm.height() + sm.height() + 3
             y = rect.center().y() - total / 2
-            text_width = max(0, int(rect.width() - 15))
+            text_width = max(0, int(rect.width() - 12))
+            upstream_color = colors["comparison_up" if index.data(UPSTREAM_MISMATCH_ROLE) else "chart_cache_read_ink"]
+            observed = sm.elidedText(upstream, Qt.TextElideMode.ElideRight, text_width)
             painter.setFont(small)
-            painter.setPen(QColor(colors["chart_cache_read_ink"]))
+            painter.setPen(QColor(upstream_color))
             painter.drawText(QRectF(rect.left(), y, text_width, sm.height()), Qt.AlignmentFlag.AlignCenter,
-                             sm.elidedText(upstream, Qt.TextElideMode.ElideRight, text_width))
+                             observed)
             painter.setFont(font)
             painter.setPen(QColor(colors["text"]))
             requested = fm.elidedText(lines[0], Qt.TextElideMode.ElideRight, text_width)
-            lower_y = y + sm.height() + 5
+            lower_y = y + sm.height() + 3
             painter.drawText(QRectF(rect.left(), lower_y, text_width, fm.height()), Qt.AlignmentFlag.AlignCenter, requested)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            painter.setPen(QPen(QColor(colors["chart_cache_read_ink"]), 1.2))
-            x, tip = rect.right() - 3, y + sm.height() / 2
+            painter.setPen(QPen(QColor(upstream_color), 1.1, Qt.PenStyle.SolidLine,
+                                Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            requested_right = rect.left() + (text_width + fm.horizontalAdvance(requested)) / 2
+            observed_right = rect.left() + (text_width + sm.horizontalAdvance(observed)) / 2
+            x = min(rect.right() - 2, max(requested_right, observed_right) + 8)
+            tip_x, tip_y = observed_right + 3, y + sm.height() / 2
             arrow = QPainterPath()
-            arrow.moveTo(rect.left() + (text_width + fm.horizontalAdvance(requested)) / 2 + 2, lower_y + fm.height() / 2)
+            arrow.moveTo(requested_right + 2, lower_y + fm.height() / 2)
             arrow.lineTo(x, lower_y + fm.height() / 2)
-            arrow.lineTo(x, tip)
-            arrow.moveTo(x - 3, tip + 4)
-            arrow.lineTo(x, tip)
-            arrow.lineTo(x + 3, tip + 4)
+            arrow.lineTo(x, tip_y)
+            arrow.lineTo(tip_x, tip_y)
+            arrow.moveTo(tip_x + 2.5, tip_y - 2)
+            arrow.lineTo(tip_x, tip_y)
+            arrow.lineTo(tip_x + 2.5, tip_y + 2)
             painter.drawPath(arrow)
             painter.restore()
             return
@@ -826,6 +834,7 @@ class LedgerTable(QTableWidget):
                 item = self.item(index, 1)
                 title = upstreams[0] if len(upstreams) == 1 else f"多上游（{len(upstreams)}）"
                 item.setData(UPSTREAM_ROLE, title)
+                item.setData(UPSTREAM_MISMATCH_ROLE, bool(row.get("upstream_mismatched_calls")))
                 counts = row.get("upstream_model_counts") or {}
                 detail = "\n".join(f"{value} · {counts.get(value, 1)} 次" for value in upstreams)
                 item.setToolTip("响应返回的上游模型\n" + detail + "\n已检测 %s / %s 次调用\n请求模型：%s" % (
