@@ -72,10 +72,13 @@ class QuotaWorker(QThread):
             self._wait_for_next()
 
     def stop(self, timeout_ms: int = 8000) -> None:
+        self.request_stop()
+        self.wait(timeout_ms)
+
+    def request_stop(self) -> None:
         self._stop.set()
         self._wake.set()
         self._close_client()
-        self.wait(timeout_ms)
 
     def request_refresh(self) -> None:
         self._refresh_requested.set()

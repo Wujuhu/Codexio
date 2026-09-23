@@ -151,11 +151,14 @@ class UsageWorker(QThread):
         self._wake.set()
 
     def stop(self, timeout_ms: int = 45000) -> bool:
-        self._stop_event.set()
-        self._wake.set()
+        self.request_stop()
         if self.isRunning():
             return self.wait(timeout_ms)
         return True
+
+    def request_stop(self) -> None:
+        self._stop_event.set()
+        self._wake.set()
 
     def _cancel_requested(self):
         return self._stop_event.is_set() or self._config_changed.is_set()

@@ -25,7 +25,7 @@ from codexio.money import usd
 from codexio.charts import UsageChart, bucket_records, compact_number, parse_timestamp, period_bounds
 from codexio.activity import UsageActivity, activity_bounds
 from codexio.settings import AppSettings
-from codexio.model_display import display_effort, display_model
+from codexio.model_display import display_effort
 from codexio.durations import duration_text, duration_tooltip
 from codexio.rate_limits import format_reset_time, format_reset_date
 from codexio.theme import apply_theme, theme_colors
@@ -598,7 +598,7 @@ class RequestContent(QWidget):
         if grouped:
             metadata = [("耗时", duration_text(record)), ("Turn ID", record.get("turn_id")),
                         ("结束时间", record.get("ended_at") or "未记录"),
-                        ("包含模型", "、".join(display_model(value) for value in record.get("models") or [])),
+                        ("包含模型", "、".join(record.get("models") or [])),
                         ("数据来源", "、".join(record.get("source_names") or [])),
                         ("计价状态", PRICE_STATUS_LABELS.get(record.get("pricing_status"), "未记录")),
                         ("计价说明", record.get("pricing_reason")),

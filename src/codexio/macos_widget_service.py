@@ -26,12 +26,22 @@ def ensure_widget_agent() -> None:
         return
     logger = get_logger("widget")
     agent = Path.home() / "Library/LaunchAgents" / (LABEL + ".plist")
+    try:
+        executable_stat = executable.stat()
+    except OSError:
+        logger.exception("无法读取小组件后台程序")
+        return
+    binary_id = ":".join(str(value) for value in (
+        executable_stat.st_dev, executable_stat.st_ino, executable_stat.st_size, executable_stat.st_mtime_ns))
     payload = plistlib.dumps({
         "Label": LABEL,
         "ProgramArguments": [str(executable), "--widget-refresh"],
         "RunAtLoad": True,
         "KeepAlive": True,
         "ProcessType": "Background",
+        "ExitTimeOut": 10,
+        "EnvironmentVariables": {"CODEXIO_WIDGET_BINARY_ID": binary_id,
+                                 "CODEXIO_WIDGET_AGENT_PROTOCOL": "2"},
     })
     try:
         agent.parent.mkdir(parents=True, exist_ok=True)
@@ -39,6 +49,16 @@ def ensure_widget_agent() -> None:
         domain = f"gui/{os.getuid()}"
         if previous != payload:
             if previous is not None:
+                try:
+                    old = plistlib.loads(previous)
+                    if (old.get("Label") == LABEL and
+                            old.get("EnvironmentVariables", {}).get("CODEXIO_WIDGET_AGENT_PROTOCOL") != "2"):
+                        # The older helper can abort while Qt is destroying a
+                        # long-running scan thread. Retire it once without Qt cleanup.
+                        subprocess.run(["launchctl", "kill", "SIGKILL", f"{domain}/{LABEL}"],
+                                       capture_output=True, check=False)
+                except (ValueError, TypeError, plistlib.InvalidFileException):
+                    pass
                 subprocess.run(["launchctl", "bootout", domain, str(agent)], capture_output=True, check=False)
             temporary = agent.with_suffix(".plist.tmp")
             descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -50,10 +70,6 @@ def ensure_widget_agent() -> None:
             result = subprocess.run(["launchctl", "bootstrap", domain, str(agent)], capture_output=True, check=False)
             if result.returncode:
                 logger.warning("小组件后台刷新服务未启动: %s", result.stderr.decode("utf-8", errors="replace")[:240])
-        else:
-            # Pick up the helper binary from an in-place APP update.
-            subprocess.run(["launchctl", "kickstart", "-k", f"{domain}/{LABEL}"],
-                           capture_output=True, check=False)
     except OSError:
         logger.exception("安装小组件后台刷新服务失败")
 
@@ -71,6 +87,8 @@ def _main_app_running(directory: Path) -> bool:
 class WidgetMonitor(QObject):
     def __init__(self, app: QCoreApplication):
         super().__init__(app)
+        self.app = app
+        self.shutting_down = False
         self.directory = data_dir()
         self.usage = None
         self.quota = None
@@ -90,10 +108,12 @@ class WidgetMonitor(QObject):
         QTimer.singleShot(0, self._sync_owner)
 
     def _sync_owner(self):
+        if self.shutting_down:
+            return
         if _main_app_running(self.directory):
             if self.usage is not None:
                 self._stop_workers()
-        elif self.usage is None:
+        elif self.usage is None and not self.retired_workers:
             self._start_workers()
 
     def _start_workers(self):
@@ -114,15 +134,29 @@ class WidgetMonitor(QObject):
     def _stop_workers(self):
         self.reload_timer.stop()
         usage, quota = self.usage, self.quota
-        usage.stop()
-        quota.stop()
-        for worker in (usage, quota):
-            if worker.isRunning() and not worker.wait(30000):
-                self.retired_workers.append(worker)
-                get_logger("widget").warning("小组件检测线程仍在结束中")
         self.usage = self.quota = None
         self.usage_data = self.quota_state = None
         self.signature = self.request_key = None
+        for worker in (usage, quota):
+            self.retired_workers.append(worker)
+            worker.finished.connect(self._retired_done)
+            worker.request_stop()
+            if not worker.isRunning():
+                self._retire_finished(worker)
+
+    def _retire_finished(self, worker):
+        if worker not in self.retired_workers:
+            return
+        worker.wait()  # Qt emits finished just before the OS thread fully exits.
+        self.retired_workers.remove(worker)
+        worker.deleteLater()
+        if self.shutting_down and not self.retired_workers:
+            self.app.quit()
+
+    def _retired_done(self):
+        worker = self.sender()
+        if worker is not None:
+            self._retire_finished(worker)
 
     def _on_usage(self, data):
         if self.usage is not None:
@@ -164,10 +198,15 @@ class WidgetMonitor(QObject):
         elif not self.reload_timer.isActive():
             self.reload_timer.start(max(1000, int((30 - elapsed) * 1000)))
 
-    def stop(self):
+    def request_shutdown(self):
+        if self.shutting_down:
+            return
+        self.shutting_down = True
         self.owner_timer.stop()
         if self.usage is not None:
             self._stop_workers()
+        if not self.retired_workers:
+            self.app.quit()
 
 
 def run_widget_monitor() -> int:
@@ -176,6 +215,6 @@ def run_widget_monitor() -> int:
     app = QCoreApplication([sys.argv[0], "--widget-refresh"])
     app.setApplicationName("CodexioWidgetMonitor")
     monitor = WidgetMonitor(app)
-    app.aboutToQuit.connect(monitor.stop)
-    signal.signal(signal.SIGTERM, lambda *_: app.quit())
+    signal.signal(signal.SIGTERM, lambda *_: monitor.request_shutdown())
+    signal.signal(signal.SIGINT, lambda *_: monitor.request_shutdown())
     return app.exec()

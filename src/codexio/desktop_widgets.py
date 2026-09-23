@@ -20,7 +20,6 @@ from codexio.charts import compact_number, parse_timestamp
 from codexio.durations import elapsed_milliseconds, duration_text, duration_tooltip
 from codexio.theme import theme_colors
 from codexio.money import usd
-from codexio.model_display import display_model
 from codexio.usage_collector import _user_preview
 from codexio.user_requests import normalized_tier
 from codexio.usage_metrics import cache_hit_rate, cache_percentage
@@ -606,7 +605,7 @@ def tier_label(record):
 
 
 def model_label(record):
-    return display_model(record.get("model") or "未知模型")
+    return str(record.get("model") or "未知模型")
 
 
 def ledger_duration_text(record, now=None):
@@ -734,8 +733,8 @@ class LedgerTable(QTableWidget):
             self.weights = [46, 24, 20, 10]
         else:
             headers = ["用户请求 / 发起时间" if grouped else "关联输入 / 计量时间", "模型", "输入", "输出", "缓存命中率", "费用", "耗时"]
-            headers += ["状态", "来源", "详情"] if grouped else ["来源"]
-            self.weights = [26, 14, 7, 7, 10, 12, 8, 7, 8, 6] if grouped else [28, 15, 7, 7, 11, 13, 9, 8]
+            headers += ["来源", "详情"] if grouped else ["来源"]
+            self.weights = [26, 14, 7, 7, 10, 12, 8, 8, 6] if grouped else [28, 15, 7, 7, 11, 13, 9, 8]
         changed = self.set_headers(headers)
         self._apply_source_visibility()
         return changed
@@ -774,7 +773,7 @@ class LedgerTable(QTableWidget):
         font = QFont(self.font())
         font.setPixelSize(12)
         fm = QFontMetrics(font)
-        base = [200, 125, 110, 58] if self.compact else ([180, 112, 66, 64, 85, 70, 58, 54, 66, 48] if self.grouped else [190, 112, 66, 64, 85, 70, 58, 66])
+        base = [200, 125, 110, 58] if self.compact else ([180, 112, 66, 64, 85, 70, 58, 66, 48] if self.grouped else [190, 112, 66, 64, 85, 70, 58, 66])
         for column in ([2] if self.compact else [2, 3, 4, 5, 6]):
             for row in range(self.rowCount()):
                 item = self.item(row, column)
@@ -825,7 +824,7 @@ class LedgerTable(QTableWidget):
             model = model_label(row)
             models = row.get("models") or []
             if len(models) > 1:
-                model += "\n" + " / ".join(display_model(value) for value in models)
+                model += "\n" + " / ".join(models)
             values = [preview_title(row) + "\n" + " · ".join(subtitle), model]
             if not self.compact:
                 values.append(compact_number(row.get("input_tokens")))
@@ -834,7 +833,7 @@ class LedgerTable(QTableWidget):
             values.append(cost_formatter(row))
             if not self.compact:
                 values.append(ledger_duration_text(row))
-            if self.grouped:
+            if self.grouped and self.compact:
                 values.append({"running": "回复中", "completed": "完成", "aborted": "已中断"}.get(row.get("request_status"), "未知"))
             if not self.compact:
                 values.append(row.get("source_name") or row.get("source_id") or "—")
@@ -861,8 +860,8 @@ class LedgerTable(QTableWidget):
                 detail = "\n".join(f"{value} · {counts.get(value, 1)} 次" for value in upstreams)
                 item.setData(Qt.ItemDataRole.AccessibleDescriptionRole, "响应返回的上游模型\n" + detail + "\n已检测 %s / %s 次调用\n请求模型：%s" % (
                     row.get("upstream_detected_calls", 1), row.get("upstream_total_calls", 1), " / ".join(models or [model])))
-            if self.grouped and row.get("request_status") == "running":
-                status = self.item(index, 3 if self.compact else 7)
+            if self.grouped and self.compact and row.get("request_status") == "running":
+                status = self.item(index, 3)
                 status.setData(PRIMARY_COLOR_ROLE, "running")
                 emphasis = QFont(self.font())
                 emphasis.setBold(True)
