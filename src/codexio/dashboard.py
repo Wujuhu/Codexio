@@ -43,6 +43,11 @@ from codexio.desktop_widgets import (DatePicker, HoverDetails, LedgerTable, Navi
 PAGE_NAMES = NAVIGATION_PAGES
 PAGE_LABELS = tuple(PAGE_TITLES[name] for name in PAGE_NAMES)
 PERIODS = (("今日", "today"), ("近 7 天", "week"), ("近 30 天", "month"), ("全部", "all"))
+PRICING_MODELS = (
+    ("gpt-6-astra", "GPT-6 Astra"), ("gpt-6-sol", "GPT-6 Sol"), ("gpt-6-luna", "GPT-6 Luna"),
+    ("gpt-5.6-sol", "GPT-5.6 Sol"), ("gpt-5.6-terra", "GPT-5.6 Terra"),
+    ("gpt-5.6-luna", "GPT-5.6 Luna"), ("gpt-5.5", "GPT-5.5"),
+)
 PRICE_STATUS_LABELS = {"priced": "已定价", "unpriced": "未定价", "estimated": "Standard 单价", "invalid": "计量分项异常",
                        "partial": "部分未定价", "unmetered": "待计量"}
 CALL_HEADERS = ["时间", "模型", "档位", "输入", "输出", "费用", "耗时", "Session ID", "来源"]
@@ -1377,9 +1382,12 @@ class Dashboard(QMainWindow):
         box, content = card()
         row = QHBoxLayout()
         text = QVBoxLayout()
-        heading = plain_label("模型价格（美元 / 1M Token）")
+        heading = plain_label("标准定价（美元 / 1M Token）")
         heading.setProperty("subheading", True)
         text.addWidget(heading)
+        text.addWidget(plain_label(
+            "本地估算规则：Fast 为标准价 ×2.5。输入超过 272K 时，除 GPT-6 Astra 外，输入与缓存 ×2、输出 ×1.5；GPT-6 Astra 不加长上下文倍率。",
+            muted=True, wrap=True))
         self._price_status = plain_label("同步时间：暂无", muted=True, wrap=True)
         text.addWidget(self._price_status)
         row.addLayout(text, 1)
@@ -1394,8 +1402,6 @@ class Dashboard(QMainWindow):
         self._price_search.setPlaceholderText("搜索模型…")
         self._price_search.textChanged.connect(self._update_prices)
         controls.addWidget(self._price_search, 1)
-        add = QPushButton("添加基础价")
-        add.clicked.connect(lambda: self._edit_price({}))
         self._edit_base_price = QPushButton("编辑基础价")
         self._edit_base_price.clicked.connect(self._edit_selected_price)
         self._reset_base_price = QPushButton("恢复自动基础价")
@@ -1404,11 +1410,13 @@ class Dashboard(QMainWindow):
         self._selected_price_key = None
         self._edit_base_price.setEnabled(False)
         self._reset_base_price.setEnabled(False)
-        for button in (add, self._edit_base_price, self._reset_base_price):
+        for button in (self._edit_base_price, self._reset_base_price):
             controls.addWidget(button)
         layout.addLayout(controls)
-        self._price_table = table(["模型", "计价条件", "输入", "缓存读取", "缓存创建", "输出"])
+        self._price_table = table(["模型", "输入", "缓存读取", "缓存创建", "输出"])
         self._price_table.setObjectName("pricingTable")
+        self._price_table.viewport().installEventFilter(self)
+        self._price_table.horizontalHeader().installEventFilter(self)
         self._price_table.verticalHeader().setDefaultSectionSize(50)
         self._price_table.horizontalHeader().setStretchLastSection(False)
         self._price_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -1474,7 +1482,6 @@ class Dashboard(QMainWindow):
             self._setting_widgets["show_main_on_startup"] = startup
             form.addRow("启动行为", startup)
             menu_bar.addLayout(form)
-            menu_bar.addWidget(plain_label("用量按本机日期统计；费用与主界面一致。", muted=True, wrap=True))
             menu_bar.addStretch()
         else:
             self._build_floating_settings(section)
@@ -2503,52 +2510,25 @@ class Dashboard(QMainWindow):
         if not hasattr(self, "_price_table"):
             return
         search = self._price_search.text().strip().lower()
-        available = list(dict.fromkeys(self._data.get("available_models", [])))
-        allowed = set(available)
+        allowed = {model for model, _label in PRICING_MODELS}
         standard = self._data.get("standard_prices")
         if standard is None:
             standard = [dict(p, **p.get("base_rates", {})) for p in self._data.get("prices", [])
                         if isinstance(p, dict) and p.get("service_tier", "default") in ("default", "standard")
                         and not p.get("threshold")]
         self._standard_prices_by_model = {p["model"]: p for p in standard if isinstance(p, dict) and p.get("model") in allowed}
-        converted = {}
-        for price in self._data.get("prices", []):
-            if isinstance(price, dict) and price.get("model") in allowed and price.get("service_tier", "default") in ("default", "standard", "priority", "fast"):
-                converted.setdefault(price["model"], []).append(price)
-        self._visible_prices = []
-        for model in available:
-            if search not in model.lower():
-                continue
-            variants = sorted(converted.get(model, []), key=lambda p:
-                              (p.get("service_tier", "default") in ("priority", "fast"), int(p.get("threshold") or 0)))
-            self._visible_prices.extend(dict(price) for price in variants or [{"model": model, "service_tier": "default"}])
+        self._visible_prices = [dict(self._standard_prices_by_model.get(model, {"model": model, "service_tier": "default"}))
+                                for model, label in PRICING_MODELS if search in model or search in label.lower()]
         self._price_table.blockSignals(True)
         self._price_table.setRowCount(len(self._visible_prices))
         selected = None
         for index, price in enumerate(self._visible_prices):
-            context = ("\n>%s" % compact_number(price["threshold"]) if price.get("threshold") else
-                       ("\n≤%s" % compact_number(price["long_context_threshold"]) if price.get("long_context_threshold") else ""))
-            tier = {"default": "Standard", "standard": "Standard", "priority": "Fast", "fast": "Fast"}.get(price.get("service_tier") or "default", "Standard")
-            condition = tier + context
-            values = [price.get("model") or "—", condition,
+            display = next(label for model, label in PRICING_MODELS if model == price.get("model"))
+            values = [display,
                       *[price_rate_text(price.get(k)) for k in ("input", "cache_read", "cache_write", "output")]]
-            multiplier = price.get("multipliers", {})
-            if tier == "Standard" and not price.get("threshold"):
-                rule = "OpenAI API Standard 标准价；使用官方输入、缓存读取、缓存创建与输出单价，未公布的单价保留未定价。"
-            elif multiplier:
-                rule = "标准 API 基础价 × Codex 倍率\n输入 / 缓存读取 ×%g，输出 ×%g\n缓存创建按普通输入单价，无写入附加费" % (multiplier["input"], multiplier["output"])
-                if price.get("model") == "gpt-6-astra":
-                    rule += "\nAstra 长上下文不额外加价"
-            else:
-                rule = "尚无完整的换算规则"
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                item.setToolTip(value + "\n" + rule + ("\n使用手工基础价" if price.get("locked") else ""))
-                if tier == "Standard" and not price.get("threshold"):
-                    font = QFont(self._price_table.font())
-                    font.setBold(True)
-                    item.setFont(font)
                 self._price_table.setItem(index, column, item)
             if self._price_row_key(price) == self._selected_price_key:
                 selected = index
@@ -2609,21 +2589,17 @@ class Dashboard(QMainWindow):
         value = selected["primary"]
         amount = estimate_amount(value)
         self._estimate_value.setText(amount if amount != "—" else "待采样")
-        detail = estimate_detail(value)
-        self._estimate_value.setToolTip(detail)
         delta = value.get("delta_percent")
         label = method_label(value) if value else "尚无有效样本"
         if selected["cached"] and str(value.get("method", "")).startswith("server_"):
             label = "缓存 · " + label
         self._estimate_note.setText(label + (" · 已采样 %g 个百分点" % float(delta) if delta is not None else ""))
-        self._estimate_note.setToolTip(detail)
         message = selected["message"]
         if not str(value.get("method", "")).startswith("server_") and value.get("estimated_remaining_usd") is not None:
             message = "剩余额度参考 " + usd(value["estimated_remaining_usd"]) + " · " + message
         self._estimate_period.setText(message)
         reference = selected["reference"]
         self._estimate_reference.setText("本地观测参考：" + estimate_amount(reference) if reference and value is not reference else "")
-        self._estimate_reference.setToolTip(estimate_detail(reference or {}))
 
     def _fill_estimate_history(self, view):
         estimates = estimate_history(self._data)
@@ -2634,7 +2610,7 @@ class Dashboard(QMainWindow):
                 reset_text = format_reset_date(datetime.fromtimestamp(float(reset)), split_time=True) if reset is not None else "—"
             except (ValueError, TypeError, OverflowError, OSError):
                 reset_text = "—"
-            interval, detail = estimate_interval(value)
+            interval, _detail = estimate_interval(value)
             status, _ = estimate_status(value)
             pool = {"codex": "Codex", "codex_bengalfox": "Spark"}.get(value.get("limit_id"), "未识别")
             columns = (str(value.get("plan_type") or "—").upper(), reset_text, interval, estimate_amount(value),
@@ -2644,7 +2620,6 @@ class Dashboard(QMainWindow):
             for column, text in enumerate(columns):
                 item = QTableWidgetItem(str(text))
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                item.setToolTip(detail if column == 2 else estimate_detail(value))
                 view.setItem(index, column, item)
 
     def _show_estimates(self) -> None:
@@ -2654,6 +2629,9 @@ class Dashboard(QMainWindow):
         apply_theme(dialog, self._theme)
         layout = QVBoxLayout(dialog)
         view = table(ESTIMATE_HEADERS)
+        view.setObjectName("estimateHistoryTable")
+        view.viewport().installEventFilter(self)
+        view.horizontalHeader().installEventFilter(self)
         self._estimate_history_table = view
         self._fill_estimate_history(view)
         header = view.horizontalHeader()
@@ -2862,11 +2840,14 @@ class Dashboard(QMainWindow):
         summary.addLayout(values, 1)
         history_layout.addLayout(summary)
         self._subscription_history = table(ESTIMATE_HEADERS)
+        self._subscription_history.setObjectName("subscriptionHistoryTable")
+        self._subscription_history.viewport().installEventFilter(self)
+        self._subscription_history.horizontalHeader().installEventFilter(self)
         self._subscription_history.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._subscription_history.setMinimumHeight(260)
         self._subscription_history.setMaximumHeight(420)
         history_layout.addWidget(self._subscription_history)
-        history_layout.addWidget(plain_label("日数据按 UTC（北京时间 08:00）分日，结束满 24 小时后纳入，后续补账自动修正。金额为额度等价估算；悬停可查看范围与采样依据。", muted=True, wrap=True))
+        history_layout.addWidget(plain_label("日数据按 UTC（北京时间 08:00）分日，结束满 24 小时后纳入，后续补账自动修正。金额为额度等价估算。", muted=True, wrap=True))
         contents.addWidget(self._subscription_history_section)
         contents.addStretch()
         return page
@@ -3024,6 +3005,11 @@ class Dashboard(QMainWindow):
             self._inspector_popup.show_at(anchor)
 
     def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.ToolTip and isinstance(watched, QWidget):
+            parent = watched.parentWidget()
+            if isinstance(parent, QTableWidget) and parent.objectName() in (
+                    "pricingTable", "subscriptionHistoryTable", "estimateHistoryTable"):
+                return True
         if event.type() == QEvent.Type.ToolTip and isinstance(watched, QWidget) and self._active_page == "logs" and hasattr(self, "_inspector_popup"):
             if watched is self or self.isAncestorOf(watched) or watched is self._inspector_popup or self._inspector_popup.isAncestorOf(watched):
                 return True

@@ -95,7 +95,7 @@ class UpdateManager(QObject):
             if self._cancel.is_set():
                 raise UpdateCancelled("已取消更新")
             if release is None:
-                self._emit(("finished", "当前已是最新版本，或尚未发布新版"))
+                self._emit(("finished", "已是最新版本。"))
                 return
             directory = new_job_dir()
             self._emit(("progress", "发现新版 %s，正在下载…" % release.version))

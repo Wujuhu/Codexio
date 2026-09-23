@@ -24,7 +24,7 @@ MODELS_DEV_URL = "https://models.dev/api.json"
 RATE_KEYS = ("input", "cache_read", "cache_write", "output")
 _FIELDS = {"input": "input_cost_per_token", "cache_read": "cache_read_input_token_cost",
            "cache_write": "cache_creation_input_token_cost", "output": "output_cost_per_token"}
-PRICING_RULE_VERSION = "codex-api-base-2026-09-10-v2-standard"
+PRICING_RULE_VERSION = "codex-api-base-2026-09-23-v3-standard"
 PRICING_BASIS = "standard_api_x_codex"
 PRICING_BASIS_LABEL = "标准 API 单价 × Codex 倍率"
 LONG_CONTEXT_THRESHOLD = 272000
@@ -37,6 +37,8 @@ RULE_SOURCES = (
 def codex_policy(model):
     """Known Codex modifiers; unsupported Fast modes are not inferred from API tiers."""
     model = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", model.removeprefix("openai/"))
+    if model in ("gpt-6-sol", "gpt-6-luna"):
+        return LONG_CONTEXT_THRESHOLD, 2.5
     if model in ("gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"):
         return LONG_CONTEXT_THRESHOLD, 2.5
     if model == "gpt-6-astra":
