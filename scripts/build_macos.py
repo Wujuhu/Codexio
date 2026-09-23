@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
 STAGING = BUILD / "staging/macos"
 DESTINATION = BUILD / "dev/macos"
-WIDGET_VERSION = 1  # Increase when changing the extension's public behavior.
+WIDGET_VERSION = 2  # Increase when changing the extension's public behavior.
 
 
 def run(*args, **kwargs):
@@ -88,7 +88,11 @@ def embed_widget(bundle):
         if not environment.get("DEVELOPER_DIR") and Path("/Applications/Xcode.app/Contents/Developer").is_dir():
             environment["DEVELOPER_DIR"] = "/Applications/Xcode.app/Contents/Developer"
         target = platform.machine() + "-apple-macos15.0"
-        run("xcrun", "swiftc", "-target", target, "-parse-as-library", widget_source,
+        # WidgetKit extensions enter through Foundation's NSExtensionMain. A
+        # regular Swift @main executable registers with PlugInKit but crashes
+        # before WidgetKit can enumerate its configurations.
+        run("xcrun", "swiftc", "-target", target, "-application-extension", "-parse-as-library",
+            "-Xlinker", "-e", "-Xlinker", "_NSExtensionMain", widget_source,
             "-o", extension / "Contents/MacOS/CodexioWidget", env=environment)
         run("codesign", "--force", "--sign", "-", "--timestamp=none", "--entitlements", entitlements, extension)
         run("xcrun", "swiftc", "-target", target, "-emit-library", "-module-name", "CodexioWidgetBridge",
