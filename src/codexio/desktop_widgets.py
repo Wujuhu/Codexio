@@ -20,6 +20,7 @@ from codexio.charts import compact_number, parse_timestamp
 from codexio.durations import elapsed_milliseconds, duration_text, duration_tooltip
 from codexio.theme import theme_colors
 from codexio.money import usd
+from codexio.model_display import display_model
 from codexio.usage_collector import _user_preview
 from codexio.user_requests import normalized_tier
 from codexio.usage_metrics import cache_hit_rate, cache_percentage
@@ -605,9 +606,7 @@ def tier_label(record):
 
 
 def model_label(record):
-    model = str(record.get("model") or "未知模型")
-    effort = str(record.get("reasoning_effort") or "").strip()
-    return model + " · " + effort if effort and model not in ("unknown", "未知模型", "等待调用") else model
+    return display_model(record.get("model") or "未知模型")
 
 
 def ledger_duration_text(record, now=None):
@@ -826,7 +825,7 @@ class LedgerTable(QTableWidget):
             model = model_label(row)
             models = row.get("models") or []
             if len(models) > 1:
-                model += "\n" + " / ".join(models)
+                model += "\n" + " / ".join(display_model(value) for value in models)
             values = [preview_title(row) + "\n" + " · ".join(subtitle), model]
             if not self.compact:
                 values.append(compact_number(row.get("input_tokens")))

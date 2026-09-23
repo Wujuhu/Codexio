@@ -25,6 +25,7 @@ from codexio.money import usd
 from codexio.charts import UsageChart, bucket_records, compact_number, parse_timestamp, period_bounds
 from codexio.activity import UsageActivity, activity_bounds
 from codexio.settings import AppSettings
+from codexio.model_display import display_effort, display_model
 from codexio.durations import duration_text, duration_tooltip
 from codexio.rate_limits import format_reset_time, format_reset_date
 from codexio.theme import apply_theme, theme_colors
@@ -597,13 +598,16 @@ class RequestContent(QWidget):
         if grouped:
             metadata = [("耗时", duration_text(record)), ("Turn ID", record.get("turn_id")),
                         ("结束时间", record.get("ended_at") or "未记录"),
-                        ("包含模型", "、".join(record.get("models") or [])),
+                        ("包含模型", "、".join(display_model(value) for value in record.get("models") or [])),
                         ("数据来源", "、".join(record.get("source_names") or [])),
                         ("计价状态", PRICE_STATUS_LABELS.get(record.get("pricing_status"), "未记录")),
                         ("计价说明", record.get("pricing_reason")),
                         ("关联说明", record.get("association_note") or "仅合并能够明确归属的子代理调用"),
                         ("用户", record.get("prompt_preview") or "未记录"),
                         ("模型", record.get("output_preview") or "等待可见回复")]
+        effort = display_effort(record.get("reasoning_effort"))
+        if effort:
+            metadata.insert(1, ("思考强度", effort))
         for label, value in metadata:
             detail = plain_label(value or "未记录", wrap=True)
             detail.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -3073,7 +3077,11 @@ class Dashboard(QMainWindow):
         form.setHorizontalSpacing(12)
         form.setVerticalSpacing(12)
         form.setColumnStretch(1, 1)
-        fields = [("模型", record.get("model") or "未知模型"), ("档位", tier_label(record)),
+        fields = [("模型", model_label(record))]
+        effort = display_effort(record.get("reasoning_effort"))
+        if effort:
+            fields.append(("思考强度", effort))
+        fields += [("档位", tier_label(record)),
                   ("输入（含缓存）", format(int(record.get("input_tokens") or 0), ",")),
                   ("其中缓存读取", format(int(record.get("cached_input_tokens") or 0), ",")),
                   ("输出", format(int(record.get("output_tokens") or 0), ",")),

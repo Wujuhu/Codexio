@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from codexio.logging_setup import get_logger
+from codexio.model_display import display_effort, display_model
 
 _bridge = None
 
@@ -57,6 +58,12 @@ def _has_window(state, key):
     return getattr(getattr(state, key, None), "remaining_percent", None) is not None
 
 
+def _reset_at(state, key):
+    if state is None or getattr(getattr(state, "status", None), "value", None) != "ok":
+        return None
+    return _epoch(getattr(getattr(state, key, None), "resets_at", None))
+
+
 def make_snapshot(usage: dict | None, quota_state, *, now: float | None = None) -> dict:
     selected = (usage or {}).get("widget_request")
     summary = (usage or {}).get("menu_bar_today")
@@ -76,8 +83,8 @@ def make_snapshot(usage: dict | None, quota_state, *, now: float | None = None) 
         request = {
             "id": str(selected.get("id") or "")[:180],
             "prompt": prompt[:240],
-            "model": str(selected.get("model") or "")[:96],
-            "reasoning_effort": str(selected.get("reasoning_effort") or "")[:16],
+            "model": display_model(selected.get("model"))[:96],
+            "reasoning_effort": display_effort(selected.get("reasoning_effort")),
             "cost_usd": _number(selected.get("cost_usd")),
             "duration_ms": _number(selected.get("duration_ms")),
             "duration_started_at": started,
@@ -96,7 +103,8 @@ def make_snapshot(usage: dict | None, quota_state, *, now: float | None = None) 
             "tokens": _count(summary.get("tokens")) if summary else None,
         },
         "quota": {"five_hour": _remaining(quota_state, "five_hour"), "week": _remaining(quota_state, "week"),
-                  "has_five_hour": _has_window(quota_state, "five_hour"), "has_week": _has_window(quota_state, "week")},
+                  "has_five_hour": _has_window(quota_state, "five_hour"), "has_week": _has_window(quota_state, "week"),
+                  "week_reset_at": _reset_at(quota_state, "week")},
     }
 
 
