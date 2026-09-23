@@ -55,6 +55,11 @@ def _remaining(state, key):
 
 def make_snapshot(usage: dict | None, quota_state, *, now: float | None = None) -> dict:
     selected = (usage or {}).get("widget_request")
+    summary = (usage or {}).get("menu_bar_today")
+    if not isinstance(summary, dict):
+        summaries = (usage or {}).get("summaries")
+        summary = summaries.get("today") if isinstance(summaries, dict) else None
+    summary = summary if isinstance(summary, dict) else {}
     request = None
     if isinstance(selected, dict) and selected.get("record_kind") == "user_request" and not selected.get("is_subagent"):
         prompt = str(selected.get("prompt_preview") or "").strip()
@@ -68,6 +73,7 @@ def make_snapshot(usage: dict | None, quota_state, *, now: float | None = None) 
             "id": str(selected.get("id") or "")[:180],
             "prompt": prompt[:240],
             "model": str(selected.get("model") or "")[:96],
+            "reasoning_effort": str(selected.get("reasoning_effort") or "")[:16],
             "cost_usd": _number(selected.get("cost_usd")),
             "duration_ms": _number(selected.get("duration_ms")),
             "duration_started_at": started,
@@ -81,6 +87,10 @@ def make_snapshot(usage: dict | None, quota_state, *, now: float | None = None) 
         "schema": 1,
         "updated_at": time.time() if now is None else now,
         "request": request,
+        "today": {
+            "cost_usd": _number(summary.get("usd")),
+            "tokens": _count(summary.get("tokens")) if summary else None,
+        },
         "quota": {"five_hour": _remaining(quota_state, "five_hour"), "week": _remaining(quota_state, "week")},
     }
 

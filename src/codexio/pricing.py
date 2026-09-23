@@ -206,6 +206,7 @@ class PricingCatalog:
             self._rebuild()
             self.status = {"status": self._cache.get("status", "bundled"),
                            "updated_at": self._cache.get("updated_at", "2026-09-07T00:00:00+00:00"),
+                           "last_sync_at": self._cache.get("updated_at"),
                            "error": self._cache.get("error"), "changed": False,
                            "price_version": self.price_version}
             try:
@@ -430,6 +431,7 @@ class PricingCatalog:
                                    "error": "两源单价冲突，保留已有价格: " + ", ".join(sorted(conflicts)) if conflicts else None}
                     self._rebuild()
                     self.status = {"status": self._cache["status"], "updated_at": now.isoformat(), "error": self._cache["error"],
+                                   "last_sync_at": now.isoformat(),
                                    "verification_status": verification_status, "warning": warning,
                                    "conflicting_models": sorted(conflicts),
                                    "changed": self.price_version != previous, "price_version": self.price_version}

@@ -6,6 +6,7 @@
 - Mac 使用 `build_macos.sh`，Windows 使用 `build_exe.ps1`；两者默认只生成开发包。Windows 的 `scripts/publish_exe.ps1` 仅将通过构建的 EXE 移入 `build/dev/windows`。
 - 用户确认发布后执行 `scripts/prepare_release.py --version <确认的版本号>`，合并两端清单并核验三个文件；缺包、程序版本或哈希不匹配时不得归档或发布。已有正式目录不自动覆盖，历史版本不清理。
 - 目标被运行进程占用时保留原文件及暂存新版，不自动结束用户进程。整理 `build` 时也必须保留运行中应用的原路径；当前 `build/macos` 属于待应用退出后清理的旧路径。
+- 本机 Codexio APP 由用户自行启动；开发、打包和核验时不要代用户启动已安装的 APP，也不要启动后要求用户确认。既有隔离模拟数据的打包冒烟入口照常执行。
 - 读取文本文件显式指定 UTF-8。
 
 ## macOS 交付

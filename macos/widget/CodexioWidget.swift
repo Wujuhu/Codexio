@@ -9,6 +9,7 @@ private let widgetKind = "com.wujuhu.codexio.request"
 private struct RequestSnapshot: Decodable {
     let prompt: String
     let model: String
+    let reasoning_effort: String?
     let cost_usd: Double?
     let duration_ms: Double?
     let duration_started_at: Double?
@@ -24,11 +25,17 @@ private struct QuotaSnapshot: Decodable {
     let week: Double?
 }
 
+private struct TodaySnapshot: Decodable {
+    let cost_usd: Double?
+    let tokens: Int?
+}
+
 private struct Snapshot: Decodable {
     let schema: Int
     let updated_at: Double
     let request: RequestSnapshot?
     let quota: QuotaSnapshot
+    let today: TodaySnapshot?
 
     static func read() -> Snapshot? {
         guard let account = getpwuid(getuid()) else { return nil }
@@ -133,30 +140,53 @@ private struct CodexioWidgetView: View {
     }
 
     @ViewBuilder
-    private func requestBody(_ request: RequestSnapshot, quota: QuotaSnapshot) -> some View {
+    private func requestBody(_ request: RequestSnapshot, quota: QuotaSnapshot, today: TodaySnapshot?) -> some View {
         Text(request.prompt.isEmpty ? "等待请求内容" : request.prompt)
             .font(.system(size: family == .systemSmall ? 13 : 15, weight: .semibold))
-            .lineLimit(family == .systemSmall ? 2 : 3)
+            .lineLimit(family == .systemLarge ? 3 : 2)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .privacySensitive()
-        Text(request.model.isEmpty ? "等待模型调用" : request.model)
+        let effort = request.reasoning_effort ?? ""
+        Text(request.model.isEmpty ? "等待模型调用" : request.model + (effort.isEmpty ? "" : " · " + effort))
             .font(.system(size: 11, weight: .medium))
             .foregroundStyle(.secondary)
             .lineLimit(1)
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: 8) {
             Metric(title: "费用", value: request.cost_usd.map { String(format: "$%.2f", $0) } ?? "—")
+                .frame(maxWidth: .infinity, alignment: .leading)
             VStack(alignment: .leading, spacing: 2) {
                 Text("耗时").font(.system(size: 10)).foregroundStyle(.secondary)
                 duration(request).font(.system(size: 13, weight: .semibold, design: .rounded))
                     .lineLimit(1).minimumScaleFactor(0.75)
-            }
+            }.frame(maxWidth: .infinity, alignment: .leading)
             if family == .systemMedium {
                 Metric(title: "总 Token", value: compactNumber(request.input_tokens + request.output_tokens))
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Metric(title: "命中率", value: request.cache_hit_rate.map { String(format: "%.1f%%", $0 * 100) } ?? "—")
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            Spacer(minLength: 0)
         }
-        Spacer(minLength: family == .systemSmall ? 0 : 4)
+        if family == .systemLarge {
+            Divider().padding(.vertical, 2)
+            HStack(alignment: .top, spacing: 8) {
+                Metric(title: "输入 Token", value: compactNumber(request.input_tokens))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Metric(title: "输出 Token", value: compactNumber(request.output_tokens))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Metric(title: "缓存读取", value: compactNumber(request.cached_input_tokens))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Metric(title: "命中率", value: request.cache_hit_rate.map { String(format: "%.1f%%", $0 * 100) } ?? "—")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Divider().padding(.vertical, 2)
+            HStack(alignment: .top, spacing: 12) {
+                Metric(title: "今日费用", value: today?.cost_usd.map { String(format: "$%.2f", $0) } ?? "—")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Metric(title: "今日 Token", value: today?.tokens.map(compactNumber) ?? "—")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        Spacer(minLength: family == .systemLarge ? 4 : 0)
         if family == .systemSmall {
             if let fiveHour = quota.five_hour {
                 QuotaLine(title: "5 小时额度", remaining: fiveHour)
@@ -169,26 +199,14 @@ private struct CodexioWidgetView: View {
                 QuotaLine(title: "周额度", remaining: quota.week)
             }
         }
-        if family == .systemLarge {
-            Divider().padding(.vertical, 4)
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Metric(title: "输入 Token", value: compactNumber(request.input_tokens))
-                    Metric(title: "缓存读取", value: compactNumber(request.cached_input_tokens))
-                }.frame(maxWidth: .infinity, alignment: .leading)
-                VStack(alignment: .leading, spacing: 10) {
-                    Metric(title: "输出 Token", value: compactNumber(request.output_tokens))
-                    Metric(title: "命中率", value: request.cache_hit_rate.map { String(format: "%.1f%%", $0 * 100) } ?? "—")
-                }.frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: family == .systemSmall ? 5 : 7) {
+        VStack(alignment: .leading, spacing: family == .systemSmall ? 4 : 6) {
             if let snapshot = entry.snapshot, let request = snapshot.request {
                 let fresh = Date().timeIntervalSince1970 - snapshot.updated_at < 900
-                requestBody(request, quota: fresh ? snapshot.quota : QuotaSnapshot(five_hour: nil, week: nil))
+                requestBody(request, quota: fresh ? snapshot.quota : QuotaSnapshot(five_hour: nil, week: nil),
+                            today: snapshot.today)
             } else {
                 Spacer()
                 Text("打开 Codexio 查看最近请求")
@@ -197,7 +215,7 @@ private struct CodexioWidgetView: View {
                 Spacer()
             }
         }
-        .padding(family == .systemSmall ? 11 : 13)
+        .padding(family == .systemSmall ? 13 : 15)
         .containerBackground(for: .widget) {
             Color(nsColor: .controlBackgroundColor)
         }
@@ -212,6 +230,7 @@ private struct CodexioRequestWidget: Widget {
         .configurationDisplayName("Codexio 请求")
         .description("查看最近请求、费用与剩余额度")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+        .contentMarginsDisabled()
     }
 }
 

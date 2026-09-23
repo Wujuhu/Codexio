@@ -37,7 +37,7 @@ from codexio.estimate_display import (ESTIMATE_HEADERS, estimate_amount, estimat
 from codexio.analytics_config import (NAVIGATION_PAGES, normalize_navigation_order, normalize_subscription_profile,
                                      normalize_panel_layout, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, SIDEBAR_COLLAPSED_WIDTH)
 from codexio.desktop_widgets import (DatePicker, HoverDetails, LedgerTable, NavigationList, PanelResizeHandle, PAGE_TITLES, PeriodChange, QuotaMeter,
-                                    SegmentedControl, TokenComposition, WidgetStylePreview, ledger_duration_text, preview_title, tier_label, ui_icon)
+                                    SegmentedControl, TokenComposition, WidgetStylePreview, ledger_duration_text, model_label, preview_title, tier_label, ui_icon)
 
 PAGE_NAMES = NAVIGATION_PAGES
 PAGE_LABELS = tuple(PAGE_TITLES[name] for name in PAGE_NAMES)
@@ -488,7 +488,7 @@ def populate_request_table(view: CompactLogTable, rows: list[dict], grouped: boo
             detail = ("未归属调用" if row.get("record_kind") == "unassigned" else
                       ("子代理 · " if row.get("is_subagent") else "") + "%d 条调用" % row.get("call_count", 0))
             time_text += "\n" + detail
-        values = [time_text, row.get("model") or "未知模型", fast_mode_label(row),
+        values = [time_text, model_label(row), fast_mode_label(row),
                   "%s\n缓存 %s" % (format(int(row.get("input_tokens") or 0), ","), compact_number(row.get("cached_input_tokens"))),
                   format(int(row.get("output_tokens") or 0), ","), request_cost_text(row), duration_text(row), ""]
         if grouped:
@@ -529,7 +529,7 @@ class RequestContent(QWidget):
         self._theme = theme
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        title = plain_label(record.get("model") or "未知模型")
+        title = plain_label(model_label(record))
         title.setProperty("subheading" if compact else "heading", True)
         if compact:
             top = QHBoxLayout()
@@ -1376,18 +1376,14 @@ class Dashboard(QMainWindow):
         heading = plain_label("模型价格（美元 / 1M Token）")
         heading.setProperty("subheading", True)
         text.addWidget(heading)
-        self._price_status = plain_label("内置基础价 · 等待同步状态", muted=True, wrap=True)
+        self._price_status = plain_label("同步时间：暂无", muted=True, wrap=True)
         text.addWidget(self._price_status)
         row.addLayout(text, 1)
-        self._auto_sync = QCheckBox("自动同步")
-        self._auto_sync.toggled.connect(self._set_auto_sync)
-        row.addWidget(self._auto_sync)
         sync = QPushButton("立即同步")
         sync.setProperty("primary", True)
         sync.clicked.connect(lambda: self._callback("sync_prices"))
         row.addWidget(sync)
         content.addLayout(row)
-        content.addWidget(plain_label("Fast：Astra / GPT-5.6 / GPT-5.5 ×2.5；GPT-5.4 ×2。长文（>272K）：输入与缓存 ×2、输出 ×1.5；Astra 不加价。", muted=True, wrap=True))
         layout.addWidget(box)
         controls = QHBoxLayout()
         self._price_search = QLineEdit()
@@ -1418,7 +1414,6 @@ class Dashboard(QMainWindow):
         self._price_empty = plain_label("没有匹配的模型", muted=True)
         self._price_empty.hide()
         layout.addWidget(self._price_empty)
-        layout.addWidget(plain_label("普通 Standard 使用 OpenAI API 标准价；Fast 与长上下文沿用 Codex 换算规则。", muted=True, wrap=True))
         return page
 
     def _build_settings(self) -> QWidget:
@@ -1443,7 +1438,7 @@ class Dashboard(QMainWindow):
                 inner.addWidget(plain_label(description, muted=True, wrap=True))
             self._settings_stack.addWidget(widget)
             return inner
-        appearance = section("外观", "设置主界面的阅读环境。")
+        appearance = section("外观", "")
         form = QFormLayout()
         form.setVerticalSpacing(18)
         if self._is_macos:
@@ -1455,10 +1450,9 @@ class Dashboard(QMainWindow):
         self._show_log_source.setChecked(self._config.get("show_log_source") is True)
         form.addRow("请求日志", self._show_log_source)
         appearance.addLayout(form)
-        appearance.addWidget(plain_label("导航栏可直接拖动排序，概览固定第一。", muted=True, wrap=True))
         appearance.addStretch()
         if self._is_macos:
-            menu_bar = section("菜单栏", "点击菜单栏图标查看额度、今日用量和最近请求，关闭主窗口后继续统计。")
+            menu_bar = section("菜单栏", "")
             form = QFormLayout()
             form.setVerticalSpacing(18)
             form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
@@ -1480,7 +1474,7 @@ class Dashboard(QMainWindow):
             menu_bar.addStretch()
         else:
             self._build_floating_settings(section)
-        sources = section("数据来源", "本机与远程来源分别读取，原始记录保持不变。")
+        sources = section("数据来源", "")
         self._source_list = QListWidget()
         self._source_list.setMinimumHeight(150)
         self._source_list.itemDoubleClicked.connect(lambda *_: self._edit_source())
@@ -1569,7 +1563,6 @@ class Dashboard(QMainWindow):
         estimate_card, _ = settings_card("额度估算", "用量统计", "结合服务端多日记录估算周额度；数据补齐后会重新计算。")
         self._server_estimates_enabled = QCheckBox("用服务端多日数据估算周额度")
         estimate_card.addWidget(self._server_estimates_enabled)
-        estimate_card.addWidget(plain_label("服务端日数据允许延迟，补齐后自动重算；无须每天 08:00 在线。", muted=True, wrap=True))
         self._upstream_toggle = QCheckBox("上游检测")
         self._upstream_toggle.clicked.connect(lambda value: self._callback("upstream_toggle", value))
         upstream_card, self._upstream_badge = settings_card(self._upstream_toggle, "已关闭",
@@ -2124,10 +2117,6 @@ class Dashboard(QMainWindow):
     def _sync_config_controls(self, name: str) -> None:
         if name == "logs":
             self._log_table.set_source_visible(self._config.get("show_log_source") is True)
-        elif name == "pricing":
-            self._auto_sync.blockSignals(True)
-            self._auto_sync.setChecked(bool(self._config.get("auto_sync_prices", True)))
-            self._auto_sync.blockSignals(False)
         elif name == "settings":
             self.set_upstream_status(*getattr(self, "_upstream_state", ("已关闭 · 官方直连", False, False)))
             self._auto_update.blockSignals(True)
@@ -2185,12 +2174,6 @@ class Dashboard(QMainWindow):
             return
         self._config["widget_visible"] = visible
         self._callback("toggle_widget", visible)
-
-    def _set_auto_sync(self, value: bool) -> None:
-        if self._loading:
-            return
-        self._config["auto_sync_prices"] = value
-        self._callback("config", copy.deepcopy(self._config))
 
     def _set_auto_update(self, value: bool) -> None:
         if self._loading:
@@ -2578,15 +2561,8 @@ class Dashboard(QMainWindow):
         self._size_price_columns()
         status = self._data.get("pricing_status") or {}
         if isinstance(status, dict):
-            label = {"bundled": "基础价已就绪", "synced": "基础价已同步", "fallback": "基础价已同步", "offline": "同步失败，沿用已有基础价", "conflict": "部分基础价更新待核验"}.get(status.get("status"), "基础价已就绪")
-            stamp = parse_timestamp(status.get("updated_at") or status.get("last_sync_at"))
-            catalog_status = self._data.get("model_catalog_status") or {}
-            note = "仅显示本机 Codex 提供的 %d 个模型" % len(available)
-            if not available:
-                note = "暂未读取到本机 Codex 模型列表"
-            elif catalog_status.get("status") == "stale":
-                note += "，当前使用上次读取的列表"
-            self._price_status.setText(note + "\n" + label + (" · " + stamp.strftime("%m/%d %H:%M") if stamp else ""))
+            stamp = parse_timestamp(status.get("last_sync_at"))
+            self._price_status.setText("同步时间：" + (stamp.strftime("%Y-%m-%d %H:%M") if stamp else "暂无"))
 
     @staticmethod
     def _price_row_key(price):

@@ -604,6 +604,12 @@ def tier_label(record):
     return {"priority": "Fast", "default": "Standard"}.get(normalized_tier(value), "未记录")
 
 
+def model_label(record):
+    model = str(record.get("model") or "未知模型")
+    effort = str(record.get("reasoning_effort") or "").strip()
+    return model + " · " + effort if effort and model not in ("unknown", "未知模型", "等待调用") else model
+
+
 def ledger_duration_text(record, now=None):
     value = elapsed_milliseconds(record, now)
     if value is None:
@@ -817,7 +823,7 @@ class LedgerTable(QTableWidget):
             tier = tier_label(row)
             if tier != "Standard":
                 subtitle.append(tier)
-            model = row.get("model") or "未知模型"
+            model = model_label(row)
             models = row.get("models") or []
             if len(models) > 1:
                 model += "\n" + " / ".join(models)
@@ -845,7 +851,7 @@ class LedgerTable(QTableWidget):
                 self.setItem(index, column, item)
             # Full request text is available in the persistent details pane.
             self.item(index, 0).setToolTip("")
-            self.item(index, 1).setData(Qt.ItemDataRole.AccessibleDescriptionRole, "\n".join(models or [row.get("model") or "未知模型"]))
+            self.item(index, 1).setData(Qt.ItemDataRole.AccessibleDescriptionRole, "\n".join(models or [model_label(row)]))
             upstreams = row.get("upstream_models") or []
             if upstreams and not self.compact:
                 item = self.item(index, 1)

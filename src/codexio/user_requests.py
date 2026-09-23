@@ -227,7 +227,13 @@ def iter_user_requests(records, turns=(), agent_links=(), sources=(), *, detail_
             status = "completed"
         else:
             status = "unknown"
-        models = sorted({str(row.get("model") or "未知模型") for row in rows})
+        models = sorted({str(row.get("model")) for row in rows
+                         if row.get("model") not in (None, "", "unknown", "未知模型")})
+        if not models:
+            early = str(meta.get("model") or "")
+            models = [early] if early and early not in ("unknown", "未知模型") else (["未知模型"] if rows else [])
+        efforts = {row.get("reasoning_effort") for row in rows if row.get("reasoning_effort")}
+        effort = next(iter(efforts)) if len(efforts) == 1 else meta.get("reasoning_effort") if not efforts else None
         tiers = sorted({normalized_tier(row.get("service_tier")) for row in rows})
         cache = CacheUsage()
         for row in rows:
@@ -271,6 +277,7 @@ def iter_user_requests(records, turns=(), agent_links=(), sources=(), *, detail_
                 and bases[key]["meta"].get("session_id") != meta.get("session_id")}),
             "call_count": len(rows), "member_ids": [row["id"] for row in rows],
             "models": models, "model": models[0] if len(models) == 1 else "多模型（%d）" % len(models) if models else "等待调用",
+            "reasoning_effort": effort,
             "service_tiers": tiers, "service_tier": tiers[0] if len(tiers) == 1 else "mixed" if tiers else None,
             **cache.summary(),
             "source_ids": source_ids, "source_names": source_names,

@@ -86,6 +86,7 @@ class MacController(QObject):
         self._widget_quota = None
         self._widget_signature = None
         self._widget_request_id = None
+        self._widget_model = None
         self._widget_running = False
         self._widget_last_reload = 0.0
         self._widget_reload_timer = QTimer(self)
@@ -146,6 +147,9 @@ class MacController(QObject):
         refresh.setShortcut(QKeySequence("Ctrl+R"))
 
     def start(self):
+        if not self.mock:
+            from codexio.macos_widget_service import ensure_widget_agent
+            ensure_widget_agent()
         self.usage.start()
         self.worker.start()
         self.server_usage.start()
@@ -205,7 +209,7 @@ class MacController(QObject):
             self._widget_last_reload = time.monotonic()
 
     def _publish_widget_snapshot(self):
-        if self.mock or self.closing:
+        if self.mock or self.closing or self._widget_usage is None:
             return
         try:
             snapshot = make_snapshot(self._widget_usage, self._widget_quota)
@@ -217,11 +221,13 @@ class MacController(QObject):
             return
         request = snapshot.get("request") or {}
         request_id = request.get("id")
+        model_key = (request.get("model"), request.get("reasoning_effort"))
         running = request.get("duration_running") is True
         urgent = (self._widget_signature is None or request_id != self._widget_request_id
-                  or running != self._widget_running)
+                  or model_key != self._widget_model or running != self._widget_running)
         self._widget_signature = signature
         self._widget_request_id = request_id
+        self._widget_model = model_key
         self._widget_running = running
         elapsed = time.monotonic() - self._widget_last_reload
         if urgent or elapsed >= 300:

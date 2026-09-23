@@ -88,10 +88,12 @@ class UsageWorker(QThread):
     progress_changed = Signal(str)
     loading_changed = Signal(object)
 
-    def __init__(self, config: dict, mock: bool = False, directory: Path | None = None) -> None:
+    def __init__(self, config: dict, mock: bool = False, directory: Path | None = None,
+                 widget_only: bool = False) -> None:
         super().__init__()
         self._config = copy.deepcopy(config)
         self._mock = mock
+        self._widget_only = widget_only
         self._directory = directory or data_dir()
         self._commands = queue.Queue()
         self._stop_event = threading.Event()
@@ -352,6 +354,12 @@ class UsageWorker(QThread):
         sources = [source for source in self._store.sources() if not str(source.get("id", source.get("source_id", ""))).startswith("lan:")]
         queries = UsageQueries(self._store.path)
         generation = queries.rebuild(self._catalog, sources)
+        if self._widget_only:
+            now = datetime.now().astimezone()
+            today = queries.confirmed_summary(start=now.replace(hour=0, minute=0, second=0, microsecond=0), end=now)
+            self.data_changed.emit({"widget_request": queries.widget_request(), "menu_bar_today": today})
+            self._finish_initial_loading("小组件数据已加载")
+            return
         active = self._active_sources()
         by_source = {s.get("id", s.get("source_id")): s for s in sources}
         complete = bool(active) and not self._cancel_requested() and all(

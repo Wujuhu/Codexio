@@ -11,13 +11,14 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
 STAGING = BUILD / "staging/macos"
 DESTINATION = BUILD / "dev/macos"
-WIDGET_VERSION = 3  # Increase when changing the extension's public behavior.
+WIDGET_VERSION = 5  # Increase when changing the extension's public behavior.
 
 
 def run(*args, **kwargs):
@@ -183,6 +184,13 @@ def main():
     run("codesign", "--verify", "--deep", "--strict", target)
     for name in (APP_ARCHIVE_NAME, MANIFEST_NAME):
         (staging / name).replace(DESTINATION / name)
+    # The installed APP owns the desktop widget. Keep this development copy
+    # from competing for the same WidgetKit extension identifier.
+    for attempt in range(3):
+        subprocess.run(["pluginkit", "-r", str(target / "Contents/PlugIns/CodexioWidget.appex")],
+                       capture_output=True, check=False)
+        if attempt < 2:
+            time.sleep(0.5)
     collection = staging / "Codexio"
     if collection.exists():
         shutil.rmtree(collection)

@@ -115,6 +115,7 @@ def load_analytics_config(path: Path | None = None) -> dict:
     config["codex_roots"] = list(dict.fromkeys(str(v) for v in config["codex_roots"] if str(v).strip()))
     for key in ("widget_visible", "auto_sync_prices", "auto_update", "macos_auto_update", "show_log_source", "server_estimates_enabled", "upstream_detection_enabled"):
         config[key] = config[key] if isinstance(config[key], bool) else False
+    config["auto_sync_prices"] = True
     try:
         datetime.fromisoformat(str(config["account_since"]).replace("Z", "+00:00"))
     except (ValueError, TypeError):
@@ -124,6 +125,7 @@ def load_analytics_config(path: Path | None = None) -> dict:
 
 def save_analytics_config(config: dict, path: Path | None = None) -> None:
     config = {key: value for key, value in config.items() if key not in ("lan_sources", "share_tokens", "usd_per_credit", "upstream_exit_prompt")}
+    config["auto_sync_prices"] = True
     config["navigation_order"] = normalize_navigation_order(config.get("navigation_order"))
     config.update(normalize_panel_layout(config))
     config["subscription_profile"] = normalize_subscription_profile(config.get("subscription_profile"))

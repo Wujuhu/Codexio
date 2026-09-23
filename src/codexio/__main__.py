@@ -19,6 +19,10 @@ if __name__ == "__main__" and sys.platform == "darwin" and len(sys.argv) == 3 an
     from codexio.macos_updater import run_update_job
     sys.exit(run_update_job(sys.argv[2]))
 
+if __name__ == "__main__" and sys.platform == "darwin" and sys.argv[1:] == ["--widget-refresh"]:
+    from codexio.macos_widget_service import run_widget_monitor
+    sys.exit(run_widget_monitor())
+
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QApplication, QMenu
 

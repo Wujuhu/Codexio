@@ -17,11 +17,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-PARSER_VERSION = 9
+PARSER_VERSION = 10
 PREVIEW_LIMIT = 600
 COUNTERS = ("input_tokens", "cached_input_tokens", "cache_write_input_tokens",
             "output_tokens", "reasoning_output_tokens", "total_tokens")
 UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+
+def _reasoning_effort(value):
+    effort = str(value or "").strip().lower()
+    return effort if effort in ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra") else None
 
 
 def _now() -> str:
@@ -422,7 +427,7 @@ def read_session_titles(root: Path) -> dict:
 
 def _initial_state(path: Path) -> dict:
     return {"rollout_id": _rollout_id(path), "session_id": _rollout_id(path),
-            "turn_id": "", "model": "unknown", "service_tier": None,
+            "turn_id": "", "model": "unknown", "reasoning_effort": None, "service_tier": None,
             "provider": "unknown", "prompt_preview": "", "meta_seen": False,
             "last_by_source": {}, "previous_signature": None, "high_water": None,
             "last_totals": {}, "replay_done": False, "parent_position": 0,
@@ -510,6 +515,10 @@ def _turn_activate(state, turn_id, timestamp, owned=False, explicit_start=False)
     state["request_current"] = turn_id
     row = _turn_get(state, turn_id, timestamp)
     if row:
+        if state.get("model") not in (None, "", "unknown"):
+            row["model"] = state["model"]
+        if state.get("reasoning_effort"):
+            row["reasoning_effort"] = state["reasoning_effort"]
         pending_owner = state.get("pending_question_owner")
         if pending_owner and pending_owner != turn_id and not row.get("prompt_preview"):
             row["continuation_of"] = _turn_key(state["session_id"], pending_owner)
@@ -544,6 +553,22 @@ def _turn_before(entry, state):
         return
     kind, subtype = entry.get("type"), payload.get("type")
     timestamp = _timestamp(entry.get("timestamp"))
+    if kind == "event_msg" and subtype == "thread_settings_applied":
+        settings = payload.get("thread_settings") or payload.get("settings") or {}
+        if isinstance(settings, dict):
+            model = settings.get("model")
+            if isinstance(model, str) and model.strip():
+                state["model"] = model.strip()
+            effort = _reasoning_effort(settings.get("reasoning_effort"))
+            if effort:
+                state["reasoning_effort"] = effort
+    elif kind == "turn_context":
+        model = payload.get("model") or (payload.get("info") or {}).get("model")
+        if isinstance(model, str) and model.strip():
+            state["model"] = model.strip()
+        effort = _reasoning_effort(payload.get("effort") or payload.get("reasoning_effort"))
+        if effort:
+            state["reasoning_effort"] = effort
     official = ""
     if kind == "turn_context" or kind == "event_msg" and subtype in ("task_started", "turn_started"):
         official = str(payload.get("turn_id") or (payload.get("id") if kind == "turn_context" else "") or "")
@@ -831,14 +856,15 @@ def _record(state, usage, timestamp, source_id, source_name, context, quality,
         output_preview = ""
     data.update(id=ident, response_id=response_id, session_id=session_id,
                 turn_id=effective_turn, timestamp=timestamp,
-                model=state.get("model") or "unknown", service_tier=state.get("service_tier"),
+                model=state.get("model") or "unknown", reasoning_effort=state.get("reasoning_effort"),
+                service_tier=state.get("service_tier"),
                 source_id=source_id, source_name=source_name, provider=state.get("provider") or "unknown",
                 limit_id=state.get("limit_id"), quality=quality,
                 session_title=context.titles.get(session_id, ""), prompt_preview=preview,
                 output_preview=output_preview,
                 context_owner_verified=owns_context)
     if not owns_context:
-        data.update(model="unknown", service_tier=None, limit_id=None)
+        data.update(model="unknown", reasoning_effort=None, service_tier=None, limit_id=None)
     _remember_preview_record(state, data)
     return data
 
@@ -898,6 +924,9 @@ def _process_accounting_entry(entry: dict, state: dict, context: _Context,
         model = payload.get("model") or (payload.get("info") or {}).get("model")
         if isinstance(model, str) and model.strip():
             state["model"] = model.strip()
+        effort = _reasoning_effort(payload.get("effort") or payload.get("reasoning_effort"))
+        if effort:
+            state["reasoning_effort"] = effort
         turn_id = str(payload.get("turn_id") or payload.get("id") or "")
         if turn_id and turn_id != state.get("turn_id"):
             state.update(turn_id=turn_id, prompt_preview="", modern_candidate=None, active_response_id=None, preview_pending=[])
@@ -907,8 +936,15 @@ def _process_accounting_entry(entry: dict, state: dict, context: _Context,
     if kind == "event_msg":
         if subtype == "thread_settings_applied":
             settings = payload.get("thread_settings") or payload.get("settings") or {}
-            if isinstance(settings, dict) and settings.get("service_tier"):
-                state["service_tier"] = str(settings["service_tier"])
+            if isinstance(settings, dict):
+                if settings.get("service_tier"):
+                    state["service_tier"] = str(settings["service_tier"])
+                model = settings.get("model")
+                if isinstance(model, str) and model.strip():
+                    state["model"] = model.strip()
+                effort = _reasoning_effort(settings.get("reasoning_effort"))
+                if effort:
+                    state["reasoning_effort"] = effort
         elif subtype in ("task_started", "turn_started"):
             new_turn = str(payload.get("turn_id") or "")
             if new_turn and new_turn != state.get("turn_id"):
