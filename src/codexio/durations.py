@@ -52,7 +52,7 @@ def elapsed_milliseconds(record, now=None):
         start = _time(record.get("duration_started_at"))
         end = _time(now) if now is not None else datetime.now(timezone.utc)
         if start is not None and end is not None and end >= start:
-            return (end - start).total_seconds() * 1000
+            return (end - start).total_seconds() * 1000 + (valid_milliseconds(record.get("duration_base_ms")) or 0)
         return None
     return valid_milliseconds(record.get("duration_ms"))
 
@@ -77,6 +77,8 @@ def duration_text(record, now=None):
 
 
 def duration_tooltip(record):
+    if record.get("duration_segments", 0) > 1:
+        return "按各轮实际处理时间合计，不包含等待用户答复的间隔；并行子代理不重复相加。"
     if record.get("duration_running"):
         return "进行中：从主请求发起时间累计，包含工具等待；并行子代理不重复相加。"
     value = elapsed_milliseconds(record)

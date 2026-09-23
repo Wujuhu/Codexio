@@ -207,9 +207,29 @@ class UsageWorker(QThread):
 
     def _run_loop(self, collector) -> None:
         dirty, next_remote, next_publish, next_sync = True, 0.0, 0.0, 0.0
+        startup_price_sync = True
+        startup_sync_inflight = False
         if self._mock:
             self._report_initial_loading("正在准备模拟用量数据")
             self._seed_mock()
+        elif self._config.get("auto_sync_prices"):
+            # Start the network check at process startup while the normal scan
+            # continues. The catalog serializes its own cache updates.
+            startup_price_sync = False
+            startup_sync_inflight = True
+            next_sync = time.monotonic() + 86400
+            self.progress_changed.emit("正在同步模型价格")
+
+            def sync_on_launch():
+                try:
+                    result = self._catalog.sync(force=True)
+                except Exception:
+                    logger.exception("启动时模型价格同步失败，沿用已缓存价格")
+                    result = {"status": "offline"}
+                self._commands.put(("startup_price_sync_done", result))
+                self._wake.set()
+
+            threading.Thread(target=sync_on_launch, name="Codexio-price-startup", daemon=True).start()
         while not self._stop_event.is_set():
             self._wake.clear()
             force_sync = False
@@ -226,9 +246,12 @@ class UsageWorker(QThread):
                             # UI preferences carry the real enrollment timestamp;
                             # changing theme must not unassign the synthetic history.
                             value["account_since"] = self._config["account_since"]
+                        was_auto_sync = bool(self._config.get("auto_sync_prices"))
                         self._config = value
                         self._config_changed.clear()
-                        next_remote = next_sync = 0
+                        next_remote = 0
+                        if self._config.get("auto_sync_prices") and not was_auto_sync:
+                            next_sync = 0
                     elif command == "observations":
                         self._store.upsert_observations(value[1], value[0])
                     elif command == "rescan":
@@ -238,7 +261,10 @@ class UsageWorker(QThread):
                     elif command == "override":
                         self._catalog.set_override(*value)
                     elif command == "sync":
-                        force_sync = True
+                        force_sync = not startup_sync_inflight
+                    elif command == "startup_price_sync_done":
+                        startup_sync_inflight = False
+                        next_sync = time.monotonic() + (3600 if value.get("status") == "offline" else 86400)
                     elif command == "refresh":
                         next_remote = 0
                     elif command == "server_estimates":
@@ -275,13 +301,18 @@ class UsageWorker(QThread):
                 self._publish()
                 dirty = False
                 next_publish = time.monotonic() + 60
-            if not self._mock and not self._cancel_requested() and (force_sync or (self._config.get("auto_sync_prices") and time.monotonic() >= next_sync)):
+            if not self._mock and not startup_sync_inflight and not self._cancel_requested() and (force_sync or (
+                    self._config.get("auto_sync_prices") and (startup_price_sync or time.monotonic() >= next_sync))):
                 self.progress_changed.emit("正在同步模型价格")
                 try:
-                    self._catalog.sync(force=force_sync)
+                    result = self._catalog.sync(force=force_sync or startup_price_sync)
                 except Exception:
                     logger.exception("模型价格同步失败，沿用已缓存价格")
-                next_sync = time.monotonic() + 3600
+                    result = {"status": "offline"}
+                # Each launch checks online once; while running, successful checks
+                # recur after 24 hours and failed checks retry after one hour.
+                startup_price_sync = False
+                next_sync = time.monotonic() + (3600 if result.get("status") == "offline" else 86400)
                 dirty = True
             self._wake.wait(0.1 if dirty else 5.0)
 
@@ -372,7 +403,8 @@ class UsageWorker(QThread):
                 self._store.set_meta(key, model_catalog)
         data = {
             "query_path": str(self._store.path), "query_generation": generation,
-            "summaries": self._summaries, "latest_request": queries.latest_request(), "filters": queries.filters(),
+            "summaries": self._summaries, "latest_request": queries.latest_request(),
+            "widget_request": queries.widget_request(), "filters": queries.filters(),
             "menu_bar_today": self._menu_bar_today, "today_date": now.date().isoformat(),
             "prices": self._catalog.rows(),
             "standard_prices": self._catalog.standard_rows(),

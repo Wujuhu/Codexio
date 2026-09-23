@@ -24,18 +24,27 @@ def read_manifest(path):
 def load_base(system, explicit=None, *, version=None):
     if explicit:
         return read_manifest(explicit)
-    # Development builds stay offline and prefer the other platform's current build.
+    # A Mac-only development version retains the last published Windows asset.
+    # The other platform can legitimately have a different version number.
     other = "windows" if system == "macos" else "macos"
     candidates = [ROOT / "build/dev" / other / "latest.json"]
     if version:
         candidates.append(ROOT / "release" / version / "latest.json")
+    candidates.append(ROOT / "build/dev" / system / "latest.json")
+    releases = []
+    for path in (ROOT / "release").glob("*/latest.json"):
+        try:
+            releases.append((version_tuple(path.parent.name), path))
+        except UpdateError:
+            continue
+    candidates.extend(path for _, path in sorted(releases, reverse=True))
     for path in candidates:
         if path.exists():
             data = read_manifest(path)
             entry = data if system == "macos" else data.get("macos", {})
             if not isinstance(entry, dict):
                 raise UpdateError("平台更新清单格式无效")
-            if entry.get("version") == version:
+            if entry.get("version"):
                 return data
     return {}
 

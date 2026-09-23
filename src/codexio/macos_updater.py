@@ -34,20 +34,27 @@ def download_release(release, target, cancel, progress=lambda _value: None):
     return updates.download_release(release, target, cancel, progress, windows_executable=False)
 
 
-def _run(*arguments):
+def _run(stage, *arguments):
     try:
         return subprocess.run(list(map(str, arguments)), check=True, capture_output=True,
                               stdin=subprocess.DEVNULL, timeout=120)
-    except (subprocess.SubprocessError, OSError) as exc:
-        raise UpdateError("Mac 更新文件校验或准备失败，已保留当前版本") from exc
+    except subprocess.CalledProcessError as exc:
+        detail = exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else str(exc.stderr or "")
+        detail = "；".join(part.strip() for part in detail.splitlines()[-2:] if part.strip())[:240]
+        raise UpdateError(stage + "失败，已保留当前版本" + ("：" + detail if detail else "")) from exc
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        raise UpdateError(stage + "失败，已保留当前版本（" + type(exc).__name__ + "）") from exc
 
 
-def _validate_bundle(bundle: Path, version=None):
+def _validate_bundle(bundle: Path, version=None, *, stage="Mac 应用包校验"):
     if bundle.is_symlink() or not bundle.is_dir():
         raise UpdateError("Mac 应用包无效")
     executable = bundle / "Contents/MacOS/Codexio"
-    with (bundle / "Contents/Info.plist").open("rb") as source:
-        info = plistlib.load(source)
+    try:
+        with (bundle / "Contents/Info.plist").open("rb") as source:
+            info = plistlib.load(source)
+    except (OSError, ValueError, plistlib.InvalidFileException) as exc:
+        raise UpdateError(stage + "失败：应用信息无法读取") from exc
     actual_version = info.get("CFBundleShortVersionString")
     version_tuple(actual_version)
     if (info.get("CFBundleIdentifier") != BUNDLE_ID or info.get("CFBundleExecutable") != "Codexio"
@@ -55,8 +62,8 @@ def _validate_bundle(bundle: Path, version=None):
             or (version is not None and actual_version != version)
             or not executable.resolve().is_relative_to(bundle.resolve())):
         raise UpdateError("Mac 应用标识或版本与更新清单不一致")
-    _run("/usr/bin/codesign", "--verify", "--deep", "--strict", bundle)
-    _run("/usr/bin/lipo", "-verify_arch", platform.machine(), executable)
+    _run(stage + "（签名）", "/usr/bin/codesign", "--verify", "--deep", "--strict", bundle)
+    _run(stage + "（芯片架构）", "/usr/bin/lipo", "-verify_arch", platform.machine(), executable)
     return executable
 
 
@@ -67,11 +74,12 @@ def launch_installer(directory: Path, release: Release, cancel: threading.Event,
     target = executable.parents[2]
     if target.suffix != ".app" or executable != target / "Contents/MacOS/Codexio":
         raise UpdateError("请从安装好的 Codexio.app 中更新")
-    _validate_bundle(target)
+    _validate_bundle(target, stage="现有应用校验")
     if cancel.is_set():
         raise UpdateCancelled("已取消更新")
     helper = directory / "CodexioUpdater.app"
-    _run("/usr/bin/ditto", target, helper)
+    _run("更新辅助程序复制", "/usr/bin/ditto", "--norsrc", "--noextattr", target, helper)
+    _validate_bundle(helper, stage="更新辅助程序校验")
     _write_json(directory / "job.json", dict(
         target=str(target), old_sha256=file_sha256(executable), sha256=release.sha256,
         version=release.version, parent_pid=parent_pid or os.getpid(),
@@ -96,7 +104,7 @@ def launch_installer(directory: Path, release: Release, cancel: threading.Event,
 def _prepare_bundle(directory, pending, version):
     extract_app_archive(directory / "package.bin", pending, version)
     try:
-        _validate_bundle(pending, version)
+        _validate_bundle(pending, version, stage="新版应用校验")
     except Exception:
         shutil.rmtree(pending)
         raise
@@ -128,7 +136,7 @@ def _install(directory, job):
     if not target.is_absolute() or target.suffix != ".app" or target.is_symlink():
         raise UpdateError("Mac 更新目标无效")
     target = target.resolve(strict=True)
-    executable = _validate_bundle(target)
+    executable = _validate_bundle(target, stage="现有应用校验")
     version_tuple(job["version"])
     if not all(re.fullmatch(r"[0-9a-f]{64}", str(job.get(key, ""))) for key in ("sha256", "old_sha256")):
         raise UpdateError("更新校验信息无效")
@@ -147,7 +155,11 @@ def _install(directory, job):
     process = None
     moved_old = False
     parent_exited = False
-    with (target.parent / ".Codexio-update.lock").open("a") as lock:
+    try:
+        lock = (target.parent / ".Codexio-update.lock").open("a")
+    except OSError as exc:
+        raise UpdateError("应用程序目录不可写，无法更新；请确认当前账号有安装权限") from exc
+    with lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
@@ -161,7 +173,7 @@ def _install(directory, job):
             _state(directory, "ready")
             _wait_for_exit(pid, directory)
             parent_exited = True
-            if file_sha256(_validate_bundle(target)) != job["old_sha256"]:
+            if file_sha256(_validate_bundle(target, stage="替换前应用校验")) != job["old_sha256"]:
                 raise UpdateError("当前应用已变化，停止替换")
             target.rename(backup)
             moved_old = True
@@ -174,7 +186,11 @@ def _install(directory, job):
                 if (receipt.get("version") == job["version"] and receipt.get("pid") == process.pid
                         and process.poll() is None):
                     # Only remove the old app after the new process confirms startup.
-                    shutil.rmtree(backup)
+                    try:
+                        shutil.rmtree(backup)
+                    except OSError:
+                        _state(directory, "done", "已更新至 " + job["version"] + "；旧版备份暂留在 " + str(backup))
+                        return
                     (directory / "package.bin").unlink(missing_ok=True)
                     _state(directory, "done", "已更新至 " + job["version"])
                     return

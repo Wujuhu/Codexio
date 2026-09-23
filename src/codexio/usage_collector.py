@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-PARSER_VERSION = 8
+PARSER_VERSION = 9
 PREVIEW_LIMIT = 600
 COUNTERS = ("input_tokens", "cached_input_tokens", "cache_write_input_tokens",
             "output_tokens", "reasoning_output_tokens", "total_tokens")
@@ -200,6 +200,38 @@ def _user_event_content(payload):
                       in ("image", "inputimage", "localimage", "imageurl") for item in content)
     count = max((len(payload.get(key) or []) if isinstance(payload.get(key), list) else 0) for key in ("images", "local_images"))
     return content + [{"type": "image"} for _ in range(max(0, count - represented))]
+
+
+def _question_reply(value):
+    """Recognize a complete, structured UI reply without hiding user prose."""
+    parts = []
+    for item in value if isinstance(value, list) else [value]:
+        if isinstance(item, str):
+            parts.append(item)
+        elif (isinstance(item, dict)
+              and str(item.get("type") or "").replace("_", "").lower() in ("text", "inputtext")):
+            parts.append(str(item.get("text") or ""))
+    text = "\n".join(parts).strip()
+    opening, closing = "<send_user_message_question_reply>", "</send_user_message_question_reply>"
+    if not text.startswith(opening) or not text.endswith(closing):
+        return False, ()
+    try:
+        answers = json.loads(text[len(opening):-len(closing)].strip())
+        if not isinstance(answers, list) or not 0 < len(answers) <= 32:
+            return False, ()
+        calls = []
+        for answer in answers:
+            if not isinstance(answer, dict) or "questionItemId" not in answer:
+                return False, ()
+            identity = answer["questionItemId"]
+            identity = json.loads(identity) if isinstance(identity, str) else identity
+            if (isinstance(identity, list) and len(identity) >= 2
+                    and identity[0] in ("request_user_input_async", "send_user_message_async")
+                    and isinstance(identity[1], str)):
+                calls.append(identity[1])
+        return True, tuple(dict.fromkeys(calls))
+    except (ValueError, TypeError):
+        return False, ()
 
 
 def _assistant_preview(payload) -> str:
@@ -478,6 +510,9 @@ def _turn_activate(state, turn_id, timestamp, owned=False, explicit_start=False)
     state["request_current"] = turn_id
     row = _turn_get(state, turn_id, timestamp)
     if row:
+        pending_owner = state.get("pending_question_owner")
+        if pending_owner and pending_owner != turn_id and not row.get("prompt_preview"):
+            row["continuation_of"] = _turn_key(state["session_id"], pending_owner)
         row["verified"] = bool(row.get("verified") or owned)
         if explicit_start:
             if row.get("started_inferred") or not row.get("started_at"):
@@ -518,9 +553,24 @@ def _turn_before(entry, state):
         if row:
             row["synthetic"] = False
     message, representation = _request_message(entry)
+    internal, call_ids = _question_reply(message) if message is not None else (False, ())
+    if internal:
+        owners = {state.get("question_calls", {}).get(call_id) for call_id in call_ids}
+        owners.discard(None)
+        if len(owners) == 1:
+            owner = next(iter(owners))
+            current = _turn_get(state, state.get("request_current") or state.get("turn_id"), timestamp)
+            if current and current["turn_id"] != owner and not current.get("prompt_preview"):
+                current["continuation_of"] = _turn_key(state["session_id"], owner)
+                current["verified"] = bool(current.get("verified") or _turn_owned(entry, state))
+                _turn_save(state, current, timestamp)
+            elif current is None or current.get("ended_at"):
+                state["pending_question_owner"] = owner
+        return
     preview = _user_preview(message) if message is not None else ""
     if not preview:
         return
+    state.pop("pending_question_owner", None)
     fingerprint = _hash(_plain(message, 262144))
     current = _turn_get(state, state.get("request_current") or state.get("turn_id"), timestamp)
     last = state.get("request_last_input", {})
@@ -538,6 +588,8 @@ def _turn_before(entry, state):
             current["has_usage"] = True  # prevent the official-ID promotion path from joining two inputs
         current = _turn_activate(state, turn_id, timestamp, _turn_owned(entry, state), True)
     if current:
+        if current.get("continuation_of") and not current.get("has_usage"):
+            current.pop("continuation_of", None)
         current["verified"] = bool(current.get("verified") or _turn_owned(entry, state))
         if not current.get("ended_at"):
             current["status"] = "running"
@@ -574,6 +626,12 @@ def _turn_agent_entry(entry, state, timestamp):
     if kind in ("function_call", "custom_tool_call"):
         name = str(payload.get("name") or "").split(".")[-1]
         parent_turn = state.get("request_current") or state.get("turn_id")
+        if name in ("request_user_input_async", "send_user_message_async") and call_id and parent_turn:
+            questions = state.setdefault("question_calls", {})
+            questions[call_id] = parent_turn
+            while len(questions) > 512:
+                questions.pop(next(iter(questions)))
+            return
         if name not in ("spawn_agent", "followup_task", "send_input") or not call_id or not parent_turn:
             return
         try:
@@ -856,13 +914,15 @@ def _process_accounting_entry(entry: dict, state: dict, context: _Context,
             if new_turn and new_turn != state.get("turn_id"):
                 state.update(turn_id=new_turn, prompt_preview="", modern_candidate=None, active_response_id=None, preview_pending=[])
         elif subtype == "user_message" and not inherited:
-            preview = _user_preview(_user_event_content(payload))
+            content = _user_event_content(payload)
+            preview = "" if _question_reply(content)[0] else _user_preview(content)
             if preview:
                 state["prompt_preview"] = preview
         elif subtype in ("item_completed", "item_started") and not inherited:
             item = payload.get("item") or {}
             if isinstance(item, dict) and item.get("type") in ("user_message", "userMessage", "UserMessage"):
-                preview = _user_preview(item.get("content", item.get("message", "")))
+                content = item.get("content", item.get("message", ""))
+                preview = "" if _question_reply(content)[0] else _user_preview(content)
                 if preview:
                     state["prompt_preview"] = preview
         elif subtype == "agent_message" and not inherited:
@@ -894,7 +954,8 @@ def _process_accounting_entry(entry: dict, state: dict, context: _Context,
 
     if kind == "response_item" and not inherited and payload.get("role") == "user" and payload.get("type", "message") == "message":
         if not state.get("prompt_preview"):
-            preview = _user_preview(payload.get("content", ""))
+            content = payload.get("content", "")
+            preview = "" if _question_reply(content)[0] else _user_preview(content)
             if preview:
                 state["prompt_preview"] = preview
 
@@ -1112,7 +1173,8 @@ def iter_scan(root, get_cursor, source_id="local", source_name="本机", account
                         or ((b'"type":"message"' in raw or b'"type": "message"' in raw)
                             and any(marker in raw for marker in (b'"role":"assistant"', b'"role": "assistant"')))))
                     is_agent_routing = b'"response_item"' in raw and (
-                        any(name in raw for name in (b'spawn_agent', b'followup_task', b'send_input'))
+                        any(name in raw for name in (b'spawn_agent', b'followup_task', b'send_input',
+                                                    b'request_user_input_async', b'send_user_message_async'))
                         or (b'call_output"' in raw and any(call_id.encode("utf-8") in raw for call_id in state.get("request_calls", {}))))
                     if is_message_item or is_agent_routing or any(marker in raw for marker in (b'"token_usage_record"', b'"event_msg"', b'"turn_context"', b'"session_meta"')):
                         try:

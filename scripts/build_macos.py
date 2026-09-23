@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import platform
 import plistlib
 import re
 import shutil
@@ -15,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
 STAGING = BUILD / "staging/macos"
 DESTINATION = BUILD / "dev/macos"
+WIDGET_VERSION = 1  # Increase when changing the extension's public behavior.
 
 
 def run(*args, **kwargs):
@@ -49,6 +52,60 @@ def build_icon():
     run("iconutil", "-c", "icns", iconset, "-o", resources / "Codexio.icns")
 
 
+def embed_widget(bundle):
+    """Embed a stable native WidgetKit extension in the PyInstaller app."""
+    sources = ROOT / "macos/widget"
+    widget_source = sources / "CodexioWidget.swift"
+    bridge_source = sources / "WidgetBridge.swift"
+    entitlements = sources / "Widget.entitlements"
+    digest = hashlib.sha256()
+    for path in (widget_source, bridge_source, entitlements):
+        digest.update(path.read_bytes())
+    digest.update(("macos15-widget-%s-%s" % (WIDGET_VERSION, platform.machine())).encode("ascii"))
+    cache = BUILD / "cache/macos-widget" / digest.hexdigest()[:20]
+    extension = cache / "CodexioWidget.appex"
+    bridge = cache / "libCodexioWidgetBridge.dylib"
+    if not (extension / "Contents/MacOS/CodexioWidget").is_file() or not bridge.is_file():
+        if cache.exists():
+            shutil.rmtree(cache)
+        (extension / "Contents/MacOS").mkdir(parents=True)
+        (extension / "Contents/Info.plist").write_bytes(plistlib.dumps({
+            "CFBundleIdentifier": "com.wujuhu.codexio.widget",
+            "CFBundleExecutable": "CodexioWidget",
+            "CFBundleName": "Codexio Widget",
+            "CFBundleDisplayName": "Codexio",
+            "CFBundlePackageType": "XPC!",
+            "CFBundleVersion": str(WIDGET_VERSION),
+            "CFBundleShortVersionString": "1.%d" % (WIDGET_VERSION - 1),
+            "CFBundleInfoDictionaryVersion": "6.0",
+            "CFBundleDevelopmentRegion": "zh_CN",
+            "CFBundleSupportedPlatforms": ["MacOSX"],
+            "DTPlatformName": "macosx",
+            "LSMinimumSystemVersion": "15.0",
+            "NSExtension": {"NSExtensionPointIdentifier": "com.apple.widgetkit-extension"},
+        }))
+        environment = dict(os.environ)
+        if not environment.get("DEVELOPER_DIR") and Path("/Applications/Xcode.app/Contents/Developer").is_dir():
+            environment["DEVELOPER_DIR"] = "/Applications/Xcode.app/Contents/Developer"
+        target = platform.machine() + "-apple-macos15.0"
+        run("xcrun", "swiftc", "-target", target, "-parse-as-library", widget_source,
+            "-o", extension / "Contents/MacOS/CodexioWidget", env=environment)
+        run("codesign", "--force", "--sign", "-", "--timestamp=none", "--entitlements", entitlements, extension)
+        run("xcrun", "swiftc", "-target", target, "-emit-library", "-module-name", "CodexioWidgetBridge",
+            bridge_source, "-o", bridge, env=environment)
+        run("codesign", "--force", "--sign", "-", "--timestamp=none", bridge)
+    run("codesign", "--verify", "--strict", extension)
+    run("codesign", "--verify", "--strict", bridge)
+    destination = bundle / "Contents/PlugIns/CodexioWidget.appex"
+    if destination.exists():
+        shutil.rmtree(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(extension, destination, symlinks=True)
+    shutil.copy2(bridge, bundle / "Contents/Frameworks/libCodexioWidgetBridge.dylib")
+    # Seal the new nested code without changing the extension's own signature.
+    run("codesign", "--force", "--sign", "-", "--timestamp=none", bundle)
+
+
 def main():
     parser = argparse.ArgumentParser(description="构建开发版 APP、APP ZIP 和清单，仅输出到 build/dev/macos。")
     parser.add_argument("--staging-subdir", help="在构建暂存区使用独立子目录，保留正在运行的旧暂存应用")
@@ -65,6 +122,7 @@ def main():
     build_icon()
     run(sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--distpath", staging,
         "--workpath", BUILD / "cache/pyinstaller/macos", ROOT / "packaging/codexio-macos.spec")
+    embed_widget(bundle)
     with (bundle / "Contents/Info.plist").open("rb") as stream:
         info = plistlib.load(stream)
     version = re.search(r'__version__ = "([^"]+)"', (ROOT / "src/codexio/__init__.py").read_text(encoding="utf-8")).group(1)

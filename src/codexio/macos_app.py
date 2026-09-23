@@ -5,6 +5,7 @@ import copy
 import hashlib
 import os
 import sys
+import time
 from functools import partial
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from codexio.dashboard import Dashboard
 from codexio.dashboard_host import DashboardHost
 from codexio.logging_setup import get_logger, setup_logging
 from codexio.menu_bar import MenuBarController
+from codexio.macos_widget_snapshot import make_snapshot, reload_widget, write_snapshot
 from codexio.server_usage_monitor import ServerUsageMonitor
 from codexio.settings import data_dir, load_settings, save_settings
 from codexio.usage_worker import UsageWorker
@@ -80,6 +82,15 @@ class MacController(QObject):
         self.worker = QuotaWorker(self.settings, mock=mock)
         self.usage = UsageWorker(self.config, mock=mock)
         self.server_usage = ServerUsageMonitor(self.config, data_dir(), app, mock=mock)
+        self._widget_usage = None
+        self._widget_quota = None
+        self._widget_signature = None
+        self._widget_request_id = None
+        self._widget_running = False
+        self._widget_last_reload = 0.0
+        self._widget_reload_timer = QTimer(self)
+        self._widget_reload_timer.setSingleShot(True)
+        self._widget_reload_timer.timeout.connect(self._reload_widget)
         self.dashboard_host = DashboardHost(lambda: self.settings, lambda: self.config, {
             "refresh": self.refresh, "settings": self.apply_settings, "config": self.apply_config,
             "sync_prices": self.usage.request_sync, "price_override": self.usage.set_price_override,
@@ -180,10 +191,44 @@ class MacController(QObject):
     def on_quota(self, state):
         self.dashboard_host.apply_quota(state)
         self.menu_bar.preview.apply_quota(state)
+        self._widget_quota = state
+        self._publish_widget_snapshot()
 
     def on_usage(self, data):
         self.dashboard_host.apply_data(data)
         self.menu_bar.preview.apply_data(data)
+        self._widget_usage = data
+        self._publish_widget_snapshot()
+
+    def _reload_widget(self):
+        if not self.closing and reload_widget():
+            self._widget_last_reload = time.monotonic()
+
+    def _publish_widget_snapshot(self):
+        if self.mock or self.closing:
+            return
+        try:
+            snapshot = make_snapshot(self._widget_usage, self._widget_quota)
+            signature = write_snapshot(snapshot)
+        except (OSError, ValueError):
+            get_logger("widget").exception("保存小组件数据失败")
+            return
+        if signature == self._widget_signature:
+            return
+        request = snapshot.get("request") or {}
+        request_id = request.get("id")
+        running = request.get("duration_running") is True
+        urgent = (self._widget_signature is None or request_id != self._widget_request_id
+                  or running != self._widget_running)
+        self._widget_signature = signature
+        self._widget_request_id = request_id
+        self._widget_running = running
+        elapsed = time.monotonic() - self._widget_last_reload
+        if urgent or elapsed >= 300:
+            self._widget_reload_timer.stop()
+            self._reload_widget()
+        elif not self._widget_reload_timer.isActive():
+            self._widget_reload_timer.start(max(1000, int((300 - elapsed) * 1000)))
 
     def on_loading(self, loading):
         self.dashboard_host.set_usage_loading(loading)
@@ -225,6 +270,7 @@ class MacController(QObject):
         if self.closing:
             return
         self.closing = True
+        self._widget_reload_timer.stop()
         self.upstream.stop()
         self.updater.stop()
         self.menu_bar.stop()

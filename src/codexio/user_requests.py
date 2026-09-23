@@ -87,6 +87,10 @@ def _parent_edges(bases, links, resolve):
     edges = {}
     for key, base in bases.items():
         meta = base["meta"]
+        continuation = resolve(str(meta.get("continuation_of") or ""))
+        if continuation in bases and continuation != key:
+            edges[key] = continuation
+            continue
         direct = by_child_session.get(meta.get("session_id"), [])
         if not meta.get("is_subagent") and not direct:
             continue
@@ -119,6 +123,45 @@ def _parent_edges(bases, links, resolve):
         if len(candidates) > 1:
             base["association_note"] = "存在多个父轮次，未合并费用"
     return edges
+
+
+def _continuation_duration(bases, keys, edges, root):
+    """Add execution intervals without counting a user's pause between replies."""
+    segments = {root}
+    segments.update(key for key in keys if bases[key]["meta"].get("continuation_of"))
+    if len(segments) < 2:
+        return None
+    members = {key: [] for key in segments}
+    for key in keys:
+        owner = key
+        while owner not in segments and owner in edges:
+            owner = edges[owner]
+        members[owner if owner in segments else root].append(bases[key]["meta"])
+    total, active = 0.0, []
+    for key in segments:
+        meta = bases[key]["meta"]
+        component = members[key]
+        states = [part.get("status", "unknown") for part in component]
+        status = ("running" if "running" in states else meta.get("status", "unknown")
+                  if all(value in ("completed", "aborted") for value in states) else "unknown")
+        fields = request_duration_fields(meta, component, status)
+        if fields["duration_running"]:
+            active.append(fields["duration_started_at"])
+        else:
+            duration = valid_milliseconds(fields["duration_ms"])
+            if duration is None:
+                return dict(duration_ms=None, duration_running=False, duration_started_at=None,
+                            duration_segments=len(segments))
+            total += duration
+    if len(active) == 1:
+        return dict(duration_ms=None, duration_base_ms=total, duration_running=True,
+                    duration_segments=len(segments),
+                    duration_started_at=active[0])
+    if active:
+        return dict(duration_ms=None, duration_running=False, duration_started_at=None,
+                    duration_segments=len(segments))
+    return dict(duration_ms=total, duration_running=False, duration_started_at=None,
+                duration_segments=len(segments))
 
 
 def iter_user_requests(records, turns=(), agent_links=(), sources=(), *, detail_keys=False):
@@ -201,8 +244,14 @@ def iter_user_requests(records, turns=(), agent_links=(), sources=(), *, detail_
         missing = len(costs) - len(known)
         pricing = ("unmetered" if not rows else "unpriced" if not known else "partial" if missing else
                    "estimated" if any(row.get("pricing_status") == "estimated" for row in rows) else "priced")
-        preview = meta.get("output_preview") if primary_status in ("completed", "aborted") else meta.get("latest_output_preview")
-        preview = preview or meta.get("output_preview") or next((row.get("output_preview") for row in reversed(own_rows) if row.get("output_preview")), "")
+        continuation_keys = [key for key in keys if bases[key]["meta"].get("continuation_of")]
+        display_key = max(continuation_keys, key=lambda key: (
+            str(bases[key]["meta"].get("ended_at") or bases[key]["meta"].get("started_at") or ""), key)) if continuation_keys else root
+        display_meta = bases[display_key]["meta"]
+        preview = (display_meta.get("output_preview") if display_meta.get("status") in ("completed", "aborted")
+                   else display_meta.get("latest_output_preview"))
+        preview = (preview or display_meta.get("output_preview") or meta.get("output_preview")
+                   or next((row.get("output_preview") for row in reversed(rows) if row.get("output_preview")), ""))
         association = primary.get("association_note") or ("未能明确关联父请求，子代理单独计量" if meta.get("is_subagent") else "")
         if pending_parents.intersection(keys):
             association = "部分子代理日志尚未采集，当前费用为已记录调用的累计"
@@ -217,7 +266,9 @@ def iter_user_requests(records, turns=(), agent_links=(), sources=(), *, detail_
             "started_at": started, "started_inferred": meta.get("started_inferred", True),
             "ended_at": max((str(bases[key]["meta"].get("ended_at") or "") for key in keys), default=""),
             "request_status": status, "status_label": REQUEST_STATUSES[status], "association_note": association,
-            "is_subagent": bool(meta.get("is_subagent")), "subagent_count": len({bases[key]["meta"].get("session_id") for key in keys if key != root}),
+            "is_subagent": bool(meta.get("is_subagent")), "subagent_count": len({bases[key]["meta"].get("session_id")
+                for key in keys if key != root and bases[key]["meta"].get("is_subagent")
+                and bases[key]["meta"].get("session_id") != meta.get("session_id")}),
             "call_count": len(rows), "member_ids": [row["id"] for row in rows],
             "models": models, "model": models[0] if len(models) == 1 else "多模型（%d）" % len(models) if models else "等待调用",
             "service_tiers": tiers, "service_tier": tiers[0] if len(tiers) == 1 else "mixed" if tiers else None,
@@ -237,11 +288,15 @@ def iter_user_requests(records, turns=(), agent_links=(), sources=(), *, detail_
         else:
             group.update(request_duration_fields(meta, [bases[key]["meta"] for key in keys], status,
                                                  pending=bool(pending_parents.intersection(keys))))
+            continuation_duration = _continuation_duration(bases, keys, edges, root)
+            if continuation_duration is not None:
+                group.update(continuation_duration)
         group.update({field: sum(_count(row.get(field)) for row in rows) for field in COUNTERS})
         group["total_tokens"] = group["input_tokens"] + group["output_tokens"]
         if detail_keys:
             group["_primary_call_id"] = first.get("id")
-            group["_preview_call_id"] = next((row["id"] for row in reversed(own_rows) if row.get("output_preview")), None)
+            group["_preview_call_id"] = next((row["id"] for row in reversed(rows) if row.get("output_preview")), None)
+            group["_final_turn_key"] = display_key
         yield group
 
 

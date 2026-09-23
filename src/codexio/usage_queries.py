@@ -19,13 +19,14 @@ from codexio.usage_collector import _user_preview
 from codexio.usage_metrics import dashboard_summary
 from codexio.upstream_store import UpstreamStore, enrich_rows
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 METRIC_FIELDS = ("id", "timestamp", "model", "service_tier", "source_id", "source_name", "source_ids",
                  "session_id", "turn_id", "request_turn_id", "total_tokens", "cost_usd", "pricing_status",
                  "provider", "account_key", "limit_id", "quality", "duration_ms") + COUNTERS
 TURN_FIELDS = ("id", "session_id", "turn_id", "verified", "observed_at", "ended_at", "status", "started_at",
                "started_inferred", "duration_ms", "first_turn", "input_hashes", "source_id", "source_ids", "alias_of",
-               "is_subagent", "parent_session_id", "parent_turn_id", "agent_path", "has_usage", "synthetic")
+               "is_subagent", "parent_session_id", "parent_turn_id", "agent_path", "has_usage", "synthetic",
+               "continuation_of")
 
 
 def _json(value):
@@ -269,10 +270,15 @@ class UsageQueries:
         preview_call = call(group.pop("_preview_call_id", None))
         row = db.execute("SELECT data FROM usage_query_turns WHERE id=?", (group["id"],)).fetchone()
         meta = json.loads(row[0]) if row else {}
-        preview = meta.get("output_preview") if meta.get("status") in ("completed", "aborted") else meta.get("latest_output_preview")
+        final_key = group.pop("_final_turn_key", group["id"])
+        final_row = db.execute("SELECT data FROM usage_query_turns WHERE id=?", (final_key,)).fetchone()
+        final_meta = json.loads(final_row[0]) if final_row else meta
+        preview = (final_meta.get("output_preview") if final_meta.get("status") in ("completed", "aborted")
+                   else final_meta.get("latest_output_preview"))
         group.update(session_title=primary.get("session_title") or meta.get("session_title") or "",
                      prompt_preview=_user_preview(meta.get("prompt_preview") or "") or _user_preview(primary.get("prompt_preview") or ""),
-                     output_preview=preview or meta.get("output_preview") or preview_call.get("output_preview") or "")
+                     output_preview=preview or final_meta.get("output_preview") or meta.get("output_preview")
+                     or preview_call.get("output_preview") or "")
 
     @staticmethod
     def _call_filters(alias, source, model, tier):
@@ -386,6 +392,17 @@ class UsageQueries:
         with self._connect() as db:
             row = db.execute("SELECT data FROM usage_request_groups WHERE record_kind='user_request' AND is_subagent=0 "
                              "ORDER BY timestamp DESC,id DESC LIMIT 1").fetchone()
+            return json.loads(row[0]) if row else None
+
+    def widget_request(self):
+        """Choose the newest running main request, then the latest main request."""
+        with self._connect() as db:
+            row = db.execute("SELECT data FROM usage_request_groups WHERE record_kind='user_request' AND is_subagent=0 "
+                             "AND json_extract(data,'$.request_status')='running' "
+                             "ORDER BY timestamp DESC,id DESC LIMIT 1").fetchone()
+            if row is None:
+                row = db.execute("SELECT data FROM usage_request_groups WHERE record_kind='user_request' AND is_subagent=0 "
+                                 "ORDER BY timestamp DESC,id DESC LIMIT 1").fetchone()
             return json.loads(row[0]) if row else None
 
     def filters(self):

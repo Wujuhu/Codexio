@@ -36,7 +36,7 @@ app = BUNDLE(
         "CFBundleDisplayName": "Codexio",
         "CFBundleShortVersionString": VERSION,
         "CFBundleVersion": VERSION,
-        "LSMinimumSystemVersion": "12.0",
+        "LSMinimumSystemVersion": "15.0",
         "NSHighResolutionCapable": True,
         "NSRequiresAquaSystemAppearance": False,
         "NSSupportsAutomaticTermination": False,

@@ -968,11 +968,13 @@ class Dashboard(QMainWindow):
             brand_pixmap.setDevicePixelRatio(2)
         brand_icon.setPixmap(brand_pixmap)
         brand_icon.setFixedSize(32, 32)
+        brand_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         brand_icon.setAccessibleName("Codexio")
         brand_row.addWidget(brand_icon)
         brand = plain_label("Codexio")
         self._brand_name = brand
         brand.setObjectName("brandName")
+        brand.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         brand.setMinimumWidth(0)
         brand.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         brand_row.addWidget(brand, 1)
