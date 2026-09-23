@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import math
+import time
 from functools import lru_cache
 
-from PySide6.QtCore import QByteArray, QDate, QPointF, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPainterPath, QPen, QPixmap, QTextCharFormat
+from PySide6.QtCore import QByteArray, QDate, QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QIcon, QPainter, QPainterPath, QPen, QPixmap, QTextCharFormat
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QButtonGroup, QCalendarWidget, QDateEdit, QFrame, QHBoxLayout, QHeaderView, QLabel, QListWidget,
@@ -21,7 +22,7 @@ from codexio.theme import theme_colors
 from codexio.money import usd
 from codexio.usage_collector import _user_preview
 from codexio.user_requests import normalized_tier
-from codexio.usage_metrics import cache_hit_rate, cache_percentage, cache_tooltip, output_speed_text, output_speed_tooltip
+from codexio.usage_metrics import cache_hit_rate, cache_percentage
 
 PAGE_TITLES = dict(overview="概览", subscription="订阅额度", trends="用量趋势", logs="请求日志", pricing="模型定价", settings="设置")
 NAVIGATION_LABELS = dict(overview="概览", logs="日志", trends="用量", subscription="订阅", pricing="定价", settings="设置")
@@ -624,6 +625,7 @@ SECONDARY_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 PRIMARY_COLOR_ROLE = int(Qt.ItemDataRole.UserRole) + 2
 UPSTREAM_ROLE = int(Qt.ItemDataRole.UserRole) + 3
 UPSTREAM_MISMATCH_ROLE = int(Qt.ItemDataRole.UserRole) + 4
+DETAIL_LINK_ROLE = int(Qt.ItemDataRole.UserRole) + 5
 
 
 class LedgerDelegate(QStyledItemDelegate):
@@ -639,6 +641,7 @@ class LedgerDelegate(QStyledItemDelegate):
         rect = QRectF(option.rect).adjusted(9, 4, -9, -4)
         font = QFont(opt.font)
         font.setPixelSize(13 if index.data(PRIMARY_COLOR_ROLE) == "running" else 12)
+        font.setUnderline(bool(index.data(DETAIL_LINK_ROLE)))
         fm = QFontMetrics(font)
         small = QFont(font)
         small.setPixelSize(11)
@@ -680,7 +683,7 @@ class LedgerDelegate(QStyledItemDelegate):
             painter.drawPath(arrow)
             painter.restore()
             return
-        color = colors.get(index.data(PRIMARY_COLOR_ROLE), colors["text"])
+        color = colors["chart_input_ink"] if index.data(DETAIL_LINK_ROLE) else colors.get(index.data(PRIMARY_COLOR_ROLE), colors["text"])
         painter.setFont(font)
         painter.setPen(QColor(color))
         painter.drawText(QRectF(rect.left(), y, rect.width(), fm.height()), Qt.AlignmentFlag.AlignCenter,
@@ -694,9 +697,12 @@ class LedgerDelegate(QStyledItemDelegate):
 
 
 class LedgerTable(QTableWidget):
-    duration_column = 6
-    speed_column = 5
+    duration_column = 5
     cache_column = 3
+
+    @property
+    def details_column(self):
+        return self.columnCount() - 1 if self.grouped and not self.compact else -1
 
     def __init__(self, grouped=True, compact=False, parent=None):
         super().__init__(parent)
@@ -727,9 +733,9 @@ class LedgerTable(QTableWidget):
             headers = ["用户请求 / 发起时间", "模型", "费用", "状态"]
             self.weights = [46, 24, 20, 10]
         else:
-            headers = ["用户请求 / 发起时间" if grouped else "关联输入 / 计量时间", "模型", "输入 / 输出", "缓存命中率", "费用", "速度", "耗时"]
-            headers += ["状态", "来源"] if grouped else ["来源"]
-            self.weights = [26, 14, 13, 10, 12, 10, 8, 7, 8] if grouped else [28, 15, 14, 11, 13, 11, 9, 8]
+            headers = ["用户请求 / 发起时间" if grouped else "关联输入 / 计量时间", "模型", "输入 / 输出", "缓存命中率", "费用", "耗时"]
+            headers += ["状态", "来源", "详情"] if grouped else ["来源"]
+            self.weights = [26, 14, 13, 10, 12, 8, 7, 8, 6] if grouped else [28, 15, 14, 11, 13, 9, 8]
         changed = self.set_headers(headers)
         self._apply_source_visibility()
         return changed
@@ -740,7 +746,7 @@ class LedgerTable(QTableWidget):
 
     def _apply_source_visibility(self):
         for column in range(self.columnCount()):
-            self.setColumnHidden(column, not self.compact and not self._show_source and column == self.columnCount() - 1)
+            self.setColumnHidden(column, not self._show_source and self._headers[column] == "来源")
         self.fit_columns()
 
     def set_headers(self, headers):
@@ -764,12 +770,12 @@ class LedgerTable(QTableWidget):
     def fit_columns(self):
         if not getattr(self, "weights", None):
             return
-        minimum = 580 if self.compact else 810
+        minimum = 580 if self.compact else 740
         font = QFont(self.font())
         font.setPixelSize(12)
         fm = QFontMetrics(font)
-        base = [200, 125, 110, 58] if self.compact else ([170, 100, 82, 78, 82, 85, 56, 56, 72] if self.grouped else [190, 110, 90, 78, 90, 85, 64, 78])
-        for column in ([2] if self.compact else [2, 3, 4, 5, 6]):
+        base = [200, 125, 110, 58] if self.compact else ([190, 120, 90, 78, 82, 60, 56, 72, 56] if self.grouped else [200, 120, 100, 78, 90, 64, 78])
+        for column in ([2] if self.compact else [2, 3, 4, 5]):
             for row in range(self.rowCount()):
                 item = self.item(row, column)
                 if item:
@@ -790,6 +796,17 @@ class LedgerTable(QTableWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.fit_columns()
+
+    def viewportEvent(self, event):
+        if event.type() == QEvent.Type.ToolTip and not self.compact:
+            return True
+        return super().viewportEvent(event)
+
+    def mouseMoveEvent(self, event):
+        index = self.indexAt(event.position().toPoint())
+        self.viewport().setCursor(Qt.CursorShape.PointingHandCursor if index.isValid() and
+                                  index.column() == self.details_column else Qt.CursorShape.ArrowCursor)
+        super().mouseMoveEvent(event)
 
     def set_records(self, rows, cost_formatter, theme="system"):
         self.set_theme(theme)
@@ -815,20 +832,24 @@ class LedgerTable(QTableWidget):
                 values.append(cache_percentage(cache_hit_rate(row)))
             values.append(cost_formatter(row))
             if not self.compact:
-                values.append(output_speed_text(row))
                 values.append(ledger_duration_text(row))
             if self.grouped:
                 values.append({"running": "回复中", "completed": "完成", "aborted": "已中断"}.get(row.get("request_status"), "未知"))
             if not self.compact:
                 values.append(row.get("source_name") or row.get("source_id") or "—")
+                if self.grouped:
+                    values.append("详情")
             for column, text in enumerate(values):
                 item = QTableWidgetItem(str(text))
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                item.setToolTip(str(text))
+                if self.compact:
+                    item.setToolTip(str(text))
+                if column == self.details_column:
+                    item.setData(DETAIL_LINK_ROLE, True)
                 self.setItem(index, column, item)
             # Full request text is available in the persistent details pane.
             self.item(index, 0).setToolTip("")
-            self.item(index, 1).setToolTip("\n".join(models or [row.get("model") or "未知模型"]))
+            self.item(index, 1).setData(Qt.ItemDataRole.AccessibleDescriptionRole, "\n".join(models or [row.get("model") or "未知模型"]))
             upstreams = row.get("upstream_models") or []
             if upstreams and not self.compact:
                 item = self.item(index, 1)
@@ -837,21 +858,70 @@ class LedgerTable(QTableWidget):
                 item.setData(UPSTREAM_MISMATCH_ROLE, bool(row.get("upstream_mismatched_calls")))
                 counts = row.get("upstream_model_counts") or {}
                 detail = "\n".join(f"{value} · {counts.get(value, 1)} 次" for value in upstreams)
-                item.setToolTip("响应返回的上游模型\n" + detail + "\n已检测 %s / %s 次调用\n请求模型：%s" % (
+                item.setData(Qt.ItemDataRole.AccessibleDescriptionRole, "响应返回的上游模型\n" + detail + "\n已检测 %s / %s 次调用\n请求模型：%s" % (
                     row.get("upstream_detected_calls", 1), row.get("upstream_total_calls", 1), " / ".join(models or [model])))
-                item.setData(Qt.ItemDataRole.AccessibleDescriptionRole, item.toolTip())
-            if not self.compact:
-                self.item(index, self.cache_column).setToolTip(cache_tooltip(row))
-                self.item(index, self.speed_column).setToolTip(output_speed_tooltip(row))
-                self.item(index, self.duration_column).setToolTip(duration_tooltip(row))
             if self.grouped and row.get("request_status") == "running":
-                status = self.item(index, 3 if self.compact else 7)
+                status = self.item(index, 3 if self.compact else 6)
                 status.setData(PRIMARY_COLOR_ROLE, "running")
                 emphasis = QFont(self.font())
                 emphasis.setBold(True)
                 status.setFont(emphasis)
         self.setUpdatesEnabled(True)
         self.fit_columns()
+
+
+class HoverDetails(QFrame):
+    """Interactive details, kept open while the pointer is on its link or panel."""
+    close_requested = Signal()
+
+    def __init__(self, parent):
+        super().__init__(parent, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow)
+        self.setFixedWidth(320)
+        self._anchor = QRect()
+        self._outside_since = None
+        self._timer = QTimer(self)
+        self._timer.setInterval(50)
+        self._timer.timeout.connect(self._track_pointer)
+
+    def show_at(self, anchor):
+        self._anchor = QRect(anchor)
+        self._outside_since = None
+        screen = QApplication.screenAt(anchor.center()) or QApplication.primaryScreen()
+        if screen:
+            area = screen.availableGeometry().adjusted(8, 8, -8, -8)
+            self.resize(self.width(), min(520, int(area.height() * .7)))
+            x = anchor.left() - self.width() - 6
+            if x < area.left():
+                x = anchor.right() + 6
+            x = max(area.left(), min(x, area.right() - self.width()))
+            y = max(area.top(), min(anchor.top(), area.bottom() - self.height()))
+            self.move(x, y)
+        self.show()
+        self._timer.start()
+
+    def _track_pointer(self):
+        position = QCursor.pos()
+        if self.frameGeometry().contains(position) or self._anchor.adjusted(-3, -3, 3, 3).contains(position):
+            self._outside_since = None
+        elif self._outside_since is None:
+            self._outside_since = time.monotonic()
+        elif time.monotonic() - self._outside_since >= .2:
+            self.close_requested.emit()
+
+    def paintEvent(self, event):
+        colors = theme_colors(getattr(self.parentWidget(), "_theme", "system"))
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor(colors["inspector_border"]), 1))
+        painter.setBrush(QColor(colors["inspector_surface"]))
+        painter.drawRoundedRect(QRectF(self.rect()).adjusted(.5, .5, -.5, -.5), 12, 12)
+
+    def hideEvent(self, event):
+        self._timer.stop()
+        super().hideEvent(event)
 
 
 class PanelResizeHandle(QFrame):

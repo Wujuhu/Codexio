@@ -12,6 +12,7 @@ import time
 import psutil
 
 from codexio.upstream_config import UpstreamError
+from codexio.process_env import external_environment
 
 
 def identity(process):
@@ -111,7 +112,7 @@ def _close_client(client):
         # AppleEvents to the app or changing macOS automation permissions.
         script = "ObjC.import('AppKit'); $.NSRunningApplication.runningApplicationWithProcessIdentifier(%d).terminate;" % client["pid"]
         subprocess.run(["/usr/bin/osascript", "-l", "JavaScript", "-e", script],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5, env=external_environment())
     else:
         from ctypes import wintypes
         user = ctypes.WinDLL("user32", use_last_error=True)
@@ -172,13 +173,14 @@ def restart_running():
         launched.add(client["exe"])
         if sys.platform == "darwin":
             result = subprocess.run(["/usr/bin/open", "-a", client["bundle"]],
-                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, env=external_environment())
             if result.returncode:
                 raise UpstreamError("未能重新打开 ChatGPT；配置已恢复，可手动打开客户端")
         elif client.get("aumid"):
-            os.startfile("shell:AppsFolder\\" + client["aumid"])
+            subprocess.Popen([str(Path(os.environ.get("WINDIR", "C:/Windows")) / "explorer.exe"),
+                              "shell:AppsFolder\\" + client["aumid"]], env=external_environment(), close_fds=True)
         else:
-            subprocess.Popen([client["exe"]], cwd=str(Path(client["exe"]).parent), close_fds=True)
+            subprocess.Popen([client["exe"]], cwd=str(Path(client["exe"]).parent), close_fds=True, env=external_environment())
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
         if any(item["exe"] in launched for item in running_clients()):

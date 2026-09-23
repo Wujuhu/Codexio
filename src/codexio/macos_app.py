@@ -87,13 +87,13 @@ class MacController(QObject):
             "main_hidden": self.save_geometry, "open_data_directory": self.open_data_directory,
             "check_update": lambda: self.updater.check(),
             "upstream_toggle": lambda value: self.upstream.toggle(value),
-            "upstream_exit_prompt": lambda value: self.upstream.set_exit_prompt(value),
         }, app, factory=partial(Dashboard, desktop_platform="macos"))
         self.upstream = UpstreamManager(app, data_dir(), lambda: self.config, self.apply_config,
                                         lambda: self.dashboard_host.dashboard, mock=mock)
         self.upstream.on_quit = self._finish_quit
         self.upstream.status_changed.connect(self.dashboard_host.set_upstream_status)
         self.upstream.observations_changed.connect(self.dashboard_host.refresh_upstream)
+        self.upstream.startup_ready.connect(self._startup_ready)
         self.updater = UpdateManager(app, lambda: self.upstream.quit_for_update(self._finish_quit), available=False if mock else None)
         self.updater.status_changed.connect(self.dashboard_host.set_update_status)
         self.menu_bar = MenuBarController(app, self.settings, self.config,
@@ -135,14 +135,16 @@ class MacController(QObject):
         refresh.setShortcut(QKeySequence("Ctrl+R"))
 
     def start(self):
-        if self.settings.show_main_on_startup or not self.menu_bar.tray.isSystemTrayAvailable():
-            self.open_main()
         self.usage.start()
         self.worker.start()
         self.server_usage.start()
         self.updater.start(bool(self.config.get("macos_auto_update", True)))
         QTimer.singleShot(0, self.upstream.start)
         QTimer.singleShot(1500, self.acknowledge_restart)
+
+    def _startup_ready(self, force_main):
+        if force_main or self.settings.show_main_on_startup or not self.menu_bar.tray.isSystemTrayAvailable():
+            self.open_main()
 
     def acknowledge_restart(self):
         message = acknowledge_update()

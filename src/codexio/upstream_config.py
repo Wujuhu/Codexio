@@ -134,17 +134,21 @@ class OfficialRoute:
             self.preflight()
             original = self._read()
             doc = self._parse(original)
+            routed_url = base_url[:-3] + "/" + route_token + "/v1"
             table = tomlkit.table()
-            table.update(name="OpenAI", base_url=base_url, wire_api="responses",
-                         requires_openai_auth=True, supports_websockets=False)
+            table.update(name="OpenAI", base_url=routed_url, wire_api="responses",
+                         requires_openai_auth=True, supports_websockets=True)
             table["http_headers"] = {ROUTE_HEADER: route_token}
-            doc["model_provider"] = ROUTE_ID
+            # Keep the built-in provider identity, including its dynamic model
+            # catalog and existing conversations. Retain the alias for old turns.
+            doc["model_provider"] = "openai"
+            doc["openai_base_url"] = routed_url
             if "model_providers" not in doc:
                 doc["model_providers"] = tomlkit.table()
             doc["model_providers"][ROUTE_ID] = table
             applied = tomlkit.dumps(doc)
             mode = self.config.stat().st_mode & 0o777 if self.config.exists() else 0o600
-            record = dict(config=str(self.config), original=original, applied=applied, mode=mode,
+            record = dict(config=str(self.config), original=original, applied=applied, mode=mode, route_version=2,
                           existed=self.config.exists(), original_provider=self._parse(original).get("model_provider"))
             private_json(self.journal, record)
             if self._read() != original:
@@ -170,6 +174,15 @@ class OfficialRoute:
                 owned = self._parse(record["applied"])["model_providers"][ROUTE_ID].unwrap()
                 providers = doc.get("model_providers", {})
                 actual = providers.get(ROUTE_ID)
+                if record.get("route_version") == 2:
+                    before = self._parse(record["original"])
+                    applied = self._parse(record["applied"])
+                    for key in ("openai_base_url", "model_provider"):
+                        if doc.get(key) == applied.get(key):
+                            if key in before:
+                                doc[key] = before[key]
+                            else:
+                                doc.pop(key, None)
                 if doc.get("model_provider") == ROUTE_ID:
                     if actual is None or actual.unwrap() != owned:
                         raise UpstreamError("上游路由被外部修改，已保留转发；请重试恢复")

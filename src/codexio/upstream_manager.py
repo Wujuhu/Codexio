@@ -1,27 +1,22 @@
-"""Shared macOS/Windows UI lifecycle for optional upstream detection."""
+"""Shared lifecycle: apply routing first, then offer restart now or later."""
 from __future__ import annotations
 
 import os
 import threading
 
 from PySide6.QtCore import QObject, QEvent, QTimer, Signal
-from PySide6.QtWidgets import QCheckBox, QMessageBox
+from PySide6.QtWidgets import QMessageBox
 
+from codexio.logging_setup import get_logger
 from codexio.upstream_config import UpstreamError
 from codexio.upstream_service import UpstreamService
 from codexio.upstream_store import UpstreamStore
 
 
-ENABLE_TEXT = ("上游检测保留 ChatGPT 官方登录，通过本地转发读取响应中的模型名称。\n\n"
-               "开启后会立即自动重启正在运行的 ChatGPT；未运行时不会主动打开。"
-               "退出 Codexio 时会恢复直连并自动重启 ChatGPT，确保之后仍可使用。\n\n"
-               "下次打开 Codexio 会再次询问，确认后重新开启检测并自动重启 ChatGPT。"
-               "进行中的请求会中断。是否继续？")
-
-
 class UpstreamManager(QObject):
     status_changed = Signal(str, bool, bool)
     observations_changed = Signal()
+    startup_ready = Signal(bool)
     _done = Signal(object)
 
     def __init__(self, app, directory, config, save, parent_window, *, mock=False, service=None):
@@ -30,14 +25,11 @@ class UpstreamManager(QObject):
         self.mock = mock
         self.service = service or UpstreamService(directory)
         self.store = UpstreamStore(directory / "upstream.sqlite")
-        self.active = False
-        self.busy = False
-        self.closing = False
-        self.allow_quit = False
-        self.system_exit = False
+        self.active = self.busy = self.closing = self.allow_quit = self.system_exit = False
         self.on_quit = None
         self._revision = 0
         self._polling = False
+        self._pending_quit = None
         self._done.connect(self._finished)
         self._timer = QTimer(self)
         self._timer.setInterval(3000)
@@ -46,41 +38,48 @@ class UpstreamManager(QObject):
         self.app.commitDataRequest.connect(self._system_quit)
 
     def _persist(self, **values):
-        updated = dict(self.config(), **values)
-        self.save(updated)
+        self.save(dict(self.config(), **values))
 
     def _status(self, message):
         self.status_changed.emit(message, self.active, self.busy)
 
-    def _confirm(self, *, quitting=False):
+    def _offer_restart(self, operation, after=None):
+        if not self.service.clients_running():
+            self._finish_action(operation, after)
+            return
+        self.busy = True
+        self._status("已应用设置 · 等待选择重启方式" if self.active else "已恢复配置 · 等待选择重启方式")
         box = QMessageBox(self.parent_window())
         box.setWindowTitle("上游检测")
-        box.setText("退出并恢复官方直连？" if quitting else "开启上游检测并自动重启 ChatGPT？")
-        box.setInformativeText(("退出后会暂时关闭检测、恢复直连，并自动重启正在运行的 ChatGPT。"
-                                "下次打开 Codexio 仍会询问是否重新开启检测。") if quitting else ENABLE_TEXT)
-        box.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
-        box.button(QMessageBox.StandardButton.Ok).setText("退出并重启" if quitting else "开启并重启")
-        box.button(QMessageBox.StandardButton.Cancel).setText("取消")
-        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
-        checkbox = QCheckBox("下次退出不再提示") if quitting else None
-        if checkbox:
-            box.setCheckBox(checkbox)
-        accepted = box.exec() == QMessageBox.StandardButton.Ok
-        if accepted and checkbox and checkbox.isChecked():
-            self._persist(upstream_exit_prompt=False)
-        return accepted
+        if operation in ("enable", "startup"):
+            box.setText("Codexio 已应用上游检测设置")
+            box.setInformativeText("重启 ChatGPT 后应用改动。现在重启会中断正在进行的请求。")
+        else:
+            box.setText("Codexio 已恢复 ChatGPT 配置" + ("，即将退出" if operation == "quit" else ""))
+            box.setInformativeText("如果不重启 ChatGPT 可能无法正常运行。现在重启会中断正在进行的请求。")
+        later = box.addButton("稍后自行重启", QMessageBox.ButtonRole.RejectRole)
+        now = box.addButton("现在重启", QMessageBox.ButtonRole.AcceptRole)
+        box.setDefaultButton(later)
+        box.setEscapeButton(later)
+        box.exec()
+        self.busy = False
+        if box.clickedButton() == now:
+            self._run("restart", self.service.restart_client, (operation, after))
+        else:
+            self._finish_action(operation, after, deferred=True)
 
     def _run(self, operation, work, after=None):
         if self.busy or self.closing:
             return
         self.busy = True
-        self._status({"enable": "正在开启并重启 ChatGPT…", "disable": "正在恢复直连并重启 ChatGPT…",
-                      "quit": "正在恢复直连并重启 ChatGPT…", "startup": "正在检查上次路由…"}[operation])
+        self._status({"enable": "正在应用上游检测设置…", "disable": "正在恢复 ChatGPT 配置…",
+                      "quit": "正在恢复 ChatGPT 配置并停止代理…", "startup": "正在应用启动设置…",
+                      "recover": "正在恢复直连配置…", "restart": "正在重启 ChatGPT…"}[operation])
         def run():
             try:
                 value, error = work(), None
             except Exception as exc:
-                value, error = None, str(exc) if isinstance(exc, UpstreamError) else "操作未完成；已保留恢复记录，请重试"
+                value, error = None, str(exc) if isinstance(exc, UpstreamError) else "操作未完成，请重试"
             self._done.emit((operation, value, error, after))
         threading.Thread(target=run, name="Codexio-upstream", daemon=True).start()
 
@@ -88,9 +87,20 @@ class UpstreamManager(QObject):
         self._timer.start()
         if self.mock:
             self._status("预览模式不启用上游检测")
+            self.startup_ready.emit(False)
             return
         update = bool(os.environ.get("CODEXIO_UPDATE_JOB"))
-        self._run("startup", lambda: self.service.recover(update=update))
+        enabled = bool(self.config().get("upstream_detection_enabled"))
+        def start():
+            handed_off = self.service.recover(update=update)
+            if enabled:
+                if not handed_off:
+                    self.service.enable()
+                return handed_off
+            if self.service.state or self.service.needs_restore:
+                self.service.disable()
+            return False
+        self._run("startup", start)
 
     def toggle(self, enabled):
         if self.busy or self.closing:
@@ -99,12 +109,8 @@ class UpstreamManager(QObject):
             self._status("预览模式不修改 Codex 配置")
             return
         if enabled:
-            if self.active:
-                return
-            if not self._confirm():
-                self._status("本次未启用；下次仍询问" if self.config().get("upstream_detection_enabled") else "已关闭")
-                return
-            self._run("enable", self.service.enable)
+            if not self.active:
+                self._run("enable", self.service.enable)
         else:
             self._persist(upstream_detection_enabled=False)
             if self.active or self.service.needs_restore:
@@ -112,45 +118,72 @@ class UpstreamManager(QObject):
             else:
                 self._status("已关闭 · 官方直连")
 
-    def set_exit_prompt(self, enabled):
-        self._persist(upstream_exit_prompt=bool(enabled))
-
     def _finished(self, result):
         operation, value, error, after = result
+        if self.closing:
+            return
         if operation == "health":
             self._polling = False
-            if self.closing or self.busy or not self.active or not error:
-                return
-            self._run("startup", self.service.recover)
+            if error and self.active and not self.busy:
+                self._run("recover", self.service.disable)
             return
         self.busy = False
         self.active = self.service.active
         if error:
             self._status(error)
+            if operation == "restart" and after[0] == "quit":
+                get_logger("upstream").warning("退出时自动重启失败：%s", error)
+                self._exit(after[1])
+                return
             QMessageBox.warning(self.parent_window(), "上游检测", error)
+            if operation == "startup":
+                self.startup_ready.emit(True)
+            if operation == "restart" and after[0] == "startup":
+                self.startup_ready.emit(True)
+            return
+        if operation == "enable":
+            self._persist(upstream_detection_enabled=True)
+        if self._pending_quit and operation not in ("quit", "restart"):
+            callback, self._pending_quit = self._pending_quit, None
+            self.request_quit(callback)
             return
         if operation == "startup":
-            if self.active:
-                self._status("已接续上游检测 · ChatGPT 无需再次重启")
-            elif self.config().get("upstream_detection_enabled"):
-                self.toggle(True)
+            if self.active and not value:
+                self._offer_restart(operation)
             else:
-                self._status("已关闭 · 官方直连")
+                self._finish_action(operation)
         elif operation == "enable":
-            self._persist(upstream_detection_enabled=True)
-            self._status(value)
+            self._offer_restart(operation)
         elif operation == "disable":
-            self._persist(upstream_detection_enabled=False)
-            self._status(value)
+            if value:
+                self._offer_restart(operation)
+            else:
+                self._finish_action(operation)
         elif operation == "quit":
+            self._offer_restart(operation, after)
+        elif operation == "restart":
+            self._finish_action(*after, restarted=bool(value))
+        elif operation == "recover":
+            self._status("代理已停止并恢复配置，请重新开启上游检测")
+
+    def _finish_action(self, operation, after=None, *, deferred=False, restarted=False):
+        self._status(("已开启" if self.active else "已关闭 · 官方直连") +
+                     (" · 请自行重启 ChatGPT" if deferred else " · 已重启 ChatGPT" if restarted else ""))
+        if operation == "quit":
             self._exit(after)
+        elif self._pending_quit:
+            callback, self._pending_quit = self._pending_quit, None
+            self.request_quit(callback)
+        elif operation == "startup":
+            self.startup_ready.emit(self.active)
 
     def request_quit(self, callback):
-        if self.busy or self.closing:
+        if self.closing:
+            return
+        if self.busy:
+            self._pending_quit = callback
             return
         if (self.active or self.service.needs_restore) and not self.system_exit:
-            if self.config().get("upstream_exit_prompt", True) and not self._confirm(quitting=True):
-                return
             self._run("quit", self.service.disable, callback)
         else:
             self._exit(callback)
@@ -167,9 +200,7 @@ class UpstreamManager(QObject):
         self._exit(callback)
 
     def _system_quit(self, _session):
-        self.system_exit = True
-        self.allow_quit = True
-        # The guardian restores on owner exit without reopening the client.
+        self.system_exit = self.allow_quit = True
         self.stop()
 
     def eventFilter(self, watched, event):
@@ -190,7 +221,7 @@ class UpstreamManager(QObject):
             error = None
             try:
                 if not self.service.healthy():
-                    raise UpstreamError("检测已暂停")
+                    error = "检测已暂停"
             except UpstreamError:
                 error = "转发服务中断"
             self._done.emit(("health", None, error, None))

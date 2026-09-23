@@ -161,7 +161,6 @@ def main(argv: list[str] | None = None) -> int:
         "main_hidden": save_main_geometry,
         "check_update": lambda: updater.check() if updater is not None else None,
         "upstream_toggle": lambda value: upstream.toggle(value),
-        "upstream_exit_prompt": lambda value: upstream.set_exit_prompt(value),
     }, app)
     upstream = UpstreamManager(app, data_dir(), lambda: analytics_config, apply_config,
                                lambda: dashboard_host.dashboard, mock=args.mock)
@@ -222,7 +221,7 @@ def main(argv: list[str] | None = None) -> int:
         scheme_signal.connect(update_theme)
     update_theme()
     window.setVisible(bool(analytics_config.get("widget_visible", True)))
-    dashboard_host.open("overview", "today")
+    upstream.startup_ready.connect(lambda *_: dashboard_host.open("overview", "today"))
     usage.start()
     worker.start()
     server_usage.start()

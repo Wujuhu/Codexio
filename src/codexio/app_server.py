@@ -402,7 +402,8 @@ def _terminate_process(proc: subprocess.Popen[bytes]) -> None:
 
 
 def _child_env() -> dict:
-    env = os.environ.copy()
+    from codexio.process_env import external_environment
+    env = external_environment()
     if not _local_proxy_unreachable():
         return env
     logger.warning("本机代理不可用，已改为直连启动 Codex")

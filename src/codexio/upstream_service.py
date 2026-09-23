@@ -15,7 +15,8 @@ from urllib.request import Request, ProxyHandler, build_opener
 
 import psutil
 
-from codexio.upstream_client import alive, identity, restart_running
+from codexio.upstream_client import alive, identity, restart_running, running_clients
+from codexio.process_env import external_environment
 from codexio.upstream_config import OfficialRoute, UpstreamError, codex_config_path, private_json, read_json
 
 
@@ -26,7 +27,7 @@ def verify_official_login():
         raise UpstreamError("未找到 Codex 客户端，未修改路由")
     try:
         options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
-        result = subprocess.run([str(executable), "login", "status"], capture_output=True, timeout=15, **options)
+        result = subprocess.run([str(executable), "login", "status"], capture_output=True, timeout=15, env=external_environment(), **options)
     except (OSError, subprocess.TimeoutExpired):
         raise UpstreamError("无法确认官方登录状态，未修改路由") from None
     # Status output is examined in memory only; never persist credentials/output.
@@ -74,6 +75,45 @@ class UpstreamService:
         self.active = False
         self.handed_off = False
         self.process = None
+        saved = read_json(self.directory / "client-routes.json").get("clients", [])
+        self._loaded_routes = {(item["pid"], item["created"]): item["route"] for item in saved
+                               if isinstance(item, dict) and all(key in item for key in ("pid", "created", "route"))}
+        self._startup_route = self._current_route()
+        self._route_history = [(0, self._startup_route)]
+
+    def _current_route(self):
+        if self.route.journal.exists():
+            record = read_json(self.route.journal)
+            applied = self.route._parse(record.get("applied", ""))
+            return str(applied.get("openai_base_url") or applied.get("model_providers", {}).get("codexio-upstream", {}).get("base_url") or "direct")
+        return "direct"
+
+    def _remember_clients(self, route):
+        clients = running_clients()
+        for client in clients:
+            loaded = next((value for stamp, value in reversed(self._route_history) if stamp <= client["created"]), route)
+            self._loaded_routes.setdefault((client["pid"], client["created"]), loaded)
+        keys = {(client["pid"], client["created"]) for client in clients}
+        self._loaded_routes = {key: value for key, value in self._loaded_routes.items() if key in keys}
+        private_json(self.directory / "client-routes.json", {"clients": [dict(pid=key[0], created=key[1], route=value)
+                     for key, value in self._loaded_routes.items()]})
+        return clients
+
+    def clients_running(self):
+        return bool(self._remember_clients(self._current_route()))
+
+    def restart_needed(self):
+        route = self._current_route()
+        return any(self._loaded_routes[(client["pid"], client["created"])] != route
+                   for client in self._remember_clients(route))
+
+    def restart_client(self):
+        restarted = self.restart()
+        route = self._current_route()
+        for client in running_clients():
+            self._loaded_routes[(client["pid"], client["created"])] = route
+        self._remember_clients(route)
+        return restarted
 
     def control(self, action, **data):
         state = self.state or read_json(self.directory / "session.json")
@@ -102,6 +142,13 @@ class UpstreamService:
             self.directory.chmod(0o700)
         previous = read_json(self.directory / "session.json")
         self.state = previous
+        if previous.get("process") and alive(previous["process"]) and previous.get("protocol_version", 1) < 2:
+            owner = previous.get("owner")
+            if owner and owner != self.owner and alive(owner):
+                raise UpstreamError("另一个 Codexio 正在使用上游检测")
+            self.control("deactivate")
+            self._route_history.append((time.time(), self._current_route()))
+            self._stop_helper()
         if previous.get("process") and alive(previous["process"]):
             self.control("health")
         else:
@@ -145,9 +192,11 @@ class UpstreamService:
                 raise UpstreamError("本地转发启动超时，已恢复原路由")
         result = self.control("claim", owner=self.owner, update=update)
         self.active = bool(result["capture"])
+        self._route_history.append((time.time(), self._current_route()))
         return self.active
 
     def recover(self, *, update=False):
+        self._remember_clients(self._startup_route)
         self.active = False
         previous = read_json(self.directory / "session.json")
         if self.route.journal.exists() or alive(previous.get("process")):
@@ -155,25 +204,45 @@ class UpstreamService:
         return False
 
     def enable(self):
+        self._remember_clients(self._current_route())
         self.verify_login()
         self.ensure()
+        self._remember_clients(self._current_route())
         self.control("activate")
         self.active = True
-        try:
-            restarted = self.restart()
-        except Exception as exc:
-            self.control("deactivate")
-            self.active = False
-            raise UpstreamError(str(exc) if isinstance(exc, UpstreamError) else "客户端重启失败，已恢复直连配置") from None
-        return "已开启 · 已自动重启 ChatGPT" if restarted else "已开启 · 下次打开 ChatGPT 生效"
+        self._route_history.append((time.time(), self._current_route()))
+        return self.restart_needed()
 
-    def disable(self, *, restart=True):
-        if not alive(self.state.get("process")):
-            self.ensure()
-        self.control("deactivate")
+    def disable(self):
+        self._remember_clients(self._current_route())
+        self.state = self.state or read_json(self.directory / "session.json")
+        if alive(self.state.get("process")):
+            self.control("deactivate")
+        else:
+            self.route.restore()
         self.active = False
-        restarted = self.restart() if restart else False
-        return "已关闭 · 已自动重启 ChatGPT" if restarted else "已关闭 · 官方直连"
+        self._route_history.append((time.time(), "direct"))
+        self._stop_helper()
+        return self.restart_needed()
+
+    def _stop_helper(self):
+        process = self.state.get("process")
+        if not alive(process):
+            return
+        if self.state.get("protocol_version", 1) >= 2:
+            self.control("shutdown")
+            deadline = time.monotonic() + 5
+            while alive(process) and time.monotonic() < deadline:
+                time.sleep(.05)
+        if alive(process):
+            # Only the private, identity-checked relay is stopped. Never a client.
+            target = psutil.Process(process["pid"])
+            if alive(process):
+                target.terminate()
+                try:
+                    target.wait(3)
+                except psutil.TimeoutExpired:
+                    raise UpstreamError("本地代理尚未退出，请稍后重试") from None
 
     def prepare_update(self):
         if self.active:
@@ -188,7 +257,7 @@ class UpstreamService:
         if self.handed_off or not self.state:
             return
         try:
-            self.control("abandon")
+            self.disable()
         except UpstreamError:
             self.route.restore()
 

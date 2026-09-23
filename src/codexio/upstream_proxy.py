@@ -10,7 +10,7 @@ import sys
 import ssl
 import time
 
-from aiohttp import ClientSession, ClientTimeout, ClientError, DummyCookieJar, TCPConnector, web
+from aiohttp import ClientSession, ClientTimeout, ClientError, DummyCookieJar, TCPConnector, WSMsgType, WSServerHandshakeError, web
 import certifi
 import psutil
 
@@ -46,10 +46,11 @@ class Relay:
         self.app = web.Application(client_max_size=1024**3)
         self.app.router.add_post("/_codexio/{action}", self.control)
         self.app.router.add_route("*", "/v1/{path:.*}", self.forward)
+        self.app.router.add_route("*", "/{route}/v1/{path:.*}", self.forward)
 
     def persist(self):
         self.state.update(owner=self.owner, guards=self.guards, capture=self.capture,
-                          handoff_until=self.handoff_until, error=self.error)
+                          handoff_until=self.handoff_until, error=self.error, protocol_version=2)
         private_json(self.directory / "session.json", self.state)
 
     async def start(self):
@@ -135,6 +136,14 @@ class Relay:
             self.owner = None
             self.handoff_until = 0
             self.persist()
+        elif action == "shutdown":
+            self.detach()
+            if not self.error:
+                self.owner = None
+                self.guards = []
+                self.handoff_until = 0
+                self.persist()
+                self.stopping.set()
         elif action != "health":
             raise web.HTTPNotFound()
         return web.json_response({"capture": self.capture, "error": self.error, "process": self.state["process"]})
@@ -156,20 +165,21 @@ class Relay:
                 self.queue.task_done()
 
     async def forward(self, request):
-        if not hmac.compare_digest(request.headers.get(ROUTE_HEADER, ""), self.state["route_token"]):
+        supplied = request.match_info.get("route") or request.headers.get(ROUTE_HEADER, "")
+        if not hmac.compare_digest(supplied, self.state["route_token"]):
             raise web.HTTPForbidden()
         if not request.headers.get("Authorization", "").startswith("Bearer "):
             raise web.HTTPUnauthorized()
-        if request.headers.get("Upgrade", "").lower() == "websocket":
-            raise web.HTTPBadRequest(text="This route uses HTTP/SSE.")
         # Never accept a destination URL from a client. Paths and redirects cannot
         # change the official origin or send its OAuth credentials to another host.
-        target = self.origin + request.raw_path[len("/v1"):]
+        target = self.origin + "/" + request.raw_path.split("/v1/", 1)[1]
         headers = relay_headers(request.headers)
         headers["Accept-Encoding"] = "identity"
         self.active_requests += 1
         response = None
         try:
+            if request.headers.get("Upgrade", "").lower() == "websocket":
+                return await self.forward_websocket(request, target, headers)
             async with self.session.request(request.method, target, headers=headers,
                                             data=request.content.iter_chunked(65536) if request.can_read_body else None,
                                             allow_redirects=False) as upstream:
@@ -202,6 +212,41 @@ class Relay:
         finally:
             self.active_requests -= 1
 
+    async def forward_websocket(self, request, target, headers):
+        headers = {key: value for key, value in headers.items() if not key.lower().startswith("sec-websocket-")}
+        protocols = [value.strip() for value in request.headers.get("Sec-WebSocket-Protocol", "").split(",") if value.strip()]
+        target = target.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
+        try:
+            async with self.session.ws_connect(target, headers=headers, protocols=protocols, max_msg_size=0) as upstream:
+                response = web.WebSocketResponse(protocols=[upstream.protocol] if upstream.protocol else (), max_msg_size=0)
+                response.headers.update({key: value for key, value in relay_headers(upstream._response.headers).items()
+                                         if not key.lower().startswith("sec-websocket-") and key.lower() not in
+                                         ("content-type", "content-length", "content-encoding")})
+                await response.prepare(request)
+                observer = ResponseObserver(self.observe)
+                async def pump(source, destination, observe=False):
+                    async for message in source:
+                        if message.type == WSMsgType.TEXT:
+                            await destination.send_str(message.data)
+                        elif message.type == WSMsgType.BINARY:
+                            await destination.send_bytes(message.data)
+                        else:
+                            break
+                        if observe and len(message.data) <= observer.MAX_EVENT:
+                            with contextlib.suppress(Exception):
+                                observer._observe(message.data)
+                tasks = [asyncio.create_task(pump(response, upstream)), asyncio.create_task(pump(upstream, response, True))]
+                try:
+                    await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                finally:
+                    for task in tasks:
+                        task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    await response.close()
+                return response
+        except WSServerHandshakeError as error:
+            return web.Response(status=error.status, text="Official WebSocket connection unavailable.")
+
     async def watch_owner(self):
         while not self.stopping.is_set():
             await asyncio.sleep(1)
@@ -212,6 +257,9 @@ class Relay:
                 continue
             if self.capture or self.route.journal.exists():
                 self.detach()
+            if not owner_alive and not self.route.journal.exists():
+                self.stopping.set()
+                continue
             self.guards = [item for item in self.guards if alive(item)]
             if owner_alive and time.monotonic() - self.last_control < 10:
                 continue

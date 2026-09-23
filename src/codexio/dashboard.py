@@ -31,13 +31,12 @@ from codexio.theme import apply_theme, theme_colors
 from codexio.user_requests import aggregate_user_requests, matches_call, REQUEST_STATUSES
 from codexio.usage_collector import _user_preview
 from codexio.usage_queries import summarize_model_calls, comparison_bounds
-from codexio.usage_metrics import (dashboard_summary, dashboard_comparison, cache_percentage, cache_tooltip,
-                                  output_speed_text, output_speed_tooltip)
+from codexio.usage_metrics import dashboard_summary, dashboard_comparison, cache_percentage, cache_tooltip
 from codexio.estimate_display import (ESTIMATE_HEADERS, estimate_amount, estimate_detail, estimate_history,
                                       method_label, select_estimates)
 from codexio.analytics_config import (NAVIGATION_PAGES, normalize_navigation_order, normalize_subscription_profile,
                                      normalize_panel_layout, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, SIDEBAR_COLLAPSED_WIDTH)
-from codexio.desktop_widgets import (DatePicker, DrawerHost, LedgerTable, NavigationList, PanelResizeHandle, PAGE_TITLES, PeriodChange, QuotaMeter,
+from codexio.desktop_widgets import (DatePicker, HoverDetails, LedgerTable, NavigationList, PanelResizeHandle, PAGE_TITLES, PeriodChange, QuotaMeter,
                                     SegmentedControl, TokenComposition, WidgetStylePreview, ledger_duration_text, preview_title, tier_label, ui_icon)
 
 PAGE_NAMES = NAVIGATION_PAGES
@@ -1100,10 +1099,6 @@ class Dashboard(QMainWindow):
     def _save_panel_layout(self):
         self._callback("config", copy.deepcopy(self._config))
 
-    def _preview_width_changed(self, width):
-        self._config["log_preview_width"] = width
-        self._save_panel_layout()
-
     def _navigation_reordered(self, order):
         self._config["navigation_order"] = normalize_navigation_order(order)
         self._navigation.select_page(self._active_page)
@@ -1344,13 +1339,15 @@ class Dashboard(QMainWindow):
         self._log_table.horizontalScrollBar().setProperty("scrollActive", True)
         self._log_table.cellClicked.connect(self._inspect_log_row)
         self._log_table.cellActivated.connect(self._inspect_log_row)
-        inspector = self._create_inspector()
-        self._log_drawer = DrawerHost(self._log_table, inspector, preview_width=self._config["log_preview_width"])
-        self._log_drawer.width_changed.connect(self._preview_width_changed)
+        self._log_table.cellEntered.connect(self._inspect_log_row)
+        self._inspector_popup = self._create_inspector()
+        self._inspector_popup.close_requested.connect(self._close_inspector)
+        self._log_page = page
+        QApplication.instance().installEventFilter(self)
         self._log_canvas, records_layout = card()
         self._log_canvas.setObjectName("logCanvas")
         records_layout.setContentsMargins(22, 20, 4, 20)
-        records_layout.addWidget(self._log_drawer, 1)
+        records_layout.addWidget(self._log_table, 1)
         layout.addWidget(self._log_canvas, 1)
         pagination = QHBoxLayout()
         pagination.setContentsMargins(0, 0, 18, 0)
@@ -1575,17 +1572,9 @@ class Dashboard(QMainWindow):
         self._upstream_toggle.clicked.connect(lambda value: self._callback("upstream_toggle", value))
         upstream_card, self._upstream_badge = settings_card(self._upstream_toggle, "已关闭",
             "保留 ChatGPT 官方登录。仅显示响应实际返回的模型型号，历史请求无法补查；退出 Codexio 会恢复配置。")
-        upstream_card.addWidget(plain_label("可检测上游响应的模型型号，该功能会修改 config.toml，必须在 Codexio 运行时才可检测。开启或关闭该功能，都会自动重启 ChatGPT 以应用改动。", muted=True, wrap=True))
+        upstream_card.addWidget(plain_label("可检测上游响应的模型型号，该功能会修改 config.toml，必须在 Codexio 运行时才可检测。设置更改后，可选择现在重启 ChatGPT 或稍后自行重启。", muted=True, wrap=True))
         self._upstream_status = plain_label("已关闭 · 官方直连", muted=True, wrap=True)
         upstream_card.addWidget(self._upstream_status)
-        separator = QFrame()
-        separator.setProperty("settingsDivider", True)
-        separator.setFixedHeight(1)
-        upstream_card.addWidget(separator)
-        self._upstream_exit_prompt = QCheckBox("退出 Codexio 时提示恢复 ChatGPT 配置并重启")
-        self._upstream_exit_prompt.setChecked(self._config.get("upstream_exit_prompt", True))
-        self._upstream_exit_prompt.clicked.connect(lambda value: self._callback("upstream_exit_prompt", value))
-        upstream_card.addWidget(self._upstream_exit_prompt)
         self.set_upstream_status(*getattr(self, "_upstream_state", ("已关闭 · 官方直连", False, False)))
         updates.addStretch()
         layout.addLayout(body, 1)
@@ -1619,7 +1608,6 @@ class Dashboard(QMainWindow):
             self._upstream_badge.setProperty("detecting", active)
             self._upstream_badge.style().unpolish(self._upstream_badge)
             self._upstream_badge.style().polish(self._upstream_badge)
-            self._restore_control(self._upstream_exit_prompt, self._config.get("upstream_exit_prompt", True))
 
     def refresh_upstream(self):
         self._dirty_pages.add("logs")
@@ -1799,13 +1787,8 @@ class Dashboard(QMainWindow):
                     text = ledger_duration_text(row, now)
                     if item.text() != text:
                         item.setText(text)
-                        item.setToolTip(duration_text(row, now) + "\n" + duration_tooltip(row))
                         if self._log_table.fontMetrics().horizontalAdvance(text) + 16 > self._log_table.columnWidth(column):
                             self._log_table.queue_columns()
-                speed = self._log_table.item(index, self._log_table.speed_column)
-                if speed is not None:
-                    speed.setText(output_speed_text(row, now))
-                    speed.setToolTip(output_speed_tooltip(row))
         if self._inspected_record and getattr(self, "_inspector_duration", None) is not None:
             self._inspector_duration.setText(duration_text(self._inspected_record, now))
 
@@ -2077,6 +2060,8 @@ class Dashboard(QMainWindow):
         if name not in PAGE_NAMES:
             name = "overview"
         self._active_page = name
+        if name != "logs" and hasattr(self, "_inspector_popup"):
+            self._close_inspector(restore_focus=False)
         self._sync_duration_timer()
         self._ensure_page(name)
         index = PAGE_NAMES.index(name)
@@ -2106,6 +2091,8 @@ class Dashboard(QMainWindow):
             self._escape_inspector.setEnabled(self._active_page == "logs" and self._inspected_record is not None)
 
     def hideEvent(self, event) -> None:
+        if hasattr(self, "_inspector_popup"):
+            self._inspector_popup.hide()
         self._duration_timer.stop()
         if hasattr(self, "_escape_inspector"):
             self._escape_inspector.setEnabled(False)
@@ -2124,8 +2111,6 @@ class Dashboard(QMainWindow):
         self._navigation.set_order(self._config.get("navigation_order"))
         self._navigation.select_page(self._active_page)
         self._apply_sidebar_layout()
-        if "logs" in self._pages:
-            self._log_drawer.set_preview_width(self._config["log_preview_width"])
         self._widget_toggle.blockSignals(True)
         self._widget_toggle.setChecked(bool(config.get("widget_visible", True)))
         self._widget_toggle.blockSignals(False)
@@ -2277,6 +2262,8 @@ class Dashboard(QMainWindow):
             self._dirty_pages.add("logs")
             return
         if reset_page:
+            if hasattr(self, "_inspector_popup"):
+                self._close_inspector(restore_focus=False)
             self._page_number = 0
             self._log_preview_dismissed = False
         period = self._log_period.currentData()
@@ -2332,7 +2319,6 @@ class Dashboard(QMainWindow):
             rows = self._filtered_records[self._page_number * self._page_size:(self._page_number + 1) * self._page_size]
         if getattr(self, "_rendered_log_rows", None) == rows:
             self._update_log_navigation(count, page_count)
-            self._select_default_log_preview()
             return
         previous_rows = getattr(self, "_rendered_log_rows", None) or []
         selected = self._log_table.currentRow()
@@ -2354,18 +2340,6 @@ class Dashboard(QMainWindow):
                 self._show_inspector(latest, focus=False)
             elif latest is None:
                 self._close_inspector(restore_focus=False)
-        self._select_default_log_preview()
-
-    def _select_default_log_preview(self) -> None:
-        """Open the first available page-one row without overriding user intent."""
-        rows = self._rendered_log_rows or []
-        if self._page_number != 0 or not rows or self._inspected_record or self._log_preview_dismissed:
-            return
-        selected = self._log_table.currentRow()
-        # A restored selection takes precedence over the initial first-row default.
-        selected = selected if 0 <= selected < len(rows) else 0
-        self._log_table.selectRow(selected)
-        self._inspect_log_row(selected)
 
     def _update_log_navigation(self, count: int, page_count: int) -> None:
         if self._log_mode.currentData() == "user_request":
@@ -2959,8 +2933,6 @@ class Dashboard(QMainWindow):
             if value.get("id") == record.get("id"):
                 self._log_table.selectRow(index)
                 break
-        self._inspector_origin = record.get("id")
-        self._show_inspector(record)
 
     def _profile_plan_text(self):
         profile = normalize_subscription_profile(self._config.get("subscription_profile"))
@@ -3027,10 +2999,10 @@ class Dashboard(QMainWindow):
         self._dialog(dialog)
 
     def _create_inspector(self):
-        frame = QFrame()
+        frame = HoverDetails(self)
         frame.setObjectName("requestInspector")
         frame.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        frame.setAccessibleName("请求详情，点击左侧请求查看，按 Escape 清空选择")
+        frame.setAccessibleName("请求详情，移开鼠标或按 Escape 关闭")
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(17, 14, 4, 14)
         header = QHBoxLayout()
@@ -3057,10 +3029,23 @@ class Dashboard(QMainWindow):
         return frame
 
     def _inspect_log_row(self, row, column=0):
+        if column != self._log_table.details_column or not self._log_table.grouped:
+            return
         rows = getattr(self, "_rendered_log_rows", None) or []
         if 0 <= row < len(rows):
-            self._inspector_origin = rows[row].get("id")
-            self._show_inspector(rows[row], focus=False)
+            record = rows[row]
+            if not self._inspector_popup.isVisible() or self._inspector_origin != record.get("id"):
+                self._show_inspector(record, focus=False)
+            item = self._log_table.item(row, column)
+            anchor = self._log_table.visualItemRect(item)
+            anchor.moveTopLeft(self._log_table.viewport().mapToGlobal(anchor.topLeft()))
+            self._inspector_popup.show_at(anchor)
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.ToolTip and isinstance(watched, QWidget) and self._active_page == "logs" and hasattr(self, "_inspector_popup"):
+            if watched is self or self.isAncestorOf(watched) or watched is self._inspector_popup or self._inspector_popup.isAncestorOf(watched):
+                return True
+        return super().eventFilter(watched, event)
 
     def _show_inspector(self, record, *, focus=True):
         self._inspector_origin = record.get("id")
@@ -3074,7 +3059,6 @@ class Dashboard(QMainWindow):
         grouped = record.get("record_kind") == "user_request"
         session_title = str(record.get("session_title") or "未记录会话标题")
         self._inspector_heading.set_text(session_title)
-        self._inspector_heading.setToolTip(session_title)
         previous = self._inspector_scroll.takeWidget()
         if previous:
             previous.hide()
@@ -3199,14 +3183,16 @@ class Dashboard(QMainWindow):
         layout.addStretch()
         self._inspector_scroll.setWidget(content)
         self._inspector_stack.setCurrentWidget(self._inspector_scroll)
+        apply_theme(self._inspector_popup, self._theme)
         self._escape_inspector.setEnabled(True)
         if old_scroll is not None:
             self._inspector_scroll.verticalScrollBar().setValue(old_scroll)
         if focus:
-            self._log_drawer.inspector.setFocus(Qt.FocusReason.OtherFocusReason)
+            self._inspector_popup.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _close_inspector(self, *args, restore_focus=True):
-        """Clear details while keeping the right pane in place."""
+        """Dismiss the transient details without changing the table selection."""
+        self._inspector_popup.hide()
         if restore_focus:
             self._log_preview_dismissed = True
         self._escape_inspector.setEnabled(False)
@@ -3220,10 +3206,6 @@ class Dashboard(QMainWindow):
             previous.hide()
             previous.deleteLater()
         self._inspector_stack.setCurrentWidget(self._inspector_empty)
-        self._log_table.clearSelection()
-        self._log_table.setCurrentCell(-1, -1)
-        if restore_focus:
-            self._log_table.setFocus()
 
     def _preview_widget(self, *args):
         if self._is_macos:
