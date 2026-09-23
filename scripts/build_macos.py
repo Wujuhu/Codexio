@@ -147,13 +147,13 @@ def main():
     run("ditto", "-c", "-k", "--keepParent", "--norsrc", "--noextattr", bundle, archive)
     # Exercise the same extraction, signature and architecture checks as the updater.
     archive_check = BUILD / "checks/macos-archive"
-    refuse_running(archive_check / "Codexio.app")
+    refuse_running(archive_check / "Codexio.pending")
     if archive_check.exists():
         shutil.rmtree(archive_check)
     archive_check.mkdir(parents=True)
     shutil.copy2(archive, archive_check / "package.bin")
     try:
-        _prepare_bundle(archive_check, archive_check / "Codexio.app", version)
+        _prepare_bundle(archive_check, archive_check / "Codexio.pending", version)
     finally:
         shutil.rmtree(archive_check)
     manifest_args = ["--base", args.manifest] if args.manifest else []
@@ -168,7 +168,14 @@ def main():
         return 0
     refuse_running(target)
     DESTINATION.mkdir(parents=True, exist_ok=True)
-    previous = BUILD / "backups/macos/Codexio.app"
+    legacy_backup = BUILD / "backups/macos/Codexio.app"
+    if legacy_backup.exists():
+        refuse_running(legacy_backup)
+        subprocess.run(["pluginkit", "-r", str(legacy_backup / "Contents/PlugIns/CodexioWidget.appex")],
+                       capture_output=True, check=False)
+        shutil.rmtree(legacy_backup)
+    # A backup ending in .app is discovered as another WidgetKit host.
+    previous = BUILD / "backups/macos/Codexio.app.previous"
     refuse_running(previous)
     if previous.exists():
         shutil.rmtree(previous)

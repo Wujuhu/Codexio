@@ -147,9 +147,6 @@ class MacController(QObject):
         refresh.setShortcut(QKeySequence("Ctrl+R"))
 
     def start(self):
-        if not self.mock:
-            from codexio.macos_widget_service import ensure_widget_agent
-            ensure_widget_agent()
         self.usage.start()
         self.worker.start()
         self.server_usage.start()
@@ -308,6 +305,14 @@ def run_macos(args):
     app.setQuitOnLastWindowClosed(False)
     app.setWindowIcon(load_app_icon())
     app.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont))
+    setup_logging()
+    # Run before the single-instance handoff: Finder may launch the replaced
+    # APP while the previous process is still open at the same path.
+    if not args.mock:
+        from codexio.macos_widget_repair import repair_installed_widget
+        from codexio.macos_widget_service import ensure_widget_agent
+        repair_installed_widget()
+        ensure_widget_agent()
     controller = None
     instance = SingleInstance(data_dir(), lambda: controller.open_main() if controller is not None else None, app)
     try:
@@ -316,7 +321,6 @@ def run_macos(args):
     except RuntimeError as exc:
         QMessageBox.information(None, "Codexio", str(exc))
         return 1
-    setup_logging()
     get_logger("macos").info("启动 Codexio macOS %s", __version__)
     try:
         controller = MacController(app, mock=args.mock)

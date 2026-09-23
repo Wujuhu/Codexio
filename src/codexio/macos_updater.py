@@ -79,6 +79,11 @@ def launch_installer(directory: Path, release: Release, cancel: threading.Event,
         raise UpdateCancelled("已取消更新")
     helper = directory / "CodexioUpdater.app"
     _run("更新辅助程序复制", "/usr/bin/ditto", "--norsrc", "--noextattr", target, helper)
+    # The updater is a helper, not a second widget host.
+    helper_widget = helper / "Contents/PlugIns/CodexioWidget.appex"
+    if helper_widget.exists():
+        shutil.rmtree(helper_widget)
+        _run("更新辅助程序签名", "/usr/bin/codesign", "--force", "--sign", "-", "--timestamp=none", helper)
     _validate_bundle(helper, stage="更新辅助程序校验")
     _write_json(directory / "job.json", dict(
         target=str(target), old_sha256=file_sha256(executable), sha256=release.sha256,
@@ -148,8 +153,10 @@ def _install(directory, job):
         raise UpdateError("重启参数无效")
     if file_sha256(directory / "package.bin") != job["sha256"]:
         raise UpdateError("下载文件被修改，已取消安装")
-    pending = target.parent / (".Codexio-" + directory.name + ".pending.app")
-    backup = target.parent / (".Codexio-" + directory.name + ".previous.app")
+    # Hidden .app copies can register duplicate WidgetKit extensions before the
+    # replacement launches. Their bundle structure remains valid without .app.
+    pending = target.parent / (".Codexio-" + directory.name + ".pending")
+    backup = target.parent / (".Codexio-" + directory.name + ".previous")
     if pending.exists() or backup.exists():
         raise UpdateError("更新暂存文件已存在，请重新检查更新")
     process = None
