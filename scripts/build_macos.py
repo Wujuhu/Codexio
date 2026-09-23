@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
 STAGING = BUILD / "staging/macos"
 DESTINATION = BUILD / "dev/macos"
-WIDGET_VERSION = 5  # Increase when changing the extension's public behavior.
+WIDGET_VERSION = 6  # Increase when changing the extension's public behavior.
 
 
 def run(*args, **kwargs):

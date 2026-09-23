@@ -53,6 +53,10 @@ def _remaining(state, key):
     return _number(getattr(getattr(state, key, None), "remaining_percent", None))
 
 
+def _has_window(state, key):
+    return getattr(getattr(state, key, None), "remaining_percent", None) is not None
+
+
 def make_snapshot(usage: dict | None, quota_state, *, now: float | None = None) -> dict:
     selected = (usage or {}).get("widget_request")
     summary = (usage or {}).get("menu_bar_today")
@@ -91,7 +95,8 @@ def make_snapshot(usage: dict | None, quota_state, *, now: float | None = None) 
             "cost_usd": _number(summary.get("usd")),
             "tokens": _count(summary.get("tokens")) if summary else None,
         },
-        "quota": {"five_hour": _remaining(quota_state, "five_hour"), "week": _remaining(quota_state, "week")},
+        "quota": {"five_hour": _remaining(quota_state, "five_hour"), "week": _remaining(quota_state, "week"),
+                  "has_five_hour": _has_window(quota_state, "five_hour"), "has_week": _has_window(quota_state, "week")},
     }
 
 

@@ -23,6 +23,8 @@ private struct RequestSnapshot: Decodable {
 private struct QuotaSnapshot: Decodable {
     let five_hour: Double?
     let week: Double?
+    let has_five_hour: Bool?
+    let has_week: Bool?
 }
 
 private struct TodaySnapshot: Decodable {
@@ -187,17 +189,23 @@ private struct CodexioWidgetView: View {
             }
         }
         Spacer(minLength: family == .systemLarge ? 4 : 0)
+        let showFiveHour = quota.has_five_hour ?? (quota.five_hour != nil)
+        let showWeek = quota.has_week ?? (quota.week != nil)
         if family == .systemSmall {
-            if let fiveHour = quota.five_hour {
-                QuotaLine(title: "5 小时额度", remaining: fiveHour)
+            if showFiveHour {
+                QuotaLine(title: "5 小时额度", remaining: quota.five_hour)
             } else {
                 QuotaLine(title: "周额度", remaining: quota.week)
             }
-        } else {
+        } else if showFiveHour && showWeek {
             HStack(spacing: 16) {
                 QuotaLine(title: "5 小时额度", remaining: quota.five_hour)
                 QuotaLine(title: "周额度", remaining: quota.week)
             }
+        } else if showFiveHour {
+            QuotaLine(title: "5 小时额度", remaining: quota.five_hour)
+        } else {
+            QuotaLine(title: "周额度", remaining: quota.week)
         }
     }
 
@@ -205,7 +213,9 @@ private struct CodexioWidgetView: View {
         VStack(alignment: .leading, spacing: family == .systemSmall ? 4 : 6) {
             if let snapshot = entry.snapshot, let request = snapshot.request {
                 let fresh = Date().timeIntervalSince1970 - snapshot.updated_at < 900
-                requestBody(request, quota: fresh ? snapshot.quota : QuotaSnapshot(five_hour: nil, week: nil),
+                requestBody(request, quota: fresh ? snapshot.quota : QuotaSnapshot(
+                    five_hour: nil, week: nil, has_five_hour: snapshot.quota.has_five_hour,
+                    has_week: snapshot.quota.has_week),
                             today: snapshot.today)
             } else {
                 Spacer()
