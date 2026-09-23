@@ -1335,7 +1335,7 @@ class Dashboard(QMainWindow):
         self._date_row.hide()
         layout.addWidget(self._date_row)
         self._log_table = LedgerTable()
-        self._log_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self._log_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._log_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self._log_table.horizontalScrollBar().setProperty("scrollPersistent", True)
         self._log_table.horizontalScrollBar().setProperty("scrollActive", True)

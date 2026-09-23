@@ -140,7 +140,6 @@ class NavigationList(QListWidget):
         self.customContextMenuRequested.connect(self._context_menu)
         self.itemClicked.connect(lambda item: self.page_requested.emit(item.data(Qt.ItemDataRole.UserRole)))
         self.itemActivated.connect(lambda item: self.page_requested.emit(item.data(Qt.ItemDataRole.UserRole)))
-        self.setToolTip("拖动调整页面顺序；概览固定第一。也可右键上移或下移。")
         self.set_order(None)
 
     def order(self):
@@ -158,9 +157,6 @@ class NavigationList(QListWidget):
             item.setSizeHint(QSize(120, 39))
             if name == "overview":
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsDragEnabled)
-                item.setToolTip("概览固定第一")
-            else:
-                item.setToolTip("拖动调整顺序；右键可上移或下移")
             self.addItem(item)
         self.select_page(selected)
         self.set_collapsed(self._collapsed)
@@ -172,7 +168,6 @@ class NavigationList(QListWidget):
             label = NAVIGATION_LABELS[item.data(Qt.ItemDataRole.UserRole)]
             item.setText("" if collapsed else label)
             item.setData(Qt.ItemDataRole.AccessibleTextRole, label)
-            item.setToolTip(label + (" · 概览固定第一" if index == 0 else " · 拖动调整顺序"))
             item.setSizeHint(QSize(36 if collapsed else 80, 39))
 
     def select_page(self, name):
@@ -697,8 +692,8 @@ class LedgerDelegate(QStyledItemDelegate):
 
 
 class LedgerTable(QTableWidget):
-    duration_column = 5
-    cache_column = 3
+    duration_column = 6
+    cache_column = 4
 
     @property
     def details_column(self):
@@ -733,9 +728,9 @@ class LedgerTable(QTableWidget):
             headers = ["用户请求 / 发起时间", "模型", "费用", "状态"]
             self.weights = [46, 24, 20, 10]
         else:
-            headers = ["用户请求 / 发起时间" if grouped else "关联输入 / 计量时间", "模型", "输入 / 输出", "缓存命中率", "费用", "耗时"]
+            headers = ["用户请求 / 发起时间" if grouped else "关联输入 / 计量时间", "模型", "输入", "输出", "缓存命中率", "费用", "耗时"]
             headers += ["状态", "来源", "详情"] if grouped else ["来源"]
-            self.weights = [26, 14, 13, 10, 12, 8, 7, 8, 6] if grouped else [28, 15, 14, 11, 13, 9, 8]
+            self.weights = [26, 14, 7, 7, 10, 12, 8, 7, 8, 6] if grouped else [28, 15, 7, 7, 11, 13, 9, 8]
         changed = self.set_headers(headers)
         self._apply_source_visibility()
         return changed
@@ -774,8 +769,8 @@ class LedgerTable(QTableWidget):
         font = QFont(self.font())
         font.setPixelSize(12)
         fm = QFontMetrics(font)
-        base = [200, 125, 110, 58] if self.compact else ([190, 120, 90, 78, 82, 60, 56, 72, 56] if self.grouped else [200, 120, 100, 78, 90, 64, 78])
-        for column in ([2] if self.compact else [2, 3, 4, 5]):
+        base = [200, 125, 110, 58] if self.compact else ([180, 112, 66, 64, 85, 70, 58, 54, 66, 48] if self.grouped else [190, 112, 66, 64, 85, 70, 58, 66])
+        for column in ([2] if self.compact else [2, 3, 4, 5, 6]):
             for row in range(self.rowCount()):
                 item = self.item(row, column)
                 if item:
@@ -828,7 +823,8 @@ class LedgerTable(QTableWidget):
                 model += "\n" + " / ".join(models)
             values = [preview_title(row) + "\n" + " · ".join(subtitle), model]
             if not self.compact:
-                values.append(compact_number(row.get("input_tokens")) + "\n" + compact_number(row.get("output_tokens")))
+                values.append(compact_number(row.get("input_tokens")))
+                values.append(compact_number(row.get("output_tokens")))
                 values.append(cache_percentage(cache_hit_rate(row)))
             values.append(cost_formatter(row))
             if not self.compact:
@@ -861,7 +857,7 @@ class LedgerTable(QTableWidget):
                 item.setData(Qt.ItemDataRole.AccessibleDescriptionRole, "响应返回的上游模型\n" + detail + "\n已检测 %s / %s 次调用\n请求模型：%s" % (
                     row.get("upstream_detected_calls", 1), row.get("upstream_total_calls", 1), " / ".join(models or [model])))
             if self.grouped and row.get("request_status") == "running":
-                status = self.item(index, 3 if self.compact else 6)
+                status = self.item(index, 3 if self.compact else 7)
                 status.setData(PRIMARY_COLOR_ROLE, "running")
                 emphasis = QFont(self.font())
                 emphasis.setBold(True)

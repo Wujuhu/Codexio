@@ -143,12 +143,16 @@ private struct CodexioWidgetView: View {
             .font(.system(size: 11, weight: .medium))
             .foregroundStyle(.secondary)
             .lineLimit(1)
-        HStack(alignment: .top, spacing: 12) {
-            Metric(title: "估算费用", value: request.cost_usd.map { String(format: "$%.2f", $0) } ?? "—")
+        HStack(alignment: .top, spacing: 10) {
+            Metric(title: "费用", value: request.cost_usd.map { String(format: "$%.2f", $0) } ?? "—")
             VStack(alignment: .leading, spacing: 2) {
                 Text("耗时").font(.system(size: 10)).foregroundStyle(.secondary)
                 duration(request).font(.system(size: 13, weight: .semibold, design: .rounded))
                     .lineLimit(1).minimumScaleFactor(0.75)
+            }
+            if family == .systemMedium {
+                Metric(title: "总 Token", value: compactNumber(request.input_tokens + request.output_tokens))
+                Metric(title: "命中率", value: request.cache_hit_rate.map { String(format: "%.1f%%", $0 * 100) } ?? "—")
             }
             Spacer(minLength: 0)
         }
@@ -167,26 +171,21 @@ private struct CodexioWidgetView: View {
         }
         if family == .systemLarge {
             Divider().padding(.vertical, 4)
-            HStack(spacing: 12) {
-                Metric(title: "输入 Token", value: compactNumber(request.input_tokens))
-                Metric(title: "输出 Token", value: compactNumber(request.output_tokens))
-            }
-            HStack(spacing: 12) {
-                Metric(title: "缓存读取", value: compactNumber(request.cached_input_tokens))
-                Metric(title: "命中率", value: request.cache_hit_rate.map { String(format: "%.1f%%", $0 * 100) } ?? "—")
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Metric(title: "输入 Token", value: compactNumber(request.input_tokens))
+                    Metric(title: "缓存读取", value: compactNumber(request.cached_input_tokens))
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 10) {
+                    Metric(title: "输出 Token", value: compactNumber(request.output_tokens))
+                    Metric(title: "命中率", value: request.cache_hit_rate.map { String(format: "%.1f%%", $0 * 100) } ?? "—")
+                }.frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: family == .systemSmall ? 6 : 9) {
-            HStack(spacing: 6) {
-                Image(systemName: "chevron.left.forwardslash.chevron.right")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(.tint)
-                Text("Codexio").font(.system(size: 12, weight: .semibold))
-                Spacer()
-            }
+        VStack(alignment: .leading, spacing: family == .systemSmall ? 5 : 7) {
             if let snapshot = entry.snapshot, let request = snapshot.request {
                 let fresh = Date().timeIntervalSince1970 - snapshot.updated_at < 900
                 requestBody(request, quota: fresh ? snapshot.quota : QuotaSnapshot(five_hour: nil, week: nil))
@@ -198,7 +197,7 @@ private struct CodexioWidgetView: View {
                 Spacer()
             }
         }
-        .padding(family == .systemSmall ? 13 : 17)
+        .padding(family == .systemSmall ? 11 : 13)
         .containerBackground(for: .widget) {
             Color(nsColor: .controlBackgroundColor)
         }
@@ -211,7 +210,7 @@ private struct CodexioRequestWidget: Widget {
             CodexioWidgetView(entry: entry)
         }
         .configurationDisplayName("Codexio 请求")
-        .description("查看最近请求、估算费用与剩余额度")
+        .description("查看最近请求、费用与剩余额度")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
     }
 }
