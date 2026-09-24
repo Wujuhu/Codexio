@@ -6,7 +6,7 @@ import os
 import sys
 import time
 
-from PySide6.QtCore import QObject, QTimer
+from PySide6.QtCore import QObject, Qt, QTimer
 from PySide6.QtWidgets import QApplication
 
 
@@ -52,14 +52,20 @@ class SmokeRun(QObject):
                 # One optional screenshot for a current UI edit, never a matrix.
                 if os.environ.get("CODEXIO_CAPTURE_SETTINGS") == "1":
                     self.window.open_page("settings")
-                    self.window._settings_sections.setCurrentRow(3)
+                    self.window._settings_sections.setCurrentRow(self.window._settings_sections.count() - 1)
+                elif os.environ.get("CODEXIO_CAPTURE_PAGE") in ("subscription", "pricing"):
+                    self.window.open_page(os.environ["CODEXIO_CAPTURE_PAGE"])
             elif self.step == 2:
                 if os.environ.get("CODEXIO_CAPTURE_SETTINGS") == "1":
                     self.window.grab().save(str(self.output / "settings.png"))
+                elif os.environ.get("CODEXIO_CAPTURE_PAGE") in ("subscription", "pricing"):
+                    self.window.grab().save(str(self.output / (os.environ["CODEXIO_CAPTURE_PAGE"] + ".png")))
                 self.window.close()
-            else:
+            elif self.step == 3:
                 assert host.dashboard is None, "主窗口未正常关闭"
-                assert self.controller.open_main().isVisible(), "主窗口未能重新打开"
+                self.controller.app.applicationStateChanged.emit(Qt.ApplicationState.ApplicationActive)
+            else:
+                assert host.dashboard is not None and host.dashboard.isVisible(), "主窗口未能重新打开"
                 self.checks.append("主窗口关闭与重开")
                 self.finish(True)
                 return

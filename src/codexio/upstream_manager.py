@@ -30,6 +30,7 @@ class UpstreamManager(QObject):
         self._revision = 0
         self._polling = False
         self._pending_quit = None
+        self._restart_status = {"status": "matched"}
         self._done.connect(self._finished)
         self._timer = QTimer(self)
         self._timer.setInterval(3000)
@@ -44,14 +45,18 @@ class UpstreamManager(QObject):
         self.status_changed.emit(message, self.active, self.busy)
 
     def _offer_restart(self, operation, after=None):
-        if not self.service.clients_running():
+        assessment = self._restart_status
+        if assessment["status"] == "matched" or assessment.get("notified"):
             self._finish_action(operation, after)
             return
         self.busy = True
         self._status("已应用设置 · 等待选择重启方式" if self.active else "已恢复配置 · 等待选择重启方式")
         box = QMessageBox(self.parent_window())
         box.setWindowTitle("上游检测")
-        if operation in ("enable", "startup"):
+        if assessment["status"] == "unknown":
+            box.setText("无法确认配置是否已生效")
+            box.setInformativeText("尚无当前 ChatGPT 后台进程加载配置的可靠记录。可重启以确认生效，也可稍后自行重启。现在重启会中断正在进行的请求。")
+        elif self.active:
             box.setText("Codexio 已应用上游检测设置")
             box.setInformativeText("重启 ChatGPT 后应用改动。现在重启会中断正在进行的请求。")
         else:
@@ -66,7 +71,8 @@ class UpstreamManager(QObject):
         if box.clickedButton() == now:
             self._run("restart", self.service.restart_client, (operation, after))
         else:
-            self._finish_action(operation, after, deferred=True)
+            self.service.mark_restart_notified(assessment)
+            self._finish_action(operation, after)
 
     def _run(self, operation, work, after=None):
         if self.busy or self.closing:
@@ -77,7 +83,8 @@ class UpstreamManager(QObject):
                       "recover": "正在恢复直连配置…", "restart": "正在重启 ChatGPT…"}[operation])
         def run():
             try:
-                value, error = work(), None
+                value = dict(result=work(), restart=self.service.restart_assessment())
+                error = None
             except Exception as exc:
                 value, error = None, str(exc) if isinstance(exc, UpstreamError) else "操作未完成，请重试"
             self._done.emit((operation, value, error, after))
@@ -126,6 +133,11 @@ class UpstreamManager(QObject):
             self._polling = False
             if error and self.active and not self.busy:
                 self._run("recover", self.service.disable)
+            elif value and not self.busy:
+                previous = self._restart_status.get("status")
+                self._restart_status = value
+                if previous != value["status"]:
+                    self._show_ready_status()
             return
         self.busy = False
         self.active = self.service.active
@@ -141,34 +153,30 @@ class UpstreamManager(QObject):
             if operation == "restart" and after[0] == "startup":
                 self.startup_ready.emit(True)
             return
+        self._restart_status = value["restart"]
+        value = value["result"]
         if operation == "enable":
             self._persist(upstream_detection_enabled=True)
         if self._pending_quit and operation not in ("quit", "restart"):
             callback, self._pending_quit = self._pending_quit, None
             self.request_quit(callback)
             return
-        if operation == "startup":
-            if self.active and not value:
-                self._offer_restart(operation)
-            else:
-                self._finish_action(operation)
-        elif operation == "enable":
-            self._offer_restart(operation)
-        elif operation == "disable":
-            if value:
-                self._offer_restart(operation)
-            else:
-                self._finish_action(operation)
-        elif operation == "quit":
+        if operation in ("startup", "enable", "disable", "quit"):
             self._offer_restart(operation, after)
         elif operation == "restart":
             self._finish_action(*after, restarted=bool(value))
         elif operation == "recover":
             self._status("代理已停止并恢复配置，请重新开启上游检测")
 
-    def _finish_action(self, operation, after=None, *, deferred=False, restarted=False):
-        self._status(("已开启" if self.active else "已关闭 · 官方直连") +
-                     (" · 请自行重启 ChatGPT" if deferred else " · 已重启 ChatGPT" if restarted else ""))
+    def _show_ready_status(self, *, restarted=False):
+        state = self._restart_status["status"]
+        suffix = (" · 请自行重启 ChatGPT" if state == "changed" else
+                  " · 配置生效状态待确认" if state == "unknown" else
+                  " · 已重启 ChatGPT" if restarted else "")
+        self._status(("已开启" if self.active else "已关闭 · 官方直连") + suffix)
+
+    def _finish_action(self, operation, after=None, *, restarted=False):
+        self._show_ready_status(restarted=restarted)
         if operation == "quit":
             self._exit(after)
         elif self._pending_quit:
@@ -183,7 +191,7 @@ class UpstreamManager(QObject):
         if self.busy:
             self._pending_quit = callback
             return
-        if (self.active or self.service.needs_restore) and not self.system_exit:
+        if not self.system_exit and not self.mock:
             self._run("quit", self.service.disable, callback)
         else:
             self._exit(callback)
@@ -214,17 +222,19 @@ class UpstreamManager(QObject):
         if revision != self._revision:
             self._revision = revision
             self.observations_changed.emit()
-        if not self.active or self.busy or self.closing or self._polling:
+        if self.mock or self.busy or self.closing or self._polling:
             return
         self._polling = True
         def check():
             error = None
+            assessment = None
             try:
-                if not self.service.healthy():
+                if self.active and not self.service.healthy():
                     error = "检测已暂停"
-            except UpstreamError:
+                assessment = self.service.restart_assessment()
+            except (UpstreamError, OSError):
                 error = "转发服务中断"
-            self._done.emit(("health", None, error, None))
+            self._done.emit(("health", assessment, error, None))
         threading.Thread(target=check, name="Codexio-upstream-health", daemon=True).start()
 
     def stop(self):

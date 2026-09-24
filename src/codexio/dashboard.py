@@ -34,7 +34,7 @@ from codexio.usage_collector import _user_preview
 from codexio.usage_queries import summarize_model_calls, comparison_bounds
 from codexio.usage_metrics import dashboard_summary, dashboard_comparison, cache_percentage, cache_tooltip
 from codexio.estimate_display import (ESTIMATE_HEADERS, estimate_amount, estimate_detail, estimate_history,
-                                      method_label, select_estimates)
+                                      select_estimates)
 from codexio.analytics_config import (NAVIGATION_PAGES, normalize_navigation_order, normalize_subscription_profile,
                                      normalize_panel_layout, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, SIDEBAR_COLLAPSED_WIDTH)
 from codexio.desktop_widgets import (DatePicker, HoverDetails, LedgerTable, NavigationList, PanelResizeHandle, PAGE_TITLES, PeriodChange, QuotaMeter,
@@ -83,7 +83,7 @@ def estimate_interval(value: dict) -> tuple[str, str]:
     start, end = parse_timestamp(value.get("start")), parse_timestamp(value.get("end"))
     if start is None or end is None:
         return "—", "采样时间未记录"
-    text = start.strftime("%m/%d %H:%M") + "\n→ " + end.strftime("%m/%d %H:%M")
+    text = start.strftime("%m/%d %H:%M") + "\n→ " + end.strftime("%H:%M" if start.date() == end.date() else "%m/%d %H:%M")
     return text, start.strftime("%Y/%m/%d %H:%M") + " → " + end.strftime("%Y/%m/%d %H:%M")
 
 
@@ -1387,7 +1387,7 @@ class Dashboard(QMainWindow):
         heading.setProperty("subheading", True)
         text.addWidget(heading)
         text.addWidget(plain_label(
-            "本地估算规则：Fast 为标准价 ×2.5。输入超过 272K 时，除 GPT-6 Astra 外，输入与缓存 ×2、输出 ×1.5；GPT-6 Astra 不加长上下文倍率。",
+            "倍率：Fast 消耗速度为 2.5 倍。超过 272K 上下文时，除 GPT-6 Astra 外，输入和缓存为 2 倍，输出为1.5 倍。",
             muted=True, wrap=True))
         self._price_status = plain_label("同步时间：暂无", muted=True, wrap=True)
         text.addWidget(self._price_status)
@@ -1436,7 +1436,7 @@ class Dashboard(QMainWindow):
         self._settings_sections = QListWidget()
         self._settings_sections.setObjectName("settingsSections")
         self._settings_sections.setFixedWidth(118)
-        self._settings_sections.addItems(["外观", "菜单栏" if self._is_macos else "悬浮窗", "数据来源", "应用"])
+        self._settings_sections.addItems(["外观", *([] if self._is_macos else ["悬浮窗"]), "数据来源", "应用"])
         self._settings_stack = QStackedWidget()
         body.addWidget(self._settings_sections)
         body.addWidget(self._settings_stack, 1)
@@ -1464,26 +1464,7 @@ class Dashboard(QMainWindow):
         form.addRow("请求日志", self._show_log_source)
         appearance.addLayout(form)
         appearance.addStretch()
-        if self._is_macos:
-            menu_bar = section("菜单栏", "")
-            form = QFormLayout()
-            form.setVerticalSpacing(18)
-            form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-            for key, label, choices in (
-                ("quota_scope", "预览额度", (("自动", "auto"), ("5 小时与周额度", "both"), ("仅周额度", "week"))),
-                ("menu_bar_preview_size", "预览大小", (("紧凑 · 253 px", "comfortable"), ("宽敞 · 293 px", "large"))),
-            ):
-                field = combo(choices, getattr(self._settings, key))
-                field.setMaximumWidth(280)
-                self._setting_widgets[key] = field
-                form.addRow(label, field)
-            startup = QCheckBox("启动时显示主界面")
-            startup.setChecked(self._settings.show_main_on_startup)
-            self._setting_widgets["show_main_on_startup"] = startup
-            form.addRow("启动行为", startup)
-            menu_bar.addLayout(form)
-            menu_bar.addStretch()
-        else:
+        if not self._is_macos:
             self._build_floating_settings(section)
         sources = section("数据来源", "")
         self._source_list = QListWidget()
@@ -1596,7 +1577,7 @@ class Dashboard(QMainWindow):
         self._upstream_toggle.clicked.connect(lambda value: self._callback("upstream_toggle", value))
         upstream_card, self._upstream_badge = settings_card(self._upstream_toggle, "已关闭",
             "保留 ChatGPT 官方登录。仅显示响应实际返回的模型型号，历史请求无法补查；退出 Codexio 会恢复配置。")
-        upstream_card.addWidget(plain_label("可检测上游响应的模型型号，该功能会修改 config.toml，必须在 Codexio 运行时才可检测。设置更改后，可选择现在重启 ChatGPT 或稍后自行重启。", muted=True, wrap=True))
+        upstream_card.addWidget(plain_label("可检测上游响应的模型型号，该功能会修改 config.toml，必须在 Codexio 运行时才可检测。配置与当前客户端已加载的配置一致时，无需重启；需要生效或无法确认时，可选择现在重启 ChatGPT 或稍后自行重启。", muted=True, wrap=True))
         self._upstream_status = plain_label("已关闭 · 官方直连", muted=True, wrap=True)
         upstream_card.addWidget(self._upstream_status)
         self.set_upstream_status(*getattr(self, "_upstream_state", ("已关闭 · 官方直连", False, False)))
@@ -2104,7 +2085,10 @@ class Dashboard(QMainWindow):
             self._period_overrides[name] = period
         self._dirty_pages.add(name)
         if not self._loading:
-            self.showNormal()
+            if self.isMinimized():
+                self.showNormal()
+            else:
+                self.show()
             self.raise_()
             self.activateWindow()
             self._refresh_visible()
@@ -2615,15 +2599,6 @@ class Dashboard(QMainWindow):
         value = selected["primary"]
         amount = estimate_amount(value)
         self._estimate_value.setText(amount if amount != "—" else "待采样")
-        delta = value.get("delta_percent")
-        label = method_label(value) if value else "尚无有效样本"
-        self._estimate_note.setText(label + (" · 已采样 %g 个百分点" % float(delta) if delta is not None else ""))
-        message = selected["message"]
-        if value.get("estimated_remaining_usd") is not None:
-            message = "剩余额度参考 " + usd(value["estimated_remaining_usd"]) + " · " + message
-        self._estimate_period.setText(message)
-        reference = selected["reference"]
-        self._estimate_reference.setText("本地观测参考：" + estimate_amount(reference) if reference and value is not reference else "")
 
     def _fill_estimate_history(self, view):
         estimates = estimate_history(self._data)
@@ -2635,13 +2610,15 @@ class Dashboard(QMainWindow):
             interval, _detail = estimate_interval(value)
             start_pct = float(value.get("start_percent") or 0)
             end_pct = float(value.get("end_percent") or 0)
-            quota = "%g%% → %g%%（+%g 点）" % (start_pct, end_pct, end_pct - start_pct)
+            quota = "%g%% → %g%%" % (start_pct, end_pct)
             columns = (str(value.get("plan_type") or "—").upper(), interval, quota,
                        format(int(value.get("consumed_tokens") or 0), ","),
                        usd(value.get("consumed_usd")), estimate_amount(value))
             for column, text in enumerate(columns):
                 item = QTableWidgetItem(str(text))
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                if column == 1:
+                    item.setToolTip(_detail)
                 view.setItem(index, column, item)
         if view is getattr(self, "_subscription_history", None):
             view.setFixedHeight(view.horizontalHeader().sizeHint().height()
@@ -2867,13 +2844,7 @@ class Dashboard(QMainWindow):
         values.addWidget(plain_label("整周额度估值", muted=True))
         self._estimate_value = plain_label("待采样", wrap=True)
         self._estimate_value.setProperty("metric", True)
-        self._estimate_note = plain_label("", muted=True, wrap=True)
-        self._estimate_period = plain_label("", muted=True, wrap=True)
-        self._estimate_reference = plain_label("", muted=True, wrap=True)
         values.addWidget(self._estimate_value)
-        values.addWidget(self._estimate_note)
-        values.addWidget(self._estimate_period)
-        values.addWidget(self._estimate_reference)
         summary.addLayout(values, 1)
         history_layout.addLayout(summary)
         self._subscription_history = table(ESTIMATE_HEADERS)
@@ -2894,7 +2865,6 @@ class Dashboard(QMainWindow):
         navigation.addWidget(self._estimate_page_label)
         navigation.addWidget(self._estimate_next)
         history_layout.addLayout(navigation)
-        history_layout.addWidget(plain_label("仅按同一账号、套餐和周额度周期内的本机调用费用与额度变化估算；总 Token 仅展示。", muted=True, wrap=True))
         contents.addWidget(self._subscription_history_section)
         contents.addStretch()
         return page

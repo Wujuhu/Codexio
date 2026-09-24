@@ -90,8 +90,6 @@ class AppSettings:
     dock_side_height: Optional[int] = None
     quota_scope: str = DEFAULT_QUOTA_SCOPE
     codex_path: Optional[str] = None
-    menu_bar_preview_size: str = "comfortable"
-    show_main_on_startup: bool = True
 
     def normalized(self) -> "AppSettings":
         interval = self.refresh_interval_seconds
@@ -124,8 +122,6 @@ class AppSettings:
             dock_side_height=_clamp_int(self.dock_side_height, 32, MAX_WINDOW_HEIGHT),
             quota_scope=scope,
             codex_path=path,
-            menu_bar_preview_size=self.menu_bar_preview_size if self.menu_bar_preview_size in ("comfortable", "large") else "comfortable",
-            show_main_on_startup=bool(self.show_main_on_startup),
         )
 
     def background_alpha(self) -> int:
@@ -174,8 +170,6 @@ def load_settings(path: Optional[Path] = None) -> AppSettings:
         dock_side_height=_optional_int(raw.get("dock_side_height")),
         quota_scope=str(raw.get("quota_scope", DEFAULT_QUOTA_SCOPE)),
         codex_path=raw.get("codex_path") if isinstance(raw.get("codex_path"), str) else None,
-        menu_bar_preview_size=str(raw.get("menu_bar_preview_size", "comfortable")),
-        show_main_on_startup=_optional_bool(raw.get("show_main_on_startup"), True),
     )
     return settings.normalized()
 

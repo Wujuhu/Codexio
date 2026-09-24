@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
 STAGING = BUILD / "staging/macos"
 DESTINATION = BUILD / "dev/macos"
-WIDGET_VERSION = 10  # Increase for widget UI, registration, or host-lifecycle changes.
+WIDGET_VERSION = 11  # Increase for widget UI, registration, or host-lifecycle changes.
 
 
 def run(*args, **kwargs):

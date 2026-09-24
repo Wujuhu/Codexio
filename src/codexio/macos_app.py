@@ -19,7 +19,6 @@ from codexio.app_icon import load_app_icon
 from codexio.dashboard import Dashboard
 from codexio.dashboard_host import DashboardHost
 from codexio.logging_setup import get_logger, setup_logging
-from codexio.menu_bar import MenuBarController
 from codexio.macos_widget_snapshot import make_snapshot, reload_widget, write_snapshot
 from codexio.settings import data_dir, load_settings, save_settings
 from codexio.usage_worker import UsageWorker
@@ -46,7 +45,7 @@ class SingleInstance(QObject):
             socket = QLocalSocket(self)
             socket.connectToServer(self.name)
             if not socket.waitForConnected(1500):
-                raise RuntimeError("Codexio 已在运行，正在启动或退出；请稍后从菜单栏打开。")
+                raise RuntimeError("Codexio 已在运行，正在启动或退出；请稍后点击 Dock 图标打开。")
             socket.disconnectFromServer()
             return False
         QLocalServer.removeServer(self.name)
@@ -73,6 +72,9 @@ class MacController(QObject):
         self.app = app
         self.mock = mock
         self.closing = False
+        self._started = False
+        self._open_pending = False
+        self._last_page = "overview"
         self.settings = load_settings()
         self.config = load_analytics_config()
         self.config.update(widget_visible=False)
@@ -96,11 +98,8 @@ class MacController(QObject):
         self.upstream.on_quit = self._finish_quit
         self.upstream.status_changed.connect(self.dashboard_host.set_upstream_status)
         self.upstream.observations_changed.connect(self.dashboard_host.refresh_upstream)
-        self.upstream.startup_ready.connect(self._startup_ready)
         self.updater = UpdateManager(app, lambda: self.upstream.quit_for_update(self._finish_quit), available=False if mock else None)
         self.updater.status_changed.connect(self.dashboard_host.set_update_status)
-        self.menu_bar = MenuBarController(app, self.settings, self.config,
-                                          on_open=self.open_main, on_quit=self.quit)
         self._build_application_menu()
         self.worker.state_changed.connect(self.on_quota)
         self.worker.snapshot_changed.connect(self.usage.add_snapshot)
@@ -110,8 +109,8 @@ class MacController(QObject):
         self.usage.progress_changed.connect(self.dashboard_host.set_progress)
         self.app.styleHints().colorSchemeChanged.connect(self.update_theme)
         self.app.aboutToQuit.connect(self.stop)
-        # A status-item popup also activates the application on macOS. Window
-        # creation must only follow an explicit action, never activation timing.
+        # Qt also emits this for Dock/Finder reopen while already active.
+        self.app.applicationStateChanged.connect(self._application_state_changed)
 
     def _build_application_menu(self):
         # A parentless bar is the macOS default even after the main window closes.
@@ -138,25 +137,45 @@ class MacController(QObject):
         refresh.setShortcut(QKeySequence("Ctrl+R"))
 
     def start(self):
+        self._started = True
+        self.open_main()
         self.usage.start()
         self.worker.start()
         self.updater.start(bool(self.config.get("macos_auto_update", True)))
         QTimer.singleShot(0, self.upstream.start)
         QTimer.singleShot(1500, self.acknowledge_restart)
 
-    def _startup_ready(self, force_main):
-        if force_main or self.settings.show_main_on_startup or not self.menu_bar.tray.isSystemTrayAvailable():
+    def _application_state_changed(self, state):
+        if state == Qt.ApplicationState.ApplicationActive and self._started and not self.closing and not self._open_pending:
+            self._open_pending = True
+            QTimer.singleShot(0, self._restore_main)
+
+    def _restore_main(self):
+        self._open_pending = False
+        if self.closing or self.upstream.allow_quit or self.upstream.system_exit:
+            return
+        modal = self.app.activeModalWidget()
+        if modal is not None:
+            modal.raise_()
+            modal.activateWindow()
+            return
+        window = self.dashboard_host.dashboard
+        if window is None or not window.isVisible() or window.isMinimized():
             self.open_main()
+        else:
+            window.raise_()
+            window.activateWindow()
 
     def acknowledge_restart(self):
         message = acknowledge_update()
         if message:
             self.dashboard_host.set_update_status(message, False)
 
-    def open_main(self, page="overview", period=None):
+    def open_main(self, page=None, period=None):
         if self.closing:
             return
-        self.menu_bar.preview.hide()
+        current = self.dashboard_host.dashboard
+        page = page or (current._active_page if current is not None else self._last_page)
         window = self.dashboard_host.open(page, period)
         screen = window.screen() or self.app.primaryScreen()
         if screen:
@@ -165,12 +184,11 @@ class MacController(QObject):
                           max(window.minimumHeight(), min(window.height(), rect.height())))
             if not rect.contains(window.frameGeometry()):
                 window.move(rect.center() - window.rect().center())
+        get_logger("macos").info("显示主窗口 page=%s created=%s", page, current is None)
         return window
 
     def close_window(self):
-        if self.menu_bar.preview.isVisible():
-            self.menu_bar.preview.hide()
-        elif self.dashboard_host.dashboard is not None:
+        if self.dashboard_host.dashboard is not None:
             self.dashboard_host.dashboard.close()
 
     def refresh(self):
@@ -180,13 +198,11 @@ class MacController(QObject):
 
     def on_quota(self, state):
         self.dashboard_host.apply_quota(state)
-        self.menu_bar.preview.apply_quota(state)
         self._widget_quota = state
         self._publish_widget_snapshot()
 
     def on_usage(self, data):
         self.dashboard_host.apply_data(data)
-        self.menu_bar.preview.apply_data(data)
         self._widget_usage = data
         self._publish_widget_snapshot()
 
@@ -210,13 +226,11 @@ class MacController(QObject):
 
     def on_loading(self, loading):
         self.dashboard_host.set_usage_loading(loading)
-        self.menu_bar.preview.set_usage_loading(loading)
 
     def apply_settings(self, settings):
         self.settings = settings.normalized()
         save_settings(self.settings)
         self.worker.update_settings(self.settings)
-        self.menu_bar.preview.configure(self.settings, self.config)
 
     def apply_config(self, config):
         self.config = copy.deepcopy(config)
@@ -225,7 +239,6 @@ class MacController(QObject):
         self.updater.set_enabled(bool(self.config.get("macos_auto_update", True)))
         self.usage.update_config(self.config)
         self.dashboard_host.config_updated(self.config)
-        self.menu_bar.preview.configure(self.settings, self.config)
 
     def assign_history(self, assignment):
         config = copy.deepcopy(self.config)
@@ -233,6 +246,8 @@ class MacController(QObject):
         self.apply_config(config)
 
     def save_geometry(self, geometry):
+        if self.dashboard_host.dashboard is not None:
+            self._last_page = self.dashboard_host.dashboard._active_page
         self.config["main_geometry"] = geometry
         save_analytics_config(self.config)
 
@@ -241,7 +256,6 @@ class MacController(QObject):
 
     def update_theme(self, *_args):
         self.dashboard_host.config_updated(self.config)
-        self.menu_bar.preview.configure(self.settings, self.config)
 
     def stop(self):
         if self.closing:
@@ -249,7 +263,6 @@ class MacController(QObject):
         self.closing = True
         self.upstream.stop()
         self.updater.stop()
-        self.menu_bar.stop()
         self.dashboard_host.save_geometry()
         save_settings(self.settings)
         self.worker.stop()
@@ -296,7 +309,7 @@ def run_macos(args):
         if widget_ready:
             ensure_widget_agent()
     controller = None
-    instance = SingleInstance(data_dir(), lambda: controller.open_main() if controller is not None else None, app)
+    instance = SingleInstance(data_dir(), lambda: controller._restore_main() if controller is not None else None, app)
     try:
         if not instance.acquire():
             return 0

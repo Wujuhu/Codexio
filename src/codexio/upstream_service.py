@@ -16,19 +16,23 @@ from urllib.request import Request, ProxyHandler, build_opener
 
 import psutil
 
-from codexio.upstream_client import alive, identity, restart_running, running_clients
+from codexio.upstream_client import alive, identity, restart_running
 from codexio.process_env import external_environment
 from codexio.upstream_config import OfficialRoute, UpstreamError, codex_config_path, private_json, read_json
+from codexio.upstream_restart import RestartTracker, desktop_config_path
 
 
-def verify_official_login():
+def verify_official_login(config_path=None):
     from codexio.codex_discovery import find_codex
     executable = find_codex()
     if executable is None:
         raise UpstreamError("未找到 Codex 客户端，未修改路由")
     try:
         options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
-        result = subprocess.run([str(executable), "login", "status"], capture_output=True, timeout=15, env=external_environment(), **options)
+        env = external_environment()
+        if config_path is not None:
+            env["CODEX_HOME"] = str(Path(config_path).parent)
+        result = subprocess.run([str(executable), "login", "status"], capture_output=True, timeout=15, env=env, **options)
     except (OSError, subprocess.TimeoutExpired):
         raise UpstreamError("无法确认官方登录状态，未修改路由") from None
     # Status output is examined in memory only; never persist credentials/output.
@@ -112,53 +116,30 @@ def _prune_runtime(root: Path, current: Path) -> None:
 class UpstreamService:
     def __init__(self, data_directory, *, config_path=None, restart=restart_running, verify_login=verify_official_login):
         self.directory = Path(data_directory) / "upstream"
-        self.route = OfficialRoute(config_path or codex_config_path(), self.directory)
+        recorded_config = read_json(self.directory / "route.json").get("config")
+        self.route = OfficialRoute(config_path or recorded_config or codex_config_path(), self.directory)
+        self._config_override = config_path
         self.restart = restart
-        self.verify_login = verify_login
+        self.verify_login = (lambda: verify_official_login(self.route.config)) if verify_login is verify_official_login else verify_login
         self.owner = identity(psutil.Process())
         self.state = {}
         self.active = False
         self.handed_off = False
         self.process = None
-        saved = read_json(self.directory / "client-routes.json").get("clients", [])
-        self._loaded_routes = {(item["pid"], item["created"]): item["route"] for item in saved
-                               if isinstance(item, dict) and all(key in item for key in ("pid", "created", "route"))}
-        self._startup_route = self._current_route()
-        self._route_history = [(0, self._startup_route)]
+        self._restart = RestartTracker(self.directory)
 
-    def _current_route(self):
-        if self.route.journal.exists():
-            record = read_json(self.route.journal)
-            applied = self.route._parse(record.get("applied", ""))
-            return str(applied.get("openai_base_url") or applied.get("model_providers", {}).get("codexio-upstream", {}).get("base_url") or "direct")
-        return "direct"
+    def restart_assessment(self):
+        return self._restart.assess()
 
-    def _remember_clients(self, route):
-        clients = running_clients()
-        for client in clients:
-            loaded = next((value for stamp, value in reversed(self._route_history) if stamp <= client["created"]), route)
-            self._loaded_routes.setdefault((client["pid"], client["created"]), loaded)
-        keys = {(client["pid"], client["created"]) for client in clients}
-        self._loaded_routes = {key: value for key, value in self._loaded_routes.items() if key in keys}
-        private_json(self.directory / "client-routes.json", {"clients": [dict(pid=key[0], created=key[1], route=value)
-                     for key, value in self._loaded_routes.items()]})
-        return clients
-
-    def clients_running(self):
-        return bool(self._remember_clients(self._current_route()))
+    def mark_restart_notified(self, assessment):
+        self._restart.mark_notified(assessment)
 
     def restart_needed(self):
-        route = self._current_route()
-        return any(self._loaded_routes[(client["pid"], client["created"])] != route
-                   for client in self._remember_clients(route))
+        return self.restart_assessment()["status"] != "matched"
 
     def restart_client(self):
-        restarted = self.restart()
-        route = self._current_route()
-        for client in running_clients():
-            self._loaded_routes[(client["pid"], client["created"])] = route
-        self._remember_clients(route)
-        return restarted
+        self.restart_assessment()
+        return self.restart()
 
     def control(self, action, **data):
         state = self.state or read_json(self.directory / "session.json")
@@ -192,7 +173,6 @@ class UpstreamService:
             if owner and owner != self.owner and alive(owner):
                 raise UpstreamError("另一个 Codexio 正在使用上游检测")
             self.control("deactivate")
-            self._route_history.append((time.time(), self._current_route()))
             self._stop_helper()
         if previous.get("process") and alive(previous["process"]):
             self.control("health")
@@ -237,11 +217,10 @@ class UpstreamService:
                 raise UpstreamError("本地转发启动超时，已恢复原路由")
         result = self.control("claim", owner=self.owner, update=update)
         self.active = bool(result["capture"])
-        self._route_history.append((time.time(), self._current_route()))
         return self.active
 
     def recover(self, *, update=False):
-        self._remember_clients(self._startup_route)
+        self.restart_assessment()
         self.active = False
         previous = read_json(self.directory / "session.json")
         if self.route.journal.exists() or alive(previous.get("process")):
@@ -249,24 +228,26 @@ class UpstreamService:
         return False
 
     def enable(self):
-        self._remember_clients(self._current_route())
+        target = Path(self._config_override or desktop_config_path(codex_config_path())).resolve()
+        if target != self.route.config:
+            if self.needs_restore or alive(read_json(self.directory / "session.json").get("process")):
+                raise UpstreamError("客户端的 config.toml 路径已改变，请先关闭上游检测再重新开启")
+            self.route = OfficialRoute(target, self.directory)
+        self.restart_assessment()
         self.verify_login()
         self.ensure()
-        self._remember_clients(self._current_route())
         self.control("activate")
         self.active = True
-        self._route_history.append((time.time(), self._current_route()))
         return self.restart_needed()
 
     def disable(self):
-        self._remember_clients(self._current_route())
+        self.restart_assessment()
         self.state = self.state or read_json(self.directory / "session.json")
         if alive(self.state.get("process")):
             self.control("deactivate")
         else:
             self.route.restore()
         self.active = False
-        self._route_history.append((time.time(), "direct"))
         self._stop_helper()
         return self.restart_needed()
 
