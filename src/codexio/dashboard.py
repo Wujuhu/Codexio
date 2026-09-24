@@ -1488,9 +1488,9 @@ class Dashboard(QMainWindow):
         sources = section("数据来源", "")
         refresh_form = QFormLayout()
         refresh_form.setVerticalSpacing(12)
-        refresh = combo((("5 秒 · 更及时", 5), ("10 秒 · 推荐", 10),
+        refresh = combo((("5 秒 · 更及时", 5), ("10 秒 · 默认推荐", 10),
                          ("30 秒 · 更省资源", 30), ("1 分钟", 60)),
-                        self._config.get("usage_refresh_interval_seconds", 5))
+                        self._config.get("usage_refresh_interval_seconds", 10))
         refresh.setMaximumWidth(220)
         self._setting_widgets["usage_refresh_interval_seconds"] = refresh
         refresh_form.addRow("用量日志检查", refresh)
@@ -2146,7 +2146,7 @@ class Dashboard(QMainWindow):
             self._log_table.set_source_visible(self._config.get("show_log_source") is True)
         elif name == "settings":
             self._restore_control(self._setting_widgets["usage_refresh_interval_seconds"],
-                                  self._config.get("usage_refresh_interval_seconds", 5))
+                                  self._config.get("usage_refresh_interval_seconds", 10))
             self.set_upstream_status(*getattr(self, "_upstream_state", ("已关闭 · 官方直连", False, False)))
             self._auto_update.blockSignals(True)
             self._auto_update.setChecked(bool(self._config.get("macos_auto_update" if self._is_macos else "auto_update", True)))
@@ -2670,6 +2670,8 @@ class Dashboard(QMainWindow):
             if self._config.get(key) == value:
                 return
             self._config[key] = value
+            if key == "usage_refresh_interval_seconds":
+                self._config["usage_refresh_interval_user_set"] = True
             if key == "theme":
                 self._theme = value
                 self._apply_theme()

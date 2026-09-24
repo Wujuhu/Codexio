@@ -18,7 +18,7 @@ PREVIEW_DEFAULT_WIDTH = 240
 PREVIEW_MIN_WIDTH = 220
 PREVIEW_MAX_WIDTH = 480
 USAGE_REFRESH_INTERVALS = (5, 10, 30, 60)
-DEFAULT_USAGE_REFRESH_INTERVAL = 5
+DEFAULT_USAGE_REFRESH_INTERVAL = 10
 
 
 def normalize_panel_layout(config):
@@ -77,6 +77,7 @@ def default_config() -> dict:
         "upstream_detection_enabled": False,
         "show_log_source": False,
         "usage_refresh_interval_seconds": DEFAULT_USAGE_REFRESH_INTERVAL,
+        "usage_refresh_interval_user_set": False,
         "codex_roots": [os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")],
         "ssh_sources": [],
         "account_since": utc_now(),
@@ -118,6 +119,10 @@ def load_analytics_config(path: Path | None = None) -> dict:
     for key in ("widget_visible", "auto_sync_prices", "auto_update", "macos_auto_update", "show_log_source", "upstream_detection_enabled"):
         config[key] = config[key] if isinstance(config[key], bool) else False
     config["auto_sync_prices"] = True
+    config["usage_refresh_interval_user_set"] = config.get("usage_refresh_interval_user_set") is True
+    if not config["usage_refresh_interval_user_set"] and config.get("usage_refresh_interval_seconds") == 5:
+        # The previous build saved its 5-second default without a choice marker.
+        config["usage_refresh_interval_seconds"] = DEFAULT_USAGE_REFRESH_INTERVAL
     if config.get("usage_refresh_interval_seconds") not in USAGE_REFRESH_INTERVALS:
         config["usage_refresh_interval_seconds"] = DEFAULT_USAGE_REFRESH_INTERVAL
     try:
@@ -134,6 +139,7 @@ def save_analytics_config(config: dict, path: Path | None = None) -> None:
     config.update(normalize_panel_layout(config))
     config["subscription_profile"] = normalize_subscription_profile(config.get("subscription_profile"))
     config["show_log_source"] = config.get("show_log_source") is True
+    config["usage_refresh_interval_user_set"] = config.get("usage_refresh_interval_user_set") is True
     if config.get("usage_refresh_interval_seconds") not in USAGE_REFRESH_INTERVALS:
         config["usage_refresh_interval_seconds"] = DEFAULT_USAGE_REFRESH_INTERVAL
     config["navigation_order_version"] = 1

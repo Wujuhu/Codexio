@@ -403,12 +403,17 @@ class UsageStore:
         with self._connect() as db:
             return [json.loads(row[0]) for row in db.execute("SELECT data FROM usage_sources ORDER BY id")]
 
-    def set_source_status(self, source_id: str, **fields) -> None:
+    def set_source_status(self, source_id: str, **fields) -> bool:
         with self._connect() as db:
             row = db.execute("SELECT data FROM usage_sources WHERE id=?", (source_id,)).fetchone()
             value = json.loads(row[0]) if row else {"id": source_id, "source_id": source_id}
+            previous = dict(value)
             value.update(fields)
+            comparable = lambda item: {key: field for key, field in item.items() if key != "last_scan_at"}
+            if row and comparable(value) == comparable(previous):
+                return False
             db.execute("INSERT INTO usage_sources VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data", (source_id, self._json(value)))
+            return True
 
     def models(self) -> list:
         with self._connect() as db:

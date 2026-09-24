@@ -253,6 +253,7 @@ class UsageWorker(QThread):
                 except queue.Empty:
                     break
                 try:
+                    publish_for_command = True
                     if command == "config":
                         if self._mock:
                             # UI preferences carry the real enrollment timestamp;
@@ -265,9 +266,11 @@ class UsageWorker(QThread):
                         if self._config.get("auto_sync_prices") and not was_auto_sync:
                             next_sync = 0
                     elif command == "observations":
-                        self._store.upsert_observations(value[1], value[0])
+                        changed = self._store.upsert_observations(value[1], value[0])
+                        publish_for_command = bool(changed) and self._estimates_visible
                     elif command == "rescan":
                         self._store.clear_index()
+                        collector.invalidate()
                         if self._mock:
                             self._seed_mock()
                     elif command == "override":
@@ -282,7 +285,7 @@ class UsageWorker(QThread):
                         next_remote = 0
                     elif command == "estimates_visible":
                         self._estimates_visible = value
-                    dirty = True
+                    dirty = publish_for_command or dirty
                 except Exception:
                     logger.exception("用量操作失败: %s", command)
                     self.progress_changed.emit("操作失败，已保留现有数据")
@@ -296,6 +299,9 @@ class UsageWorker(QThread):
                                                 account_since=self._config.get("account_since"), stop=self._cancel_requested)
                         dirty = bool(result.get("changed")) or dirty
                         self._scan_status = result.get("error") or "已索引 %s 个日志文件" % result.get("indexed_files", result.get("files", 0))
+                        if self._scan_status != self._last_progress:
+                            self._last_progress = self._scan_status
+                            self.progress_changed.emit(self._scan_status)
                     except Exception:
                         logger.exception("本地计量扫描失败")
                         self._store.set_source_status(source_id, status="error", name="本机", error="日志扫描失败", last_scan_at=utc_now())
@@ -306,15 +312,14 @@ class UsageWorker(QThread):
                            for s in self._config.get(kind + "_sources", [])):
                         self._report_initial_loading("正在同步远程用量")
                     if self._config.get("ssh_sources"):
-                        self._collect_remote()
-                        dirty = True
+                        dirty = self._collect_remote() or dirty
                     next_remote = time.monotonic() + 60
             if self._stop_event.is_set():
                 break
             if dirty or time.monotonic() >= next_publish:
                 self._publish()
                 dirty = False
-                next_publish = time.monotonic() + 60
+                next_publish = time.monotonic() + self._next_publish_delay()
             if not self._mock and not startup_sync_inflight and not self._cancel_requested() and (force_sync or (
                     self._config.get("auto_sync_prices") and (startup_price_sync or time.monotonic() >= next_sync))):
                 self.progress_changed.emit("正在同步模型价格")
@@ -333,34 +338,44 @@ class UsageWorker(QThread):
                 interval = DEFAULT_USAGE_REFRESH_INTERVAL
             self._wake.wait(0.1 if dirty else interval)
 
-    def _collect_remote(self) -> None:
+    def _next_publish_delay(self) -> float:
+        now = datetime.now().astimezone()
+        midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time()).astimezone()
+        deadlines = [midnight, getattr(self, "_next_summary_at", None)]
+        if self._estimates_visible:
+            deadlines.append(self._estimate_due)
+        seconds = [(deadline - now).total_seconds() for deadline in deadlines if deadline is not None and deadline > now]
+        return max(1.0, min([3600.0, *seconds]))
+
+    def _collect_remote(self) -> bool:
         from codexio.remote_collector import collect_ssh
+        changed = False
         for source in self._config.get("ssh_sources", []):
             if not source.get("enabled", True) or self._stop_event.is_set():
                 continue
             if self._config_changed.is_set():
-                return
+                return changed
             source_id = _remote_source_id("ssh", source)
             try:
                 cursors = self._store.get_meta("cursor:" + source_id) or {}
                 result = collect_ssh(dict(source, id=source_id, account_since=self._config.get("account_since")), cursors, timeout=30)
                 if self._cancel_requested():
                     raise InterruptedError("collection cancelled")
-                self._store.import_frames(result, source_id, meta_key="cursor:" + source_id)
-                self._store.update_session_titles(result.get("titles") or {})
+                changed = bool(self._store.import_frames(result, source_id, meta_key="cursor:" + source_id)) or changed
+                changed = bool(self._store.update_session_titles(result.get("titles") or {})) or changed
                 diagnostics = result.get("diagnostics") or {}
                 if (result.get("errors") or result.get("partial_files") or result.get("deferred_files")
                         or any(diagnostics.get(key) for key in ("ambiguous_cumulative", "missing_baseline", "malformed_lines"))):
                     raise RuntimeError("remote history incomplete")
-                self._store.set_source_status(source_id, name=source.get("name") or source.get("host"),
-                                              status="ok", last_scan_at=utc_now(), error=None)
+                changed = self._store.set_source_status(source_id, name=source.get("name") or source.get("host"),
+                                                        status="ok", last_scan_at=utc_now(), error=None) or changed
             except InterruptedError:
-                self._store.set_source_status(source_id, status="cancelled", error="采集已暂停，等待后续同步", last_scan_at=utc_now())
-                return
+                return self._store.set_source_status(source_id, status="cancelled", error="采集已暂停，等待后续同步", last_scan_at=utc_now()) or changed
             except Exception as exc:
                 logger.warning("SSH 用量同步失败: %s", type(exc).__name__)
-                self._store.set_source_status(source_id, name=source.get("name") or source.get("host"),
-                                              status="error", error="连接或采集失败，请检查主机、认证和 Python 配置", last_scan_at=utc_now())
+                changed = self._store.set_source_status(source_id, name=source.get("name") or source.get("host"),
+                                                        status="error", error="连接或采集失败，请检查主机、认证和 Python 配置", last_scan_at=utc_now()) or changed
+        return changed
 
     def _publish(self) -> None:
         self._report_initial_loading("正在汇总用量数据")
@@ -434,11 +449,13 @@ class UsageWorker(QThread):
             "updated_at": utc_now(), "scan_status": self._scan_status,
         }
         comparable = dict(data, updated_at=None)
-        comparable["sources"] = [{k: v for k, v in source.items() if k != "last_scan_at"} for source in sources]
+        source_fields = ("id", "source_id", "name", "status", "message", "error", "cancelled")
+        comparable["sources"] = [{key: source.get(key) for key in source_fields} for source in sources]
         signature = hashlib.sha256(json.dumps(comparable, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")).hexdigest()
-        data["content_changed"] = signature != self._last_payload_signature
-        self._last_payload_signature = signature
-        self.data_changed.emit(data)
+        if signature != self._last_payload_signature:
+            data["content_changed"] = True
+            self._last_payload_signature = signature
+            self.data_changed.emit(data)
         if self._scan_status != self._last_progress:
             self._last_progress = self._scan_status
             self.progress_changed.emit(self._scan_status)

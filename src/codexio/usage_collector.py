@@ -1220,7 +1220,7 @@ def _checkpoint(stream, path, offset, state):
 
 
 def iter_scan(root, get_cursor, source_id="local", source_name="本机", account_since=None, stop=None,
-              *, get_cursors=None, skip_unchanged=None, mark_verified=None):
+              *, get_cursors=None):
     """Yield transactional batches. Complete-line offsets never cross a partial tail."""
     root = Path(root).expanduser()
     files = session_files(root)
@@ -1239,18 +1239,20 @@ def iter_scan(root, get_cursor, source_id="local", source_name="本机", account
             stat = path.stat()
             pending = (cursor or {}).get("state", {}).get("pending_parent")
             parent_available = bool(pending and pending in context.index)
-            if (skip_unchanged is not None and cursor and cursor.get("version") == PARSER_VERSION
+            if (cursor and cursor.get("version") == PARSER_VERSION
                     and cursor.get("identity") == [stat.st_dev, stat.st_ino]
-                    and cursor.get("offset") == stat.st_size and cursor.get("mtime_ns") == stat.st_mtime_ns
-                    and not parent_available and skip_unchanged(key, stat)):
-                yield {"indexed_file": True, "key": key, "diagnostics": cursor["state"].get("diagnostics", {}),
-                       "pending_parent": cursor["state"].get("pending_parent")}
-                continue
+                    and cursor.get("size") == stat.st_size and cursor.get("mtime_ns") == stat.st_mtime_ns
+                    and not parent_available):
+                if cursor.get("offset") == stat.st_size:
+                    yield {"indexed_file": True, "key": key, "diagnostics": cursor["state"].get("diagnostics", {}),
+                           "pending_parent": cursor["state"].get("pending_parent")}
+                    continue
+                if cursor.get("partial_tail"):
+                    yield {"partial_file": True, "key": key}
+                    continue
             with path.open("rb") as stream:
                 valid = _valid_cursor(stream, cursor, stat) and not parent_available
                 if valid and cursor["offset"] == stat.st_size and cursor.get("mtime_ns") == stat.st_mtime_ns:
-                    if mark_verified is not None:
-                        mark_verified(key, stat)
                     yield {"indexed_file": True, "key": key, "diagnostics": cursor["state"].get("diagnostics", {}),
                            "pending_parent": cursor["state"].get("pending_parent")}
                     continue
@@ -1262,9 +1264,11 @@ def iter_scan(root, get_cursor, source_id="local", source_name="本机", account
                 origin = {"file_key": key, "generation": generation}
                 stream.seek(offset)
                 records, observations, bytes_read, total_bytes = [], [], 0, 0
+                partial_tail = False
                 while not _stopped(stop):
                     raw = stream.readline()
                     if not raw or not raw.endswith(b"\n"):
+                        partial_tail = bool(raw)
                         break
                     offset = stream.tell()
                     bytes_read += len(raw)
@@ -1298,7 +1302,10 @@ def iter_scan(root, get_cursor, source_id="local", source_name="本机", account
                 turns, agent_links = _drain_request_updates(state, origin)
                 checkpoint = _checkpoint(stream, path, offset, state)
                 complete = offset == checkpoint["size"] and not _stopped(stop)
+                partial_tail = (partial_tail and checkpoint["size"] == stat.st_size
+                                and checkpoint["mtime_ns"] == stat.st_mtime_ns)
                 checkpoint.update(generation=generation, reconcile_pending=reconcile_pending,
+                                  partial_tail=partial_tail,
                                   scan_complete=complete and not state.get("pending_parent") and not state.get("diagnostics", {}).get("malformed_lines"))
                 yield {"key": key, "cursor": checkpoint, "records": records, "observations": observations,
                        "bytes_read": bytes_read, "indexed_file": complete, "partial_file": not complete,
@@ -1341,16 +1348,14 @@ def scan_directory(root, cursors=None, source_id="local", source_name="本机", 
 class Collector:
     def __init__(self, store):
         self.store = store
-        self._verified = {}
         self._status_cache = {}
+        self._title_cache = {}
+        self._cursor_cache = {}
 
-    def _skip_unchanged(self, key, stat):
-        seen = self._verified.get(key)
-        return bool(seen and seen[:4] == (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
-                    and time.monotonic() - seen[4] < 300)
-
-    def _mark_verified(self, key, stat):
-        self._verified[key] = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, time.monotonic())
+    def invalidate(self):
+        self._status_cache.clear()
+        self._title_cache.clear()
+        self._cursor_cache.clear()
 
     def scan(self, root: Path, source_id="local", source_name="本机", account_since=None, stop=None) -> dict:
         root = Path(root).expanduser()
@@ -1359,15 +1364,29 @@ class Collector:
         if not root.is_dir():
             status["error"] = "Codex 数据目录不存在"
         else:
+            def cached_cursors(keys):
+                keys = list(keys)
+                cached = self._cursor_cache.setdefault(source_id, {})
+                missing = [key for key in keys if key not in cached]
+                if missing:
+                    fetched = self.store.get_cursors(missing)
+                    cached.update((key, fetched.get(key)) for key in missing)
+                return cached
+
             for batch in iter_scan(root, self.store.get_cursor, source_id, source_name, account_since, stop,
-                                   get_cursors=self.store.get_cursors,
-                                   skip_unchanged=self._skip_unchanged, mark_verified=self._mark_verified):
+                                   get_cursors=cached_cursors):
                 if "titles" in batch:
                     status["files"] = batch["files"]
-                    status["changed"] += self.store.update_session_titles(batch["titles"])
+                    if self._title_cache.get(source_id) is not batch["titles"]:
+                        status["changed"] += self.store.update_session_titles(batch["titles"])
+                        self._title_cache[source_id] = batch["titles"]
                 if "cursor" in batch:
                     status["changed"] += self.store.commit_batch(batch["records"], batch["observations"], source_id, batch["key"], batch["cursor"],
                                                                 turns=batch.get("turns", []), agent_links=batch.get("agent_links", []))
+                    checkpoint = batch["cursor"]
+                    if checkpoint.get("scan_complete") and checkpoint.get("reconcile_pending"):
+                        checkpoint = dict(checkpoint, reconcile_pending=False)
+                    self._cursor_cache[source_id][batch["key"]] = checkpoint
                 status["bytes_read"] += batch.get("bytes_read", 0)
                 if batch.get("indexed_file"):
                     status["indexed_files"] += 1
@@ -1386,8 +1405,7 @@ class Collector:
         status["status"] = "error" if status["error"] else "ok"
         status["name"] = source_name
         persisted = {k: v for k, v in status.items() if k not in ("source_id", "last_scan_at")}
-        previous = self._status_cache.get(source_id)
-        if previous is None or previous[0] != persisted or time.monotonic() - previous[1] >= 60:
+        if self._status_cache.get(source_id) != persisted:
             self.store.set_source_status(source_id, **{k: v for k, v in status.items() if k != "source_id"})
-            self._status_cache[source_id] = (persisted, time.monotonic())
+            self._status_cache[source_id] = persisted
         return status
