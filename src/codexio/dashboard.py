@@ -967,6 +967,7 @@ class Dashboard(QMainWindow):
         side.setSpacing(14)
         from codexio.app_icon import render_app_pixmap
         brand_row = QHBoxLayout()
+        self._brand_row = brand_row
         brand_row.setContentsMargins(4, 5, 0, 0)
         brand_row.setSpacing(4)
         brand_icon = QLabel()
@@ -1006,6 +1007,8 @@ class Dashboard(QMainWindow):
         side.addWidget(self._sidebar_status)
         self._account_button = QPushButton("个人订阅")
         self._account_button.setObjectName("accountButton")
+        self._account_button.setAttribute(Qt.WidgetAttribute.WA_LayoutUsesWidgetRect)
+        self._account_button.setIconSize(self._navigation.iconSize())
         self._account_button.clicked.connect(lambda: self.open_page("subscription"))
         side.addWidget(self._account_button)
         layout.addWidget(sidebar)
@@ -1072,12 +1075,17 @@ class Dashboard(QMainWindow):
         width = SIDEBAR_COLLAPSED_WIDTH if collapsed else self._config["sidebar_width"]
         self._sidebar.setFixedWidth(width)
         self._sidebar_layout.setContentsMargins(8 if collapsed else 12, 20, 8 if collapsed else 12, 16)
+        self._brand_row.setContentsMargins(0 if collapsed else 4, 5, 0, 0)
+        self._sidebar_toggle.setFixedWidth(width - 16 if collapsed else 24)
         self._brand_icon.setVisible(not collapsed)
         self._brand_name.setVisible(not collapsed and width >= 170)
         self._navigation.set_collapsed(collapsed)
         self._sidebar_status.setVisible(not collapsed)
         account = "个人订阅\n" + self._profile_plan_text().replace("&", "&&")
         self._account_button.setText("" if collapsed else account)
+        self._account_button.setProperty("collapsed", collapsed)
+        self._account_button.style().unpolish(self._account_button)
+        self._account_button.style().polish(self._account_button)
         self._account_button.setToolTip(account.replace("&&", "&"))
         self._account_button.setAccessibleName("个人订阅")
         action = "展开导航栏" if collapsed else "收起导航栏"
@@ -1551,16 +1559,20 @@ class Dashboard(QMainWindow):
         refresh_card, _ = settings_card("刷新与估算", "自动")
         refresh_form = QFormLayout()
         refresh_form.setVerticalSpacing(12)
+        refresh_form.setHorizontalSpacing(16)
+        refresh_form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        refresh_form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        refresh_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
         for key, label, choices, selected in (
-            ("refresh_interval_seconds", "额度刷新", (("30 秒", 30), ("1 分钟", 60), ("5 分钟", 300)),
+            ("refresh_interval_seconds", "额度", (("30 秒", 30), ("1 分钟", 60), ("5 分钟", 300)),
              self._settings.refresh_interval_seconds),
-            ("usage_refresh_interval_seconds", "用量日志检查", (("5 秒", 5), ("10 秒", 10), ("30 秒", 30), ("1 分钟", 60)),
+            ("usage_refresh_interval_seconds", "日志数据", (("5 秒", 5), ("10 秒", 10), ("30 秒", 30), ("1 分钟", 60)),
              self._config.get("usage_refresh_interval_seconds", 10)),
-            ("week_estimate_interval_minutes", "周额度估算周期", (("10 分钟", 10), ("30 分钟", 30), ("60 分钟", 60)),
+            ("week_estimate_interval_minutes", "额度估算", (("10 分钟", 10), ("30 分钟", 30), ("60 分钟", 60)),
              self._config.get("week_estimate_interval_minutes", 10)),
         ):
             field = combo(choices, selected)
-            field.setMaximumWidth(220)
+            field.setFixedWidth(160)
             self._setting_widgets[key] = field
             refresh_form.addRow(label, field)
         refresh_card.addLayout(refresh_form)
@@ -2632,6 +2644,9 @@ class Dashboard(QMainWindow):
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 view.setItem(index, column, item)
         if view is getattr(self, "_subscription_history", None):
+            view.setFixedHeight(view.horizontalHeader().sizeHint().height()
+                                + sum(view.rowHeight(row) for row in range(len(visible)))
+                                + 2 * view.frameWidth())
             self._estimate_page_label.setText("%s / %s · 共 %s 条" % (
                 self._estimate_page + 1 if estimates else 0, pages if estimates else 0, len(estimates)))
             self._estimate_previous.setEnabled(self._estimate_page > 0)
@@ -2867,8 +2882,6 @@ class Dashboard(QMainWindow):
         self._subscription_history.horizontalHeader().installEventFilter(self)
         self._subscription_history.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._subscription_history.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._subscription_history.setFixedHeight(
-            self._subscription_history.horizontalHeader().sizeHint().height() + 10 * 54 + 4)
         history_layout.addWidget(self._subscription_history)
         navigation = QHBoxLayout()
         self._estimate_previous = QPushButton("上一页")

@@ -32,6 +32,8 @@ private struct QuotaSnapshot: Decodable {
 private struct TodaySnapshot: Decodable {
     let cost_usd: Double?
     let tokens: Int?
+    let requests: Int?
+    let cache_hit_rate: Double?
 }
 
 private struct Snapshot: Decodable {
@@ -136,12 +138,14 @@ private struct QuotaLine: View {
 }
 
 private struct Metric: View {
+    @Environment(\.widgetFamily) private var family
     let title: String
     let value: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: family == .systemLarge ? 6 : 2) {
             Text(title).font(.system(size: 10)).foregroundStyle(.secondary)
+                .lineLimit(1).minimumScaleFactor(0.8)
             Text(value).font(.system(size: 13, weight: .semibold, design: .rounded))
                 .lineLimit(1).minimumScaleFactor(0.75)
         }
@@ -163,7 +167,7 @@ private struct CodexioWidgetView: View {
     }
 
     private func durationMetric(_ request: RequestSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: family == .systemLarge ? 6 : 2) {
             Text("耗时").font(.system(size: 10)).foregroundStyle(.secondary)
             duration(request).font(.system(size: 13, weight: .semibold, design: .rounded))
                 .lineLimit(1).minimumScaleFactor(0.75)
@@ -183,7 +187,7 @@ private struct CodexioWidgetView: View {
             .font(.system(size: family == .systemSmall ? 11 : 12, weight: .semibold))
             .foregroundStyle(.primary)
             .lineLimit(1)
-            .padding(.top, 6)
+            .padding(.top, family == .systemLarge ? 10 : 6)
         Divider().padding(.vertical, family == .systemLarge ? 9 : 7)
         if family == .systemMedium {
             HStack(alignment: .top, spacing: 0) {
@@ -196,10 +200,14 @@ private struct CodexioWidgetView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else {
-            HStack(alignment: .top, spacing: 8) {
+            HStack(alignment: .top, spacing: family == .systemLarge ? 12 : 8) {
                 Metric(title: "费用", value: request.cost_usd.map { String(format: "$%.2f", $0) } ?? "—")
                     .frame(maxWidth: .infinity, alignment: .leading)
                 durationMetric(request)
+                if family == .systemLarge {
+                    Metric(title: "命中率", value: request.cache_hit_rate.map { String(format: "%.1f%%", $0 * 100) } ?? "—")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
         }
         if family == .systemLarge {
@@ -213,12 +221,14 @@ private struct CodexioWidgetView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             Divider().padding(.vertical, 9)
-            HStack(alignment: .top, spacing: 12) {
-                Metric(title: "命中率", value: request.cache_hit_rate.map { String(format: "%.1f%%", $0 * 100) } ?? "—")
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(alignment: .top, spacing: 8) {
                 Metric(title: "今日费用", value: today?.cost_usd.map { String(format: "$%.2f", $0) } ?? "—")
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Metric(title: "今日 Token", value: today?.tokens.map(compactNumber) ?? "—")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Metric(title: "今日请求数", value: today?.requests.map(compactNumber) ?? "—")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Metric(title: "今日命中率", value: today?.cache_hit_rate.map { String(format: "%.1f%%", $0 * 100) } ?? "—")
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }

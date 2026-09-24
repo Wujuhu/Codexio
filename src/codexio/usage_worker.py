@@ -405,7 +405,7 @@ class UsageWorker(QThread):
             self._rolling.process_due(time.time(), queries)
         if self._widget_only:
             now = datetime.now().astimezone()
-            today = queries.confirmed_summary(start=now.replace(hour=0, minute=0, second=0, microsecond=0), end=now)
+            today = queries.dashboard_summary(start=now.replace(hour=0, minute=0, second=0, microsecond=0), end=now)
             widget_data = {"widget_request": queries.widget_request(), "menu_bar_today": today}
             signature = json.dumps(widget_data, sort_keys=True, ensure_ascii=False, default=str)
             if signature != self._last_widget_signature:
@@ -427,7 +427,7 @@ class UsageWorker(QThread):
                 or now < getattr(self, "_summary_at", now)
                 or next_summary_at is not None and now >= next_summary_at):
             self._summaries = queries.summaries(now)
-            self._menu_bar_today = queries.confirmed_summary(start=now.replace(hour=0, minute=0, second=0, microsecond=0), end=now)
+            self._menu_bar_today = queries.dashboard_summary(start=now.replace(hour=0, minute=0, second=0, microsecond=0), end=now)
             self._summary_key = summary_key
             self._summary_at = now
             self._next_summary_at = parse_time(queries.next_record_at(now))

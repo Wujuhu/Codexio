@@ -101,6 +101,8 @@ def make_snapshot(usage: dict | None, quota_state, *, now: float | None = None) 
         "today": {
             "cost_usd": _number(summary.get("usd")),
             "tokens": _count(summary.get("tokens")) if summary else None,
+            "requests": _count(summary.get("user_requests")) if summary.get("user_requests") is not None else None,
+            "cache_hit_rate": _number(summary.get("cache_hit_rate")),
         },
         "quota": {"five_hour": _remaining(quota_state, "five_hour"), "week": _remaining(quota_state, "week"),
                   "has_five_hour": _has_window(quota_state, "five_hour"), "has_week": _has_window(quota_state, "week"),
