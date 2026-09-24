@@ -80,14 +80,14 @@ def _retire_processes(pids):
 
 
 def repair_installed_widget() -> None:
-    """Run on GUI startup; touch only Codexio's own WidgetKit extension."""
+    """Make the frozen APP the sole registered host for Codexio's widget."""
     if sys.platform != "darwin" or not getattr(sys, "frozen", False):
         return
     bundle = Path(sys.executable).resolve().parents[2]
-    if bundle != Path("/Applications/Codexio.app"):
+    extension = bundle / "Contents/PlugIns/CodexioWidget.appex"
+    if bundle.name != "Codexio.app" or not extension.is_dir():
         return
     logger = get_logger("widget")
-    extension = bundle / "Contents/PlugIns/CodexioWidget.appex"
     marker = data_dir() / "widget_install_state.json"
     try:
         identity = _installed_identity(bundle, extension)
