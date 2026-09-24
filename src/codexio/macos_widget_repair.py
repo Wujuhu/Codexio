@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import os
+import plistlib
+import re
 import signal
 import subprocess
 import sys
@@ -33,6 +35,17 @@ def _registered_extensions():
         if path.name == "CodexioWidget.appex" and path.parent.name == "PlugIns":
             paths.add(path)
     return paths
+
+
+def _registered_version(extension: Path):
+    result = _run("pluginkit", "-m", "-A", "-D", "-v", "-i", WIDGET_ID)
+    if result.returncode:
+        return None
+    for line in result.stdout.splitlines():
+        match = re.search(re.escape(WIDGET_ID) + r"\(([^)]+)\)", line)
+        if match and Path(line.split("\t")[-1].strip()) == extension:
+            return match.group(1)
+    return None
 
 
 def _installed_identity(bundle: Path, extension: Path):
@@ -79,18 +92,20 @@ def _retire_processes(pids):
     return False
 
 
-def repair_installed_widget() -> None:
+def repair_installed_widget() -> bool:
     """Make the frozen APP the sole registered host for Codexio's widget."""
     if sys.platform != "darwin" or not getattr(sys, "frozen", False):
-        return
+        return False
     bundle = Path(sys.executable).resolve().parents[2]
     extension = bundle / "Contents/PlugIns/CodexioWidget.appex"
     if bundle.name != "Codexio.app" or not extension.is_dir():
-        return
+        return False
     logger = get_logger("widget")
     marker = data_dir() / "widget_install_state.json"
     try:
         identity = _installed_identity(bundle, extension)
+        with (extension / "Contents/Info.plist").open("rb") as stream:
+            expected_version = str(plistlib.load(stream).get("CFBundleShortVersionString") or "")
         try:
             previous = json.loads(marker.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -100,17 +115,29 @@ def repair_installed_widget() -> None:
         stale = registered - {extension}
         if not replaced and not stale and extension in registered:
             from codexio.macos_widget_snapshot import reload_widget
-            reload_widget()
-            return
+            return reload_widget()
         registration_ok = True
-        for path in stale:
-            if _run("pluginkit", "-r", str(path)).returncode:
-                registration_ok = False
-                logger.warning("旧小组件扩展暂未注销: %s", path)
-        if extension not in registered and _run("pluginkit", "-a", str(extension)).returncode:
+        # Register and elect the current extension before removing the old host,
+        # so a failed registration never leaves existing widgets without a provider.
+        if (replaced or extension not in registered) and _run("pluginkit", "-a", str(extension)).returncode:
             registration_ok = False
             logger.warning("当前小组件扩展暂未注册")
-        pids = _old_widget_processes(extension / "Contents/MacOS/CodexioWidget", replaced=replaced or bool(stale))
+        if registration_ok and _run("pluginkit", "-e", "use", "-i", WIDGET_ID).returncode:
+            registration_ok = False
+            logger.warning("当前小组件扩展暂未选用")
+        current_registered = extension in _registered_extensions() if registration_ok else False
+        if current_registered:
+            for path in stale:
+                if _run("pluginkit", "-r", str(path)).returncode:
+                    registration_ok = False
+                    logger.warning("旧小组件扩展暂未注销: %s", path)
+        else:
+            registration_ok = False
+        registered_after = _registered_extensions() if registration_ok else set()
+        registration_ok = (registration_ok and registered_after == {extension}
+                           and _registered_version(extension) == expected_version)
+        pids = (_old_widget_processes(extension / "Contents/MacOS/CodexioWidget",
+                                      replaced=replaced or bool(stale)) if registration_ok else [])
         retired = _retire_processes(pids)
         from codexio.macos_widget_snapshot import reload_widget
         reloaded = reload_widget()
@@ -119,7 +146,10 @@ def repair_installed_widget() -> None:
             temporary.write_text(json.dumps(identity, separators=(",", ":")), encoding="utf-8")
             os.chmod(temporary, 0o600)
             temporary.replace(marker)
+            return True
         else:
             logger.warning("小组件注册或旧进程仍待恢复，下次启动将重试")
-    except (OSError, subprocess.TimeoutExpired, ValueError):
+            return False
+    except (OSError, subprocess.TimeoutExpired, ValueError, plistlib.InvalidFileException):
         logger.exception("首次启动时修复小组件注册失败，下次启动将重试")
+        return False

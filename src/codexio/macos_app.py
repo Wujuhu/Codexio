@@ -277,13 +277,23 @@ def run_macos(args):
     app.setWindowIcon(load_app_icon())
     app.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont))
     setup_logging()
+    if not args.mock:
+        from codexio.macos_app_takeover import take_over_canonical_app
+        try:
+            if take_over_canonical_app():
+                return 0
+        except RuntimeError as exc:
+            QMessageBox.critical(None, "Codexio 接管失败", str(exc))
+            return 1
     # Run before the single-instance handoff: Finder may launch the replaced
     # APP while the previous process is still open at the same path.
+    widget_ready = False
     if not args.mock:
         from codexio.macos_widget_repair import repair_installed_widget
         from codexio.macos_widget_service import ensure_widget_agent
-        repair_installed_widget()
-        ensure_widget_agent()
+        widget_ready = repair_installed_widget()
+        if widget_ready:
+            ensure_widget_agent()
     controller = None
     instance = SingleInstance(data_dir(), lambda: controller.open_main() if controller is not None else None, app)
     try:
@@ -296,6 +306,9 @@ def run_macos(args):
     try:
         controller = MacController(app, mock=args.mock)
         controller.start()
+        if not args.mock and widget_ready:
+            from codexio.macos_app_takeover import cleanup_takeover_backups
+            cleanup_takeover_backups()
         if args.smoke_test:
             from codexio.macos_smoke import schedule_smoke_test
             schedule_smoke_test(controller, Path(args.smoke_test))

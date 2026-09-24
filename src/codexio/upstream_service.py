@@ -54,6 +54,12 @@ def helper_command(directory):
             cache.mkdir(parents=True, exist_ok=True)
             shutil.rmtree(temporary, ignore_errors=True)
             shutil.copytree(bundle, temporary, symlinks=True)
+            # A forwarding helper must never appear as another WidgetKit host.
+            helper_widget = temporary / "Contents/PlugIns/CodexioWidget.appex"
+            if helper_widget.exists():
+                shutil.rmtree(helper_widget)
+                subprocess.run(["codesign", "--force", "--sign", "-", "--timestamp=none", temporary],
+                               capture_output=True, check=True)
             temporary.replace(target)
     else:
         cache.mkdir(parents=True, exist_ok=True)

@@ -16,6 +16,14 @@
 - Mac 自动更新只下载 `Codexio.app.zip`，校验后等待应用正常退出，在旧 APP 的原路径放入新版并启动。新进程确认启动成功后删除旧 APP；失败时恢复旧版，未确认成功前保留回滚能力。
 - Mac 端暂不创建悬浮窗，不运行 Windows EXE 更新器。版本号与本地提交、远程发布约定继续共用。
 
+## macOS 小组件接管规则
+
+- `com.wujuhu.codexio.widget` 只能由唯一稳定宿主 `/Applications/Codexio.app` 提供。用户从 `build`、下载目录或其他位置启动完整 APP 时，新 APP 必须先原子复制并接管 `/Applications/Codexio.app`，从该稳定路径重新启动；不得让多个路径下的同 Bundle ID 扩展长期同时注册。
+- 接管前先校验新 APP 的版本、Widget 构建号和完整签名。停止并移除旧 Codexio Widget LaunchAgent，结束旧 `/Applications/Codexio.app` 主程序、后台刷新程序和 CodexioWidget 扩展进程，注销旧扩展，再替换稳定宿主。新 APP 启动失败时恢复旧 APP；新 APP 确认运行后才清理旧备份。
+- 稳定宿主启动时必须先注册并选用当前 APP 内的小组件，确认当前路径已注册后再注销其他旧路径；注册失败时保留已有可用扩展，不得先拆掉旧版造成空白小组件。接管完成后系统中只允许一个 Codexio 小组件注册路径，并与当前 APP 的 Widget 版本一致。
+- 只清理 Codexio 自己创建的注册、LaunchAgent、进程、接管备份、安装标记和运行缓存，不删除系统全局 WidgetKit 数据库或其他应用缓存。小组件 UI、Bundle 版本、注册或宿主生命周期变化时递增 `WIDGET_VERSION`。
+- 开发打包后除签名、ZIP 和隔离冒烟外，还要核对 APP 版本、Widget 短版本与构建号，并确认接管代码不会在 `--mock` 或打包冒烟中修改真实 `/Applications`、LaunchAgent、进程或系统注册。
+
 # 版本管理
 
 - 修改功能或修复问题时默认保持当前版本号。新增或递增版本号前，必须先取得用户明确确认。

@@ -20,7 +20,7 @@ APP ZIP 内含 `Codexio.app/Contents/PlugIns/CodexioWidget.appex`。首次安装
 
 主程序只向 `~/Library/Application Support/Codexio/widget_snapshot.json` 写入有界的精简快照，小组件扩展以沙盒的单文件只读权限读取；不读取 Codex 原始日志或凭据。普通 APP 升级复用相同的小组件 Bundle ID 和 `kind`，本轮更新扩展构建版本，已添加的小组件预期保留原位。免费临时签名方案已在构建机上验证扩展注册，另一台 macOS 15 或更新的 Mac 仍需验证首次安装与升级后保留情况。
 
-直接启动开发包时，它会注销系统中同 Bundle ID 的旧 Codexio 扩展并注册当前 APP 内的版本，避免桌面继续使用 `/Applications` 中的旧扩展。完全退出后的常驻刷新仍要求正式 APP 位于 `/Applications/Codexio.app`。
+直接启动开发包或其他位置的完整 APP 时，它会先校验并原子接管唯一宿主 `/Applications/Codexio.app`，再从稳定路径启动。接管会停止旧 Codexio 小组件后台服务与旧扩展进程、更新 LaunchAgent，并在确认当前扩展注册成功后清理其他旧路径；启动失败时保留或恢复旧 APP。这样桌面配置始终对应同一路径，不会因多个同 ID 扩展争抢而显示旧版或空白。
 
 ## 行为与数据口径
 
