@@ -13,7 +13,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
-from codexio.analytics_config import utc_now
+from codexio.analytics_config import DEFAULT_USAGE_REFRESH_INTERVAL, USAGE_REFRESH_INTERVALS, utc_now
 from codexio.logging_setup import get_logger
 from codexio.settings import data_dir
 
@@ -328,7 +328,10 @@ class UsageWorker(QThread):
                 startup_price_sync = False
                 next_sync = time.monotonic() + (3600 if result.get("status") == "offline" else 86400)
                 dirty = True
-            self._wake.wait(0.1 if dirty else 5.0)
+            interval = self._config.get("usage_refresh_interval_seconds")
+            if interval not in USAGE_REFRESH_INTERVALS:
+                interval = DEFAULT_USAGE_REFRESH_INTERVAL
+            self._wake.wait(0.1 if dirty else interval)
 
     def _collect_remote(self) -> None:
         from codexio.remote_collector import collect_ssh

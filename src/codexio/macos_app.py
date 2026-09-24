@@ -5,7 +5,6 @@ import copy
 import hashlib
 import os
 import sys
-import time
 from functools import partial
 from pathlib import Path
 
@@ -83,13 +82,6 @@ class MacController(QObject):
         self._widget_usage = None
         self._widget_quota = None
         self._widget_signature = None
-        self._widget_request_id = None
-        self._widget_model = None
-        self._widget_running = False
-        self._widget_last_reload = 0.0
-        self._widget_reload_timer = QTimer(self)
-        self._widget_reload_timer.setSingleShot(True)
-        self._widget_reload_timer.timeout.connect(self._reload_widget)
         self.dashboard_host = DashboardHost(lambda: self.settings, lambda: self.config, {
             "refresh": self.refresh, "settings": self.apply_settings, "config": self.apply_config,
             "sync_prices": self.usage.request_sync, "price_override": self.usage.set_price_override,
@@ -198,8 +190,8 @@ class MacController(QObject):
         self._publish_widget_snapshot()
 
     def _reload_widget(self):
-        if not self.closing and reload_widget():
-            self._widget_last_reload = time.monotonic()
+        if not self.closing:
+            reload_widget()
 
     def _publish_widget_snapshot(self):
         if self.mock or self.closing or self._widget_usage is None:
@@ -212,23 +204,8 @@ class MacController(QObject):
             return
         if signature == self._widget_signature:
             return
-        request = snapshot.get("request") or {}
-        request_id = request.get("id")
-        model_key = (request.get("model"), request.get("reasoning_effort"))
-        running = request.get("duration_running") is True
-        urgent = (self._widget_signature is None or request_id != self._widget_request_id
-                  or model_key != self._widget_model or running != self._widget_running)
         self._widget_signature = signature
-        self._widget_request_id = request_id
-        self._widget_model = model_key
-        self._widget_running = running
-        elapsed = time.monotonic() - self._widget_last_reload
-        interval = 60 if running else 300
-        if urgent or elapsed >= interval:
-            self._widget_reload_timer.stop()
-            self._reload_widget()
-        elif not self._widget_reload_timer.isActive():
-            self._widget_reload_timer.start(max(1000, int((interval - elapsed) * 1000)))
+        self._reload_widget()
 
     def on_loading(self, loading):
         self.dashboard_host.set_usage_loading(loading)
@@ -269,7 +246,6 @@ class MacController(QObject):
         if self.closing:
             return
         self.closing = True
-        self._widget_reload_timer.stop()
         self.upstream.stop()
         self.updater.stop()
         self.menu_bar.stop()

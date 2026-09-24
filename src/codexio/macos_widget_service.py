@@ -6,7 +6,6 @@ import plistlib
 import signal
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, QObject, QTimer
@@ -96,11 +95,6 @@ class WidgetMonitor(QObject):
         self.quota_state = None
         self.retired_workers = []
         self.signature = None
-        self.request_key = None
-        self.last_reload = 0.0
-        self.reload_timer = QTimer(self)
-        self.reload_timer.setSingleShot(True)
-        self.reload_timer.timeout.connect(self._reload)
         self.owner_timer = QTimer(self)
         self.owner_timer.setInterval(2000)
         self.owner_timer.timeout.connect(self._sync_owner)
@@ -132,11 +126,10 @@ class WidgetMonitor(QObject):
         self.quota.start()
 
     def _stop_workers(self):
-        self.reload_timer.stop()
         usage, quota = self.usage, self.quota
         self.usage = self.quota = None
         self.usage_data = self.quota_state = None
-        self.signature = self.request_key = None
+        self.signature = None
         for worker in (usage, quota):
             self.retired_workers.append(worker)
             worker.finished.connect(self._retired_done)
@@ -172,8 +165,7 @@ class WidgetMonitor(QObject):
         if self.usage is None or _main_app_running(self.directory):
             return
         from codexio.macos_widget_snapshot import reload_widget
-        if reload_widget():
-            self.last_reload = time.monotonic()
+        reload_widget()
 
     def _publish(self):
         if self.usage_data is None or _main_app_running(self.directory):
@@ -187,16 +179,8 @@ class WidgetMonitor(QObject):
             return
         if signature == self.signature:
             return
-        request = snapshot.get("request") or {}
-        key = (request.get("id"), request.get("model"), request.get("reasoning_effort"), request.get("duration_running"))
-        urgent = key != self.request_key
-        self.signature, self.request_key = signature, key
-        elapsed = time.monotonic() - self.last_reload
-        if urgent or elapsed >= 30:
-            self.reload_timer.stop()
-            self._reload()
-        elif not self.reload_timer.isActive():
-            self.reload_timer.start(max(1000, int((30 - elapsed) * 1000)))
+        self.signature = signature
+        self._reload()
 
     def request_shutdown(self):
         if self.shutting_down:

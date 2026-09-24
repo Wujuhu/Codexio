@@ -17,6 +17,8 @@ SIDEBAR_COLLAPSED_WIDTH = 60
 PREVIEW_DEFAULT_WIDTH = 240
 PREVIEW_MIN_WIDTH = 220
 PREVIEW_MAX_WIDTH = 480
+USAGE_REFRESH_INTERVALS = (5, 10, 30, 60)
+DEFAULT_USAGE_REFRESH_INTERVAL = 5
 
 
 def normalize_panel_layout(config):
@@ -74,6 +76,7 @@ def default_config() -> dict:
         "macos_auto_update": True,
         "upstream_detection_enabled": False,
         "show_log_source": False,
+        "usage_refresh_interval_seconds": DEFAULT_USAGE_REFRESH_INTERVAL,
         "codex_roots": [os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")],
         "ssh_sources": [],
         "account_since": utc_now(),
@@ -115,6 +118,8 @@ def load_analytics_config(path: Path | None = None) -> dict:
     for key in ("widget_visible", "auto_sync_prices", "auto_update", "macos_auto_update", "show_log_source", "upstream_detection_enabled"):
         config[key] = config[key] if isinstance(config[key], bool) else False
     config["auto_sync_prices"] = True
+    if config.get("usage_refresh_interval_seconds") not in USAGE_REFRESH_INTERVALS:
+        config["usage_refresh_interval_seconds"] = DEFAULT_USAGE_REFRESH_INTERVAL
     try:
         datetime.fromisoformat(str(config["account_since"]).replace("Z", "+00:00"))
     except (ValueError, TypeError):
@@ -129,6 +134,8 @@ def save_analytics_config(config: dict, path: Path | None = None) -> None:
     config.update(normalize_panel_layout(config))
     config["subscription_profile"] = normalize_subscription_profile(config.get("subscription_profile"))
     config["show_log_source"] = config.get("show_log_source") is True
+    if config.get("usage_refresh_interval_seconds") not in USAGE_REFRESH_INTERVALS:
+        config["usage_refresh_interval_seconds"] = DEFAULT_USAGE_REFRESH_INTERVAL
     config["navigation_order_version"] = 1
     target = path or data_dir() / "analytics_settings.json"
     target.parent.mkdir(parents=True, exist_ok=True)
