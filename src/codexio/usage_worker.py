@@ -104,6 +104,13 @@ class UsageWorker(QThread):
         self._scan_status = "正在建立用量索引"
         self._initial_loading = True
         self._loading_stage = None
+        self._estimates_visible = False
+        self._estimates = []
+        self._estimate_key = None
+        self._estimate_due = None
+        self._last_payload_signature = None
+        self._last_widget_signature = None
+        self._last_progress = None
 
     def update_config(self, config: dict) -> None:
         self._commands.put(("config", copy.deepcopy(config)))
@@ -118,8 +125,8 @@ class UsageWorker(QThread):
         self._commands.put(("sync", None))
         self._wake.set()
 
-    def request_estimate_refresh(self) -> None:
-        self._commands.put(("server_estimates", None))
+    def set_estimates_visible(self, visible: bool) -> None:
+        self._commands.put(("estimates_visible", bool(visible)))
         self._wake.set()
 
     def set_price_override(self, model: str, rates: dict | None) -> None:
@@ -227,7 +234,7 @@ class UsageWorker(QThread):
 
             def sync_on_launch():
                 try:
-                    result = self._catalog.sync(force=True)
+                    result = self._catalog.sync(force=False)
                 except Exception:
                     logger.exception("启动时模型价格同步失败，沿用已缓存价格")
                     result = {"status": "offline"}
@@ -269,11 +276,12 @@ class UsageWorker(QThread):
                         force_sync = not startup_sync_inflight
                     elif command == "startup_price_sync_done":
                         startup_sync_inflight = False
-                        next_sync = time.monotonic() + (3600 if value.get("status") == "offline" else 86400)
+                        next_sync = time.monotonic() + value.get("next_check_seconds",
+                            3600 if value.get("status") == "offline" else 86400)
                     elif command == "refresh":
                         next_remote = 0
-                    elif command == "server_estimates":
-                        self._server_cache_key = None
+                    elif command == "estimates_visible":
+                        self._estimates_visible = value
                     dirty = True
                 except Exception:
                     logger.exception("用量操作失败: %s", command)
@@ -297,9 +305,10 @@ class UsageWorker(QThread):
                     if any(s.get("enabled", True) for kind in ("ssh",)
                            for s in self._config.get(kind + "_sources", [])):
                         self._report_initial_loading("正在同步远程用量")
-                    self._collect_remote()
+                    if self._config.get("ssh_sources"):
+                        self._collect_remote()
+                        dirty = True
                     next_remote = time.monotonic() + 60
-                    dirty = True
             if self._stop_event.is_set():
                 break
             if dirty or time.monotonic() >= next_publish:
@@ -360,7 +369,11 @@ class UsageWorker(QThread):
         if self._widget_only:
             now = datetime.now().astimezone()
             today = queries.confirmed_summary(start=now.replace(hour=0, minute=0, second=0, microsecond=0), end=now)
-            self.data_changed.emit({"widget_request": queries.widget_request(), "menu_bar_today": today})
+            widget_data = {"widget_request": queries.widget_request(), "menu_bar_today": today}
+            signature = json.dumps(widget_data, sort_keys=True, ensure_ascii=False, default=str)
+            if signature != self._last_widget_signature:
+                self._last_widget_signature = signature
+                self.data_changed.emit(widget_data)
             self._finish_initial_loading("小组件数据已加载")
             return
         active = self._active_sources()
@@ -381,25 +394,18 @@ class UsageWorker(QThread):
             self._summary_key = summary_key
             self._summary_at = now
             self._next_summary_at = parse_time(queries.next_record_at(now))
-        self._estimates = queries.weekly_estimates(active, self._config["account_since"], sources_complete=complete,
-                                                   assignments=self._config.get("history_assignments", []), now=now)
-        from codexio.server_usage_store import read_server_snapshot
-        from codexio.server_estimation import estimate_server_weeks
-        server_path = self._directory / "server_usage.sqlite"
-        revision = []
-        for path in (server_path, server_path.with_name(server_path.name + "-wal")):
-            try:
-                stat = path.stat()
-                revision.append((stat.st_mtime_ns, stat.st_size))
-            except OSError:
-                revision.append(None)
-        server_key = (self._mock, self._config.get("server_estimates_enabled", True), int(now.timestamp()) // 60, *revision)
-        if server_key != getattr(self, "_server_cache_key", None):
-            server = (read_server_snapshot(server_path) if not self._mock and server_key[1]
-                      else dict(context={"quota_status": "mock" if self._mock else "disabled"}, observations=[], daily=[]))
-            self._server_estimates = estimate_server_weeks(server["observations"], server["daily"], server["context"].get("account_key"), now=now)
-            self._server_context = server["context"]
-            self._server_cache_key = server_key
+        if self._estimates_visible:
+            revisions = self._store.revisions()
+            key = (generation, revisions["observations"], tuple(sorted(active)),
+                   self._config["account_since"],
+                   json.dumps(self._config.get("history_assignments", []), sort_keys=True, default=str), complete)
+            if (key != self._estimate_key or self._estimate_due is not None and now >= self._estimate_due
+                    or now < getattr(self, "_estimate_at", now)):
+                self._estimates = queries.weekly_estimates(active, self._config["account_since"], sources_complete=complete,
+                                                           assignments=self._config.get("history_assignments", []), now=now)
+                self._estimate_key = key
+                self._estimate_at = now
+                self._estimate_due = parse_time(queries.next_weekly_estimate_refresh())
         if self._mock:
             model_catalog = {"models": ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"], "status": "ok"}
         else:
@@ -420,13 +426,19 @@ class UsageWorker(QThread):
             "prices": self._catalog.rows(),
             "standard_prices": self._catalog.standard_rows(),
             "pricing_status": copy.deepcopy(self._catalog.status), "sources": sources, "weekly_estimates": self._estimates,
-            "weekly_server_estimates": self._server_estimates, "server_usage_context": self._server_context,
             "calibration_sources": sorted(active), "sources_complete": complete,
             "available_models": model_catalog.get("models", []), "model_catalog_status": model_catalog,
             "updated_at": utc_now(), "scan_status": self._scan_status,
         }
+        comparable = dict(data, updated_at=None)
+        comparable["sources"] = [{k: v for k, v in source.items() if k != "last_scan_at"} for source in sources]
+        signature = hashlib.sha256(json.dumps(comparable, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")).hexdigest()
+        data["content_changed"] = signature != self._last_payload_signature
+        self._last_payload_signature = signature
         self.data_changed.emit(data)
-        self.progress_changed.emit(self._scan_status)
+        if self._scan_status != self._last_progress:
+            self._last_progress = self._scan_status
+            self.progress_changed.emit(self._scan_status)
         if not self._cancel_requested():
             # An empty history is also a completed first load. Config changes
             # interrupt scans, so wait for the new configuration's first pass.

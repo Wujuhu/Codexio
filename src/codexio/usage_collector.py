@@ -13,6 +13,7 @@ import math
 import os
 import re
 import sqlite3
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,8 @@ PREVIEW_LIMIT = 600
 COUNTERS = ("input_tokens", "cached_input_tokens", "cache_write_input_tokens",
             "output_tokens", "reasoning_output_tokens", "total_tokens")
 UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+_TITLE_CACHE = {}
+_SESSION_CACHE = {}
 
 
 def _reasoning_effort(value):
@@ -349,23 +352,56 @@ def _stopped(stop) -> bool:
 
 def session_files(root: Path) -> list:
     """One physical rollout per UUID, even while an archive move is in flight."""
+    cache_key = str(root.resolve())
+    cached = _SESSION_CACHE.get(cache_key)
+    if cached and time.monotonic() - cached[0] < 60:
+        unchanged = True
+        for directory, signature in cached[2]:
+            try:
+                stat = directory.stat()
+                current = stat.st_dev, stat.st_ino, stat.st_mtime_ns
+            except OSError:
+                current = None
+            if current != signature:
+                unchanged = False
+                break
+        if unchanged:
+            return cached[1]
     found = {}
+    directories = {root, root / "sessions", root / "archived_sessions"}
     for directory in (root / "sessions", root / "archived_sessions"):
         if not directory.is_dir():
             continue
-        for path in directory.rglob("*.jsonl"):
-            try:
-                # Do not follow file symlinks outside the explicitly chosen root.
-                if path.is_symlink():
+        for current, children, filenames in os.walk(directory, followlinks=False):
+            children[:] = [name for name in children if not (Path(current) / name).is_symlink()]
+            directories.add(Path(current))
+            for filename in filenames:
+                if not filename.endswith(".jsonl"):
                     continue
-                ids = UUID_RE.findall(path.stem)
-                key = ids[-1].lower() if ids else path.name
-                old = found.get(key)
-                if old is None or path.stat().st_size > old.stat().st_size:
-                    found[key] = path
-            except OSError:
-                continue
-    return sorted(found.values(), key=lambda p: str(p))
+                path = Path(current) / filename
+                try:
+                    # Do not follow file symlinks outside the explicitly chosen root.
+                    if path.is_symlink():
+                        continue
+                    ids = UUID_RE.findall(path.stem)
+                    key = ids[-1].lower() if ids else path.name
+                    old = found.get(key)
+                    if old is None or path.stat().st_size > old.stat().st_size:
+                        found[key] = path
+                except OSError:
+                    continue
+    files = sorted(found.values(), key=lambda p: str(p))
+    stamps = []
+    for directory in directories:
+        try:
+            stat = directory.stat()
+            stamps.append((directory, (stat.st_dev, stat.st_ino, stat.st_mtime_ns)))
+        except OSError:
+            stamps.append((directory, None))
+    if len(_SESSION_CACHE) >= 8 and cache_key not in _SESSION_CACHE:
+        _SESSION_CACHE.pop(next(iter(_SESSION_CACHE)))
+    _SESSION_CACHE[cache_key] = (time.monotonic(), files, stamps)
+    return files
 
 
 def _rollout_id(path: Path) -> str:
@@ -378,6 +414,22 @@ def cursor_key(root: Path, path: Path, source_id: str) -> str:
 
 
 def read_session_titles(root: Path) -> dict:
+    index = root / "session_index.jsonl"
+    paths = [index, *sorted(root.glob("state*.sqlite"), reverse=True)]
+    signature = []
+    for path in paths:
+        candidates = (path,) if path == index else (path, path.with_name(path.name + "-wal"))
+        for candidate in candidates:
+            try:
+                stat = candidate.stat()
+                signature.append((str(candidate), stat.st_mtime_ns, stat.st_size))
+            except OSError:
+                signature.append((str(candidate), None, None))
+    key = str(root.resolve())
+    cached = _TITLE_CACHE.get(key)
+    if cached and cached[0] == signature:
+        return cached[1]
+
     def clean_title(value) -> str:
         if not isinstance(value, str):
             return ""
@@ -387,7 +439,6 @@ def read_session_titles(root: Path) -> dict:
         return title
 
     titles = {}
-    index = root / "session_index.jsonl"
     try:
         with index.open("r", encoding="utf-8") as stream:
             for line in stream:
@@ -403,7 +454,7 @@ def read_session_titles(root: Path) -> dict:
     except OSError:
         pass
     # Restrict both table and columns; do not SELECT * from the Codex state DB.
-    for path in sorted(root.glob("state*.sqlite"), reverse=True):
+    for path in paths[1:]:
         db = None
         try:
             db = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=1)
@@ -422,6 +473,9 @@ def read_session_titles(root: Path) -> dict:
         finally:
             if db is not None:
                 db.close()
+    if len(_TITLE_CACHE) >= 8 and key not in _TITLE_CACHE:
+        _TITLE_CACHE.pop(next(iter(_TITLE_CACHE)))
+    _TITLE_CACHE[key] = (signature, titles)
     return titles
 
 
@@ -1165,10 +1219,14 @@ def _checkpoint(stream, path, offset, state):
             "tail_hash": tail_hash, "state": state, "path": str(path), "last_scan_at": _now()}
 
 
-def iter_scan(root, get_cursor, source_id="local", source_name="本机", account_since=None, stop=None):
+def iter_scan(root, get_cursor, source_id="local", source_name="本机", account_since=None, stop=None,
+              *, get_cursors=None, skip_unchanged=None, mark_verified=None):
     """Yield transactional batches. Complete-line offsets never cross a partial tail."""
     root = Path(root).expanduser()
     files = session_files(root)
+    if get_cursors is not None:
+        cursors = get_cursors(cursor_key(root, path, source_id) for path in files)
+        get_cursor = cursors.get
     context = _Context(files, read_session_titles(root))
     yield {"titles": context.titles, "files": len(files)}
     account_since = _timestamp(account_since) or None
@@ -1181,9 +1239,18 @@ def iter_scan(root, get_cursor, source_id="local", source_name="本机", account
             stat = path.stat()
             pending = (cursor or {}).get("state", {}).get("pending_parent")
             parent_available = bool(pending and pending in context.index)
+            if (skip_unchanged is not None and cursor and cursor.get("version") == PARSER_VERSION
+                    and cursor.get("identity") == [stat.st_dev, stat.st_ino]
+                    and cursor.get("offset") == stat.st_size and cursor.get("mtime_ns") == stat.st_mtime_ns
+                    and not parent_available and skip_unchanged(key, stat)):
+                yield {"indexed_file": True, "key": key, "diagnostics": cursor["state"].get("diagnostics", {}),
+                       "pending_parent": cursor["state"].get("pending_parent")}
+                continue
             with path.open("rb") as stream:
                 valid = _valid_cursor(stream, cursor, stat) and not parent_available
                 if valid and cursor["offset"] == stat.st_size and cursor.get("mtime_ns") == stat.st_mtime_ns:
+                    if mark_verified is not None:
+                        mark_verified(key, stat)
                     yield {"indexed_file": True, "key": key, "diagnostics": cursor["state"].get("diagnostics", {}),
                            "pending_parent": cursor["state"].get("pending_parent")}
                     continue
@@ -1274,6 +1341,16 @@ def scan_directory(root, cursors=None, source_id="local", source_name="本机", 
 class Collector:
     def __init__(self, store):
         self.store = store
+        self._verified = {}
+        self._status_cache = {}
+
+    def _skip_unchanged(self, key, stat):
+        seen = self._verified.get(key)
+        return bool(seen and seen[:4] == (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+                    and time.monotonic() - seen[4] < 300)
+
+    def _mark_verified(self, key, stat):
+        self._verified[key] = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, time.monotonic())
 
     def scan(self, root: Path, source_id="local", source_name="本机", account_since=None, stop=None) -> dict:
         root = Path(root).expanduser()
@@ -1282,7 +1359,9 @@ class Collector:
         if not root.is_dir():
             status["error"] = "Codex 数据目录不存在"
         else:
-            for batch in iter_scan(root, self.store.get_cursor, source_id, source_name, account_since, stop):
+            for batch in iter_scan(root, self.store.get_cursor, source_id, source_name, account_since, stop,
+                                   get_cursors=self.store.get_cursors,
+                                   skip_unchanged=self._skip_unchanged, mark_verified=self._mark_verified):
                 if "titles" in batch:
                     status["files"] = batch["files"]
                     status["changed"] += self.store.update_session_titles(batch["titles"])
@@ -1306,5 +1385,9 @@ class Collector:
             status["error"] = "采集尚未完成，等待下次增量扫描"
         status["status"] = "error" if status["error"] else "ok"
         status["name"] = source_name
-        self.store.set_source_status(source_id, **{k: v for k, v in status.items() if k != "source_id"})
+        persisted = {k: v for k, v in status.items() if k not in ("source_id", "last_scan_at")}
+        previous = self._status_cache.get(source_id)
+        if previous is None or previous[0] != persisted or time.monotonic() - previous[1] >= 60:
+            self.store.set_source_status(source_id, **{k: v for k, v in status.items() if k != "source_id"})
+            self._status_cache[source_id] = (persisted, time.monotonic())
         return status

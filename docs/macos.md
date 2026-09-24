@@ -1,6 +1,6 @@
 # Codexio for macOS
 
-当前开发版本 **0.2.7**，复用 Windows 主界面与本地用量后端。macOS 的入口、菜单栏和打包与 Windows 悬浮窗、EXE 更新器分开。
+当前开发版本 **0.2.8**，复用 Windows 主界面与本地用量后端。macOS 的入口、菜单栏和打包与 Windows 悬浮窗、EXE 更新器分开。
 
 ## 运行与安装
 
@@ -14,9 +14,9 @@
 
 ## 原生桌面小组件
 
-APP ZIP 内含 `Codexio.app/Contents/PlugIns/CodexioWidget.appex`。首次安装建议用 Finder 将完整 APP 放入 `/Applications`，启动一次后在桌面右键“编辑小组件”，搜索 Codexio，选择小、中或大尺寸。小组件优先展示进行中的主请求，否则展示最近一次主请求，不在界面区分两者；金额是现有计价规则的估算费用。小尺寸显示请求预览、模型、费用、时长和额度，中尺寸增加双额度，大尺寸增加输入、输出、缓存读取与命中率。WidgetKit 决定实际刷新时机，运行时长使用系统动态日期显示。
+APP ZIP 内含 `Codexio.app/Contents/PlugIns/CodexioWidget.appex`。首次安装建议用 Finder 将完整 APP 放入 `/Applications`，启动一次后在桌面右键“编辑小组件”，搜索 Codexio，选择小、中或大尺寸。小组件优先展示进行中的主请求，否则展示最近一次主请求；金额是现有计价规则的估算费用。小尺寸显示请求预览、模型、费用、时长和额度，中尺寸增加双额度，并将四项用量数据等距排列到两个额度区域上方；大尺寸增加输入、输出、缓存读取与命中率。额度标题为“5 小时”“周”，五小时重置只显示本地时间点。WidgetKit 决定实际刷新时机，运行时长使用系统动态日期显示。
 
-主程序只向 `~/Library/Application Support/Codexio/widget_snapshot.json` 写入有界的精简快照，小组件扩展以沙盒的单文件只读权限读取；不读取 Codex 原始日志或凭据。普通 APP 升级复用相同的小组件 Bundle ID、`kind` 和未变化的扩展构建，已添加的小组件预期保留原位。免费临时签名方案已在构建机上验证扩展注册，另一台 macOS 15 或更新的 Mac 仍需验证首次安装与升级后保留情况。
+主程序只向 `~/Library/Application Support/Codexio/widget_snapshot.json` 写入有界的精简快照，小组件扩展以沙盒的单文件只读权限读取；不读取 Codex 原始日志或凭据。普通 APP 升级复用相同的小组件 Bundle ID 和 `kind`，本轮更新扩展构建版本，已添加的小组件预期保留原位。免费临时签名方案已在构建机上验证扩展注册，另一台 macOS 15 或更新的 Mac 仍需验证首次安装与升级后保留情况。
 
 ## 行为与数据口径
 
@@ -38,7 +38,7 @@ Dock 图标由 `src/codexio/icons/app.svg` 直接渲染，ICNS 的各尺寸独�
 
 额度只由本机 Codex `app-server` 提供；超时、断网或接口数据缺失时显示缓存／未知，不用本机 Token 反推真实额度，不在重置时间到达时直接伪造 100%。倒计时和日期都是当地时间。金额使用项目既有 [计价规则](codex-pricing.md)，界面统一称为“费用”，表示按模型定价换算的金额，并非实际订阅账单。
 
-默认从 `CODEX_HOME` 或 `~/.codex` 扫描 `sessions` 和 `archived_sessions`。API 请求和日志索引沿用原项目；不会主动重置额度、发送模型请求或修改原始会话日志。可选服务端周额度估算沿用现有只读凭据流程。
+默认从 `CODEX_HOME` 或 `~/.codex` 扫描 `sessions` 和 `archived_sessions`。API 请求和日志索引沿用原项目；不会主动重置额度、发送模型请求或修改原始会话日志。周额度等价美元仅依据本地日志和本地额度观测估算。
 
 偏好、额度缓存、价格缓存、日志索引、运行日志位于 `~/Library/Application Support/Codexio`。`CODEXIO_DATA_DIR` 可显式覆盖存储路径，适合开发隔离；显式设置 `LOCALAPPDATA` 时保留旧的路径覆盖行为。`--mock` 默认使用该目录下的 `mock` 子目录，避免污染真实用量和偏好。
 

@@ -417,6 +417,19 @@ class UsageStore:
     def get_cursor(self, key: str) -> Optional[dict]:
         return self._get_value("usage_cursors", key)
 
+    def get_cursors(self, keys) -> dict[str, dict]:
+        keys = list(keys)
+        if not keys:
+            return {}
+        with self._connect() as db:
+            result = {}
+            for offset in range(0, len(keys), 500):
+                chunk = keys[offset:offset + 500]
+                marks = ",".join("?" for _ in chunk)
+                for key, data in db.execute("SELECT key,data FROM usage_cursors WHERE key IN (" + marks + ")", chunk):
+                    result[key] = json.loads(data)
+            return result
+
     def set_cursor(self, key: str, state: dict) -> None:
         self._set_value("usage_cursors", key, state)
 
@@ -453,4 +466,3 @@ class UsageStore:
             # Remote cursors must be reset too, otherwise clearing local data
             # would permanently skip the already-consumed remote prefix.
             db.execute("DELETE FROM usage_meta WHERE key LIKE '%cursor%'")
-

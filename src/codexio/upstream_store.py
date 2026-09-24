@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from contextlib import closing
 import json
 from pathlib import Path
 import sqlite3
@@ -11,23 +12,40 @@ import time
 class UpstreamStore:
     def __init__(self, path: Path):
         self.path = Path(path)
+        self._writer_initialized = False
 
     def record(self, response_id, model, event="response.completed"):
-        if not all(isinstance(v, str) and 0 < len(v.strip()) <= 256 for v in (response_id, model)):
+        self.record_batch([(response_id, model, event)])
+
+    def record_batch(self, values):
+        latest = {}
+        for response_id, model, event in values:
+            if not all(isinstance(v, str) and 0 < len(v.strip()) <= 256 for v in (response_id, model)):
+                continue
+            response_id, model = response_id.strip(), model.strip()
+            rank = 1 if event == "response.created" else 2
+            old = latest.get(response_id)
+            if old is None or rank >= old[2]:
+                latest[response_id] = (model, event, rank)
+        if not latest:
             return
-        response_id, model = response_id.strip(), model.strip()
-        rank = 1 if event == "response.created" else 2
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.path, timeout=1) as db:
-            db.execute("PRAGMA journal_mode=WAL")
-            db.execute("CREATE TABLE IF NOT EXISTS observations(response_id TEXT PRIMARY KEY,model TEXT NOT NULL,event TEXT NOT NULL,rank INTEGER NOT NULL,observed_at REAL NOT NULL)")
-            db.execute("CREATE TABLE IF NOT EXISTS revision(id INTEGER PRIMARY KEY,value INTEGER NOT NULL)")
-            db.execute("INSERT OR IGNORE INTO revision VALUES(1,0)")
-            old = db.execute("SELECT model,rank FROM observations WHERE response_id=?", (response_id,)).fetchone()
-            if old and (old[1] > rank or old == (model, rank)):
-                return
-            db.execute("INSERT OR REPLACE INTO observations VALUES(?,?,?,?,?)", (response_id, model, event, rank, time.time()))
-            db.execute("UPDATE revision SET value=value+1 WHERE id=1")
+        with closing(sqlite3.connect(self.path, timeout=1)) as db, db:
+            if not self._writer_initialized:
+                db.execute("PRAGMA journal_mode=WAL")
+                db.execute("CREATE TABLE IF NOT EXISTS observations(response_id TEXT PRIMARY KEY,model TEXT NOT NULL,event TEXT NOT NULL,rank INTEGER NOT NULL,observed_at REAL NOT NULL)")
+                db.execute("CREATE TABLE IF NOT EXISTS revision(id INTEGER PRIMARY KEY,value INTEGER NOT NULL)")
+                db.execute("INSERT OR IGNORE INTO revision VALUES(1,0)")
+            changed = 0
+            for response_id, (model, event, rank) in latest.items():
+                old = db.execute("SELECT model,rank FROM observations WHERE response_id=?", (response_id,)).fetchone()
+                if old and (old[1] > rank or old == (model, rank)):
+                    continue
+                db.execute("INSERT OR REPLACE INTO observations VALUES(?,?,?,?,?)", (response_id, model, event, rank, time.time()))
+                changed += 1
+            if changed:
+                db.execute("UPDATE revision SET value=value+? WHERE id=1", (changed,))
+        self._writer_initialized = True
 
     def revision(self):
         if not self.path.is_file():

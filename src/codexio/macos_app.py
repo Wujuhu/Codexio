@@ -22,7 +22,6 @@ from codexio.dashboard_host import DashboardHost
 from codexio.logging_setup import get_logger, setup_logging
 from codexio.menu_bar import MenuBarController
 from codexio.macos_widget_snapshot import make_snapshot, reload_widget, write_snapshot
-from codexio.server_usage_monitor import ServerUsageMonitor
 from codexio.settings import data_dir, load_settings, save_settings
 from codexio.usage_worker import UsageWorker
 from codexio.worker import QuotaWorker
@@ -81,7 +80,6 @@ class MacController(QObject):
         save_analytics_config(self.config)
         self.worker = QuotaWorker(self.settings, mock=mock)
         self.usage = UsageWorker(self.config, mock=mock)
-        self.server_usage = ServerUsageMonitor(self.config, data_dir(), app, mock=mock)
         self._widget_usage = None
         self._widget_quota = None
         self._widget_signature = None
@@ -96,6 +94,7 @@ class MacController(QObject):
             "refresh": self.refresh, "settings": self.apply_settings, "config": self.apply_config,
             "sync_prices": self.usage.request_sync, "price_override": self.usage.set_price_override,
             "quit": self.quit, "rescan": self.usage.rescan, "assign_history": self.assign_history,
+            "estimates_visible": self.usage.set_estimates_visible,
             "main_hidden": self.save_geometry, "open_data_directory": self.open_data_directory,
             "check_update": lambda: self.updater.check(),
             "upstream_toggle": lambda value: self.upstream.toggle(value),
@@ -116,7 +115,6 @@ class MacController(QObject):
         self.usage.data_changed.connect(self.on_usage)
         self.usage.loading_changed.connect(self.on_loading)
         self.usage.progress_changed.connect(self.dashboard_host.set_progress)
-        self.server_usage.updated.connect(self.usage.request_estimate_refresh)
         self.app.styleHints().colorSchemeChanged.connect(self.update_theme)
         self.app.aboutToQuit.connect(self.stop)
         # A status-item popup also activates the application on macOS. Window
@@ -149,7 +147,6 @@ class MacController(QObject):
     def start(self):
         self.usage.start()
         self.worker.start()
-        self.server_usage.start()
         self.updater.start(bool(self.config.get("macos_auto_update", True)))
         QTimer.singleShot(0, self.upstream.start)
         QTimer.singleShot(1500, self.acknowledge_restart)
@@ -187,7 +184,6 @@ class MacController(QObject):
         if not self.closing:
             self.worker.request_refresh()
             self.usage.request_refresh()
-            self.server_usage.request_refresh()
 
     def on_quota(self, state):
         self.dashboard_host.apply_quota(state)
@@ -210,7 +206,7 @@ class MacController(QObject):
             return
         try:
             snapshot = make_snapshot(self._widget_usage, self._widget_quota)
-            signature = write_snapshot(snapshot)
+            signature = write_snapshot(snapshot, self._widget_signature)
         except (OSError, ValueError):
             get_logger("widget").exception("保存小组件数据失败")
             return
@@ -227,11 +223,12 @@ class MacController(QObject):
         self._widget_model = model_key
         self._widget_running = running
         elapsed = time.monotonic() - self._widget_last_reload
-        if urgent or elapsed >= 300:
+        interval = 60 if running else 300
+        if urgent or elapsed >= interval:
             self._widget_reload_timer.stop()
             self._reload_widget()
         elif not self._widget_reload_timer.isActive():
-            self._widget_reload_timer.start(max(1000, int((300 - elapsed) * 1000)))
+            self._widget_reload_timer.start(max(1000, int((interval - elapsed) * 1000)))
 
     def on_loading(self, loading):
         self.dashboard_host.set_usage_loading(loading)
@@ -249,7 +246,6 @@ class MacController(QObject):
         save_analytics_config(self.config)
         self.updater.set_enabled(bool(self.config.get("macos_auto_update", True)))
         self.usage.update_config(self.config)
-        self.server_usage.update_config(self.config)
         self.dashboard_host.config_updated(self.config)
         self.menu_bar.preview.configure(self.settings, self.config)
 
@@ -279,7 +275,6 @@ class MacController(QObject):
         self.menu_bar.stop()
         self.dashboard_host.save_geometry()
         save_settings(self.settings)
-        self.server_usage.stop()
         self.worker.stop()
         self.usage.stop()
 

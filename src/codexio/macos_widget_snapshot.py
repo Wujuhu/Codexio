@@ -104,16 +104,24 @@ def make_snapshot(usage: dict | None, quota_state, *, now: float | None = None) 
         },
         "quota": {"five_hour": _remaining(quota_state, "five_hour"), "week": _remaining(quota_state, "week"),
                   "has_five_hour": _has_window(quota_state, "five_hour"), "has_week": _has_window(quota_state, "week"),
+                  "five_hour_reset_at": _reset_at(quota_state, "five_hour"),
                   "week_reset_at": _reset_at(quota_state, "week")},
     }
 
 
-def write_snapshot(snapshot: dict) -> str:
+def write_snapshot(snapshot: dict, previous_signature: str | None = None) -> str:
     """Return a content signature so callers can avoid unnecessary WidgetKit reloads."""
     path = snapshot_path()
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     canonical = json.dumps({key: value for key, value in snapshot.items() if key != "updated_at"},
                            ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    signature = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    if signature == previous_signature:
+        try:
+            if time.time() - path.stat().st_mtime < 300:
+                return signature
+        except OSError:
+            pass
     payload = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
     if len(payload) > 32_768:
         raise ValueError("小组件快照超过大小限制")
@@ -127,7 +135,7 @@ def write_snapshot(snapshot: dict) -> str:
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return signature
 
 
 def reload_widget() -> bool:

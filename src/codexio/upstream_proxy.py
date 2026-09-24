@@ -155,14 +155,21 @@ class Relay:
 
     async def write_observations(self):
         while True:
-            value = await self.queue.get()
+            batch = [await self.queue.get()]
             try:
-                await asyncio.to_thread(self.store.record, *value)
+                await asyncio.sleep(0.05)
+                while len(batch) < 64:
+                    try:
+                        batch.append(self.queue.get_nowait())
+                    except asyncio.QueueEmpty:
+                        break
+                await asyncio.to_thread(self.store.record_batch, batch)
             except Exception:
                 # Disk/database failure must never fail a user's model request.
                 pass
             finally:
-                self.queue.task_done()
+                for _ in batch:
+                    self.queue.task_done()
 
     async def forward(self, request):
         supplied = request.match_info.get("route") or request.headers.get(ROUTE_HEADER, "")

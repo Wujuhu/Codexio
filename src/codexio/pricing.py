@@ -373,7 +373,8 @@ class PricingCatalog:
                 checked = None
             retry_after = 3600 if self._cache.get("status") == "offline" else 86400
             if not force and checked and 0 <= (now - checked).total_seconds() < retry_after:
-                return dict(self.status, changed=False)
+                return dict(self.status, changed=False,
+                            next_check_seconds=max(60, retry_after - (now - checked).total_seconds()))
             previous = self.price_version
             previous_rows = [dict(row) for row in self._base_rows]
             errors = []

@@ -73,7 +73,6 @@ def default_config() -> dict:
         "auto_update": True,
         "macos_auto_update": True,
         "upstream_detection_enabled": False,
-        "server_estimates_enabled": True,
         "show_log_source": False,
         "codex_roots": [os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")],
         "ssh_sources": [],
@@ -113,7 +112,7 @@ def load_analytics_config(path: Path | None = None) -> dict:
     if not isinstance(config["codex_roots"], list):
         config["codex_roots"] = default_config()["codex_roots"]
     config["codex_roots"] = list(dict.fromkeys(str(v) for v in config["codex_roots"] if str(v).strip()))
-    for key in ("widget_visible", "auto_sync_prices", "auto_update", "macos_auto_update", "show_log_source", "server_estimates_enabled", "upstream_detection_enabled"):
+    for key in ("widget_visible", "auto_sync_prices", "auto_update", "macos_auto_update", "show_log_source", "upstream_detection_enabled"):
         config[key] = config[key] if isinstance(config[key], bool) else False
     config["auto_sync_prices"] = True
     try:
@@ -124,13 +123,12 @@ def load_analytics_config(path: Path | None = None) -> dict:
 
 
 def save_analytics_config(config: dict, path: Path | None = None) -> None:
-    config = {key: value for key, value in config.items() if key not in ("lan_sources", "share_tokens", "usd_per_credit", "upstream_exit_prompt")}
+    config = {key: value for key, value in config.items() if key not in ("lan_sources", "share_tokens", "usd_per_credit", "upstream_exit_prompt", "server_estimates_enabled")}
     config["auto_sync_prices"] = True
     config["navigation_order"] = normalize_navigation_order(config.get("navigation_order"))
     config.update(normalize_panel_layout(config))
     config["subscription_profile"] = normalize_subscription_profile(config.get("subscription_profile"))
     config["show_log_source"] = config.get("show_log_source") is True
-    config["server_estimates_enabled"] = config.get("server_estimates_enabled", True) is True
     config["navigation_order_version"] = 1
     target = path or data_dir() / "analytics_settings.json"
     target.parent.mkdir(parents=True, exist_ok=True)

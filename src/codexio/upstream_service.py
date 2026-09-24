@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import shutil
 import subprocess
@@ -61,7 +62,45 @@ def helper_command(directory):
             temporary = cache / "copy.exe"
             shutil.copy2(executable, temporary)
             temporary.replace(binary)
+    _prune_runtime(directory / "runtime", cache)
     return [str(binary), "--upstream-proxy", str(directory)]
+
+
+def _prune_runtime(root: Path, current: Path) -> None:
+    """Retain recent and in-use helper bundles; remove only known old copies."""
+    try:
+        session = read_json(root.parent / "session.json")
+        helper = session.get("process")
+        if alive(helper):
+            try:
+                protected = Path(psutil.Process(helper["pid"]).exe()).resolve()
+            except (OSError, psutil.Error):
+                return
+        else:
+            protected = None
+        candidates = sorted((path for path in root.iterdir() if path.is_dir() and not path.is_symlink()
+                             and re.fullmatch(r"[0-9a-f]{16}", path.name)),
+                            key=lambda path: path.stat().st_mtime_ns, reverse=True)
+        running = {protected} if protected is not None else set()
+        for process in psutil.process_iter(["exe", "name"]):
+            executable = process.info.get("exe")
+            if executable:
+                running.add(Path(executable).resolve())
+            elif str(process.info.get("name") or "").lower().startswith("codexio"):
+                return
+        keep = {current.resolve(), *(path.resolve() for path in candidates[:2])}
+        for path in candidates:
+            resolved = path.resolve()
+            if resolved in keep or any(executable.is_relative_to(resolved) for executable in running):
+                continue
+            if time.time() - path.stat().st_mtime < 3600:
+                continue
+            if {item.name for item in path.iterdir()} - {"Codexio.app", "Codexio.exe"}:
+                continue
+            shutil.rmtree(path)
+    except (OSError, psutil.Error):
+        # Cleanup must never prevent the forwarding helper from starting.
+        pass
 
 
 class UpstreamService:

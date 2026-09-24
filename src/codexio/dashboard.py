@@ -1571,9 +1571,6 @@ class Dashboard(QMainWindow):
             data_button = QPushButton("打开数据目录")
             data_button.clicked.connect(lambda: self._callback("open_data_directory"))
             update_card.addWidget(data_button, alignment=Qt.AlignmentFlag.AlignLeft)
-        estimate_card, _ = settings_card("额度估算", "用量统计", "结合服务端多日记录估算周额度；数据补齐后会重新计算。")
-        self._server_estimates_enabled = QCheckBox("用服务端多日数据估算周额度")
-        estimate_card.addWidget(self._server_estimates_enabled)
         self._upstream_toggle = QCheckBox("上游检测")
         self._upstream_toggle.clicked.connect(lambda value: self._callback("upstream_toggle", value))
         upstream_card, self._upstream_badge = settings_card(self._upstream_toggle, "已关闭",
@@ -1588,7 +1585,7 @@ class Dashboard(QMainWindow):
         self._settings_message.hide()
         layout.addWidget(self._settings_message)
         controls = dict(self._setting_widgets, theme=self._theme_combo,
-                        show_log_source=self._show_log_source, server_estimates_enabled=self._server_estimates_enabled)
+                        show_log_source=self._show_log_source)
         for key, widget in controls.items():
             if isinstance(widget, QComboBox):
                 signal = widget.currentIndexChanged
@@ -1899,7 +1896,11 @@ class Dashboard(QMainWindow):
         self._refresh_visible()
 
     def apply_data(self, data: dict) -> None:
+        had_data = bool(self._data)
         self._data = data if isinstance(data, dict) else {}
+        if had_data and self._data.get("content_changed") is False:
+            self._refresh_status()
+            return
         self._activity_revision += 1
         self._comparison_cache.clear()
         query_path = self._data.get("query_path")
@@ -2066,6 +2067,7 @@ class Dashboard(QMainWindow):
         if name not in PAGE_NAMES:
             name = "overview"
         self._active_page = name
+        self._callback("estimates_visible", name == "subscription")
         if name != "logs" and hasattr(self, "_inspector_popup"):
             self._close_inspector(restore_focus=False)
         self._sync_duration_timer()
@@ -2089,6 +2091,7 @@ class Dashboard(QMainWindow):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        self._callback("estimates_visible", self._active_page == "subscription")
         self._ensure_page(self._active_page)
         self._stack.setCurrentWidget(self._pages[self._active_page])
         self._refresh_visible()
@@ -2097,6 +2100,7 @@ class Dashboard(QMainWindow):
             self._escape_inspector.setEnabled(self._active_page == "logs" and self._inspected_record is not None)
 
     def hideEvent(self, event) -> None:
+        self._callback("estimates_visible", False)
         if hasattr(self, "_inspector_popup"):
             self._inspector_popup.hide()
         self._duration_timer.stop()
@@ -2137,7 +2141,6 @@ class Dashboard(QMainWindow):
             self._theme_combo.setCurrentIndex(max(0, self._theme_combo.findData(self._theme)))
             self._theme_combo.blockSignals(False)
             self._restore_control(self._show_log_source, self._config.get("show_log_source") is True)
-            self._server_estimates_enabled.setChecked(self._config.get("server_estimates_enabled", True) is True)
             self._account_since.setText("当前账号观测起点：" + (str(self._config.get("account_since")) if self._config.get("account_since") else "首次成功读取额度后记录"))
             self._refresh_source_list()
         self._config_dirty.discard(name)
@@ -2591,11 +2594,9 @@ class Dashboard(QMainWindow):
         self._estimate_value.setText(amount if amount != "—" else "待采样")
         delta = value.get("delta_percent")
         label = method_label(value) if value else "尚无有效样本"
-        if selected["cached"] and str(value.get("method", "")).startswith("server_"):
-            label = "缓存 · " + label
         self._estimate_note.setText(label + (" · 已采样 %g 个百分点" % float(delta) if delta is not None else ""))
         message = selected["message"]
-        if not str(value.get("method", "")).startswith("server_") and value.get("estimated_remaining_usd") is not None:
+        if value.get("estimated_remaining_usd") is not None:
             message = "剩余额度参考 " + usd(value["estimated_remaining_usd"]) + " · " + message
         self._estimate_period.setText(message)
         reference = selected["reference"]
@@ -2614,9 +2615,7 @@ class Dashboard(QMainWindow):
             status, _ = estimate_status(value)
             pool = {"codex": "Codex", "codex_bengalfox": "Spark"}.get(value.get("limit_id"), "未识别")
             columns = (str(value.get("plan_type") or "—").upper(), reset_text, interval, estimate_amount(value),
-                       status, "服务端采样" if str(value.get("method", "")).startswith("server_") and value.get("status") != "ready" else
-                       "服务端 · 日界对齐" if value.get("method") == "server_aligned" else
-                       "服务端 · 跨多日" if value.get("method") == "server_range" else "本地观测参考", pool)
+                       status, "本地观测估值", pool)
             for column, text in enumerate(columns):
                 item = QTableWidgetItem(str(text))
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -2639,7 +2638,7 @@ class Dashboard(QMainWindow):
         header.setMinimumSectionSize(130)
         header.setStretchLastSection(False)
         layout.addWidget(view)
-        layout.addWidget(plain_label("服务端为已入账数据估值，本地算法单列参考；非订阅实际扣款。", muted=True, wrap=True))
+        layout.addWidget(plain_label("仅使用本地日志与同期额度观测估值；非订阅实际扣款。", muted=True, wrap=True))
         self._dialog(dialog)
 
     def _save_setting(self, key, value) -> None:
@@ -2653,7 +2652,7 @@ class Dashboard(QMainWindow):
             return
         if key == "border_color":
             self._settings_message.hide()
-        if key in ("theme", "show_log_source", "server_estimates_enabled"):
+        if key in ("theme", "show_log_source"):
             if self._config.get(key) == value:
                 return
             self._config[key] = value
@@ -2741,6 +2740,7 @@ class Dashboard(QMainWindow):
         self._dialog(dialog)
 
     def closeEvent(self, event) -> None:
+        self._callback("estimates_visible", False)
         if "settings" in self._pages:
             for key, widget in self._setting_widgets.items():
                 if isinstance(widget, QLineEdit):
@@ -2847,7 +2847,7 @@ class Dashboard(QMainWindow):
         self._subscription_history.setMinimumHeight(260)
         self._subscription_history.setMaximumHeight(420)
         history_layout.addWidget(self._subscription_history)
-        history_layout.addWidget(plain_label("日数据按 UTC（北京时间 08:00）分日，结束满 24 小时后纳入，后续补账自动修正。金额为额度等价估算。", muted=True, wrap=True))
+        history_layout.addWidget(plain_label("仅按已配置来源的本地日志与同期周额度变化估算；缺失来源的消费不计入。", muted=True, wrap=True))
         contents.addWidget(self._subscription_history_section)
         contents.addStretch()
         return page

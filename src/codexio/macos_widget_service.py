@@ -122,7 +122,7 @@ class WidgetMonitor(QObject):
         from codexio.usage_worker import UsageWorker
         from codexio.worker import QuotaWorker
         config = load_analytics_config()
-        config.update(ssh_sources=[], auto_sync_prices=False, server_estimates_enabled=False)
+        config.update(ssh_sources=[], auto_sync_prices=False)
         self.usage_data = self.quota_state = None
         self.usage = UsageWorker(config, widget_only=True)
         self.quota = QuotaWorker(load_settings())
@@ -181,7 +181,7 @@ class WidgetMonitor(QObject):
         from codexio.macos_widget_snapshot import make_snapshot, write_snapshot
         try:
             snapshot = make_snapshot(self.usage_data, self.quota_state)
-            signature = write_snapshot(snapshot)
+            signature = write_snapshot(snapshot, self.signature)
         except (OSError, ValueError):
             get_logger("widget").exception("独立刷新小组件数据失败")
             return

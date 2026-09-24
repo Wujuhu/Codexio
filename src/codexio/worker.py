@@ -105,7 +105,8 @@ class QuotaWorker(QThread):
         self._ensure_client()
         notification = self._take_notification()
         if notification is not None:
-            self._apply_notification(notification)
+            if self._apply_notification(notification):
+                return
         if self._snapshot is None:
             self._set_status(QuotaStatus.READING, "正在读取")
         result = self._require_client().read_rate_limits()
@@ -191,7 +192,7 @@ class QuotaWorker(QThread):
             self._notification = None
             return message
 
-    def _apply_notification(self, message: JsonRpcMessage) -> None:
+    def _apply_notification(self, message: JsonRpcMessage) -> bool:
         params = message.params if isinstance(message.params, dict) else {}
         try:
             incoming = parse_rate_limits_result(params) if any(key in params for key in ("rateLimits", "rate_limits", "rateLimitsByLimitId", "rate_limits_by_limit_id")) else (
@@ -199,11 +200,12 @@ class QuotaWorker(QThread):
             )
         except ValueError:
             logger.warning("忽略无法解析的额度通知")
-            return
+            return False
         base = self._snapshot
         merged = merge_rate_limit_snapshots(base, incoming)
         self._store_local(merged)
         self._on_success(merged, "已收到额度更新", persist=False)
+        return base is not None
 
     def _on_success(self, snapshot: RateLimitSnapshot, message: str, persist: bool = True) -> None:
         self._snapshot = snapshot

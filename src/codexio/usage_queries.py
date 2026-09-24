@@ -19,7 +19,7 @@ from codexio.usage_collector import _user_preview
 from codexio.usage_metrics import dashboard_summary
 from codexio.upstream_store import UpstreamStore, enrich_rows
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 METRIC_FIELDS = ("id", "timestamp", "model", "reasoning_effort", "service_tier", "source_id", "source_name", "source_ids",
                  "session_id", "turn_id", "request_turn_id", "total_tokens", "cost_usd", "pricing_status",
                  "provider", "account_key", "limit_id", "quality", "duration_ms") + COUNTERS
@@ -162,10 +162,23 @@ class UsageQueries:
             CREATE INDEX IF NOT EXISTS request_members_record ON usage_request_members(record_id,request_id);
             CREATE TABLE IF NOT EXISTS usage_query_turns (id TEXT PRIMARY KEY,data TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS usage_query_state (key TEXT PRIMARY KEY,data TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS usage_query_changes (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT,kind TEXT NOT NULL,item_id TEXT NOT NULL);
         """)
+        for table, field, kind in (("usage_records", "id", "record"),
+                                   ("usage_record_sources", "record_id", "record"),
+                                   ("usage_session_titles", "session_id", "title"),
+                                   ("usage_turns", "id", "turn"),
+                                   ("usage_agent_links", "id", "agent")):
+            for action, versions in (("INSERT", ("NEW",)), ("UPDATE", ("OLD", "NEW")),
+                                     ("DELETE", ("OLD",))):
+                body = " ".join("INSERT INTO usage_query_changes(kind,item_id) VALUES('%s',%s.%s);" %
+                                (kind, version, field) for version in versions)
+                db.execute("CREATE TRIGGER IF NOT EXISTS query_%s_%s AFTER %s ON %s BEGIN %s END" %
+                           (table, action.lower(), action, table, body))
 
     def rebuild(self, catalog, sources=()):
-        """Rebuild once per changed ledger/price/name revision and commit as a unit."""
+        """Update changed calls and groups atomically; reprice all on rule changes."""
         with self._connect(write=True) as db:
             self._schema(db)
             db.execute("BEGIN IMMEDIATE")
@@ -184,48 +197,72 @@ class UsageQueries:
                     # earlier app version did not persist a journal watermark.
                     db.execute("INSERT INTO usage_query_state VALUES('materialized_change_seq',?)", (str(materialized_change_seq),))
                 return generation
-            for table in ("usage_priced_calls", "usage_query_sources", "usage_request_groups",
-                          "usage_request_members", "usage_query_turns"):
-                db.execute("DELETE FROM " + table)
-            db.execute("INSERT INTO usage_query_sources SELECT record_id,source_id FROM usage_record_sources")
-            graph = []
-            # Deduplicate frequent labels locally; unique IDs and detail text are
-            # never interned into a process-lifetime global cache.
-            labels = {}
+            changes = set(db.execute("SELECT kind,item_id FROM usage_query_changes"))
+            try:
+                old_signature = json.loads(state.get("signature", "null"))
+            except (TypeError, ValueError):
+                old_signature = None
+            incremental = bool(changes and isinstance(old_signature, list) and len(old_signature) == 4
+                               and old_signature[0] == SCHEMA_VERSION
+                               and old_signature[2] == catalog.price_version
+                               and old_signature[3] == [list(item) for item in names])
+            old_groups = dict(db.execute("SELECT id,data FROM usage_request_groups")) if incremental else {}
+            old_members = {}
+            if incremental:
+                for request_id, record_id in db.execute("SELECT request_id,record_id FROM usage_request_members"):
+                    old_members.setdefault(request_id, []).append(record_id)
+            else:
+                for table in ("usage_priced_calls", "usage_query_sources", "usage_request_groups",
+                              "usage_request_members"):
+                    db.execute("DELETE FROM " + table)
+
             raw_sql = """SELECT r.data,t.title,
                 (SELECT json_group_array(source_id) FROM
                     (SELECT source_id FROM usage_record_sources s WHERE s.record_id=r.id ORDER BY source_id))
-                FROM usage_records r LEFT JOIN usage_session_titles t ON t.session_id=r.session_id
-                ORDER BY r.timestamp DESC,r.id DESC"""
+                FROM usage_records r LEFT JOIN usage_session_titles t ON t.session_id=r.session_id"""
 
-            def priced_rows():
-                for raw in db.execute(raw_sql):
-                    record = json.loads(raw[0])
-                    if raw[1]:
-                        record["session_title"] = raw[1]
-                    record["source_ids"] = json.loads(raw[2]) or [record.get("source_id")]
-                    pricing = catalog.price(record)
-                    record.update(cost_usd=pricing.get("usd"), pricing_status=pricing.get("pricing_status", "unpriced"),
-                                  pricing_reason=pricing.get("reason", ""), price_version=pricing.get("price_version"))
-                    record.pop("price_rates", None)
-                    metrics = {key: record[key] for key in METRIC_FIELDS if key in record}
-                    for key in ("model", "service_tier", "source_id", "source_name", "quality", "provider", "limit_id"):
-                        value = metrics.get(key)
-                        if isinstance(value, str):
-                            metrics[key] = labels.setdefault(value, value)
-                    graph_row = dict(metrics)
-                    # Presence is sufficient for choosing the primary preview.
-                    # Its text is fetched only while writing this group's result.
-                    graph_row["output_preview"] = bool(record.get("output_preview"))
-                    graph.append(graph_row)
-                    yield (record["id"], _stamp(record.get("timestamp")), str(record.get("model") or "未知模型"),
-                           normalized_tier(record.get("service_tier")), str(record.get("source_id") or ""),
-                           str(record.get("session_id") or ""), str(record.get("request_turn_id") or record.get("turn_id") or ""),
-                           _json(metrics), _json(record))
+            def priced_row(raw):
+                record = json.loads(raw[0])
+                if raw[1]:
+                    record["session_title"] = raw[1]
+                record["source_ids"] = json.loads(raw[2]) or [record.get("source_id")]
+                pricing = catalog.price(record)
+                record.update(cost_usd=pricing.get("usd"), pricing_status=pricing.get("pricing_status", "unpriced"),
+                              pricing_reason=pricing.get("reason", ""), price_version=pricing.get("price_version"))
+                record.pop("price_rates", None)
+                metrics = {key: record[key] for key in METRIC_FIELDS if key in record}
+                return (record["id"], _stamp(record.get("timestamp")), str(record.get("model") or "未知模型"),
+                        normalized_tier(record.get("service_tier")), str(record.get("source_id") or ""),
+                        str(record.get("session_id") or ""), str(record.get("request_turn_id") or record.get("turn_id") or ""),
+                        _json(metrics), _json(record))
 
-            db.executemany("INSERT INTO usage_priced_calls VALUES(?,?,?,?,?,?,?,?,?)", priced_rows())
+            if incremental:
+                changed_ids = {ident for kind, ident in changes if kind == "record"}
+                for kind, session_id in changes:
+                    if kind == "title":
+                        changed_ids.update(row[0] for row in db.execute(
+                            "SELECT id FROM usage_records WHERE session_id=?", (session_id,)))
+                for ident in sorted(changed_ids):
+                    raw = db.execute(raw_sql + " WHERE r.id=?", (ident,)).fetchone()
+                    if raw is None:
+                        db.execute("DELETE FROM usage_priced_calls WHERE id=?", (ident,))
+                    else:
+                        db.execute("INSERT OR REPLACE INTO usage_priced_calls VALUES(?,?,?,?,?,?,?,?,?)", priced_row(raw))
+                    db.execute("DELETE FROM usage_query_sources WHERE record_id=?", (ident,))
+                    db.execute("INSERT INTO usage_query_sources SELECT record_id,source_id FROM usage_record_sources WHERE record_id=?", (ident,))
+            else:
+                db.execute("INSERT INTO usage_query_sources SELECT record_id,source_id FROM usage_record_sources")
+                db.executemany("INSERT INTO usage_priced_calls VALUES(?,?,?,?,?,?,?,?,?)",
+                               (priced_row(raw) for raw in db.execute(raw_sql + " ORDER BY r.timestamp DESC,r.id DESC")))
+
+            graph = []
+            for metrics, preview in db.execute("SELECT metrics,json_extract(data,'$.output_preview') FROM usage_priced_calls ORDER BY timestamp DESC,id DESC"):
+                row = json.loads(metrics)
+                row["output_preview"] = bool(preview)
+                graph.append(row)
             # Merge duplicate/forked turn metadata in the same ordering as the
             # original aggregator, while keeping its preview strings on disk.
+            db.execute("DELETE FROM usage_query_turns")
             for raw in db.execute("""SELECT data FROM usage_turns ORDER BY
                 COALESCE(NULLIF(json_extract(data,'$.observed_at'),''),NULLIF(json_extract(data,'$.ended_at'),''),'') ASC,
                 COALESCE(json_extract(data,'$.id'),'') ASC,id ASC"""):
@@ -246,19 +283,28 @@ class UsageQueries:
                     yield small
 
             links = (json.loads(row[0]) for row in db.execute("SELECT data FROM usage_agent_links ORDER BY id"))
+            seen_groups = set()
             for group in iter_user_requests(graph, slim_turns(), links, sources, detail_keys=True):
                 members = group.pop("member_ids")
                 self._enrich_group(db, group)
                 if group["record_kind"] == "unassigned":
                     group["member_ids"] = members[:1]
-                db.execute("INSERT INTO usage_request_groups VALUES(?,?,?,?,?,?)",
-                           (group["id"], _stamp(group.get("timestamp")), group["record_kind"],
-                            int(group.get("is_subagent", False)), group.get("subagent_count", 0), _json(group)))
-                db.executemany("INSERT INTO usage_request_members VALUES(?,?)", ((group["id"], ident) for ident in members))
+                ident, data = group["id"], _json(group)
+                seen_groups.add(ident)
+                if old_groups.get(ident) != data or sorted(old_members.get(ident, [])) != sorted(members):
+                    db.execute("INSERT OR REPLACE INTO usage_request_groups VALUES(?,?,?,?,?,?)",
+                               (ident, _stamp(group.get("timestamp")), group["record_kind"],
+                                int(group.get("is_subagent", False)), group.get("subagent_count", 0), data))
+                    db.execute("DELETE FROM usage_request_members WHERE request_id=?", (ident,))
+                    db.executemany("INSERT INTO usage_request_members VALUES(?,?)", ((ident, member) for member in members))
+            for ident in old_groups.keys() - seen_groups:
+                db.execute("DELETE FROM usage_request_members WHERE request_id=?", (ident,))
+                db.execute("DELETE FROM usage_request_groups WHERE id=?", (ident,))
             generation += 1
             db.executemany("INSERT INTO usage_query_state VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
                            [("signature", signature), ("generation", str(generation)),
-                            ("materialized_change_seq", str(materialized_change_seq))])
+                             ("materialized_change_seq", str(materialized_change_seq))])
+            db.execute("DELETE FROM usage_query_changes")
             return generation
 
     @staticmethod
@@ -533,6 +579,11 @@ class UsageQueries:
         result = cache.update(active, account_since, sources_complete=sources_complete, assignments=assignments, now=now)
         self.last_estimation_stats = cache.stats
         return result
+
+    def next_weekly_estimate_refresh(self):
+        with self._connect() as db:
+            row = db.execute("SELECT MIN(next_refresh) FROM usage_estimation_cycles WHERE next_refresh<>''").fetchone()
+            return row[0] if row else None
 
     def calibration_observations(self, active):
         sources = sorted(set(active) | {"local-quota"})

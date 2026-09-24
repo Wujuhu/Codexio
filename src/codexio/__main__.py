@@ -34,7 +34,6 @@ from codexio.worker import QuotaWorker
 from codexio.analytics_config import load_analytics_config, save_analytics_config
 from codexio.usage_worker import UsageWorker
 from codexio.dashboard_host import DashboardHost
-from codexio.server_usage_monitor import ServerUsageMonitor
 from codexio.settings import data_dir
 from codexio.upstream_manager import UpstreamManager
 
@@ -73,7 +72,6 @@ def main(argv: list[str] | None = None) -> int:
 
     worker = QuotaWorker(settings, mock=args.mock)
     usage = UsageWorker(analytics_config, mock=args.mock)
-    server_usage = ServerUsageMonitor(analytics_config, data_dir(), app, mock=args.mock)
     closing = False
     updater = None
     upstream = None
@@ -85,7 +83,6 @@ def main(argv: list[str] | None = None) -> int:
         closing = True
         if upstream is not None:
             upstream.stop()
-        server_usage.stop()
         if updater is not None:
             updater.stop()
         dashboard_host.save_geometry()
@@ -108,7 +105,6 @@ def main(argv: list[str] | None = None) -> int:
     def refresh() -> None:
         worker.request_refresh()
         usage.request_refresh()
-        server_usage.request_refresh()
 
     def open_main(page: str = "overview", period: str | None = None) -> None:
         dashboard_host.open(page, period)
@@ -120,7 +116,6 @@ def main(argv: list[str] | None = None) -> int:
         if updater is not None:
             updater.set_enabled(bool(analytics_config.get("auto_update", True)))
         usage.update_config(analytics_config)
-        server_usage.update_config(analytics_config)
         dashboard_host.config_updated(analytics_config)
         window.apply_theme("dark")
         window.setVisible(bool(analytics_config.get("widget_visible", True)))
@@ -161,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
         "refresh": refresh, "settings": apply_settings, "config": apply_config,
         "sync_prices": usage.request_sync, "price_override": usage.set_price_override,
         "toggle_widget": toggle_widget, "quit": quit_app, "rescan": usage.rescan,
-        "assign_history": assign_history,
+        "assign_history": assign_history, "estimates_visible": usage.set_estimates_visible,
         "main_hidden": save_main_geometry,
         "check_update": lambda: updater.check() if updater is not None else None,
         "upstream_toggle": lambda value: upstream.toggle(value),
@@ -219,7 +214,6 @@ def main(argv: list[str] | None = None) -> int:
     usage.data_changed.connect(on_usage)
     usage.loading_changed.connect(dashboard_host.set_usage_loading)
     usage.progress_changed.connect(dashboard_host.set_progress)
-    server_usage.updated.connect(usage.request_estimate_refresh)
     scheme_signal = getattr(app.styleHints(), "colorSchemeChanged", None)
     if scheme_signal is not None:
         scheme_signal.connect(update_theme)
@@ -228,7 +222,6 @@ def main(argv: list[str] | None = None) -> int:
     upstream.startup_ready.connect(lambda *_: dashboard_host.open("overview", "today"))
     usage.start()
     worker.start()
-    server_usage.start()
     updater.start(bool(analytics_config.get("auto_update", True)))
     QTimer.singleShot(0, upstream.start)
     QTimer.singleShot(1500, acknowledge_restart)
