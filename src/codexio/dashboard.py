@@ -967,7 +967,7 @@ class Dashboard(QMainWindow):
         side.setSpacing(14)
         from codexio.app_icon import render_app_pixmap
         brand_row = QHBoxLayout()
-        brand_row.setContentsMargins(4, 0, 0, 0)
+        brand_row.setContentsMargins(4, 5, 0, 0)
         brand_row.setSpacing(4)
         brand_icon = QLabel()
         self._brand_icon = brand_icon
@@ -994,11 +994,6 @@ class Dashboard(QMainWindow):
         self._sidebar_toggle.clicked.connect(self._toggle_sidebar)
         brand_row.addWidget(self._sidebar_toggle)
         side.addLayout(brand_row)
-        self._search_button = QPushButton("搜索")
-        self._search_button.setObjectName("navigationSearch")
-        self._search_button.setToolTip("搜索请求、会话或 ID（%s）" % ("⌘K" if self._is_macos else "Ctrl+K"))
-        self._search_button.clicked.connect(self._focus_request_search)
-        side.addWidget(self._search_button)
         self._search_shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
         self._search_shortcut.activated.connect(self._focus_request_search)
         self._navigation = NavigationList()
@@ -1080,8 +1075,6 @@ class Dashboard(QMainWindow):
         self._brand_icon.setVisible(not collapsed)
         self._brand_name.setVisible(not collapsed and width >= 170)
         self._navigation.set_collapsed(collapsed)
-        self._search_button.setText("" if collapsed else "搜索")
-        self._search_button.setAccessibleName("搜索请求、会话或 ID")
         self._sidebar_status.setVisible(not collapsed)
         account = "个人订阅\n" + self._profile_plan_text().replace("&", "&&")
         self._account_button.setText("" if collapsed else account)
@@ -1469,7 +1462,6 @@ class Dashboard(QMainWindow):
             form.setVerticalSpacing(18)
             form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
             for key, label, choices in (
-                ("refresh_interval_seconds", "额度刷新", (("30 秒", 30), ("1 分钟", 60), ("5 分钟", 300))),
                 ("quota_scope", "预览额度", (("自动", "auto"), ("5 小时与周额度", "both"), ("仅周额度", "week"))),
                 ("menu_bar_preview_size", "预览大小", (("紧凑 · 253 px", "comfortable"), ("宽敞 · 293 px", "large"))),
             ):
@@ -1486,18 +1478,6 @@ class Dashboard(QMainWindow):
         else:
             self._build_floating_settings(section)
         sources = section("数据来源", "")
-        refresh_form = QFormLayout()
-        refresh_form.setVerticalSpacing(12)
-        refresh = combo((("5 秒 · 更及时", 5), ("10 秒 · 默认推荐", 10),
-                         ("30 秒 · 更省资源", 30), ("1 分钟", 60)),
-                        self._config.get("usage_refresh_interval_seconds", 10))
-        refresh.setMaximumWidth(220)
-        self._setting_widgets["usage_refresh_interval_seconds"] = refresh
-        refresh_form.addRow("用量日志检查", refresh)
-        sources.addLayout(refresh_form)
-        sources.addWidget(plain_label(
-            "发现新计量后立即请求小组件更新；实际显示由 macOS 安排。" if self._is_macos else
-            "发现新计量后更新用量界面。", muted=True, wrap=True))
         self._source_list = QListWidget()
         self._source_list.setMinimumHeight(150)
         self._source_list.itemDoubleClicked.connect(lambda *_: self._edit_source())
@@ -1568,6 +1548,23 @@ class Dashboard(QMainWindow):
             updates.addWidget(frame)
             return content, status
 
+        refresh_card, _ = settings_card("刷新与估算", "自动")
+        refresh_form = QFormLayout()
+        refresh_form.setVerticalSpacing(12)
+        for key, label, choices, selected in (
+            ("refresh_interval_seconds", "额度刷新", (("30 秒", 30), ("1 分钟", 60), ("5 分钟", 300)),
+             self._settings.refresh_interval_seconds),
+            ("usage_refresh_interval_seconds", "用量日志检查", (("5 秒", 5), ("10 秒", 10), ("30 秒", 30), ("1 分钟", 60)),
+             self._config.get("usage_refresh_interval_seconds", 10)),
+            ("week_estimate_interval_minutes", "周额度估算周期", (("10 分钟", 10), ("30 分钟", 30), ("60 分钟", 60)),
+             self._config.get("week_estimate_interval_minutes", 10)),
+        ):
+            field = combo(choices, selected)
+            field.setMaximumWidth(220)
+            self._setting_widgets[key] = field
+            refresh_form.addRow(label, field)
+        refresh_card.addLayout(refresh_form)
+
         update_card, _ = settings_card("应用更新", "GitHub Release")
         self._auto_update = QCheckBox("自动下载更新")
         self._auto_update.toggled.connect(self._set_auto_update)
@@ -1636,7 +1633,6 @@ class Dashboard(QMainWindow):
         fields = [("display_mode", "显示模式", (("始终置顶", "top"), ("桌面底层", "bottom"))),
                   ("visual_style", "悬浮窗样式", (("经典", "classic"), ("双环", "rings"), ("卡片", "tiles"), ("紧凑", "compact"), ("极简", "minimal"), ("光球", "orb"))),
                   ("quota_scope", "额度范围", (("自动", "auto"), ("5 小时与周额度", "both"), ("仅周额度", "week"))),
-                  ("refresh_interval_seconds", "额度刷新", (("30 秒", 30), ("1 分钟", 60), ("5 分钟", 300))),
                   ("dock_edge", "贴边停靠", (("不贴边", "none"), ("顶部", "top"), ("底部", "bottom"), ("左侧", "left"), ("右侧", "right")))]
         for key, label, choices in fields:
             field = combo(choices, getattr(self._settings, key))
@@ -2147,6 +2143,8 @@ class Dashboard(QMainWindow):
         elif name == "settings":
             self._restore_control(self._setting_widgets["usage_refresh_interval_seconds"],
                                   self._config.get("usage_refresh_interval_seconds", 10))
+            self._restore_control(self._setting_widgets["week_estimate_interval_minutes"],
+                                  self._config.get("week_estimate_interval_minutes", 10))
             self.set_upstream_status(*getattr(self, "_upstream_state", ("已关闭 · 官方直连", False, False)))
             self._auto_update.blockSignals(True)
             self._auto_update.setChecked(bool(self._config.get("macos_auto_update" if self._is_macos else "auto_update", True)))
@@ -2167,7 +2165,6 @@ class Dashboard(QMainWindow):
         self._navigation.set_theme(self._theme)
         self._apply_sidebar_layout()
         self._account_button.setIcon(ui_icon("subscription", colors["muted"]))
-        self._search_button.setIcon(ui_icon("search", colors["muted"]))
         self._refresh_button.setIcon(ui_icon("refresh", colors["text"]))
         self._widget_toggle.setIcon(ui_icon("widget", colors["text"]))
         for widgets in self._quota_widgets.values():
@@ -2618,22 +2615,31 @@ class Dashboard(QMainWindow):
 
     def _fill_estimate_history(self, view):
         estimates = estimate_history(self._data)
-        view.setRowCount(len(estimates))
-        for index, value in enumerate(estimates):
-            reset = value.get("reset_at")
-            try:
-                reset_text = format_reset_date(datetime.fromtimestamp(float(reset)), split_time=True) if reset is not None else "—"
-            except (ValueError, TypeError, OverflowError, OSError):
-                reset_text = "—"
+        pages = max(1, math.ceil(len(estimates) / 10))
+        self._estimate_page = min(getattr(self, "_estimate_page", 0), pages - 1)
+        visible = estimates[self._estimate_page * 10:(self._estimate_page + 1) * 10]
+        view.setRowCount(len(visible))
+        for index, value in enumerate(visible):
             interval, _detail = estimate_interval(value)
-            status, _ = estimate_status(value)
-            pool = {"codex": "Codex", "codex_bengalfox": "Spark"}.get(value.get("limit_id"), "未识别")
-            columns = (str(value.get("plan_type") or "—").upper(), reset_text, interval, estimate_amount(value),
-                       status, "本地观测估值", pool)
+            start_pct = float(value.get("start_percent") or 0)
+            end_pct = float(value.get("end_percent") or 0)
+            quota = "%g%% → %g%%（+%g 点）" % (start_pct, end_pct, end_pct - start_pct)
+            columns = (str(value.get("plan_type") or "—").upper(), interval, quota,
+                       format(int(value.get("consumed_tokens") or 0), ","),
+                       usd(value.get("consumed_usd")), estimate_amount(value))
             for column, text in enumerate(columns):
                 item = QTableWidgetItem(str(text))
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 view.setItem(index, column, item)
+        if view is getattr(self, "_subscription_history", None):
+            self._estimate_page_label.setText("%s / %s · 共 %s 条" % (
+                self._estimate_page + 1 if estimates else 0, pages if estimates else 0, len(estimates)))
+            self._estimate_previous.setEnabled(self._estimate_page > 0)
+            self._estimate_next.setEnabled(self._estimate_page + 1 < pages)
+
+    def _change_estimate_page(self, delta):
+        self._estimate_page = max(0, getattr(self, "_estimate_page", 0) + delta)
+        self._fill_estimate_history(self._subscription_history)
 
     def _show_estimates(self) -> None:
         dialog = QDialog(self)
@@ -2666,7 +2672,7 @@ class Dashboard(QMainWindow):
             return
         if key == "border_color":
             self._settings_message.hide()
-        if key in ("theme", "show_log_source", "usage_refresh_interval_seconds"):
+        if key in ("theme", "show_log_source", "usage_refresh_interval_seconds", "week_estimate_interval_minutes"):
             if self._config.get(key) == value:
                 return
             self._config[key] = value
@@ -2860,10 +2866,22 @@ class Dashboard(QMainWindow):
         self._subscription_history.viewport().installEventFilter(self)
         self._subscription_history.horizontalHeader().installEventFilter(self)
         self._subscription_history.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self._subscription_history.setMinimumHeight(260)
-        self._subscription_history.setMaximumHeight(420)
+        self._subscription_history.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._subscription_history.setFixedHeight(
+            self._subscription_history.horizontalHeader().sizeHint().height() + 10 * 54 + 4)
         history_layout.addWidget(self._subscription_history)
-        history_layout.addWidget(plain_label("仅按已配置来源的本地日志与同期周额度变化估算；缺失来源的消费不计入。", muted=True, wrap=True))
+        navigation = QHBoxLayout()
+        self._estimate_previous = QPushButton("上一页")
+        self._estimate_previous.clicked.connect(lambda: self._change_estimate_page(-1))
+        self._estimate_page_label = plain_label("0 / 0 · 共 0 条", muted=True)
+        self._estimate_next = QPushButton("下一页")
+        self._estimate_next.clicked.connect(lambda: self._change_estimate_page(1))
+        navigation.addStretch()
+        navigation.addWidget(self._estimate_previous)
+        navigation.addWidget(self._estimate_page_label)
+        navigation.addWidget(self._estimate_next)
+        history_layout.addLayout(navigation)
+        history_layout.addWidget(plain_label("仅按同一账号、套餐和周额度周期内的本机调用费用与额度变化估算；总 Token 仅展示。", muted=True, wrap=True))
         contents.addWidget(self._subscription_history_section)
         contents.addStretch()
         return page

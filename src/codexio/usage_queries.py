@@ -19,7 +19,7 @@ from codexio.usage_collector import _user_preview
 from codexio.usage_metrics import dashboard_summary
 from codexio.upstream_store import UpstreamStore, enrich_rows
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 METRIC_FIELDS = ("id", "timestamp", "model", "reasoning_effort", "service_tier", "source_id", "source_name", "source_ids",
                  "session_id", "turn_id", "request_turn_id", "total_tokens", "cost_usd", "pricing_status",
                  "provider", "account_key", "limit_id", "quality", "duration_ms") + COUNTERS
@@ -188,14 +188,7 @@ class UsageQueries:
             signature = _json([SCHEMA_VERSION, revision, catalog.price_version, names])
             state = dict(db.execute("SELECT key,data FROM usage_query_state"))
             generation = int(state.get("generation", 0))
-            materialized_change_seq = max(int(state.get("materialized_change_seq", 0)),
-                                          db.execute("SELECT COALESCE(MAX(seq),0) FROM usage_estimation_changes").fetchone()[0])
             if state.get("signature") == signature:
-                if "materialized_change_seq" not in state:
-                    # Migration: matching raw revision proves this already-built
-                    # index includes every current record event, even when an
-                    # earlier app version did not persist a journal watermark.
-                    db.execute("INSERT INTO usage_query_state VALUES('materialized_change_seq',?)", (str(materialized_change_seq),))
                 return generation
             changes = set(db.execute("SELECT kind,item_id FROM usage_query_changes"))
             try:
@@ -302,8 +295,7 @@ class UsageQueries:
                 db.execute("DELETE FROM usage_request_groups WHERE id=?", (ident,))
             generation += 1
             db.executemany("INSERT INTO usage_query_state VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
-                           [("signature", signature), ("generation", str(generation)),
-                             ("materialized_change_seq", str(materialized_change_seq))])
+                           [("signature", signature), ("generation", str(generation))])
             db.execute("DELETE FROM usage_query_changes")
             return generation
 
@@ -553,12 +545,14 @@ class UsageQueries:
             return [dict(id=row[0], name=available.get(row[0]) or row[0], start=row[1], end=row[2], count=row[3])
                     for row in db.execute("SELECT c.source_id,MIN(c.timestamp),MAX(c.timestamp),COUNT(*) FROM usage_priced_calls c GROUP BY c.source_id ORDER BY c.source_id")]
 
-    def calibration_records(self, active, start=None, end=None):
+    def calibration_records(self, active, start=None, end=None, *, start_exclusive=False):
         active = sorted(active)
         if not active:
             return
         placeholders = ",".join("?" for _ in active)
         dates, date_args = self._dates("c", start, end)
+        if start is not None and start_exclusive:
+            dates[1] = "c.timestamp>?"
         # Scoped cycle reads must start from their time range. Otherwise SQLite
         # can infer an ID list from the active sources and reread their entire
         # history once for every small calibration cycle.
@@ -572,23 +566,3 @@ class UsageQueries:
                 if record.get("source_id") not in active:
                     record["source_id"] = row[1]
                 yield record
-
-    def weekly_estimates(self, active, account_since, *, sources_complete=True, assignments=(), now=None):
-        from codexio.estimation_cache import WeeklyEstimateCache
-        cache = WeeklyEstimateCache(self)
-        result = cache.update(active, account_since, sources_complete=sources_complete, assignments=assignments, now=now)
-        self.last_estimation_stats = cache.stats
-        return result
-
-    def next_weekly_estimate_refresh(self):
-        with self._connect() as db:
-            row = db.execute("SELECT MIN(next_refresh) FROM usage_estimation_cycles WHERE next_refresh<>''").fetchone()
-            return row[0] if row else None
-
-    def calibration_observations(self, active):
-        sources = sorted(set(active) | {"local-quota"})
-        with self._connect() as db:
-            sql = ("SELECT data FROM usage_observations WHERE json_extract(data,'$.source_id') IN ("
-                   + ",".join("?" for _ in sources) + ") AND ABS(CAST(json_extract(data,'$.window_minutes') AS REAL)-10080)<=10 ORDER BY timestamp,id")
-            for row in db.execute(sql, sources):
-                yield json.loads(row[0])

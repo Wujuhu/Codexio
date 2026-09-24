@@ -924,6 +924,9 @@ def _record(state, usage, timestamp, source_id, source_name, context, quality,
 
 
 def _observations(payload, timestamp, source_id, state, account_since):
+    # Quota percentages now come from the live app-server sampler. Rollout
+    # notices still identify the bucket of legacy calls, but no longer produce
+    # an unbounded second observation ledger while scanning history.
     rate = payload.get("rate_limits")
     if not isinstance(rate, dict) or not timestamp:
         return []
@@ -931,25 +934,7 @@ def _observations(payload, timestamp, source_id, state, account_since):
     state["limit_id"] = limit_id
     if rate.get("plan_type"):
         state["plan_type"] = str(rate["plan_type"])
-    result = []
-    for slot in ("primary", "secondary"):
-        window = rate.get(slot)
-        if not isinstance(window, dict):
-            continue
-        used = window.get("used_percent")
-        minutes = window.get("window_minutes", window.get("window_duration_mins"))
-        resets = window.get("resets_at")
-        if (isinstance(used, bool) or not isinstance(used, (int, float))
-                or not math.isfinite(used) or not 0 <= used <= 100
-                or not isinstance(minutes, int) or minutes <= 0
-                or not isinstance(resets, int)):
-            continue
-        data = dict(timestamp=timestamp, used_percent=used, window_minutes=minutes,
-                    resets_at=resets, plan_type=state.get("plan_type"), limit_id=limit_id,
-                    source_id=source_id, account_key="current" if account_since and timestamp >= account_since else "unknown")
-        data["id"] = "observation:" + _hash(data)
-        result.append(data)
-    return result
+    return []
 
 
 def _process_accounting_entry(entry: dict, state: dict, context: _Context,

@@ -119,6 +119,31 @@ class DatePicker(QDateEdit):
             calendar.setWeekdayTextFormat(day, weekend)
 
 
+class _NavigationDelegate(QStyledItemDelegate):
+    def paint(self, painter, option, index):
+        parent = self.parent()
+        if not getattr(parent, "_collapsed", False):
+            super().paint(painter, option, index)
+            return
+        colors = theme_colors(getattr(parent, "_theme", "system"))
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if selected or hovered:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(colors["raised" if selected else "hover"]))
+            painter.drawRoundedRect(QRectF(option.rect).adjusted(3, 1, -3, -1), 8, 8)
+        icon = index.data(Qt.ItemDataRole.DecorationRole)
+        if isinstance(icon, QIcon):
+            size = parent.iconSize()
+            rect = QRect(option.rect.center().x() - size.width() // 2,
+                         option.rect.center().y() - size.height() // 2,
+                         size.width(), size.height())
+            icon.paint(painter, rect)
+        painter.restore()
+
+
 class NavigationList(QListWidget):
     page_requested = Signal(str)
     order_changed = Signal(list)
@@ -126,6 +151,8 @@ class NavigationList(QListWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._collapsed = False
+        self._theme = "system"
+        self.setItemDelegate(_NavigationDelegate(self))
         self.setMinimumWidth(0)
         self.setObjectName("navigationList")
         self.setFrameShape(QFrame.Shape.NoFrame)
@@ -177,6 +204,7 @@ class NavigationList(QListWidget):
                 break
 
     def set_theme(self, name):
+        self._theme = name
         colors = theme_colors(name)
         for index in range(self.count()):
             item = self.item(index)

@@ -211,6 +211,7 @@ def main(argv: list[str] | None = None) -> int:
 
     worker.state_changed.connect(on_state)
     worker.snapshot_changed.connect(usage.add_snapshot)
+    worker.identity_changed.connect(usage.invalidate_estimate_window)
     usage.data_changed.connect(on_usage)
     usage.loading_changed.connect(dashboard_host.set_usage_loading)
     usage.progress_changed.connect(dashboard_host.set_progress)

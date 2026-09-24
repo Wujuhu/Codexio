@@ -106,8 +106,7 @@ class UsageWorker(QThread):
         self._loading_stage = None
         self._estimates_visible = False
         self._estimates = []
-        self._estimate_key = None
-        self._estimate_due = None
+        self._rolling = None
         self._last_payload_signature = None
         self._last_widget_signature = None
         self._last_progress = None
@@ -140,21 +139,20 @@ class UsageWorker(QThread):
     def add_snapshot(self, snapshot, source_id: str = "local-quota") -> None:
         if self._mock:
             return
-        now = utc_now()
-        observations = []
-        for key, bucket in (snapshot.by_limit or {snapshot.limit_id or "codex": snapshot}).items():
-            for window in (bucket.primary, bucket.secondary):
-                if window is None or window.used_percent is None:
-                    continue
-                observations.append({
-                    "id": "live:" + hashlib.sha256((now + source_id + key + str(window.window_duration_mins)).encode()).hexdigest(),
-                    "timestamp": now, "used_percent": window.used_percent,
-                    "window_minutes": window.window_duration_mins, "resets_at": window.resets_at,
-                    "plan_type": bucket.plan_type or snapshot.plan_type, "limit_id": key,
-                    "source_id": source_id, "account_key": "current",
-                    "observation_source": "app-server",
-                })
-        self._commands.put(("observations", (source_id, observations)))
+        bucket = (snapshot.by_limit or {}).get("codex") or snapshot
+        window = next((value for value in (bucket.primary, bucket.secondary)
+                       if value is not None and value.window_duration_mins is not None
+                       and abs(value.window_duration_mins - 10080) <= 10), None)
+        self._commands.put(("weekly_sample", dict(
+            timestamp=time.time(), used_percent=window.used_percent if window else None,
+            reset_at=window.resets_at if window else None,
+            plan_type=bucket.plan_type or snapshot.plan_type,
+            account_key=snapshot.account_key, limit_id=bucket.limit_id or "codex",
+            sole_codex_pool=set((snapshot.by_limit or {}).keys()) == {"codex"})))
+        self._wake.set()
+
+    def invalidate_estimate_window(self) -> None:
+        self._commands.put(("estimate_invalidate", None))
         self._wake.set()
 
     def stop(self, timeout_ms: int = 45000) -> bool:
@@ -203,9 +201,13 @@ class UsageWorker(QThread):
             from codexio.usage_store import UsageStore
             from codexio.usage_collector import Collector
             from codexio.pricing import PricingCatalog
+            from codexio.rolling_estimation import RollingWeeklyEstimator
             self._directory.mkdir(parents=True, exist_ok=True)
             self._store = UsageStore(self._directory / ("usage_mock.sqlite" if self._mock else "usage.sqlite"))
             self._catalog = PricingCatalog(self._directory / ("mock_prices" if self._mock else "prices"))
+            if not self._widget_only:
+                self._rolling = RollingWeeklyEstimator(self._store.path,
+                    self._config.get("week_estimate_interval_minutes", 10))
             collector = Collector(self._store)
             self._run_loop(collector)
         except Exception as exc:
@@ -261,13 +263,27 @@ class UsageWorker(QThread):
                             value["account_since"] = self._config["account_since"]
                         was_auto_sync = bool(self._config.get("auto_sync_prices"))
                         self._config = value
+                        if self._rolling is not None:
+                            self._rolling.configure(value.get("week_estimate_interval_minutes", 10))
                         self._config_changed.clear()
                         next_remote = 0
                         if self._config.get("auto_sync_prices") and not was_auto_sync:
                             next_sync = 0
-                    elif command == "observations":
-                        changed = self._store.upsert_observations(value[1], value[0])
-                        publish_for_command = bool(changed) and self._estimates_visible
+                    elif command == "weekly_sample":
+                        if self._rolling is not None:
+                            previous = self._rolling.latest
+                            self._rolling.add_sample(value)
+                            current = self._rolling.latest
+                            publish_for_command = self._estimates_visible and (
+                                previous is None or current is None or
+                                self._rolling._identity(previous) != self._rolling._identity(current) or
+                                abs(previous["reset_at"] - current["reset_at"]) > 60)
+                        else:
+                            publish_for_command = False
+                    elif command == "estimate_invalidate":
+                        if self._rolling is not None:
+                            self._rolling.invalidate()
+                        publish_for_command = self._estimates_visible
                     elif command == "rescan":
                         self._store.clear_index()
                         collector.invalidate()
@@ -316,6 +332,8 @@ class UsageWorker(QThread):
                     next_remote = time.monotonic() + 60
             if self._stop_event.is_set():
                 break
+            if self._rolling is not None and self._rolling.ready(time.time()):
+                dirty = True
             if dirty or time.monotonic() >= next_publish:
                 self._publish()
                 dirty = False
@@ -342,8 +360,6 @@ class UsageWorker(QThread):
         now = datetime.now().astimezone()
         midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time()).astimezone()
         deadlines = [midnight, getattr(self, "_next_summary_at", None)]
-        if self._estimates_visible:
-            deadlines.append(self._estimate_due)
         seconds = [(deadline - now).total_seconds() for deadline in deadlines if deadline is not None and deadline > now]
         return max(1.0, min([3600.0, *seconds]))
 
@@ -384,6 +400,9 @@ class UsageWorker(QThread):
         sources = [source for source in self._store.sources() if not str(source.get("id", source.get("source_id", ""))).startswith("lan:")]
         queries = UsageQueries(self._store.path)
         generation = queries.rebuild(self._catalog, sources)
+        if self._rolling is not None:
+            self._rolling.refresh_prices(self._catalog.price_version, queries)
+            self._rolling.process_due(time.time(), queries)
         if self._widget_only:
             now = datetime.now().astimezone()
             today = queries.confirmed_summary(start=now.replace(hour=0, minute=0, second=0, microsecond=0), end=now)
@@ -413,17 +432,7 @@ class UsageWorker(QThread):
             self._summary_at = now
             self._next_summary_at = parse_time(queries.next_record_at(now))
         if self._estimates_visible:
-            revisions = self._store.revisions()
-            key = (generation, revisions["observations"], tuple(sorted(active)),
-                   self._config["account_since"],
-                   json.dumps(self._config.get("history_assignments", []), sort_keys=True, default=str), complete)
-            if (key != self._estimate_key or self._estimate_due is not None and now >= self._estimate_due
-                    or now < getattr(self, "_estimate_at", now)):
-                self._estimates = queries.weekly_estimates(active, self._config["account_since"], sources_complete=complete,
-                                                           assignments=self._config.get("history_assignments", []), now=now)
-                self._estimate_key = key
-                self._estimate_at = now
-                self._estimate_due = parse_time(queries.next_weekly_estimate_refresh())
+            self._estimates = self._rolling.rows()
         if self._mock:
             model_catalog = {"models": ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"], "status": "ok"}
         else:
@@ -444,6 +453,9 @@ class UsageWorker(QThread):
             "prices": self._catalog.rows(),
             "standard_prices": self._catalog.standard_rows(),
             "pricing_status": copy.deepcopy(self._catalog.status), "sources": sources, "weekly_estimates": self._estimates,
+            "estimate_identity": ({key: self._rolling.latest[key] for key in
+                                   ("account_key", "plan_type", "reset_at", "sole_codex_pool")}
+                                  if self._rolling is not None and self._rolling.latest is not None else None),
             "calibration_sources": sorted(active), "sources_complete": complete,
             "available_models": model_catalog.get("models", []), "model_catalog_status": model_catalog,
             "updated_at": utc_now(), "scan_status": self._scan_status,
@@ -505,11 +517,4 @@ class UsageWorker(QThread):
             latest.update(status="running", ended_at="", latest_output_preview=latest["output_preview"], output_preview="")
         self._store.upsert_turns(turns.values(), "local")
         self._store.set_source_status("local", name="本机（模拟）", status="ok", last_scan_at=utc_now())
-        reset = int((now + timedelta(days=3)).timestamp())
-        self._store.upsert_observations([
-            {"id": "mock-q-%d" % i, "timestamp": (now - timedelta(hours=48 - i * 6)).isoformat(),
-             "used_percent": 10 + i * 4, "window_minutes": 10080, "resets_at": reset,
-             "plan_type": "pro", "limit_id": "codex", "account_key": "current", "source_id": "local"}
-            for i in range(8)
-        ], "local")
         self._scan_status = "模拟预览 · 未连接真实 Codex"

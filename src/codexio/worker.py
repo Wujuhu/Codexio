@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 import threading
+import base64
+import hashlib
+import json
+import os
+from dataclasses import replace
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import QThread, Signal
@@ -32,9 +38,41 @@ from codexio.settings import AppSettings, load_quota_cache, save_quota_cache, sa
 logger = get_logger("worker")
 
 
+def _auth_identity():
+    """Read identity only; never retain or log the local OAuth token."""
+    path = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "auth.json"
+    try:
+        tokens = json.loads(path.read_text(encoding="utf-8")).get("tokens") or {}
+        account = tokens.get("account_id")
+        token = tokens.get("access_token")
+        if not isinstance(account, str) or not account or not isinstance(token, str):
+            return None
+        encoded = token.split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
+        subject = claims.get("sub")
+        return (account, subject) if isinstance(subject, str) and subject else None
+    except (OSError, ValueError, TypeError, IndexError, AttributeError, UnicodeError):
+        return None
+
+
+def _account_key(payload, before, after):
+    if before != after:
+        return None
+    remote = payload.get("accountId", payload.get("account_id")) if isinstance(payload, dict) else None
+    remote = remote if isinstance(remote, str) and remote else None
+    if remote and after and remote != after[0]:
+        return None
+    account = remote or (after[0] if after else None)
+    if not account:
+        return None
+    subject = after[1] if after else ""
+    return hashlib.sha256(json.dumps(["codexio-week-v1", account, subject], separators=(",", ":")).encode()).hexdigest()
+
+
 class QuotaWorker(QThread):
     state_changed = Signal(object)
     snapshot_changed = Signal(object, str)
+    identity_changed = Signal()
 
     def __init__(self, settings: AppSettings, mock: bool = False) -> None:
         super().__init__()
@@ -45,6 +83,7 @@ class QuotaWorker(QThread):
         self._refresh_requested = threading.Event()
         self._reconnect_requested = threading.Event()
         self._notification: Optional[JsonRpcMessage] = None
+        self._account_change_pending = False
         self._notification_lock = threading.Lock()
         self._client: Optional[AppServerClient] = None
         self._snapshot: Optional[RateLimitSnapshot] = None
@@ -103,14 +142,24 @@ class QuotaWorker(QThread):
 
     def _fetch_local(self) -> None:
         self._ensure_client()
+        with self._notification_lock:
+            changed_account = self._account_change_pending
+            self._account_change_pending = False
+            if changed_account:
+                self._notification = None
+        if changed_account:
+            self._snapshot = None
+            self.identity_changed.emit()
         notification = self._take_notification()
         if notification is not None:
             if self._apply_notification(notification):
                 return
         if self._snapshot is None:
             self._set_status(QuotaStatus.READING, "正在读取")
+        before = _auth_identity()
         result = self._require_client().read_rate_limits()
-        snapshot = parse_rate_limits_result(result)
+        after = _auth_identity()
+        snapshot = replace(parse_rate_limits_result(result), account_key=_account_key(result, before, after))
         self._store_local(snapshot)
         self._on_success(snapshot, "已更新", persist=False)
 
@@ -180,6 +229,12 @@ class QuotaWorker(QThread):
         return client
 
     def _on_notification(self, message: JsonRpcMessage) -> None:
+        if message.method == "account/updated":
+            with self._notification_lock:
+                self._account_change_pending = True
+            self._refresh_requested.set()
+            self._wake.set()
+            return
         if message.method != RATE_LIMITS_UPDATED:
             return
         with self._notification_lock:
@@ -201,6 +256,8 @@ class QuotaWorker(QThread):
         except ValueError:
             logger.warning("忽略无法解析的额度通知")
             return False
+        before = after = _auth_identity()
+        incoming = replace(incoming, account_key=_account_key(params, before, after))
         base = self._snapshot
         merged = merge_rate_limit_snapshots(base, incoming)
         self._store_local(merged)

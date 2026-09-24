@@ -200,7 +200,6 @@ QLabel#statusText, QLabel#sidebarStatus { font-size: 11px; color: %(muted)s; }
 QPushButton { padding: 7px 11px; border-radius: 8px; }
 QPushButton[quiet="true"] { background: transparent; border: none; color: %(muted)s; padding: 6px 9px; }
 QPushButton[quiet="true"]:hover { background: %(hover)s; color: %(text)s; }
-QPushButton#navigationSearch { background: %(surface)s; color: %(muted)s; text-align: left; border: none; padding: 9px 12px; }
 QPushButton#accountButton { background: transparent; border: none; text-align: left; padding: 11px 9px; }
 QListWidget#navigationList { background: transparent; border: none; outline: none; }
 QListWidget#navigationList::item { background: transparent; color: %(muted)s; border: none; border-radius: 8px; padding: 7px 10px; }

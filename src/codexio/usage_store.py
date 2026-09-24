@@ -63,10 +63,6 @@ class UsageStore:
                 CREATE INDEX IF NOT EXISTS usage_origins_item ON usage_origins(source_id,kind,item_id);
                 CREATE TABLE IF NOT EXISTS usage_revisions (kind TEXT PRIMARY KEY, revision INTEGER NOT NULL);
                 INSERT OR IGNORE INTO usage_revisions VALUES('ledger',0),('observations',0);
-                CREATE TABLE IF NOT EXISTS usage_estimation_changes (
-                    seq INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL,
-                    item_id TEXT NOT NULL, timestamp TEXT);
-                CREATE INDEX IF NOT EXISTS estimation_changes_kind_time ON usage_estimation_changes(kind,timestamp);
             """)
             # Changes to durable inputs invalidate the derived query index. Cursor
             # checkpoints and repeated source health updates do not reprice history.
@@ -76,25 +72,6 @@ class UsageStore:
                     db.execute("CREATE TRIGGER IF NOT EXISTS revision_%s_%s AFTER %s ON %s BEGIN "
                                "UPDATE usage_revisions SET revision=revision+1 WHERE kind='%s'; END"
                                % (table, action.lower(), action, table, kind))
-            # The cycle estimator consumes and prunes this journal after an
-            # atomic update. Unlike a global revision, it identifies old and new
-            # time ranges for late counters, deletes and source-alias changes.
-            for table in ("usage_records", "usage_record_sources", "usage_observations"):
-                for action, versions in (("INSERT", ("NEW",)), ("UPDATE", ("OLD", "NEW")), ("DELETE", ("OLD",))):
-                    statements = []
-                    for version in versions:
-                        if table == "usage_observations":
-                            kind, identity, stamp = "observation", version + ".id", "NULL"
-                        else:
-                            kind = "record"
-                            identity = version + (".record_id" if table == "usage_record_sources" else ".id")
-                            raw_stamp = ("(SELECT timestamp FROM usage_records WHERE id=" + identity + ")"
-                                         if table == "usage_record_sources" else version + ".timestamp")
-                            stamp = "strftime('%Y-%m-%dT%H:%M:%f'," + raw_stamp + ")||'000+00:00'"
-                        statements.append("INSERT INTO usage_estimation_changes(kind,item_id,timestamp) VALUES('%s',%s,%s);"
-                                          % (kind, identity, stamp))
-                    db.execute("CREATE TRIGGER IF NOT EXISTS estimation_%s_%s AFTER %s ON %s BEGIN %s END"
-                               % (table, action.lower(), action, table, " ".join(statements)))
 
     def revisions(self) -> dict:
         with self._connect() as db:
@@ -278,7 +255,6 @@ class UsageStore:
     def commit_batch(self, records, observations, source_id: str, key: str, cursor: dict, *, turns=(), agent_links=()) -> int:
         with self._connect() as db:
             changed = self._upsert_records(db, records, source_id)
-            changed += self._upsert_observations(db, observations, source_id)
             changed += self._upsert_metadata(db, turns, source_id, "turn")
             changed += self._upsert_metadata(db, agent_links, source_id, "agent_link")
             if cursor.get("scan_complete") and cursor.get("reconcile_pending"):
@@ -291,7 +267,6 @@ class UsageStore:
         """Atomically import a remote pass, reconcile rewrites, and save its cursor."""
         with self._connect() as db:
             changed = self._upsert_records(db, frames.get("records", []), source_id)
-            changed += self._upsert_observations(db, frames.get("observations", []), source_id)
             changed += self._upsert_metadata(db, frames.get("turns", []), source_id, "turn")
             changed += self._upsert_metadata(db, frames.get("agent_links", []), source_id, "agent_link")
             for origin in frames.get("reconciliations", []):

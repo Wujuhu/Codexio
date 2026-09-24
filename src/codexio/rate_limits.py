@@ -59,6 +59,7 @@ class RateLimitSnapshot:
     secondary: Optional[RateLimitWindow] = None
     plan_type: Optional[str] = None
     limit_id: Optional[str] = None
+    account_key: Optional[str] = None
     raw: Optional[dict] = None
     by_limit: Optional[dict] = None
     reset_credits: Optional[int] = None
@@ -186,6 +187,7 @@ def merge_rate_limit_snapshots(
             secondary=new.secondary if new.secondary is not None else old.secondary,
             plan_type=new.plan_type if new.plan_type is not None else old.plan_type,
             limit_id=new.limit_id if new.limit_id is not None else old.limit_id,
+            account_key=new.account_key,
             raw=new.raw if new.raw is not None else old.raw,
         )
 
@@ -196,6 +198,7 @@ def merge_rate_limit_snapshots(
     def with_account_credits(snapshot):
         return replace(
             snapshot,
+            account_key=update.account_key,
             reset_credits=credit_source.reset_credits,
             reset_credit_details=credit_source.reset_credit_details,
             _reset_credits_present=credit_source._reset_credits_present,

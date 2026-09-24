@@ -104,6 +104,7 @@ class MacController(QObject):
         self._build_application_menu()
         self.worker.state_changed.connect(self.on_quota)
         self.worker.snapshot_changed.connect(self.usage.add_snapshot)
+        self.worker.identity_changed.connect(self.usage.invalidate_estimate_window)
         self.usage.data_changed.connect(self.on_usage)
         self.usage.loading_changed.connect(self.on_loading)
         self.usage.progress_changed.connect(self.dashboard_host.set_progress)

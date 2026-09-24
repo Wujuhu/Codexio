@@ -19,6 +19,8 @@ PREVIEW_MIN_WIDTH = 220
 PREVIEW_MAX_WIDTH = 480
 USAGE_REFRESH_INTERVALS = (5, 10, 30, 60)
 DEFAULT_USAGE_REFRESH_INTERVAL = 10
+WEEK_ESTIMATE_INTERVALS = (10, 30, 60)
+DEFAULT_WEEK_ESTIMATE_INTERVAL = 10
 
 
 def normalize_panel_layout(config):
@@ -78,6 +80,7 @@ def default_config() -> dict:
         "show_log_source": False,
         "usage_refresh_interval_seconds": DEFAULT_USAGE_REFRESH_INTERVAL,
         "usage_refresh_interval_user_set": False,
+        "week_estimate_interval_minutes": DEFAULT_WEEK_ESTIMATE_INTERVAL,
         "codex_roots": [os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")],
         "ssh_sources": [],
         "account_since": utc_now(),
@@ -125,6 +128,8 @@ def load_analytics_config(path: Path | None = None) -> dict:
         config["usage_refresh_interval_seconds"] = DEFAULT_USAGE_REFRESH_INTERVAL
     if config.get("usage_refresh_interval_seconds") not in USAGE_REFRESH_INTERVALS:
         config["usage_refresh_interval_seconds"] = DEFAULT_USAGE_REFRESH_INTERVAL
+    if config.get("week_estimate_interval_minutes") not in WEEK_ESTIMATE_INTERVALS:
+        config["week_estimate_interval_minutes"] = DEFAULT_WEEK_ESTIMATE_INTERVAL
     try:
         datetime.fromisoformat(str(config["account_since"]).replace("Z", "+00:00"))
     except (ValueError, TypeError):
@@ -142,6 +147,8 @@ def save_analytics_config(config: dict, path: Path | None = None) -> None:
     config["usage_refresh_interval_user_set"] = config.get("usage_refresh_interval_user_set") is True
     if config.get("usage_refresh_interval_seconds") not in USAGE_REFRESH_INTERVALS:
         config["usage_refresh_interval_seconds"] = DEFAULT_USAGE_REFRESH_INTERVAL
+    if config.get("week_estimate_interval_minutes") not in WEEK_ESTIMATE_INTERVALS:
+        config["week_estimate_interval_minutes"] = DEFAULT_WEEK_ESTIMATE_INTERVAL
     config["navigation_order_version"] = 1
     target = path or data_dir() / "analytics_settings.json"
     target.parent.mkdir(parents=True, exist_ok=True)
