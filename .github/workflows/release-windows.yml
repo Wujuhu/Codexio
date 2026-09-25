@@ -144,8 +144,8 @@ jobs:
           $Expected = @("Codexio.app.zip", "Codexio.exe", "latest.json") | Sort-Object
           $Verified = $false
           for ($Attempt = 0; $Attempt -lt 8; $Attempt++) {
-            $Release = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$Tag" | ConvertFrom-Json
-            if (-not $Release.draft -or $Release.tag_name -ne $Tag -or $Release.name -ne $Tag) {
+            $Release = gh release view $Tag --repo $env:GITHUB_REPOSITORY --json isDraft,tagName,name,body,assets | ConvertFrom-Json
+            if (-not $Release.isDraft -or $Release.tagName -ne $Tag -or $Release.name -ne $Tag) {
               throw "Draft release changed while assets were uploaded."
             }
             if (-not [string]::IsNullOrWhiteSpace([string]$Release.body)) {
