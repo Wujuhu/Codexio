@@ -68,16 +68,13 @@ jobs:
           if ($RemoteMain -ne $env:RELEASE_COMMIT) {
             throw "The confirmed commit is not the current remote main."
           }
-          $TagCommit = (git rev-list -n 1 $Tag).Trim()
-          if ($LASTEXITCODE -ne 0 -or $TagCommit -ne $env:RELEASE_COMMIT) {
-            throw "The release tag does not point to the confirmed remote main commit."
-          }
           $VersionLine = Select-String -LiteralPath "src\codexio\__init__.py" -Pattern '^__version__ = "([^\"]+)"$'
           if (-not $VersionLine -or $VersionLine.Matches[0].Groups[1].Value -ne $env:RELEASE_VERSION) {
             throw "Source version does not match the confirmed release version."
           }
-          $Release = gh release view $Tag --repo $env:GITHUB_REPOSITORY --json isDraft,tagName,name,body,assets | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0 -or -not $Release.isDraft -or $Release.tagName -ne $Tag -or $Release.name -ne $Tag) {
+          $Release = gh release view $Tag --repo $env:GITHUB_REPOSITORY --json isDraft,tagName,name,body,targetCommitish,assets | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or -not $Release.isDraft -or $Release.tagName -ne $Tag -or $Release.name -ne $Tag `
+              -or $Release.targetCommitish -ne $env:RELEASE_COMMIT) {
             throw "The matching draft release is missing or invalid."
           }
           if (-not [string]::IsNullOrWhiteSpace([string]$Release.body)) {
@@ -180,6 +177,12 @@ jobs:
           [IO.File]::WriteAllBytes($EmptyNotes, [byte[]]@())
           gh release edit $Tag --repo $env:GITHUB_REPOSITORY --title $Tag --notes-file $EmptyNotes --draft=false --latest
           if ($LASTEXITCODE -ne 0) { throw "Could not publish the verified release." }
+          git fetch --force origin "refs/tags/${Tag}:refs/tags/${Tag}"
+          if ($LASTEXITCODE -ne 0) { throw "Could not fetch the published release tag." }
+          $TagCommit = git rev-list -n 1 $Tag
+          if ($LASTEXITCODE -ne 0 -or -not $TagCommit -or $TagCommit.Trim() -ne $env:RELEASE_COMMIT) {
+            throw "The published release tag does not point to the confirmed remote main commit."
+          }
           $Release = gh release view $Tag --repo $env:GITHUB_REPOSITORY --json isDraft,tagName,name,body,assets | ConvertFrom-Json
           if ($Release.isDraft -or $Release.tagName -ne $Tag -or $Release.name -ne $Tag) {
             throw "Published release metadata is invalid."

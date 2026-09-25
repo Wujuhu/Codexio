@@ -43,7 +43,7 @@ def output(*args):
 
 def gh_release(tag):
     result = run("gh", "release", "view", tag, "--repo", REPOSITORY,
-                 "--json", "isDraft,tagName,name,body,assets,url", capture=True, check=False)
+                 "--json", "isDraft,tagName,name,body,targetCommitish,assets,url", capture=True, check=False)
     if result.returncode:
         return None
     try:
@@ -104,15 +104,14 @@ def ensure_remote_main(commit):
 
 
 def validate_draft(release, tag, commit, staging, mac_stage):
-    if not release or release.get("isDraft") is not True or release.get("tagName") != tag or release.get("name") != tag:
+    if (not release or release.get("isDraft") is not True or release.get("tagName") != tag
+            or release.get("name") != tag or release.get("targetCommitish") != commit):
         raise UpdateError("现有同版本 Release 不是可继续的草稿")
     if str(release.get("body") or "").strip():
         raise UpdateError("草稿 Release 正文不是空白")
     names = sorted(str(item.get("name") or "") for item in release.get("assets") or [])
     if any(name not in (APP_ARCHIVE_NAME, "Codexio.exe", "latest.json") for name in names):
         raise UpdateError("草稿 Release 的附件集合不符合当前发布约定")
-    if remote_ref("refs/tags/" + tag) != commit:
-        raise UpdateError("草稿 Release 的 Tag 未指向确认提交")
     downloaded = staging / "draft-macos"
     downloaded.mkdir()
     run("gh", "release", "upload", tag, "--repo", REPOSITORY, "--clobber",
@@ -137,7 +136,7 @@ def create_draft(tag, commit, mac_stage, staging):
         "--title", tag, "--draft", "--notes-file", empty,
         mac_stage / APP_ARCHIVE_NAME, mac_stage / "latest.json")
     release = gh_release(tag)
-    if not release or release.get("isDraft") is not True:
+    if not release or release.get("isDraft") is not True or release.get("targetCommitish") != commit:
         raise UpdateError("未能确认 GitHub 草稿 Release")
     return release
 
@@ -167,7 +166,7 @@ def dispatch_and_wait(version, commit):
     run("gh", "run", "watch", str(selected["databaseId"]), "--repo", REPOSITORY, "--exit-status")
 
 
-def verify_published(tag):
+def verify_published(tag, commit=None):
     release = gh_release(tag)
     if not release or release.get("isDraft") is not False or release.get("tagName") != tag or release.get("name") != tag:
         raise UpdateError("Windows 工作流结束后未得到有效的正式 Release")
@@ -176,6 +175,8 @@ def verify_published(tag):
     names = sorted(str(item.get("name") or "") for item in release.get("assets") or [])
     if names != sorted(("Codexio.exe", APP_ARCHIVE_NAME, "latest.json")):
         raise UpdateError("正式 Release 附件不是约定的三个文件")
+    if commit is not None and remote_ref("refs/tags/" + tag) != commit:
+        raise UpdateError("正式 Release Tag 未指向确认提交")
     return release
 
 
@@ -203,7 +204,7 @@ def publish(version, *, resume_draft=False, sync_only=False):
     try:
         commit = validate_repository(version)
         if sync_only:
-            verify_published(tag)
+            verify_published(tag, commit)
             return sync_local_release(version, tag, staging)
         mac_stage = validate_mac(version, staging)
         existing = gh_release(tag)
@@ -213,19 +214,28 @@ def publish(version, *, resume_draft=False, sync_only=False):
             if (existing.get("isDraft") is not True or existing.get("tagName") != tag
                     or existing.get("name") != tag or str(existing.get("body") or "").strip()):
                 raise UpdateError("现有同版本 Release 不是可继续的空正文草稿")
-            if remote_ref("refs/tags/" + tag) != commit:
-                raise UpdateError("草稿 Release 的 Tag 未指向当前确认提交")
+            old_target = str(existing.get("targetCommitish") or "")
+            if old_target != commit:
+                if (len(old_target) != 40 or any(character not in "0123456789abcdef" for character in old_target.lower())
+                        or run("git", "merge-base", "--is-ancestor", old_target, commit, check=False).returncode != 0):
+                    raise UpdateError("草稿 Release 的目标不是当前提交的可安全前移祖先")
         elif remote_ref("refs/tags/" + tag) is not None:
             raise UpdateError("同版本远程 Tag 已存在，不自动覆盖")
         elif run("git", "show-ref", "--verify", "--quiet", "refs/tags/" + tag, check=False).returncode == 0:
             raise UpdateError("本地同版本 Tag 已存在，不自动覆盖")
         ensure_remote_main(commit)
         if existing is not None:
+            if existing.get("targetCommitish") != commit:
+                empty = staging / "empty-release-notes.txt"
+                empty.write_bytes(b"")
+                run("gh", "release", "edit", tag, "--repo", REPOSITORY, "--target", commit,
+                    "--title", tag, "--notes-file", empty, "--draft=true")
+                existing = gh_release(tag)
             validate_draft(existing, tag, commit, staging, mac_stage)
         else:
             create_draft(tag, commit, mac_stage, staging)
         dispatch_and_wait(version, commit)
-        release = verify_published(tag)
+        release = verify_published(tag, commit)
         destination = sync_local_release(version, tag, staging)
         print("已发布：" + str(release.get("url") or tag))
         return destination
