@@ -36,7 +36,8 @@ from codexio.usage_metrics import dashboard_summary, dashboard_comparison, cache
 from codexio.estimate_display import (ESTIMATE_HEADERS, estimate_amount, estimate_detail, estimate_history,
                                       select_estimates)
 from codexio.analytics_config import (NAVIGATION_PAGES, normalize_navigation_order, normalize_subscription_profile,
-                                     normalize_panel_layout, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, SIDEBAR_COLLAPSED_WIDTH)
+                                     normalize_panel_layout, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, SIDEBAR_COLLAPSED_WIDTH,
+                                     DEFAULT_WEEK_ESTIMATE_INTERVAL)
 from codexio.desktop_widgets import (DatePicker, HoverDetails, LedgerTable, NavigationList, PanelResizeHandle, PAGE_TITLES, PeriodChange, QuotaMeter,
                                     SegmentedControl, TokenComposition, WidgetStylePreview, ledger_duration_text, model_label, preview_title, tier_label, ui_icon)
 
@@ -1544,29 +1545,6 @@ class Dashboard(QMainWindow):
             updates.addWidget(frame)
             return content, status
 
-        refresh_card, _ = settings_card("刷新与估算", "自动")
-        refresh_form = QFormLayout()
-        refresh_form.setVerticalSpacing(12)
-        refresh_form.setHorizontalSpacing(16)
-        refresh_form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-        refresh_form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        refresh_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
-        for key, label, choices, selected in (
-            ("refresh_interval_seconds", "额度", (("30 秒", 30), ("1 分钟", 60), ("5 分钟", 300)),
-             self._settings.refresh_interval_seconds),
-            ("usage_refresh_interval_seconds", "日志数据", (("5 秒", 5), ("10 秒", 10), ("30 秒", 30), ("1 分钟", 60)),
-             self._config.get("usage_refresh_interval_seconds", 10)),
-            ("week_estimate_interval_minutes", "额度估算", (("10 分钟", 10), ("30 分钟", 30), ("60 分钟", 60)),
-             self._config.get("week_estimate_interval_minutes", 10)),
-        ):
-            field = combo(choices, selected)
-            field.setFixedWidth(160)
-            self._setting_widgets[key] = field
-            refresh_form.addRow(label, field)
-            if key in ("refresh_interval_seconds", "week_estimate_interval_minutes"):
-                self._quota_setting_controls.append((refresh_form.labelForField(field), field))
-        refresh_card.addLayout(refresh_form)
-
         update_card, _ = settings_card("应用更新", "GitHub Release")
         self._auto_update = QCheckBox("自动下载更新")
         self._auto_update.toggled.connect(self._set_auto_update)
@@ -1590,6 +1568,28 @@ class Dashboard(QMainWindow):
         self._upstream_status = plain_label("已关闭 · 当前路由直连", muted=True, wrap=True)
         upstream_card.addWidget(self._upstream_status)
         self.set_upstream_status(*getattr(self, "_upstream_state", ("已关闭 · 当前路由直连", False, False)))
+        refresh_card, _ = settings_card("刷新与估算", "自动")
+        refresh_form = QFormLayout()
+        refresh_form.setVerticalSpacing(12)
+        refresh_form.setHorizontalSpacing(16)
+        refresh_form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        refresh_form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        refresh_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
+        for key, label, choices, selected in (
+            ("refresh_interval_seconds", "额度", (("30 秒", 30), ("1 分钟", 60), ("5 分钟", 300)),
+             self._settings.refresh_interval_seconds),
+            ("usage_refresh_interval_seconds", "日志数据", (("5 秒", 5), ("10 秒", 10), ("30 秒", 30), ("1 分钟", 60)),
+             self._config.get("usage_refresh_interval_seconds", 10)),
+            ("week_estimate_interval_minutes", "额度估算", (("10 分钟", 10), ("30 分钟", 30), ("60 分钟", 60)),
+             self._config.get("week_estimate_interval_minutes", DEFAULT_WEEK_ESTIMATE_INTERVAL)),
+        ):
+            field = combo(choices, selected)
+            field.setFixedWidth(160)
+            self._setting_widgets[key] = field
+            refresh_form.addRow(label, field)
+            if key in ("refresh_interval_seconds", "week_estimate_interval_minutes"):
+                self._quota_setting_controls.append((refresh_form.labelForField(field), field))
+        refresh_card.addLayout(refresh_form)
         updates.addStretch()
         layout.addLayout(body, 1)
         self._settings_message = plain_label("", muted=True, wrap=True)
@@ -2163,7 +2163,7 @@ class Dashboard(QMainWindow):
             self._restore_control(self._setting_widgets["usage_refresh_interval_seconds"],
                                   self._config.get("usage_refresh_interval_seconds", 10))
             self._restore_control(self._setting_widgets["week_estimate_interval_minutes"],
-                                  self._config.get("week_estimate_interval_minutes", 10))
+                                  self._config.get("week_estimate_interval_minutes", DEFAULT_WEEK_ESTIMATE_INTERVAL))
             self.set_upstream_status(*getattr(self, "_upstream_state", ("已关闭 · 当前路由直连", False, False)))
             self._auto_update.blockSignals(True)
             self._auto_update.setChecked(bool(self._config.get("macos_auto_update" if self._is_macos else "auto_update", True)))

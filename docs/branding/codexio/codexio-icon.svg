@@ -1,28 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-labelledby="cobalt-title cobalt-desc">
+  <title id="cobalt-title">Codexio · 钴蓝 X</title>
+  <desc id="cobalt-desc">纯白背景、石墨色括号、钴蓝渐变交叉与白色中心圆点。</desc>
   <defs>
-    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#141622" />
-      <stop offset="100%" stop-color="#0E1019" />
+    <linearGradient id="x-cobalt" gradientUnits="userSpaceOnUse" x1="-32" y1="-32" x2="32" y2="32">
+      <stop offset="0%" stop-color="#2563EB" />
+      <stop offset="38%" stop-color="#2D6CE8" />
+      <stop offset="70%" stop-color="#274ED4" />
+      <stop offset="100%" stop-color="#30369E" />
     </linearGradient>
-    <linearGradient id="amber-x" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#FFFBEB" />
-      <stop offset="25%" stop-color="#FDE047" />
-      <stop offset="70%" stop-color="#F59E0B" />
-      <stop offset="100%" stop-color="#D97706" />
-    </linearGradient>
-    <filter id="core-glow" x="-100%" y="-100%" width="300%" height="300%">
-      <feDropShadow dx="0" dy="8" stdDeviation="16" flood-color="#F59E0B" flood-opacity="0.35" />
-    </filter>
   </defs>
-  <rect x="32" y="32" width="448" height="448" rx="120" fill="url(#bg-grad)" stroke="#2D3248" stroke-width="6" />
-  <rect x="48" y="48" width="416" height="416" rx="104" fill="none" stroke="#1A1E2E" stroke-width="3" />
+  <rect width="512" height="512" fill="#FFFFFF" />
   <g transform="translate(256, 256)">
-    <path d="M -60,-120 L -136,0 L -60,120" fill="none" stroke="#FFFFFF" stroke-width="38" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M 60,-120 L 136,0 L 60,120" fill="none" stroke="#FFFFFF" stroke-width="38" stroke-linecap="round" stroke-linejoin="round"/>
-    <g filter="url(#core-glow)">
-      <line x1="-32" y1="-32" x2="32" y2="32" stroke="url(#amber-x)" stroke-width="14" stroke-linecap="round"/>
-      <line x1="-32" y1="32" x2="32" y2="-32" stroke="url(#amber-x)" stroke-width="14" stroke-linecap="round"/>
-      <circle cx="0" cy="0" r="6.5" fill="#FFFFFF"/>
+    <path d="M -60,-120 L -136,0 L -60,120" fill="none" stroke="#333744" stroke-width="38" stroke-linecap="round" stroke-linejoin="round" />
+    <path d="M 60,-120 L 136,0 L 60,120" fill="none" stroke="#333744" stroke-width="38" stroke-linecap="round" stroke-linejoin="round" />
+    <g>
+      <line x1="-32" y1="-32" x2="32" y2="32" stroke="url(#x-cobalt)" stroke-width="14" stroke-linecap="round" />
+      <line x1="-32" y1="32" x2="32" y2="-32" stroke="url(#x-cobalt)" stroke-width="14" stroke-linecap="round" />
+      <circle cx="0" cy="0" r="6.5" fill="#FFFFFF" />
     </g>
   </g>
 </svg>

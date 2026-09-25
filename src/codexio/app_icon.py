@@ -10,9 +10,9 @@ from PySide6.QtGui import QColor, QIcon, QImage, QLinearGradient, QPainter, QPai
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QApplication
 
-ICON_BG = QColor("#141622")
-ICON_MARK = QColor("#F59E0B")
-ICON_MARK_LIGHT = QColor("#FFFBEB")
+ICON_BG = QColor("#FFFFFF")
+ICON_MARK = QColor("#2563EB")
+ICON_MARK_LIGHT = QColor("#2D6CE8")
 BUNDLED_ICON = "app.ico"
 MASTER_PNG = "app.png"
 MASTER_SVG = "app.svg"
@@ -104,21 +104,13 @@ def render_app_image(size: int) -> QImage:
 
 
 def paint_app_mark(painter: QPainter, rect: QRectF) -> None:
-    """Keep the Quantum X identity even if the bundled raster is unavailable."""
+    """Keep the Cobalt X identity even if the bundled raster is unavailable."""
     side = min(rect.width(), rect.height())
     painter.save()
     painter.translate(rect.center().x() - side / 2, rect.center().y() - side / 2)
     painter.scale(side / 512, side / 512)
-    background = QLinearGradient(32, 32, 480, 480)
-    background.setColorAt(0, QColor("#141622"))
-    background.setColorAt(1, QColor("#0E1019"))
-    painter.setBrush(background)
-    painter.setPen(QPen(QColor("#2D3248"), 6))
-    painter.drawRoundedRect(QRectF(32, 32, 448, 448), 120, 120)
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-    painter.setPen(QPen(QColor("#1A1E2E"), 3))
-    painter.drawRoundedRect(QRectF(48, 48, 416, 416), 104, 104)
-    pen = QPen(QColor("#FFFFFF"), 38)
+    painter.fillRect(QRectF(0, 0, 512, 512), QColor("#FFFFFF"))
+    pen = QPen(QColor("#333744"), 38)
     pen.setCapStyle(Qt.PenCapStyle.RoundCap)
     pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
     painter.setPen(pen)
@@ -128,10 +120,10 @@ def paint_app_mark(painter: QPainter, rect: QRectF) -> None:
         path.lineTo(256 + direction * 136, 256)
         path.lineTo(256 + direction * 60, 376)
         painter.drawPath(path)
-    amber = QLinearGradient(224, 224, 288, 288)
-    for stop, color in ((0, "#FFFBEB"), (.25, "#FDE047"), (.7, "#F59E0B"), (1, "#D97706")):
-        amber.setColorAt(stop, QColor(color))
-    pen = QPen(amber, 14)
+    cobalt = QLinearGradient(224, 224, 288, 288)
+    for stop, color in ((0, "#2563EB"), (.38, "#2D6CE8"), (.7, "#274ED4"), (1, "#30369E")):
+        cobalt.setColorAt(stop, QColor(color))
+    pen = QPen(cobalt, 14)
     pen.setCapStyle(Qt.PenCapStyle.RoundCap)
     painter.setPen(pen)
     painter.drawLine(224, 224, 288, 288)

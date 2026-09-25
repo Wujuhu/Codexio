@@ -1,26 +1,26 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 240" width="800" height="240">
   <defs>
-    <linearGradient id="amber-x-lockup" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#FFFBEB" />
-      <stop offset="25%" stop-color="#FDE047" />
-      <stop offset="70%" stop-color="#F59E0B" />
-      <stop offset="100%" stop-color="#D97706" />
+    <linearGradient id="cobalt-x-lockup" gradientUnits="userSpaceOnUse" x1="-12" y1="-12" x2="12" y2="12">
+      <stop offset="0%" stop-color="#2563EB" />
+      <stop offset="38%" stop-color="#2D6CE8" />
+      <stop offset="70%" stop-color="#274ED4" />
+      <stop offset="100%" stop-color="#30369E" />
     </linearGradient>
   </defs>
-  <rect width="100%" height="100%" rx="24" fill="#0B0D14" />
+  <rect width="100%" height="100%" rx="24" fill="#FFFFFF" />
   <g transform="translate(35, 35)">
-    <rect width="170" height="170" rx="46" fill="#141622" stroke="#2D3248" stroke-width="2.5" />
+    <rect width="170" height="170" rx="46" fill="#FFFFFF" stroke="#E4E7EC" stroke-width="2.5" />
     <g transform="translate(85, 85)">
-      <path d="M -22,-44 L -50,0 L -22,44" fill="none" stroke="#FFFFFF" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M 22,-44 L 50,0 L 22,44" fill="none" stroke="#FFFFFF" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
-      <line x1="-12" y1="-12" x2="12" y2="12" stroke="url(#amber-x-lockup)" stroke-width="5" stroke-linecap="round"/>
-      <line x1="-12" y1="12" x2="12" y2="-12" stroke="url(#amber-x-lockup)" stroke-width="5" stroke-linecap="round"/>
+      <path d="M -22,-44 L -50,0 L -22,44" fill="none" stroke="#333744" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M 22,-44 L 50,0 L 22,44" fill="none" stroke="#333744" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" />
+      <line x1="-12" y1="-12" x2="12" y2="12" stroke="url(#cobalt-x-lockup)" stroke-width="5" stroke-linecap="round" />
+      <line x1="-12" y1="12" x2="12" y2="-12" stroke="url(#cobalt-x-lockup)" stroke-width="5" stroke-linecap="round" />
       <circle cx="0" cy="0" r="2.5" fill="#FFFFFF"/>
     </g>
   </g>
   <g transform="translate(240, 95)">
-    <text font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" font-size="56" font-weight="800" fill="#FFFFFF" letter-spacing="-1.5">Codexio</text>
-    <text y="36" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="14" font-weight="700" fill="#F59E0B" letter-spacing="1.2">QUANTUM "X" CORE</text>
-    <text y="62" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13" font-weight="400" fill="#8C97B0">原版括号母体 + 暖金 X 节律点 + 最克制最小变动的官方解法</text>
+    <text font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" font-size="56" font-weight="800" fill="#333744" letter-spacing="-1.5">Codexio</text>
+    <text y="36" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="14" font-weight="700" fill="#2563EB" letter-spacing="1.2">COBALT "X"</text>
+    <text y="62" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13" font-weight="400" fill="#667085">石墨代码括号 + 钴蓝渐变 X + 清晰浅色应用标识</text>
   </g>
 </svg>

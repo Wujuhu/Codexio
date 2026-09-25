@@ -26,7 +26,7 @@ The user explicitly authorized native UI implementation on 2026-09-08 after revi
 
 ## Brand Commitments
 
-Use the user-approved Codexio name and Quantum "X" Core icon: dark rounded container, white code brackets, and a warm amber X. Preserve the approved C workspace. The user's latest references call for brighter pastel data colors: coral price, mint Token, and purple/blue/yellow Token composition with matching legends. Preserve native typography and paired Token labels. The user explicitly wants the two lines in one plot, using additional Token-axis headroom to keep Token generally lower while the price scale stays normal; genuine overlap is allowed.
+Use the user-approved Codexio name and the 2026-09-25 Cobalt "X" icon: white background, graphite code brackets, and a cobalt-blue gradient X. The same source artwork must drive in-app branding, macOS APP/Dock assets, Windows EXE/ICO assets, window icons, and tray icons. Preserve the approved C workspace. The user's latest references call for brighter pastel data colors: coral price, mint Token, and purple/blue/yellow Token composition with matching legends. Preserve native typography and paired Token labels. The user explicitly wants the two lines in one plot, using additional Token-axis headroom to keep Token generally lower while the price scale stays normal; genuine overlap is allowed.
 
 Overview quota bars use the same weight as Token composition and transition from pastel green through yellow to red as quota falls. Metric cards keep their values and period comparisons without bottom annotation lines. Chart points stay visible, and tooltip metrics lead with price.
 
@@ -34,7 +34,7 @@ Compare against complete previous units: yesterday in full, or the complete seve
 
 Reset dates include a Chinese weekday throughout the main window and floating styles. Subscription gauges have larger arcs, thicker strokes and larger text. Weekly projection starts at a 2 percentage-point change and accepts valid reference prices with an explicit reference-estimate status; missing prices remain unavailable. Omit the explanatory prose beside the estimate. Move page and preview scrollbars toward their right edges, and keep the preview session title visibly larger than the message body in both themes.
 
-The sidebar now uses six two-character labels: 概览、日志、用量、订阅、定价、设置. Native Windows caption colors follow the selected app theme. The earlier Chinese-led Astra brand proposals were rejected. Current branding requirements are English-only names connected to AI, Quota, Widget or Codex, with original marks related to ChatGPT/Codex visual language. The user selected Codexio and supplied exact Quantum "X" Core SVG artwork on 2026-09-09. The earlier proposal directories are historical references. Current brand resources are in docs/branding/codexio.
+The sidebar now uses six two-character labels: 概览、日志、用量、订阅、定价、设置. Native Windows caption colors follow the selected app theme. The earlier Chinese-led Astra brand proposals were rejected. Current branding requirements are English-only names connected to AI, Quota, Widget or Codex, with original marks related to ChatGPT/Codex visual language. The user selected Codexio and supplied the current exact Cobalt "X" SVG artwork on 2026-09-25. Earlier proposal directories and the superseded dark/amber icon are historical references only. Current brand resources are in docs/branding/codexio.
 
 ## Evidence on Hand
 

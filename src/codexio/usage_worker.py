@@ -13,7 +13,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
-from codexio.analytics_config import DEFAULT_USAGE_REFRESH_INTERVAL, USAGE_REFRESH_INTERVALS, utc_now
+from codexio.analytics_config import (DEFAULT_USAGE_REFRESH_INTERVAL, DEFAULT_WEEK_ESTIMATE_INTERVAL,
+                                      USAGE_REFRESH_INTERVALS, utc_now)
 from codexio.logging_setup import get_logger
 from codexio.settings import data_dir
 
@@ -212,7 +213,7 @@ class UsageWorker(QThread):
             self._catalog = PricingCatalog(self._directory / ("mock_prices" if self._mock else "prices"))
             if self._mock and not self._widget_only:
                 self._rolling = RollingWeeklyEstimator(self._store.path,
-                    self._config.get("week_estimate_interval_minutes", 10))
+                    self._config.get("week_estimate_interval_minutes", DEFAULT_WEEK_ESTIMATE_INTERVAL))
             collector = Collector(self._store)
             self._run_loop(collector)
         except Exception as exc:
@@ -269,7 +270,7 @@ class UsageWorker(QThread):
                         was_auto_sync = bool(self._config.get("auto_sync_prices"))
                         self._config = value
                         if self._rolling is not None:
-                            self._rolling.configure(value.get("week_estimate_interval_minutes", 10))
+                            self._rolling.configure(value.get("week_estimate_interval_minutes", DEFAULT_WEEK_ESTIMATE_INTERVAL))
                         self._config_changed.clear()
                         next_remote = 0
                         if self._config.get("auto_sync_prices") and not was_auto_sync:
@@ -295,7 +296,7 @@ class UsageWorker(QThread):
                         if self._quota_applicable and self._rolling is None and not self._widget_only:
                             from codexio.rolling_estimation import RollingWeeklyEstimator
                             self._rolling = RollingWeeklyEstimator(
-                                self._store.path, self._config.get("week_estimate_interval_minutes", 10))
+                                self._store.path, self._config.get("week_estimate_interval_minutes", DEFAULT_WEEK_ESTIMATE_INTERVAL))
                         if self._rolling is not None:
                             self._rolling.invalidate()
                     elif command == "rescan":

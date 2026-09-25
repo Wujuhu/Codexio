@@ -20,7 +20,8 @@ PREVIEW_MAX_WIDTH = 480
 USAGE_REFRESH_INTERVALS = (5, 10, 30, 60)
 DEFAULT_USAGE_REFRESH_INTERVAL = 10
 WEEK_ESTIMATE_INTERVALS = (10, 30, 60)
-DEFAULT_WEEK_ESTIMATE_INTERVAL = 10
+DEFAULT_WEEK_ESTIMATE_INTERVAL = 30
+WEEK_ESTIMATE_INTERVAL_VERSION = 2
 
 
 def normalize_panel_layout(config):
@@ -81,6 +82,7 @@ def default_config() -> dict:
         "usage_refresh_interval_seconds": DEFAULT_USAGE_REFRESH_INTERVAL,
         "usage_refresh_interval_user_set": False,
         "week_estimate_interval_minutes": DEFAULT_WEEK_ESTIMATE_INTERVAL,
+        "week_estimate_interval_version": WEEK_ESTIMATE_INTERVAL_VERSION,
         "codex_roots": [os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")],
         "ssh_sources": [],
         "account_since": utc_now(),
@@ -105,6 +107,12 @@ def load_analytics_config(path: Path | None = None) -> dict:
             if raw.get("navigation_order_version") != 1:
                 config["navigation_order"] = list(DEFAULT_NAVIGATION_ORDER)
                 config["navigation_order_version"] = 1
+            # 0.2.9 and earlier persisted the old 10-minute default without a
+            # user-choice marker. Migrate that default once; later choices stay.
+            if raw.get("week_estimate_interval_version") != WEEK_ESTIMATE_INTERVAL_VERSION:
+                if raw.get("week_estimate_interval_minutes", 10) == 10:
+                    config["week_estimate_interval_minutes"] = DEFAULT_WEEK_ESTIMATE_INTERVAL
+                config["week_estimate_interval_version"] = WEEK_ESTIMATE_INTERVAL_VERSION
     except (OSError, ValueError):
         pass
     if config["theme"] not in ("system", "dark", "light"):
@@ -150,6 +158,7 @@ def save_analytics_config(config: dict, path: Path | None = None) -> None:
     if config.get("week_estimate_interval_minutes") not in WEEK_ESTIMATE_INTERVALS:
         config["week_estimate_interval_minutes"] = DEFAULT_WEEK_ESTIMATE_INTERVAL
     config["navigation_order_version"] = 1
+    config["week_estimate_interval_version"] = WEEK_ESTIMATE_INTERVAL_VERSION
     target = path or data_dir() / "analytics_settings.json"
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_suffix(".json.tmp")
