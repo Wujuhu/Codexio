@@ -1,6 +1,6 @@
 # Codexio for macOS
 
-当前开发版本 **0.2.9**，复用 Windows 主界面与本地用量后端。macOS 的入口、原生应用菜单和打包与 Windows 悬浮窗、EXE 更新器分开。
+当前开发版本 **0.2.10**，复用 Windows 主界面与本地用量后端。macOS 的入口、原生应用菜单、WidgetKit 和打包与 Windows 悬浮窗、EXE 更新器分开。
 
 ## 运行与安装
 
@@ -28,6 +28,8 @@ APP ZIP 内含 `Codexio.app/Contents/PlugIns/CodexioWidget.appex`。首次安装
 
 0.2.9 移除右上角状态栏图标、预览及对应设置，保留左上角原生应用菜单与 Dock。启动时立即显示主窗口，后台初始化不再阻塞窗口出现；关闭窗口后采集与上游检测继续运行。点击 Dock、在 Finder 再次打开或重复启动时，恢复现有窗口或重新创建主窗口，保留当前页面；存在模态对话框时优先显示对话框。旧版菜单栏与隐藏启动设置不再使用。
 
+0.2.10 的中、大尺寸桌面小组件在模型与思考强度后增加 Fast 和日志实际报告的上下文上限；最小尺寸不增加。API Key 或自定义 provider 模式不读取 ChatGPT 额度，并从主界面、设置和小组件完全隐藏额度内容。小组件构建号随 UI 更新递增。
+
 订阅页周期记录保留整周估值与记录表，去掉估算说明小字和额度变化括号。同日本地时间的结束端省略日期，跨日保留两端日期；完整时间可悬停查看。估算与计价算法不变。
 
 Dock 图标由 `src/codexio/icons/app.svg` 直接渲染，ICNS 的各尺寸独立生成，最高 1024 px；运行时也优先使用 SVG 图标引擎。日志表格的水平滚动条常驻，垂直滚动条固定保留位置。其他应用内滚动指示器共用 3 秒隐藏规则：滚动、键盘翻页和拖动会显示指示器，拖动期间不隐藏，停止后计时；透明状态保留原布局尺寸。
@@ -52,9 +54,9 @@ Dock 图标由 `src/codexio/icons/app.svg` 直接渲染，ICNS 的各尺寸独�
 
 更新源为同一仓库 `Wujuhu/Codexio` 的正式 GitHub Release。Mac 读取与 Windows 共用的 `latest.json` 中的 `macos` 部分，只下载该版本的 `Codexio.app.zip`，检查芯片架构、文件大小和 SHA-256，再验证应用标识、版本、macOS 签名及可执行架构。准备完成后等待应用正常退出，在原来的路径替换完整 `.app` 并启动新版；收到该新进程的启动确认后删除旧 APP，启动失败恢复旧版；无写入权限或应用未正常退出时保留当前版本。发布信任仍依赖 GitHub 仓库及 HTTPS，本地 ad-hoc 签名用于完整性检查。
 
-`./build_macos.sh` 只向 `build/dev/macos` 输出开发 APP、`Codexio.app.zip` 与 `latest.json`。顶层 Windows 字段保持原格式，Mac 版本与 ZIP 下载信息放在 `macos` 对象中。构建默认离线，优先使用另一平台的同版本开发清单，其次使用本地正式版清单；可用 `--manifest /path/to/latest.json` 指定另一台机器的清单。只有 Mac 开发包时也可以构建，正式归档时必须补齐 Windows 包。
+`./build_macos.sh` 只向 `build/dev/macos` 输出开发 APP、`Codexio.app.zip` 与 `latest.json`。顶层 Windows 字段保持原格式，Mac 版本与 ZIP 下载信息放在 `macos` 对象中。构建默认离线，优先使用另一平台的开发清单，其次使用本地正式版清单；可用 `--manifest /path/to/latest.json` 指定基准清单。0.2.10 开发阶段只要求本地 Mac 包，正式 Windows EXE 在确认发布后的 CI 阶段补齐。
 
-用户明确确认发布及版本号后，运行 `.venv/bin/python scripts/prepare_release.py --version <确认的版本号>`，从 `build/dev/windows` 和 `build/dev/macos` 合并清单、检查两端版本与哈希，成功后才创建 `release/<版本号>/`。正式目录与 GitHub 附件均为 **`Codexio.exe`、`Codexio.app.zip`、`latest.json`**。已有正式目录不自动覆盖，历史 DMG 版本不改写。
+用户完成开发验收并第二次明确确认发布及版本号后，运行 `.venv/bin/python scripts/publish_release_from_macos.py --version <确认的版本号> --confirm-publish`。脚本先验证 Mac 包并推送 `main`，再创建草稿并触发 Windows x64 工作流；工作流构建 EXE、合并清单并在三个附件全部验证后发布。脚本最后下载远程三件套复核并创建 `release/<版本号>/`。正式目录与 GitHub 附件均为 **`Codexio.exe`、`Codexio.app.zip`、`latest.json`**；已有目录、Tag 或正式 Release 不覆盖，历史 DMG 版本不改写。
 
 ZIP 构建后会走一遍与更新器相同的解压、签名及架构检查。解压保留可执行权限和应用包内部链接，拒绝越界路径、重复文件和外部链接；下载仍检查大小及 SHA-256。旧版 DMG 更新器无法读取 ZIP 更新地址，需手动换装一次支持 ZIP 的 APP，之后自动更新使用新流程。相同或更低版本不会触发更新。
 

@@ -18,15 +18,18 @@ import psutil
 
 from codexio.upstream_client import alive, identity, restart_running
 from codexio.process_env import external_environment
-from codexio.upstream_config import OfficialRoute, UpstreamError, codex_config_path, private_json, read_json
-from codexio.upstream_restart import RestartTracker, desktop_config_path
+from codexio.upstream_config import ManagedRoute, UpstreamError, codex_config_path, private_json, read_json
+from codexio.upstream_restart import RestartTracker, desktop_route_context
+from codexio.provider_config import ProviderConfigError, resolve_provider_config
 
 
-def verify_official_login(config_path=None):
+def verify_official_login(config_path=None, *, required=True):
     from codexio.codex_discovery import find_codex
     executable = find_codex()
     if executable is None:
         raise UpstreamError("未找到 Codex 客户端，未修改路由")
+    if not required:
+        return "provider"
     try:
         options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
         env = external_environment()
@@ -34,11 +37,16 @@ def verify_official_login(config_path=None):
             env["CODEX_HOME"] = str(Path(config_path).parent)
         result = subprocess.run([str(executable), "login", "status"], capture_output=True, timeout=15, env=env, **options)
     except (OSError, subprocess.TimeoutExpired):
-        raise UpstreamError("无法确认官方登录状态，未修改路由") from None
+        raise UpstreamError("无法确认 Codex 认证状态，未修改路由") from None
     # Status output is examined in memory only; never persist credentials/output.
     status = (result.stdout + result.stderr).lower()
-    if result.returncode or b"chatgpt" not in status or b"logged in" not in status:
-        raise UpstreamError("请先使用 ChatGPT 官方账号登录 Codex，再开启上游检测")
+    if result.returncode or b"logged in" not in status:
+        raise UpstreamError("请先完成 Codex 登录或配置供应商认证，再开启上游检测")
+    if b"api key" in status or b"apikey" in status:
+        return "apikey"
+    if b"chatgpt" in status:
+        return "chatgpt"
+    return "authenticated"
 
 
 def helper_command(directory):
@@ -116,16 +124,22 @@ def _prune_runtime(root: Path, current: Path) -> None:
 class UpstreamService:
     def __init__(self, data_directory, *, config_path=None, restart=restart_running, verify_login=verify_official_login):
         self.directory = Path(data_directory) / "upstream"
-        recorded_config = read_json(self.directory / "route.json").get("config")
-        self.route = OfficialRoute(config_path or recorded_config or codex_config_path(), self.directory)
+        journal = read_json(self.directory / "route.json")
+        recorded_config = journal.get("root_config") or journal.get("config")
+        self.route = ManagedRoute(config_path or recorded_config or codex_config_path(), self.directory)
         self._config_override = config_path
         self.restart = restart
-        self.verify_login = (lambda: verify_official_login(self.route.config)) if verify_login is verify_official_login else verify_login
+        if verify_login is verify_official_login:
+            self.verify_login = lambda required=True: verify_official_login(self.route.config, required=required)
+        else:
+            self.verify_login = lambda required=True: verify_login()
         self.owner = identity(psutil.Process())
         self.state = {}
         self.active = False
         self.handed_off = False
         self.process = None
+        self.plan = None
+        self._reuse_state = None
         self._restart = RestartTracker(self.directory)
 
     def restart_assessment(self):
@@ -162,31 +176,51 @@ class UpstreamService:
             raise UpstreamError(result["error"])
         return result
 
-    def ensure(self, *, update=False):
+    def ensure(self, *, update=False, plan=None):
         self.directory.mkdir(parents=True, exist_ok=True)
         if os.name != "nt":
             self.directory.chmod(0o700)
         previous = read_json(self.directory / "session.json")
         self.state = previous
-        if previous.get("process") and alive(previous["process"]) and previous.get("protocol_version", 1) < 2:
+        reuse = self._reuse_state
+        self._reuse_state = None
+        if previous.get("process") and alive(previous["process"]) and previous.get("protocol_version", 1) < 3:
             owner = previous.get("owner")
             if owner and owner != self.owner and alive(owner):
                 raise UpstreamError("另一个 Codexio 正在使用上游检测")
             self.control("deactivate")
             self._stop_helper()
+            reuse = previous
+            previous = {}
+            self.state = {}
+        if (previous.get("process") and alive(previous["process"]) and plan
+                and any(previous.get(key) != plan.get(key) for key in ("origin", "profile", "provider_id"))):
+            self.control("deactivate")
+            self._stop_helper()
+            reuse = previous
+            previous = {}
+            self.state = {}
         if previous.get("process") and alive(previous["process"]):
             self.control("health")
         else:
             # Reuse the port/token when recovering an abandoned route so a client
             # with the old provider still in memory can continue using it.
             recovering = self.route.journal.exists()
-            if recovering and not previous.get("route_token"):
+            seed = reuse or previous
+            if recovering and not seed.get("route_token"):
                 self.route.restore()
                 raise UpstreamError("已恢复遗留配置；请重新开启上游检测以重启客户端")
+            effective = plan or {}
             self.state = dict(config=str(self.route.config), owner=self.owner,
-                              route_token=previous.get("route_token") if recovering else secrets.token_urlsafe(32),
+                              route_token=(seed.get("route_token") or secrets.token_urlsafe(32))
+                              if recovering or reuse else secrets.token_urlsafe(32),
                               control_token=secrets.token_urlsafe(32),
-                              port=previous.get("port", 0) if recovering else 0)
+                              port=seed.get("port", 0) if recovering or reuse else 0,
+                              origin=effective.get("origin") or seed.get("origin") or "https://chatgpt.com/backend-api/codex",
+                              profile=effective.get("profile") if plan else seed.get("profile"),
+                              auth_mode=effective.get("auth_mode") if plan else seed.get("auth_mode"),
+                              provider_id=effective.get("provider_id") if plan else seed.get("provider_id", "openai"),
+                              protocol_version=3)
             command = helper_command(self.directory)
             private_json(self.directory / "session.json", self.state)
             options = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
@@ -223,20 +257,40 @@ class UpstreamService:
         self.restart_assessment()
         self.active = False
         previous = read_json(self.directory / "session.json")
+        if (self.route.journal.exists() or alive(previous.get("process"))) and previous.get("protocol_version", 1) < 3:
+            self.state = previous
+            owner = previous.get("owner")
+            if owner and owner != self.owner and alive(owner):
+                raise UpstreamError("另一个 Codexio 正在使用上游检测")
+            if alive(previous.get("process")):
+                self.control("deactivate")
+                self._stop_helper()
+            elif self.route.journal.exists():
+                self.route.restore()
+            self._reuse_state = previous
+            return False
         if self.route.journal.exists() or alive(previous.get("process")):
             return self.ensure(update=update)
         return False
 
     def enable(self):
-        target = Path(self._config_override or desktop_config_path(codex_config_path())).resolve()
+        context = ({"config": Path(self._config_override), "profile": None} if self._config_override else
+                   desktop_route_context(codex_config_path()))
+        target = Path(context["config"]).resolve()
         if target != self.route.config:
             if self.needs_restore or alive(read_json(self.directory / "session.json").get("process")):
                 raise UpstreamError("客户端的 config.toml 路径已改变，请先关闭上游检测再重新开启")
-            self.route = OfficialRoute(target, self.directory)
+            self.route = ManagedRoute(target, self.directory)
         self.restart_assessment()
-        self.verify_login()
-        self.ensure()
-        self.control("activate")
+        try:
+            provider = resolve_provider_config(target, profile=context.get("profile"))
+        except ProviderConfigError as exc:
+            raise UpstreamError(str(exc)) from exc
+        auth_mode = self.verify_login(provider.requires_openai_auth)
+        self.plan = self.route.plan(profile=context.get("profile"), auth_mode=auth_mode)
+        self.ensure(plan=self.plan)
+        self.control("activate", profile=self.plan.get("profile"), auth_mode=self.plan.get("auth_mode"),
+                     origin=self.plan.get("origin"))
         self.active = True
         return self.restart_needed()
 

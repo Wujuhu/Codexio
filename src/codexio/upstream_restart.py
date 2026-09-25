@@ -87,7 +87,7 @@ def client_contexts():
     return result
 
 
-def desktop_config_path(fallback):
+def desktop_route_context(fallback):
     contexts = client_contexts()
     if any(not item["config"] for item in contexts):
         raise UpstreamError("无法确认当前桌面客户端的配置路径，请等待客户端启动完成后再开启上游检测")
@@ -96,7 +96,15 @@ def desktop_config_path(fallback):
     paths = {item["config"] for item in contexts}
     if len(paths) > 1:
         raise UpstreamError("多个桌面客户端使用不同的 config.toml，请保留一个配置后再开启上游检测")
-    return Path(next(iter(paths))) if paths else Path(fallback)
+    profiles = {str(item.get("profile") or "") for item in contexts}
+    if len(profiles) > 1:
+        raise UpstreamError("多个桌面客户端使用不同的配置方案，请保留一个配置后再开启上游检测")
+    return {"config": Path(next(iter(paths))) if paths else Path(fallback),
+            "profile": (next(iter(profiles)) or None) if profiles else None}
+
+
+def desktop_config_path(fallback):
+    return desktop_route_context(fallback)["config"]
 
 
 def _snapshot(context):

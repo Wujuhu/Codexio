@@ -73,6 +73,7 @@ def main(argv: list[str] | None = None) -> int:
     worker = QuotaWorker(settings, mock=args.mock)
     usage = UsageWorker(analytics_config, mock=args.mock)
     closing = False
+    quota_applicable = False
     updater = None
     upstream = None
 
@@ -118,10 +119,12 @@ def main(argv: list[str] | None = None) -> int:
         usage.update_config(analytics_config)
         dashboard_host.config_updated(analytics_config)
         window.apply_theme("dark")
-        window.setVisible(bool(analytics_config.get("widget_visible", True)))
+        window.setVisible(quota_applicable and bool(analytics_config.get("widget_visible", True)))
         widget_action.setChecked(window.isVisible())
 
     def toggle_widget(visible: bool) -> None:
+        if not quota_applicable:
+            return
         config = dict(analytics_config, widget_visible=bool(visible))
         apply_config(config)
 
@@ -130,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
             value.display_mode = "top"
             toggle_widget(False)
         window.apply_settings(value)
-        if not analytics_config.get("widget_visible"):
+        if not quota_applicable or not analytics_config.get("widget_visible"):
             window.hide()
 
     def assign_history(assignment: dict) -> None:
@@ -150,6 +153,7 @@ def main(argv: list[str] | None = None) -> int:
         on_settings_applied=worker.update_settings,
         on_open=open_main,
         on_hide=lambda: toggle_widget(False),
+        start_hidden=True,
     )
     window.persist_settings()
     dashboard_host = DashboardHost(window.current_settings, lambda: analytics_config, {
@@ -171,8 +175,11 @@ def main(argv: list[str] | None = None) -> int:
     widget_action = menu.addAction("显示悬浮窗")
     widget_action.setCheckable(True)
     widget_action.setChecked(bool(analytics_config.get("widget_visible", True)))
+    widget_action.setVisible(False)
     widget_action.triggered.connect(toggle_widget)
-    menu.addAction("关闭悬浮窗").triggered.connect(lambda: toggle_widget(False))
+    close_widget_action = menu.addAction("关闭悬浮窗")
+    close_widget_action.setVisible(False)
+    close_widget_action.triggered.connect(lambda: toggle_widget(False))
     menu.addSeparator()
     update_action = menu.addAction("检查并更新")
     update_action.triggered.connect(lambda: updater.check() if updater is not None else None)
@@ -197,9 +204,15 @@ def main(argv: list[str] | None = None) -> int:
             update_status(message, False)
 
     def on_state(state) -> None:
+        nonlocal quota_applicable
+        quota_applicable = getattr(state, "applicable", True) is not False
         window.apply_state(state)
         dashboard_host.apply_quota(state)
         tray.update_state(state, show_five=window.shows_five_hour())
+        widget_action.setVisible(quota_applicable)
+        close_widget_action.setVisible(quota_applicable)
+        widget_action.setChecked(quota_applicable and bool(analytics_config.get("widget_visible", True)))
+        window.setVisible(quota_applicable and bool(analytics_config.get("widget_visible", True)))
 
     def on_usage(data) -> None:
         dashboard_host.apply_data(data)
@@ -212,6 +225,7 @@ def main(argv: list[str] | None = None) -> int:
     worker.state_changed.connect(on_state)
     worker.snapshot_changed.connect(usage.add_snapshot)
     worker.identity_changed.connect(usage.invalidate_estimate_window)
+    worker.applicability_changed.connect(usage.set_quota_applicable)
     usage.data_changed.connect(on_usage)
     usage.loading_changed.connect(dashboard_host.set_usage_loading)
     usage.progress_changed.connect(dashboard_host.set_progress)
@@ -219,7 +233,7 @@ def main(argv: list[str] | None = None) -> int:
     if scheme_signal is not None:
         scheme_signal.connect(update_theme)
     update_theme()
-    window.setVisible(bool(analytics_config.get("widget_visible", True)))
+    window.setVisible(False)
     upstream.startup_ready.connect(lambda *_: dashboard_host.open("overview", "today"))
     usage.start()
     worker.start()

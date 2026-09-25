@@ -26,6 +26,8 @@ DEFAULT_REQUEST_TIMEOUT = 20.0
 INITIALIZE_TIMEOUT = 15.0
 RATE_LIMITS_METHOD = "account/rateLimits/read"
 RATE_LIMITS_UPDATED = "account/rateLimits/updated"
+ACCOUNT_METHOD = "account/read"
+ACCOUNT_UPDATED = "account/updated"
 
 logger = get_logger("app_server")
 
@@ -230,6 +232,12 @@ class AppServerClient:
         result = self.request(RATE_LIMITS_METHOD, timeout=self._request_timeout)
         if not isinstance(result, dict):
             raise AppServerError("account/rateLimits/read 返回了无效结果")
+        return result
+
+    def read_account(self, refresh_token: bool = False) -> dict:
+        result = self.request(ACCOUNT_METHOD, {"refreshToken": bool(refresh_token)}, timeout=self._request_timeout)
+        if not isinstance(result, dict):
+            raise AppServerError("account/read 返回了无效结果")
         return result
 
     def request(self, method: str, params: Any = None, timeout: Optional[float] = None) -> Any:

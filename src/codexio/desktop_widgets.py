@@ -203,6 +203,15 @@ class NavigationList(QListWidget):
                 self.setCurrentRow(index)
                 break
 
+    def set_page_visible(self, name, visible):
+        for index in range(self.count()):
+            item = self.item(index)
+            if item.data(Qt.ItemDataRole.UserRole) == name:
+                item.setHidden(not bool(visible))
+                if not visible and self.currentItem() is item:
+                    self.select_page("overview")
+                break
+
     def set_theme(self, name):
         self._theme = name
         colors = theme_colors(name)

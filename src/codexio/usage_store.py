@@ -123,7 +123,9 @@ class UsageStore:
                 better_context = record.get("context_owner_verified") and not old.get("context_owner_verified")
                 copied = not better_context and (old.get("source_id") != source_id or other_origin or old.get("context_owner_verified") and not record.get("context_owner_verified"))
                 if record.get("response_id") and copied:
-                    for field in ("timestamp", "model", "service_tier", "turn_id", "request_turn_id", "session_id", "prompt_preview", "output_preview", "limit_id", "duration_ms", "call_started_at", "call_ended_at"):
+                    for field in ("timestamp", "model", "service_tier", "model_context_window", "provider",
+                                  "turn_id", "request_turn_id", "session_id", "prompt_preview", "output_preview",
+                                  "limit_id", "duration_ms", "call_started_at", "call_ended_at"):
                         if old.get(field) not in (None, "", "unknown"):
                             record[field] = old[field]
                 old_is_response = str(old.get("quality", "")).startswith("response")
@@ -143,7 +145,7 @@ class UsageStore:
                 for field in ("session_title", "prompt_preview", "output_preview"):
                     if not record.get(field):
                         record[field] = old.get(field, "")
-                for field in ("model", "service_tier", "limit_id", "provider"):
+                for field in ("model", "service_tier", "model_context_window", "limit_id", "provider"):
                     if record.get(field) in (None, "", "unknown") and old.get(field) not in (None, "", "unknown"):
                         record[field] = old[field]
                 for field in ("duration_ms", "call_started_at", "call_ended_at"):

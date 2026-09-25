@@ -1,20 +1,24 @@
-# 上游检测（0.2.6）
+# 上游检测（0.2.10）
 
-默认关闭。Mac 与 Windows 共用代理、响应记录和设置协调器；Windows EXE 由用户自行编译，本轮只在第二次发布确认后发布 Mac。
+默认关闭。Mac 与 Windows 共用代理、响应记录和设置协调器；Mac 在本地开发打包，Windows 正式 EXE 只在第二次发布确认后的 CI 阶段构建。
 
-## 官方登录与模型列表
+## ChatGPT、API Key 与自定义 provider
 
-保留内置 `openai` provider，通过官方支持的 `openai_base_url` 将请求指向本机代理，沿用官方登录与动态模型目录。保留临时 `codexio-upstream` 别名以兼容旧调用，但不把它设为全局 provider。不维护硬编码模型白名单，也不修改认证文件或钥匙串。
+ChatGPT 与 OpenAI API Key 继续使用内置 `openai` provider；自定义服务继续使用用户配置的 `model_providers.<id>`。开启检测时只把当前有效 provider 的 `openai_base_url` 或 `base_url` 临时改为本机回环地址，不更换 provider ID，不修改 `env_key`、`auth.command`、固定／环境请求头、`query_params`、WebSocket 能力、认证文件或钥匙串。
 
-官方模型缓存已包含 `gpt-6-sol`、`gpt-6-luna`，此前的旧列表伴随模型刷新超时。新实现保留原生 provider，并在启动外部客户端或 CLI 时移除 Codexio 的 PyInstaller、Qt 和动态库环境，避免这些运行时路径进入客户端及其子进程。
+解析器支持顶层配置、`[profiles.<name>]` 和独立 `<name>.config.toml`。桌面进程通过环境变量、`-c` 或多个不同 profile 覆盖路由时拒绝接管；内置 Amazon Bedrock、Ollama 和 LM Studio 没有可安全改写的 Responses base URL，也明确拒绝。自定义 provider 必须使用 Responses wire API。依据：[Codex 自定义 provider 配置](https://learn.chatgpt.com/docs/config-file/config-advanced)。
+
+上游检测不维护模型白名单，继续沿用当前 provider 的模型目录。启动外部客户端或 CLI 时移除 Codexio 的 PyInstaller、Qt 和动态库环境，避免这些运行时路径进入客户端及其子进程。
 
 依据：[官方配置参考](https://learn.chatgpt.com/docs/config-file/config-reference)。
 
 ## 转发与采集
 
-仅监听 `127.0.0.1`，本机地址包含随机路由令牌，控制接口使用独立令牌。官方目的地固定为 `https://chatgpt.com/backend-api/codex`，保留官方认证及账号请求头，不跟随重定向。支持 HTTP/SSE 和 WebSocket，保留响应中的会话与额度元数据。
+仅监听 `127.0.0.1`，本机地址包含随机路由令牌，控制接口使用独立令牌。目的地只可能来自启用前解析出的有效配置：ChatGPT 使用固定 Codex 服务，OpenAI API 使用原始 `openai_base_url` 或官方 API `/v1`，自定义 provider 使用其原始 `base_url`。客户端不能在请求中选择目的地；代理不跟随重定向。支持 HTTP/SSE 和 WebSocket，并转发 Bearer、`api-key`、`x-api-key` 及 provider 自定义认证头。
 
-从响应事件的 `id` 与 `model` 提取上游型号；HTTP 根据内容识别 SSE／JSON，兼容缺失或为 `application/octet-stream` 的 Content-Type。WebSocket 原样转发消息，并观察上游返回的响应事件。观察缓冲有上限，落库不阻塞响应转发。不保存请求正文、响应正文或 OAuth 凭据；模型记录仍使用独立 `upstream.sqlite`。
+从响应事件的 `id` 与 `model` 提取上游型号；HTTP 根据内容识别 SSE／JSON，兼容缺失或为 `application/octet-stream` 的 Content-Type。WebSocket 原样转发消息，并观察上游返回的响应事件。观察缓冲有上限，落库不阻塞响应转发。不保存请求正文、响应正文、认证头或凭据；模型记录仍使用独立 `upstream.sqlite`。
+
+恢复协议为 v3。私有恢复日志只保存配置文件位置、provider 字段路径、原始／临时 endpoint、模式与摘要，不再复制整份 `config.toml`。包含用户名、密码、查询串或 fragment 的 `base_url` 不接管，凭据应放在 provider 的认证字段、请求头或 `query_params`。旧 v2 官方路由在升级时先恢复并移除旧别名，再用同一端口与路径令牌安装 v3 路由。
 
 通过响应 ID 关联原始调用。上方小字显示响应型号，右侧箭头折回指向上方文字。每次调用分别比较型号；存在不一致时，文字和箭头标绿。费用和筛选仍使用原始请求信息。缺少返回型号或可关联编号时不猜测；服务端没有披露的内部调度无法推断。
 

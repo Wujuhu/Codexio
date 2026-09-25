@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-PARSER_VERSION = 10
+PARSER_VERSION = 11
 PREVIEW_LIMIT = 600
 COUNTERS = ("input_tokens", "cached_input_tokens", "cache_write_input_tokens",
             "output_tokens", "reasoning_output_tokens", "total_tokens")
@@ -30,6 +30,17 @@ _SESSION_CACHE = {}
 def _reasoning_effort(value):
     effort = str(value or "").strip().lower()
     return effort if effort in ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra") else None
+
+
+def _context_window(value):
+    """Accept only an explicit, positive per-turn context limit from Codex."""
+    if isinstance(value, bool):
+        return None
+    try:
+        result = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return result if result > 0 and result <= 9223372036854775807 else None
 
 
 def _now() -> str:
@@ -482,7 +493,7 @@ def read_session_titles(root: Path) -> dict:
 def _initial_state(path: Path) -> dict:
     return {"rollout_id": _rollout_id(path), "session_id": _rollout_id(path),
             "turn_id": "", "model": "unknown", "reasoning_effort": None, "service_tier": None,
-            "provider": "unknown", "prompt_preview": "", "meta_seen": False,
+            "model_context_window": None, "provider": "unknown", "prompt_preview": "", "meta_seen": False,
             "last_by_source": {}, "previous_signature": None, "high_water": None,
             "last_totals": {}, "replay_done": False, "parent_position": 0,
             "modern_candidate": None, "active_response_id": None,
@@ -573,6 +584,12 @@ def _turn_activate(state, turn_id, timestamp, owned=False, explicit_start=False)
             row["model"] = state["model"]
         if state.get("reasoning_effort"):
             row["reasoning_effort"] = state["reasoning_effort"]
+        if state.get("service_tier"):
+            row["service_tier"] = state["service_tier"]
+        if state.get("provider") not in (None, "", "unknown"):
+            row["provider"] = state["provider"]
+        if state.get("model_context_window"):
+            row["model_context_window"] = state["model_context_window"]
         pending_owner = state.get("pending_question_owner")
         if pending_owner and pending_owner != turn_id and not row.get("prompt_preview"):
             row["continuation_of"] = _turn_key(state["session_id"], pending_owner)
@@ -616,13 +633,25 @@ def _turn_before(entry, state):
             effort = _reasoning_effort(settings.get("reasoning_effort"))
             if effort:
                 state["reasoning_effort"] = effort
+            if settings.get("service_tier"):
+                state["service_tier"] = str(settings["service_tier"])
+            provider = settings.get("model_provider_id") or settings.get("model_provider")
+            if isinstance(provider, str) and provider.strip():
+                state["provider"] = provider.strip()
     elif kind == "turn_context":
+        incoming_turn = str(payload.get("turn_id") or payload.get("id") or "")
         model = payload.get("model") or (payload.get("info") or {}).get("model")
         if isinstance(model, str) and model.strip():
             state["model"] = model.strip()
         effort = _reasoning_effort(payload.get("effort") or payload.get("reasoning_effort"))
         if effort:
             state["reasoning_effort"] = effort
+        context_window = _context_window(payload.get("model_context_window") or (payload.get("info") or {}).get("model_context_window"))
+        if context_window is not None or incoming_turn and incoming_turn != state.get("turn_id"):
+            state["model_context_window"] = context_window
+    if kind == "event_msg" and subtype in ("task_started", "turn_started"):
+        context_window = _context_window(payload.get("model_context_window"))
+        state["model_context_window"] = context_window
     official = ""
     if kind == "turn_context" or kind == "event_msg" and subtype in ("task_started", "turn_started"):
         official = str(payload.get("turn_id") or (payload.get("id") if kind == "turn_context" else "") or "")
@@ -792,6 +821,16 @@ def _turn_after(entry, state, records):
                   or implicit)
     row = _turn_get(state, turn_id, timestamp)
     if row:
+        if state.get("model") not in (None, "", "unknown"):
+            row["model"] = state["model"]
+        if state.get("reasoning_effort"):
+            row["reasoning_effort"] = state["reasoning_effort"]
+        if state.get("service_tier"):
+            row["service_tier"] = state["service_tier"]
+        if state.get("provider") not in (None, "", "unknown"):
+            row["provider"] = state["provider"]
+        if state.get("model_context_window"):
+            row["model_context_window"] = state["model_context_window"]
         owner = payload.get("thread_id") or message_meta.get("thread_id")
         text = _assistant_preview(payload) if entry.get("type") == "response_item" and (not owner or owner == state["session_id"]) else ""
         if entry.get("type") == "event_msg" and payload.get("type") == "agent_message":
@@ -912,13 +951,15 @@ def _record(state, usage, timestamp, source_id, source_name, context, quality,
                 turn_id=effective_turn, timestamp=timestamp,
                 model=state.get("model") or "unknown", reasoning_effort=state.get("reasoning_effort"),
                 service_tier=state.get("service_tier"),
+                model_context_window=state.get("model_context_window"),
                 source_id=source_id, source_name=source_name, provider=state.get("provider") or "unknown",
                 limit_id=state.get("limit_id"), quality=quality,
                 session_title=context.titles.get(session_id, ""), prompt_preview=preview,
                 output_preview=output_preview,
                 context_owner_verified=owns_context)
     if not owns_context:
-        data.update(model="unknown", reasoning_effort=None, service_tier=None, limit_id=None)
+        data.update(model="unknown", reasoning_effort=None, service_tier=None,
+                    model_context_window=None, limit_id=None)
     _remember_preview_record(state, data)
     return data
 
@@ -967,6 +1008,9 @@ def _process_accounting_entry(entry: dict, state: dict, context: _Context,
         if effort:
             state["reasoning_effort"] = effort
         turn_id = str(payload.get("turn_id") or payload.get("id") or "")
+        context_window = _context_window(payload.get("model_context_window") or (payload.get("info") or {}).get("model_context_window"))
+        if context_window is not None or turn_id and turn_id != state.get("turn_id"):
+            state["model_context_window"] = context_window
         if turn_id and turn_id != state.get("turn_id"):
             state.update(turn_id=turn_id, prompt_preview="", modern_candidate=None, active_response_id=None, preview_pending=[])
         if isinstance(payload.get("service_tier"), str):
@@ -984,7 +1028,12 @@ def _process_accounting_entry(entry: dict, state: dict, context: _Context,
                 effort = _reasoning_effort(settings.get("reasoning_effort"))
                 if effort:
                     state["reasoning_effort"] = effort
+                provider = settings.get("model_provider_id") or settings.get("model_provider")
+                if isinstance(provider, str) and provider.strip():
+                    state["provider"] = provider.strip()
         elif subtype in ("task_started", "turn_started"):
+            context_window = _context_window(payload.get("model_context_window"))
+            state["model_context_window"] = context_window
             new_turn = str(payload.get("turn_id") or "")
             if new_turn and new_turn != state.get("turn_id"):
                 state.update(turn_id=new_turn, prompt_preview="", modern_candidate=None, active_response_id=None, preview_pending=[])
@@ -1073,6 +1122,9 @@ def _process_accounting_entry(entry: dict, state: dict, context: _Context,
     info = payload.get("info")
     if not isinstance(info, dict):
         return [], observations
+    context_window = _context_window(info.get("model_context_window"))
+    if context_window is not None:
+        state["model_context_window"] = context_window
     total_raw, last_raw = info.get("total_token_usage"), info.get("last_token_usage")
     total, last = _usage(total_raw), _usage(last_raw)
     signature = _signature(total, last)
@@ -1131,8 +1183,13 @@ def _process_accounting_entry(entry: dict, state: dict, context: _Context,
             record = candidate.get("record")
             paired_rate = payload.get("rate_limits")
             paired_limit = paired_rate.get("limit_id") if isinstance(paired_rate, dict) else None
-            if record and record.get("context_owner_verified") and paired_limit and record.get("limit_id") != paired_limit:
-                record = dict(record, limit_id=paired_limit)
+            enrich = {}
+            if paired_limit and record and record.get("limit_id") != paired_limit:
+                enrich["limit_id"] = paired_limit
+            if context_window is not None and record and record.get("model_context_window") != context_window:
+                enrich["model_context_window"] = context_window
+            if record and record.get("context_owner_verified") and enrich:
+                record = dict(record, **enrich)
                 candidate["record"] = record
                 _remember_preview_record(state, record)
                 return [record], observations

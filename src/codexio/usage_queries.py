@@ -19,14 +19,15 @@ from codexio.usage_collector import _user_preview
 from codexio.usage_metrics import dashboard_summary
 from codexio.upstream_store import UpstreamStore, enrich_rows
 
-SCHEMA_VERSION = 11
-METRIC_FIELDS = ("id", "timestamp", "model", "reasoning_effort", "service_tier", "source_id", "source_name", "source_ids",
+SCHEMA_VERSION = 12
+METRIC_FIELDS = ("id", "timestamp", "model", "reasoning_effort", "service_tier", "model_context_window",
+                 "source_id", "source_name", "source_ids",
                  "session_id", "turn_id", "request_turn_id", "total_tokens", "cost_usd", "pricing_status",
                  "provider", "account_key", "limit_id", "quality", "duration_ms") + COUNTERS
 TURN_FIELDS = ("id", "session_id", "turn_id", "verified", "observed_at", "ended_at", "status", "started_at",
                "started_inferred", "duration_ms", "first_turn", "input_hashes", "source_id", "source_ids", "alias_of",
                "is_subagent", "parent_session_id", "parent_turn_id", "agent_path", "has_usage", "synthetic",
-               "continuation_of", "model", "reasoning_effort")
+               "continuation_of", "model", "reasoning_effort", "service_tier", "model_context_window", "provider")
 
 
 def _json(value):

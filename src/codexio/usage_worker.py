@@ -106,6 +106,7 @@ class UsageWorker(QThread):
         self._loading_stage = None
         self._estimates_visible = False
         self._estimates = []
+        self._quota_applicable = bool(mock)
         self._rolling = None
         self._last_payload_signature = None
         self._last_widget_signature = None
@@ -137,7 +138,7 @@ class UsageWorker(QThread):
         self._wake.set()
 
     def add_snapshot(self, snapshot, source_id: str = "local-quota") -> None:
-        if self._mock:
+        if self._mock or not self._quota_applicable:
             return
         bucket = (snapshot.by_limit or {}).get("codex") or snapshot
         window = next((value for value in (bucket.primary, bucket.secondary)
@@ -149,6 +150,10 @@ class UsageWorker(QThread):
             plan_type=bucket.plan_type or snapshot.plan_type,
             account_key=snapshot.account_key, limit_id=bucket.limit_id or "codex",
             sole_codex_pool=set((snapshot.by_limit or {}).keys()) == {"codex"})))
+        self._wake.set()
+
+    def set_quota_applicable(self, applicable: bool, _mode: str = "") -> None:
+        self._commands.put(("quota_applicable", bool(applicable)))
         self._wake.set()
 
     def invalidate_estimate_window(self) -> None:
@@ -205,7 +210,7 @@ class UsageWorker(QThread):
             self._directory.mkdir(parents=True, exist_ok=True)
             self._store = UsageStore(self._directory / ("usage_mock.sqlite" if self._mock else "usage.sqlite"))
             self._catalog = PricingCatalog(self._directory / ("mock_prices" if self._mock else "prices"))
-            if not self._widget_only:
+            if self._mock and not self._widget_only:
                 self._rolling = RollingWeeklyEstimator(self._store.path,
                     self._config.get("week_estimate_interval_minutes", 10))
             collector = Collector(self._store)
@@ -270,7 +275,7 @@ class UsageWorker(QThread):
                         if self._config.get("auto_sync_prices") and not was_auto_sync:
                             next_sync = 0
                     elif command == "weekly_sample":
-                        if self._rolling is not None:
+                        if self._rolling is not None and self._quota_applicable:
                             previous = self._rolling.latest
                             self._rolling.add_sample(value)
                             current = self._rolling.latest
@@ -284,6 +289,15 @@ class UsageWorker(QThread):
                         if self._rolling is not None:
                             self._rolling.invalidate()
                         publish_for_command = self._estimates_visible
+                    elif command == "quota_applicable":
+                        self._quota_applicable = bool(value)
+                        self._estimates = []
+                        if self._quota_applicable and self._rolling is None and not self._widget_only:
+                            from codexio.rolling_estimation import RollingWeeklyEstimator
+                            self._rolling = RollingWeeklyEstimator(
+                                self._store.path, self._config.get("week_estimate_interval_minutes", 10))
+                        if self._rolling is not None:
+                            self._rolling.invalidate()
                     elif command == "rescan":
                         self._store.clear_index()
                         collector.invalidate()
@@ -332,7 +346,7 @@ class UsageWorker(QThread):
                     next_remote = time.monotonic() + 60
             if self._stop_event.is_set():
                 break
-            if self._rolling is not None and self._rolling.ready(time.time()):
+            if self._quota_applicable and self._rolling is not None and self._rolling.ready(time.time()):
                 dirty = True
             if dirty or time.monotonic() >= next_publish:
                 self._publish()
@@ -400,7 +414,7 @@ class UsageWorker(QThread):
         sources = [source for source in self._store.sources() if not str(source.get("id", source.get("source_id", ""))).startswith("lan:")]
         queries = UsageQueries(self._store.path)
         generation = queries.rebuild(self._catalog, sources)
-        if self._rolling is not None:
+        if self._quota_applicable and self._rolling is not None:
             self._rolling.refresh_prices(self._catalog.price_version, queries)
             self._rolling.process_due(time.time(), queries)
         if self._widget_only:
@@ -431,8 +445,10 @@ class UsageWorker(QThread):
             self._summary_key = summary_key
             self._summary_at = now
             self._next_summary_at = parse_time(queries.next_record_at(now))
-        if self._estimates_visible:
+        if self._quota_applicable and self._estimates_visible:
             self._estimates = self._rolling.rows()
+        elif not self._quota_applicable:
+            self._estimates = []
         if self._mock:
             model_catalog = {"models": ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"], "status": "ok"}
         else:
@@ -455,7 +471,8 @@ class UsageWorker(QThread):
             "pricing_status": copy.deepcopy(self._catalog.status), "sources": sources, "weekly_estimates": self._estimates,
             "estimate_identity": ({key: self._rolling.latest[key] for key in
                                    ("account_key", "plan_type", "reset_at", "sole_codex_pool")}
-                                  if self._rolling is not None and self._rolling.latest is not None else None),
+                                  if self._quota_applicable and self._rolling is not None
+                                  and self._rolling.latest is not None else None),
             "calibration_sources": sorted(active), "sources_complete": complete,
             "available_models": model_catalog.get("models", []), "model_catalog_status": model_catalog,
             "updated_at": utc_now(), "scan_status": self._scan_status,

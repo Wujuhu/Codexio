@@ -27,6 +27,9 @@ class TrayController:
         self._tray.show()
 
     def update_state(self, state: QuotaState, show_five: bool = True) -> None:
+        if not getattr(state, "applicable", True):
+            self._tray.setToolTip("Codexio")
+            return
         week = _tray_percent(state.week.remaining_percent)
         if show_five:
             five = _tray_percent(state.five_hour.remaining_percent)

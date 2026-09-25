@@ -10,6 +10,8 @@ private struct RequestSnapshot: Decodable {
     let prompt: String
     let model: String
     let reasoning_effort: String?
+    let service_tier: String?
+    let model_context_window: Int?
     let cost_usd: Double?
     let duration_ms: Double?
     let duration_started_at: Double?
@@ -21,6 +23,7 @@ private struct RequestSnapshot: Decodable {
 }
 
 private struct QuotaSnapshot: Decodable {
+    let applicable: Bool?
     let five_hour: Double?
     let week: Double?
     let has_five_hour: Bool?
@@ -82,6 +85,29 @@ private func compactNumber(_ count: Int) -> String {
     if count >= 1_000_000 { return String(format: "%.2fM", Double(count) / 1_000_000) }
     if count >= 10_000 { return String(format: "%.1fK", Double(count) / 1_000) }
     return count.formatted()
+}
+
+private func compactContext(_ count: Int?) -> String? {
+    guard let count, count > 0 else { return nil }
+    if count >= 1_000_000 {
+        if count % 1_000_000 == 0 { return "\(count / 1_000_000)M" }
+        let value = String(format: "%.2f", Double(count) / 1_000_000)
+            .replacingOccurrences(of: #"0+$"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\.$"#, with: "", options: .regularExpression)
+        return value + "M"
+    }
+    return "\(Int((Double(count) / 1_000).rounded()))K"
+}
+
+private func modelDetail(_ request: RequestSnapshot, family: WidgetFamily) -> String {
+    var parts = [request.model.isEmpty ? "等待模型调用" : request.model]
+    if let effort = request.reasoning_effort, !effort.isEmpty { parts.append(effort) }
+    if family != .systemSmall {
+        let tier = (request.service_tier ?? "").lowercased()
+        if tier == "fast" || tier == "priority" { parts.append("Fast") }
+        if let context = compactContext(request.model_context_window) { parts.append(context) }
+    }
+    return parts.joined(separator: " · ")
 }
 
 private func staticDuration(_ milliseconds: Double?) -> String {
@@ -182,8 +208,7 @@ private struct CodexioWidgetView: View {
             .font(.system(size: family == .systemSmall ? 13 : 15, weight: .semibold))
             .lineLimit(family == .systemLarge ? 3 : 2)
             .frame(maxWidth: .infinity, alignment: .leading)
-        let effort = request.reasoning_effort ?? ""
-        Text(request.model.isEmpty ? "等待模型调用" : request.model + (effort.isEmpty ? "" : " · " + effort))
+        Text(modelDetail(request, family: family))
             .font(.system(size: family == .systemSmall ? 11 : 12, weight: .semibold))
             .foregroundStyle(.primary)
             .lineLimit(1)
@@ -232,33 +257,35 @@ private struct CodexioWidgetView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        Divider().padding(.vertical, family == .systemLarge ? 9 : 7)
-        let showFiveHour = quota.has_five_hour ?? (quota.five_hour != nil)
-        let showWeek = quota.has_week ?? (quota.week != nil)
-        if family == .systemSmall {
-            if showFiveHour {
+        if quota.applicable != false {
+            Divider().padding(.vertical, family == .systemLarge ? 9 : 7)
+            let showFiveHour = quota.has_five_hour ?? (quota.five_hour != nil)
+            let showWeek = quota.has_week ?? (quota.week != nil)
+            if family == .systemSmall {
+                if showFiveHour {
+                    QuotaLine(title: "5 小时", remaining: quota.five_hour,
+                              resetAt: quota.five_hour_reset_at, timeOnly: true)
+                } else {
+                    QuotaLine(title: "周", remaining: quota.week, resetAt: quota.week_reset_at)
+                }
+            } else if showFiveHour && showWeek {
+                GeometryReader { geometry in
+                    HStack(spacing: 0) {
+                        QuotaLine(title: "5 小时", remaining: quota.five_hour,
+                                  resetAt: quota.five_hour_reset_at, timeOnly: true)
+                            .frame(width: geometry.size.width / 2 - 12)
+                        Color.clear.frame(width: 12)
+                        QuotaLine(title: "周", remaining: quota.week, resetAt: quota.week_reset_at)
+                            .frame(width: geometry.size.width / 2)
+                    }
+                }
+                .frame(height: 24)
+            } else if showFiveHour {
                 QuotaLine(title: "5 小时", remaining: quota.five_hour,
                           resetAt: quota.five_hour_reset_at, timeOnly: true)
             } else {
                 QuotaLine(title: "周", remaining: quota.week, resetAt: quota.week_reset_at)
             }
-        } else if showFiveHour && showWeek {
-            GeometryReader { geometry in
-                HStack(spacing: 0) {
-                    QuotaLine(title: "5 小时", remaining: quota.five_hour,
-                              resetAt: quota.five_hour_reset_at, timeOnly: true)
-                        .frame(width: geometry.size.width / 2 - 12)
-                    Color.clear.frame(width: 12)
-                    QuotaLine(title: "周", remaining: quota.week, resetAt: quota.week_reset_at)
-                        .frame(width: geometry.size.width / 2)
-                }
-            }
-            .frame(height: 24)
-        } else if showFiveHour {
-            QuotaLine(title: "5 小时", remaining: quota.five_hour,
-                      resetAt: quota.five_hour_reset_at, timeOnly: true)
-        } else {
-            QuotaLine(title: "周", remaining: quota.week, resetAt: quota.week_reset_at)
         }
         Spacer(minLength: 0)
     }
@@ -268,6 +295,7 @@ private struct CodexioWidgetView: View {
             if let snapshot = entry.snapshot, let request = snapshot.request {
                 let fresh = Date().timeIntervalSince1970 - snapshot.updated_at < 900
                 requestBody(request, quota: fresh ? snapshot.quota : QuotaSnapshot(
+                    applicable: snapshot.quota.applicable,
                     five_hour: nil, week: nil, has_five_hour: snapshot.quota.has_five_hour,
                     has_week: snapshot.quota.has_week, five_hour_reset_at: nil, week_reset_at: nil),
                             today: snapshot.today)

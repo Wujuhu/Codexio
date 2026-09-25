@@ -7,6 +7,10 @@ param(
     [switch]$PrepareOnly
 )
 $ErrorActionPreference = "Stop"
+$Replacement = ".venv/bin/python scripts/publish_release_from_macos.py --version $Version --confirm-publish"
+if (-not $PrepareOnly) {
+    throw "0.2.10 and later releases are coordinated from macOS so the confirmed Windows CI build can be attached directly. Use: $Replacement"
+}
 $ReleaseRoot = $PSScriptRoot
 $Repository = "Wujuhu/Codexio"
 $Tag = "v$Version"

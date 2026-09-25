@@ -28,11 +28,11 @@ def relay_headers(headers):
 
 
 class Relay:
-    def __init__(self, directory, state, *, origin=OFFICIAL_ORIGIN, dependents=route_dependents):
+    def __init__(self, directory, state, *, origin=None, dependents=route_dependents):
         self.directory, self.state = Path(directory), dict(state)
         self.route = OfficialRoute(Path(state["config"]), self.directory)
         self.store = UpstreamStore(self.directory.parent / "upstream.sqlite")
-        self.origin = origin.rstrip("/")
+        self.origin = str(origin or state.get("origin") or OFFICIAL_ORIGIN).rstrip("/")
         self.dependents = dependents
         self.capture = False
         self.owner = state.get("owner")
@@ -50,7 +50,7 @@ class Relay:
 
     def persist(self):
         self.state.update(owner=self.owner, guards=self.guards, capture=self.capture,
-                          handoff_until=self.handoff_until, error=self.error, protocol_version=2)
+                          handoff_until=self.handoff_until, error=self.error, origin=self.origin, protocol_version=3)
         private_json(self.directory / "session.json", self.state)
 
     async def start(self):
@@ -82,7 +82,7 @@ class Relay:
             self.route.restore()
             self.error = ""
         except (UpstreamError, OSError):
-            self.error = "配置恢复未完成，正在保留官方转发并重试"
+            self.error = "配置恢复未完成，正在保留当前模型服务转发并重试"
 
     def detach(self):
         was_routed = self.capture or self.route.journal.exists()
@@ -121,9 +121,17 @@ class Relay:
                 if self.route.journal.exists():
                     return web.json_response({"error": self.error or "路由恢复尚未完成"}, status=409)
                 try:
-                    self.route.install(self.state["url"] + "/v1", self.state["route_token"])
+                    plan = self.route.install(
+                        self.state["url"] + "/v1", self.state["route_token"],
+                        profile=data.get("profile") or self.state.get("profile"),
+                        auth_mode=data.get("auth_mode") or self.state.get("auth_mode"),
+                        expected_origin=data.get("origin") or self.state.get("origin"),
+                    )
                 except (UpstreamError, OSError) as exc:
                     return web.json_response({"error": str(exc) if isinstance(exc, UpstreamError) else "无法写入路由配置"}, status=409)
+                self.origin = plan["origin"]
+                self.state.update(origin=self.origin, profile=plan.get("profile"),
+                                  auth_mode=plan.get("auth_mode"), provider_id=plan.get("provider_id"))
                 self.capture = True
                 self.persist()
         elif action == "deactivate":
@@ -175,10 +183,8 @@ class Relay:
         supplied = request.match_info.get("route") or request.headers.get(ROUTE_HEADER, "")
         if not hmac.compare_digest(supplied, self.state["route_token"]):
             raise web.HTTPForbidden()
-        if not request.headers.get("Authorization", "").startswith("Bearer "):
-            raise web.HTTPUnauthorized()
         # Never accept a destination URL from a client. Paths and redirects cannot
-        # change the official origin or send its OAuth credentials to another host.
+        # change the configured origin or send credentials to another host.
         target = self.origin + "/" + request.raw_path.split("/v1/", 1)[1]
         headers = relay_headers(request.headers)
         headers["Accept-Encoding"] = "identity"
@@ -212,7 +218,7 @@ class Relay:
                 return response
         except (ClientError, OSError, asyncio.TimeoutError):
             if response is None:
-                return web.Response(status=502, text="Official upstream connection unavailable. Retry the request.")
+                return web.Response(status=502, text="Upstream connection unavailable. Retry the request.")
             if request.transport:
                 request.transport.close()
             return response
@@ -252,7 +258,7 @@ class Relay:
                     await response.close()
                 return response
         except WSServerHandshakeError as error:
-            return web.Response(status=error.status, text="Official WebSocket connection unavailable.")
+            return web.Response(status=error.status, text="Upstream WebSocket connection unavailable.")
 
     async def watch_owner(self):
         while not self.stopping.is_set():

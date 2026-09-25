@@ -165,7 +165,7 @@ def restart_running():
                 except psutil.NoSuchProcess:
                     pass
         if alive(client):
-            raise UpstreamError("ChatGPT 未能退出，已保留可用转发，请稍后重试")
+            raise UpstreamError("Codex 客户端未能退出，已保留可用转发，请稍后重试")
     launched = set()
     for client in clients:
         if client["exe"] in launched:
@@ -175,7 +175,7 @@ def restart_running():
             result = subprocess.run(["/usr/bin/open", "-a", client["bundle"]],
                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, env=external_environment())
             if result.returncode:
-                raise UpstreamError("未能重新打开 ChatGPT；配置已恢复，可手动打开客户端")
+                raise UpstreamError("未能重新打开 Codex 客户端；配置已恢复，可手动打开客户端")
         elif client.get("aumid"):
             subprocess.Popen([str(Path(os.environ.get("WINDIR", "C:/Windows")) / "explorer.exe"),
                               "shell:AppsFolder\\" + client["aumid"]], env=external_environment(), close_fds=True)
@@ -186,4 +186,4 @@ def restart_running():
         if any(item["exe"] in launched for item in running_clients()):
             return True
         time.sleep(.3)
-    raise UpstreamError("ChatGPT 启动未确认；已恢复直连配置，请手动打开客户端")
+    raise UpstreamError("Codex 客户端启动未确认；已恢复当前路由，请手动打开客户端")

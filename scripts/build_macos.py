@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
 STAGING = BUILD / "staging/macos"
 DESTINATION = BUILD / "dev/macos"
-WIDGET_VERSION = 11  # Increase for widget UI, registration, or host-lifecycle changes.
+WIDGET_VERSION = 12  # Increase for widget UI, registration, or host-lifecycle changes.
 
 
 def run(*args, **kwargs):
@@ -202,7 +202,7 @@ def main():
     if collection.exists():
         shutil.rmtree(collection)
     print(f"\n开发包已验证，Codexio {version}: {DESTINATION}")
-    print("正式归档仅在确认发布版本后执行 scripts/prepare_release.py --version <版本号>。")
+    print("正式发布仅在第二次确认后执行 scripts/publish_release_from_macos.py --version <版本号> --confirm-publish。")
     return 0
 
 

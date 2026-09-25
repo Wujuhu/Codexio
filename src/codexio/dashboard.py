@@ -48,7 +48,7 @@ PRICING_MODELS = (
     ("gpt-5.6-sol", "GPT-5.6 Sol"), ("gpt-5.6-terra", "GPT-5.6 Terra"),
     ("gpt-5.6-luna", "GPT-5.6 Luna"), ("gpt-5.5", "GPT-5.5"),
 )
-PRICE_STATUS_LABELS = {"priced": "已定价", "unpriced": "未定价", "estimated": "Standard 单价", "invalid": "计量分项异常",
+PRICE_STATUS_LABELS = {"priced": "已定价", "unpriced": "未定价", "estimated": "参考估值", "invalid": "计量分项异常",
                        "partial": "部分未定价", "unmetered": "待计量"}
 CALL_HEADERS = ["时间", "模型", "档位", "输入", "输出", "费用", "耗时", "Session ID", "来源"]
 USER_REQUEST_HEADERS = CALL_HEADERS[:-1] + ["状态", "来源"]
@@ -128,6 +128,8 @@ def request_cost_text(record: dict) -> str:
     value = usd(record.get("cost_usd"))
     if status == "partial":
         return value + "\n部分未定价"
+    if status == "estimated":
+        return value + "\n参考估值"
     return value
 
 
@@ -595,6 +597,7 @@ class RequestContent(QWidget):
         form = QFormLayout()
         metadata = [("Response ID", record.get("response_id") or record.get("id")),
                     ("Turn ID", record.get("turn_id")), ("数据来源", record.get("source_name") or record.get("source_id")),
+                    ("模型供应商", record.get("provider") or "未记录"),
                     ("服务档位", record.get("service_tier") or "未记录"),
                     ("计价状态", PRICE_STATUS_LABELS.get(record.get("pricing_status"), record.get("pricing_status") or "未记录")),
                     ("计价说明", record.get("pricing_reason") or "未记录"),
@@ -604,6 +607,7 @@ class RequestContent(QWidget):
             metadata = [("耗时", duration_text(record)), ("Turn ID", record.get("turn_id")),
                         ("结束时间", record.get("ended_at") or "未记录"),
                         ("包含模型", "、".join(record.get("models") or [])),
+                        ("模型供应商", "、".join(record.get("providers") or [str(record.get("provider") or "未记录")])),
                         ("数据来源", "、".join(record.get("source_names") or [])),
                         ("计价状态", PRICE_STATUS_LABELS.get(record.get("pricing_status"), "未记录")),
                         ("计价说明", record.get("pricing_reason")),
@@ -898,6 +902,7 @@ class Dashboard(QMainWindow):
         self._config_dirty = set(PAGE_NAMES)
         self._active_page = "overview"
         self._quota_state = None
+        self._quota_applicable = False
         self._update_message = None
         self._progress_message = ""
         self._usage_error = ""
@@ -1213,6 +1218,7 @@ class Dashboard(QMainWindow):
         self._recent_rows = []
         self._latest_record = None
         layout.addWidget(self._latest_box)
+        self._sync_quota_visibility()
         return page
 
     def _build_trends(self) -> QWidget:
@@ -1442,6 +1448,7 @@ class Dashboard(QMainWindow):
         body.addWidget(self._settings_stack, 1)
         self._settings_sections.currentRowChanged.connect(self._settings_stack.setCurrentIndex)
         self._setting_widgets = {}
+        self._quota_setting_controls = []
         def section(title, description):
             widget, inner = self._page(scroll=True)
             label = plain_label(title)
@@ -1556,6 +1563,8 @@ class Dashboard(QMainWindow):
             field.setFixedWidth(160)
             self._setting_widgets[key] = field
             refresh_form.addRow(label, field)
+            if key in ("refresh_interval_seconds", "week_estimate_interval_minutes"):
+                self._quota_setting_controls.append((refresh_form.labelForField(field), field))
         refresh_card.addLayout(refresh_form)
 
         update_card, _ = settings_card("应用更新", "GitHub Release")
@@ -1576,11 +1585,11 @@ class Dashboard(QMainWindow):
         self._upstream_toggle = QCheckBox("上游检测")
         self._upstream_toggle.clicked.connect(lambda value: self._callback("upstream_toggle", value))
         upstream_card, self._upstream_badge = settings_card(self._upstream_toggle, "已关闭",
-            "保留 ChatGPT 官方登录。仅显示响应实际返回的模型型号，历史请求无法补查；退出 Codexio 会恢复配置。")
-        upstream_card.addWidget(plain_label("可检测上游响应的模型型号，该功能会修改 config.toml，必须在 Codexio 运行时才可检测。配置与当前客户端已加载的配置一致时，无需重启；需要生效或无法确认时，可选择现在重启 ChatGPT 或稍后自行重启。", muted=True, wrap=True))
-        self._upstream_status = plain_label("已关闭 · 官方直连", muted=True, wrap=True)
+            "保留当前模型供应商与认证方式。仅显示响应实际返回的模型型号，历史请求无法补查；退出 Codexio 会恢复配置。")
+        upstream_card.addWidget(plain_label("可检测 Responses 上游实际返回的模型型号。该功能只把当前模型服务地址临时改为本机回环代理，退出时恢复；需要生效或无法确认时，可选择现在重启 Codex 客户端或稍后自行重启。", muted=True, wrap=True))
+        self._upstream_status = plain_label("已关闭 · 当前路由直连", muted=True, wrap=True)
         upstream_card.addWidget(self._upstream_status)
-        self.set_upstream_status(*getattr(self, "_upstream_state", ("已关闭 · 官方直连", False, False)))
+        self.set_upstream_status(*getattr(self, "_upstream_state", ("已关闭 · 当前路由直连", False, False)))
         updates.addStretch()
         layout.addLayout(body, 1)
         self._settings_message = plain_label("", muted=True, wrap=True)
@@ -1600,6 +1609,7 @@ class Dashboard(QMainWindow):
                 signal = widget.editingFinished
             signal.connect(lambda *args, key=key, widget=widget: self._save_setting(key, self._control_value(widget)))
         self._settings_sections.setCurrentRow(0)
+        self._sync_quota_visibility()
         return page
 
     def set_upstream_status(self, message, active=False, busy=False):
@@ -1620,7 +1630,9 @@ class Dashboard(QMainWindow):
             self._render_log_page()
 
     def _build_floating_settings(self, section):
+        self._floating_settings_index = self._settings_stack.count()
         floating = section("悬浮窗", "更改后自动保存并立即应用。")
+        self._floating_settings_page = self._settings_stack.widget(self._floating_settings_index)
         form = QFormLayout()
         form.setVerticalSpacing(13)
         fields = [("display_mode", "显示模式", (("始终置顶", "top"), ("桌面底层", "bottom"))),
@@ -1969,14 +1981,17 @@ class Dashboard(QMainWindow):
                                           next((row for row in self._user_requests if row.get("record_kind") == "user_request" and not row.get("is_subagent")), None))
     def apply_quota(self, state) -> None:
         self._quota_state = state
+        applicable = state.get("applicable", True) if isinstance(state, dict) else getattr(state, "applicable", True)
+        self._quota_applicable = applicable is not False
+        self._sync_quota_visibility()
         status = state.get("status") if isinstance(state, dict) else getattr(state, "status", None)
         status = getattr(status, "value", status)
-        if status in ("ok", "error"):
+        if status in ("ok", "error", "not_applicable"):
             self._initial_quota_done = True
         self._dirty_pages.update(("overview", "subscription"))
-        if self._page_is_active("settings"):
+        if self._quota_applicable and self._page_is_active("settings"):
             self._preview_widget()
-        if self._active_page in ("overview", "subscription") and self._page_is_active(self._active_page):
+        if self._quota_applicable and self._active_page in ("overview", "subscription") and self._page_is_active(self._active_page):
             self._render_quota(state)
             if self._active_page == "subscription":
                 self._render_subscription()
@@ -1984,6 +1999,10 @@ class Dashboard(QMainWindow):
             self._update_startup_progress()
 
     def _render_quota(self, state) -> None:
+        if not self._quota_applicable:
+            if hasattr(self, "_overview_quota_note"):
+                self._overview_quota_note.hide()
+            return
         def get(obj, key, default=None):
             return obj.get(key, default) if isinstance(obj, dict) else getattr(obj, key, default)
         for key, meter in self._quota_widgets.get(self._active_page, {}).items():
@@ -2054,7 +2073,8 @@ class Dashboard(QMainWindow):
             self._initial_loading_finished = True
             self._startup_banner.hide()
             return
-        self._startup_message.setText("正在读取会员额度" if self._initial_usage_done else self._usage_loading_stage)
+        self._startup_message.setText(("正在读取会员额度" if self._quota_applicable else "正在确认账户模式")
+                                      if self._initial_usage_done else self._usage_loading_stage)
         self._startup_banner.show()
 
     def set_progress(self, message: str) -> None:
@@ -2065,10 +2085,12 @@ class Dashboard(QMainWindow):
     def open_page(self, name: str = "overview", period: Optional[str] = None) -> None:
         aliases = {"usage": "trends", "detail": "logs", "requests": "logs", "tokens": "overview", "prices": "pricing"}
         name = aliases.get(name, name)
+        if name == "subscription" and not self._quota_applicable:
+            name = "overview"
         if name not in PAGE_NAMES:
             name = "overview"
         self._active_page = name
-        self._callback("estimates_visible", name == "subscription")
+        self._callback("estimates_visible", self._quota_applicable and name == "subscription")
         if name != "logs" and hasattr(self, "_inspector_popup"):
             self._close_inspector(restore_focus=False)
         self._sync_duration_timer()
@@ -2095,7 +2117,7 @@ class Dashboard(QMainWindow):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        self._callback("estimates_visible", self._active_page == "subscription")
+        self._callback("estimates_visible", self._quota_applicable and self._active_page == "subscription")
         self._ensure_page(self._active_page)
         self._stack.setCurrentWidget(self._pages[self._active_page])
         self._refresh_visible()
@@ -2128,6 +2150,7 @@ class Dashboard(QMainWindow):
         self._widget_toggle.blockSignals(True)
         self._widget_toggle.setChecked(bool(config.get("widget_visible", True)))
         self._widget_toggle.blockSignals(False)
+        self._sync_quota_visibility()
         self._config_dirty.update(PAGE_NAMES)
         self._dirty_pages.update(PAGE_NAMES)
         self._apply_theme()
@@ -2141,7 +2164,7 @@ class Dashboard(QMainWindow):
                                   self._config.get("usage_refresh_interval_seconds", 10))
             self._restore_control(self._setting_widgets["week_estimate_interval_minutes"],
                                   self._config.get("week_estimate_interval_minutes", 10))
-            self.set_upstream_status(*getattr(self, "_upstream_state", ("已关闭 · 官方直连", False, False)))
+            self.set_upstream_status(*getattr(self, "_upstream_state", ("已关闭 · 当前路由直连", False, False)))
             self._auto_update.blockSignals(True)
             self._auto_update.setChecked(bool(self._config.get("macos_auto_update" if self._is_macos else "auto_update", True)))
             self._auto_update.blockSignals(False)
@@ -2171,7 +2194,7 @@ class Dashboard(QMainWindow):
             self._recent_table.set_theme(self._theme)
             for widget in self._overview_comparisons.values():
                 widget.set_theme(self._theme)
-        if "settings" in self._pages:
+        if "settings" in self._pages and self._quota_applicable:
             self._preview_widget()
         if "pricing" in self._pages:
             self._size_price_columns()
@@ -2191,10 +2214,40 @@ class Dashboard(QMainWindow):
             self._apply_theme()
 
     def _toggle_widget(self, visible: bool) -> None:
-        if self._loading:
+        if self._loading or not self._quota_applicable:
             return
         self._config["widget_visible"] = visible
         self._callback("toggle_widget", visible)
+
+    def _sync_quota_visibility(self) -> None:
+        applicable = self._quota_applicable
+        if hasattr(self, "_account_button"):
+            self._account_button.setVisible(applicable)
+        if hasattr(self, "_navigation"):
+            self._navigation.set_page_visible("subscription", applicable)
+        if hasattr(self, "_widget_toggle"):
+            self._widget_toggle.setVisible(not self._is_macos and applicable)
+        if hasattr(self, "_refresh_button"):
+            self._refresh_button.setToolTip("刷新额度与用量" if applicable else "刷新用量")
+        for meter in self._quota_widgets.get("overview", {}).values():
+            meter.setVisible(applicable)
+        if hasattr(self, "_overview_quota_note") and not applicable:
+            self._overview_quota_note.hide()
+        if hasattr(self, "_quota_setting_controls"):
+            for label, field in self._quota_setting_controls:
+                if label is not None:
+                    label.setVisible(applicable)
+                field.setVisible(applicable)
+        if hasattr(self, "_account_since"):
+            self._account_since.setVisible(applicable)
+        if hasattr(self, "_floating_settings_index") and hasattr(self, "_settings_sections"):
+            item = self._settings_sections.item(self._floating_settings_index)
+            if item is not None:
+                item.setHidden(not applicable)
+            if not applicable and self._settings_sections.currentRow() == self._floating_settings_index:
+                self._settings_sections.setCurrentRow(0)
+        if not applicable and self._active_page == "subscription" and hasattr(self, "_stack"):
+            self.open_page("overview")
 
     def _set_auto_update(self, value: bool) -> None:
         if self._loading:

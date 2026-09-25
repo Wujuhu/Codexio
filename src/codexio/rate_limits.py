@@ -17,6 +17,7 @@ class QuotaStatus(str, Enum):
     OK = "ok"
     ERROR = "error"
     STALE = "stale"
+    NOT_APPLICABLE = "not_applicable"
 
 
 @dataclass(frozen=True)
@@ -116,14 +117,19 @@ class QuotaState:
     plan_type: Optional[str] = None
     reset_credits: Optional[int] = None
     reset_credit_details: Optional[Tuple[ResetCredit, ...]] = None
+    applicable: bool = True
+    auth_mode: Optional[str] = None
 
     @classmethod
-    def empty(cls, status: QuotaStatus = QuotaStatus.READING, message: str = "正在读取") -> "QuotaState":
+    def empty(cls, status: QuotaStatus = QuotaStatus.READING, message: str = "正在读取", *,
+              applicable: bool = True, auth_mode: Optional[str] = None) -> "QuotaState":
         return cls(
             five_hour=WindowView.unavailable(),
             week=WindowView.unavailable(),
             status=status,
             message=message,
+            applicable=applicable,
+            auth_mode=auth_mode,
         )
 
 
@@ -266,6 +272,8 @@ def quota_state_from_snapshot(
     message: str,
     last_success_at: Optional[datetime] = None,
     last_error: Optional[str] = None,
+    applicable: bool = True,
+    auth_mode: Optional[str] = None,
 ) -> QuotaState:
     five_hour, week = classify_windows(snapshot)
     return QuotaState(
@@ -278,6 +286,8 @@ def quota_state_from_snapshot(
         plan_type=snapshot.plan_type,
         reset_credits=snapshot.reset_credits,
         reset_credit_details=snapshot.reset_credit_details,
+        applicable=applicable,
+        auth_mode=auth_mode,
     )
 
 

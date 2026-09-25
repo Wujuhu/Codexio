@@ -122,6 +122,7 @@ class WidgetMonitor(QObject):
         self.quota = QuotaWorker(load_settings())
         self.usage.data_changed.connect(self._on_usage)
         self.quota.state_changed.connect(self._on_quota)
+        self.quota.applicability_changed.connect(self.usage.set_quota_applicable)
         self.usage.start()
         self.quota.start()
 

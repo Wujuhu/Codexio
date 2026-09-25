@@ -1,0 +1,192 @@
+name: Release Windows EXE
+run-name: release-windows v${{ inputs.version }} ${{ inputs.request_id }}
+
+"on":
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Confirmed release version without the v prefix
+        required: true
+        type: string
+      commit:
+        description: Exact remote main commit to package
+        required: true
+        type: string
+      request_id:
+        description: Correlation id from the Mac release coordinator
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-windows-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-complete-release:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_COMMIT: ${{ inputs.commit }}
+      RELEASE_REQUEST_ID: ${{ inputs.request_id }}
+      PYTHONUTF8: "1"
+    steps:
+      - name: Check out the confirmed commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+
+      - name: Set up Windows x64 Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          architecture: x64
+          cache: pip
+
+      - name: Validate source, tag, and draft release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:RELEASE_VERSION -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+            throw "Invalid release version."
+          }
+          if ($env:RELEASE_COMMIT -notmatch '^[0-9a-f]{40}$') {
+            throw "The release commit must be a full Git SHA."
+          }
+          $Tag = "v$env:RELEASE_VERSION"
+          $Head = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $Head -ne $env:RELEASE_COMMIT) {
+            throw "Checked out commit does not match the confirmed release commit."
+          }
+          git fetch --force origin main --tags
+          if ($LASTEXITCODE -ne 0) { throw "Could not refresh origin/main and tags." }
+          $RemoteMain = (git rev-parse origin/main).Trim()
+          if ($RemoteMain -ne $env:RELEASE_COMMIT) {
+            throw "The confirmed commit is not the current remote main."
+          }
+          $TagCommit = (git rev-list -n 1 $Tag).Trim()
+          if ($LASTEXITCODE -ne 0 -or $TagCommit -ne $env:RELEASE_COMMIT) {
+            throw "The release tag does not point to the confirmed remote main commit."
+          }
+          $VersionLine = Select-String -LiteralPath "src\codexio\__init__.py" -Pattern '^__version__ = "([^\"]+)"$'
+          if (-not $VersionLine -or $VersionLine.Matches[0].Groups[1].Value -ne $env:RELEASE_VERSION) {
+            throw "Source version does not match the confirmed release version."
+          }
+          $Release = gh release view $Tag --repo $env:GITHUB_REPOSITORY --json isDraft,tagName,name,body,assets | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or -not $Release.isDraft -or $Release.tagName -ne $Tag -or $Release.name -ne $Tag) {
+            throw "The matching draft release is missing or invalid."
+          }
+          if (-not [string]::IsNullOrWhiteSpace([string]$Release.body)) {
+            throw "Release notes must be empty."
+          }
+          $Names = @($Release.assets | ForEach-Object { $_.name })
+          foreach ($Required in @("Codexio.app.zip", "latest.json")) {
+            if ($Required -notin $Names) { throw "Draft release is missing $Required." }
+          }
+          foreach ($Name in $Names) {
+            if ($Name -notin @("Codexio.exe", "Codexio.app.zip", "latest.json")) {
+              throw "Draft release contains an unexpected asset: $Name"
+            }
+          }
+
+      - name: Download and verify the Mac development package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $Tag = "v$env:RELEASE_VERSION"
+          $MacDir = Join-Path $PWD "build\staging\release-ci\macos"
+          New-Item -ItemType Directory -Path $MacDir -Force | Out-Null
+          gh release download $Tag --repo $env:GITHUB_REPOSITORY --dir $MacDir --pattern "Codexio.app.zip" --pattern "latest.json" --clobber
+          if ($LASTEXITCODE -ne 0) { throw "Could not download the Mac draft assets." }
+          python scripts\verify_release.py --version $env:RELEASE_VERSION --directory $MacDir --platform macos
+          if ($LASTEXITCODE -ne 0) { throw "Mac draft asset verification failed." }
+
+      - name: Build the Windows executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -m venv .venv
+          if ($LASTEXITCODE -ne 0) { throw "Could not create the Windows virtual environment." }
+          $MacManifest = Join-Path $PWD "build\staging\release-ci\macos\latest.json"
+          .\build_exe.ps1 -ManifestPath $MacManifest
+          if ($LASTEXITCODE -ne 0) { throw "Windows build failed." }
+          $Exe = Join-Path $PWD "build\dev\windows\Codexio.exe"
+          $Info = (Get-Item -LiteralPath $Exe).VersionInfo
+          if ($Info.ProductVersion -ne $env:RELEASE_VERSION -or $Info.FileVersion -ne $env:RELEASE_VERSION) {
+            throw "Windows executable version metadata does not match the release version."
+          }
+          $Bytes = [IO.File]::ReadAllBytes($Exe)
+          if ($Bytes.Length -lt 2 -or $Bytes[0] -ne 0x4d -or $Bytes[1] -ne 0x5a) {
+            throw "Windows executable does not have an MZ header."
+          }
+
+      - name: Assemble and verify the three release assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $MacDir = Join-Path $PWD "build\staging\release-ci\macos"
+          python scripts\prepare_release.py --version $env:RELEASE_VERSION --windows "build\dev\windows" --macos $MacDir
+          if ($LASTEXITCODE -ne 0) { throw "Could not assemble the complete release." }
+          python scripts\verify_release.py --version $env:RELEASE_VERSION --directory "release\$env:RELEASE_VERSION"
+          if ($LASTEXITCODE -ne 0) { throw "Complete release verification failed." }
+
+      - name: Upload Windows EXE and final merged manifest
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $Tag = "v$env:RELEASE_VERSION"
+          $ReleaseDir = Join-Path $PWD "release\$env:RELEASE_VERSION"
+          gh release upload $Tag --repo $env:GITHUB_REPOSITORY --clobber `
+            (Join-Path $ReleaseDir "Codexio.exe") `
+            (Join-Path $ReleaseDir "latest.json")
+          if ($LASTEXITCODE -ne 0) { throw "Could not upload the Windows release assets." }
+          $Expected = @("Codexio.app.zip", "Codexio.exe", "latest.json") | Sort-Object
+          $Verified = $false
+          for ($Attempt = 0; $Attempt -lt 8; $Attempt++) {
+            $Release = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$Tag" | ConvertFrom-Json
+            if (-not $Release.draft -or $Release.tag_name -ne $Tag -or $Release.name -ne $Tag) {
+              throw "Draft release changed while assets were uploaded."
+            }
+            if (-not [string]::IsNullOrWhiteSpace([string]$Release.body)) {
+              throw "Release notes are no longer empty."
+            }
+            $Assets = @($Release.assets)
+            $Names = @($Assets | ForEach-Object { $_.name } | Sort-Object)
+            $AllMatch = -not (Compare-Object $Expected $Names)
+            foreach ($Name in $Expected) {
+              $Remote = $Assets | Where-Object { $_.name -eq $Name }
+              $Local = Get-Item -LiteralPath (Join-Path $ReleaseDir $Name)
+              $Hash = (Get-FileHash -LiteralPath $Local.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              if (-not $Remote -or $Remote.state -ne "uploaded" -or [int64]$Remote.size -ne $Local.Length `
+                  -or $Remote.digest -ne "sha256:$Hash") {
+                $AllMatch = $false
+              }
+            }
+            if ($AllMatch) { $Verified = $true; break }
+            Start-Sleep -Seconds 1
+          }
+          if (-not $Verified) { throw "Uploaded asset hashes or metadata do not match the verified files." }
+
+      - name: Publish the verified release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $Tag = "v$env:RELEASE_VERSION"
+          $EmptyNotes = Join-Path $env:RUNNER_TEMP "empty-release-notes.txt"
+          [IO.File]::WriteAllBytes($EmptyNotes, [byte[]]@())
+          gh release edit $Tag --repo $env:GITHUB_REPOSITORY --title $Tag --notes-file $EmptyNotes --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw "Could not publish the verified release." }
+          $Release = gh release view $Tag --repo $env:GITHUB_REPOSITORY --json isDraft,tagName,name,body,assets | ConvertFrom-Json
+          if ($Release.isDraft -or $Release.tagName -ne $Tag -or $Release.name -ne $Tag) {
+            throw "Published release metadata is invalid."
+          }
+          if (-not [string]::IsNullOrWhiteSpace([string]$Release.body)) {
+            throw "Published release notes are not empty."
+          }
+          $Names = @($Release.assets | ForEach-Object { $_.name } | Sort-Object)
+          $Expected = @("Codexio.app.zip", "Codexio.exe", "latest.json") | Sort-Object
+          if (Compare-Object $Expected $Names) { throw "Published release assets are incomplete." }

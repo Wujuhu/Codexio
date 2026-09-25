@@ -235,6 +235,15 @@ def iter_user_requests(records, turns=(), agent_links=(), sources=(), *, detail_
         efforts = {row.get("reasoning_effort") for row in rows if row.get("reasoning_effort")}
         effort = next(iter(efforts)) if len(efforts) == 1 else meta.get("reasoning_effort") if not efforts else None
         tiers = sorted({normalized_tier(row.get("service_tier")) for row in rows})
+        if not tiers and meta.get("service_tier"):
+            tiers = [normalized_tier(meta.get("service_tier"))]
+        contexts = {_count(row.get("model_context_window")) for row in rows if _count(row.get("model_context_window"))}
+        if not contexts and _count(meta.get("model_context_window")):
+            contexts.add(_count(meta.get("model_context_window")))
+        providers = sorted({str(row.get("provider")) for row in rows
+                            if row.get("provider") not in (None, "", "unknown")})
+        if not providers and meta.get("provider") not in (None, "", "unknown"):
+            providers = [str(meta["provider"])]
         cache = CacheUsage()
         for row in rows:
             cache.add(row)
@@ -250,6 +259,9 @@ def iter_user_requests(records, turns=(), agent_links=(), sources=(), *, detail_
         missing = len(costs) - len(known)
         pricing = ("unmetered" if not rows else "unpriced" if not known else "partial" if missing else
                    "estimated" if any(row.get("pricing_status") == "estimated" for row in rows) else "priced")
+        third_party_reference = any(str(row.get("provider") or "unknown").lower()
+                                    not in ("openai", "codexio-upstream") and row.get("cost_usd") is not None
+                                    for row in rows)
         continuation_keys = [key for key in keys if bases[key]["meta"].get("continuation_of")]
         display_key = max(continuation_keys, key=lambda key: (
             str(bases[key]["meta"].get("ended_at") or bases[key]["meta"].get("started_at") or ""), key)) if continuation_keys else root
@@ -279,6 +291,8 @@ def iter_user_requests(records, turns=(), agent_links=(), sources=(), *, detail_
             "models": models, "model": models[0] if len(models) == 1 else "多模型（%d）" % len(models) if models else "等待调用",
             "reasoning_effort": effort,
             "service_tiers": tiers, "service_tier": tiers[0] if len(tiers) == 1 else "mixed" if tiers else None,
+            "model_context_window": next(iter(contexts)) if len(models) == 1 and len(contexts) == 1 else None,
+            "providers": providers, "provider": providers[0] if len(providers) == 1 else "mixed" if providers else "unknown",
             **cache.summary(),
             "source_ids": source_ids, "source_names": source_names,
             "source_id": source_ids[0] if len(source_ids) == 1 else "multiple" if source_ids else "",
@@ -288,7 +302,9 @@ def iter_user_requests(records, turns=(), agent_links=(), sources=(), *, detail_
             "output_preview": preview, "cost_usd": math.fsum(known) if known else None,
             "pricing_status": pricing, "unpriced_calls": missing,
             "pricing_reason": "已知费用；另有 %d 条调用未定价" % missing if pricing == "partial" else
-                              "等待计量记录" if pricing == "unmetered" else "逐条调用按各自模型与档位计价后合计",
+                              "等待计量记录" if pricing == "unmetered" else
+                              "第三方调用按同名 OpenAI 模型参考价估算，可能与供应商账单不同" if third_party_reference else
+                              "逐条调用按各自模型与档位计价后合计",
         }
         if group["record_kind"] == "unassigned":
             group.update(duration_ms=valid_milliseconds(first.get("duration_ms")), duration_running=False, duration_started_at=None)

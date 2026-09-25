@@ -58,6 +58,10 @@ def _has_window(state, key):
     return getattr(getattr(state, key, None), "remaining_percent", None) is not None
 
 
+def _quota_applicable(state):
+    return state is not None and getattr(state, "applicable", True) is not False
+
+
 def _reset_at(state, key):
     if state is None or getattr(getattr(state, "status", None), "value", None) != "ok":
         return None
@@ -85,6 +89,8 @@ def make_snapshot(usage: dict | None, quota_state, *, now: float | None = None) 
             "prompt": prompt[:240],
             "model": display_model(selected.get("model"))[:96],
             "reasoning_effort": display_effort(selected.get("reasoning_effort")),
+            "service_tier": str(selected.get("service_tier") or "")[:24] or None,
+            "model_context_window": _count(selected.get("model_context_window")) or None,
             "cost_usd": _number(selected.get("cost_usd")),
             "duration_ms": _number(selected.get("duration_ms")),
             "duration_started_at": started,
@@ -104,7 +110,8 @@ def make_snapshot(usage: dict | None, quota_state, *, now: float | None = None) 
             "requests": _count(summary.get("user_requests")) if summary.get("user_requests") is not None else None,
             "cache_hit_rate": _number(summary.get("cache_hit_rate")),
         },
-        "quota": {"five_hour": _remaining(quota_state, "five_hour"), "week": _remaining(quota_state, "week"),
+        "quota": {"applicable": _quota_applicable(quota_state),
+                  "five_hour": _remaining(quota_state, "five_hour"), "week": _remaining(quota_state, "week"),
                   "has_five_hour": _has_window(quota_state, "five_hour"), "has_week": _has_window(quota_state, "week"),
                   "five_hour_reset_at": _reset_at(quota_state, "five_hour"),
                   "week_reset_at": _reset_at(quota_state, "week")},

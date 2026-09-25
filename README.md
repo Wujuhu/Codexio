@@ -1,6 +1,6 @@
 # Codexio
 
-当前本地开发版本为 **0.2.9**。本阶段完成修改、验证和打包后提交到本地 Git；推送和 GitHub 发布需另行明确授权。
+当前本地开发版本为 **0.2.10**。本阶段完成修改、验证和 Mac 开发打包后提交到本地 Git；推送和 GitHub 发布需另行明确授权。
 
 Windows / macOS 桌面额度与用量面板，通过 Codex `app-server` 读取当前账户额度，并增量扫描会话计量记录，显示：
 
@@ -12,6 +12,14 @@ Windows / macOS 桌面额度与用量面板，通过 Codex `app-server` 读取�
 - 小时／天／周用量趋势、逐次请求明细、模型价格和订阅周额度观测估值
 
 可用源码运行。Windows 打包成单个 `Codexio.exe`，保留原有自动更新流程；macOS 打包为 `Codexio.app`，通过 GitHub Release 的 APP ZIP 与统一清单自动更新。
+
+## v0.2.10
+
+- macOS 中、大尺寸小组件在模型与思考强度后显示 Fast 档位和日志实际报告的上下文上限，例如 `GPT-6-Astra · Max · Fast · 828K`；最小组件仍只显示模型与思考强度。缺少实际 `model_context_window` 时不使用配置值或模型目录猜测。
+- Codex 使用 API Key 或自定义 Responses provider 时继续记录请求、Token、缓存、时长、服务档位、provider 与上下文，但停止 ChatGPT 额度读取和周估值，并隐藏主界面、设置、小组件、Windows 悬浮窗与托盘中的额度内容。
+- 第三方 provider 的同名 OpenAI 模型按 OpenAI 价格作参考估值并明确标记，无法精确匹配的模型保持未定价。
+- 上游检测可接管 ChatGPT、OpenAI API 和自定义 Responses provider，只临时改写当前有效 `base_url`；认证字段原样保留，恢复记录不再复制整份配置。
+- Mac 继续本地开发打包。用户第二次明确确认发布后，Mac 协调脚本推送 `main`、创建草稿并触发 Windows x64 Actions；Windows EXE 在工作流中直接加入经完整核验的三附件 Release。
 
 ## v0.2.6 开发界面
 
@@ -26,13 +34,13 @@ Windows 与 macOS 共用以下布局与偏好：
 
 ## 上游检测（默认关闭）
 
-Windows 和 macOS 均可在 **设置 → 应用 → 上游检测** 手动开启。保留官方 `openai` provider，使用 `openai_base_url` 将 HTTP/SSE 与 WebSocket 请求经本机代理转发到官方服务，沿用官方模型列表与登录认证，不改动 `auth.json` 或系统钥匙串。
+Windows 和 macOS 均可在 **设置 → 应用 → 上游检测** 手动开启。当前有效的 ChatGPT、OpenAI API 或自定义 Responses provider 只会把 `base_url` 临时改为带随机令牌的本机回环地址；provider ID、API Key 环境变量、认证命令、固定／环境请求头和查询参数保持原样，不改动 `auth.json` 或系统钥匙串。
 
-- 先应用检测设置或恢复直连配置，再根据客户端状态提示“稍后自行重启”“现在重启”。ChatGPT 未运行时不提示，也不主动打开它。
-- 开启时选择稍后重启，期间 ChatGPT 没有重启就又关闭检测，配置恢复成客户端原有状态，因此这次关闭不再提示。是否需要重启按客户端进程与已加载的路由判断。
+- 先应用检测设置或恢复当前模型服务配置，再根据客户端状态提示“稍后自行重启”“现在重启”。Codex 桌面客户端未运行时不提示，也不主动打开它。
+- 开启时选择稍后重启，期间客户端没有重启就又关闭检测，配置恢复成客户端原有状态，因此这次关闭不再提示。是否需要重启按客户端进程与已加载的路由判断。
 - 上游检测开启时退出 Codexio，会先恢复配置并停止代理，再提示重启；选择任一按钮都会继续退出。关闭状态下退出不提示。
 - 保留开启偏好时，下次启动 Codexio 自动应用检测设置，再提示重启；选择后进入主界面。移除旧的开启确认框和退出提示开关。
-- 关闭或退出后不保留纯转发进程。选择稍后自行重启的用户，可能需要自行重启 ChatGPT 才能恢复请求。Codexio 自更新使用短暂的服务交接，避免重复切换路由。
+- 关闭或退出后不保留纯转发进程。选择稍后自行重启的用户，可能需要自行重启 Codex 客户端才能恢复请求。Codexio 自更新使用短暂的服务交接，避免重复切换路由。
 - 日志模型上方显示实际响应的型号，折线箭头指向它；响应与对应请求型号不同则文字和箭头标绿，其他情况保持紫色。历史已检测数据保留，不用请求型号冒充检测结果。
 
 详情见 [上游检测实现与验证](docs/upstream-detection.md)。
@@ -51,7 +59,7 @@ Mac 端要求 macOS 15 或更新系统，复用 Windows 主界面与计价、去
 - Dock 与界面图标直接使用 SVG 原稿，打包时按每个目标尺寸生成 16–1024 px 的 ICNS 资源。
 - 日志表格的水平滚动条常驻；其余滚动条仅在滚动时显示，停止滚动 3 秒后隐藏，内容宽度保持稳定。
 - 默认数据目录为 `~/Library/Application Support/Codexio`。读取 Codex 本机日志，写入独立的 Codexio 索引；模拟预览使用独立目录。
-- 原生 WidgetKit 桌面小组件提供小、中、大三种尺寸，显示进行中的主请求或最近一次请求、估算费用、时长和额度；较大尺寸增加 Token、缓存信息。中尺寸四项数据等距排列，前后两项分别对齐两个额度区域；额度标题为“5 小时”“周”，五小时重置仅显示本地时间点。新快照内容产生后立即向系统申请刷新，主程序与退出后的后台服务使用同一规则；macOS 决定实际显示时机。将 APP 放到“应用程序”并至少启动一次后，可在桌面右键“编辑小组件”中搜索 Codexio。普通 APP 更新保持小组件标识，设计为无需手动重新添加；免费签名在另一台 Mac 上的升级行为仍待验收。
+- 原生 WidgetKit 桌面小组件提供小、中、大三种尺寸，显示进行中的主请求或最近一次请求、估算费用和时长；较大尺寸增加 Token、缓存信息。中、大组件追加 Fast 与实际上下文，最小组件不追加。ChatGPT 模式继续显示 5 小时和周额度；API／自定义 provider 模式完全移除额度区。新快照内容产生后立即向系统申请刷新，主程序与退出后的后台服务使用同一规则；macOS 决定实际显示时机。将 APP 放到“应用程序”并至少启动一次后，可在桌面右键“编辑小组件”中搜索 Codexio。普通 APP 更新保持小组件标识，设计为无需手动重新添加。
 
 开发需要 Python 3.12 或 3.13。首次运行自动创建项目内 `.venv` 并安装依赖：
 
@@ -75,7 +83,13 @@ build/
 └── tools/        # 本地临时工具
 ```
 
-只有在用户明确确认发布及版本号后，执行 `scripts/prepare_release.py --version <确认的版本号>`，归集两端已验证的开发包并生成正式目录：
+只有在用户完成开发验收并第二次明确确认发布及版本号后，执行以下命令；它会核验本地 Mac 包、推送 `main`、创建空正文草稿、触发 Windows x64 构建、发布固定三附件，并在发布后下载复核到本地正式目录：
+
+```bash
+.venv/bin/python scripts/publish_release_from_macos.py --version <确认的版本号> --confirm-publish
+```
+
+正式目录结构为：
 
 ```text
 release/
@@ -85,9 +99,7 @@ release/
     └── latest.json
 ```
 
-归档要求两端版本、文件大小和 SHA-256 一致；ZIP 内的 APP 版本也必须一致。已有版本不自动覆盖，历史发布保留原样。跨机器构建可用 Mac 的 `--manifest` 或 Windows 的 `-ManifestPath` 合并另一端清单，并把另一端的开发包放入对应 `build/dev` 目录。
-
-用户明确要求仅发布 Mac 时，使用 `scripts/prepare_release.py --version <版本号> --platform macos --base release/<上一已发布版本>/latest.json`，必要时通过 `--macos` 指定已验证的新包目录。该次目录与 Release 仅包含 `Codexio.app.zip` 和 `latest.json`，清单保留已发布的 Windows 版本、下载地址和校验信息；默认双平台发布流程不变。
+归档要求两端版本、文件大小和 SHA-256 一致；ZIP 内的 APP 版本也必须一致。Windows 工作流失败时 Release 保持草稿，绝不公开残缺版本。已有正式目录、Tag 和正式 Release 不自动覆盖，历史发布保持原样；`build_exe.ps1` 与 `scripts/prepare_release.py` 仍可用于本地故障排查，但不是 0.2.10 的正式发布入口。
 
 Mac 包按构建机器架构生成，目前在 Apple Silicon 上验证，使用本地 ad-hoc 签名。ZIP 解压后是完整的 `Codexio.app`，无需 DMG；建议用 Finder 将 APP 放入 `/Applications` 后运行。更新会等待正常退出、原位替换并启动新版，收到新进程的启动确认后删除旧 APP；启动失败则回滚。旧的 DMG 更新器无法识别新的 ZIP 地址，已安装旧版的用户需要手动更换一次支持 ZIP 更新的 APP。详细说明见 [macOS 开发说明](docs/macos.md)。
 
@@ -97,7 +109,7 @@ Mac 包按构建机器架构生成，目前在 Apple Silicon 上验证，使用�
 - 本地开发与打包使用 Python 3.13.15（64 位）。现有 PySide6 6.9 依赖支持 Python 3.9–3.13，暂不支持 3.14。
 - 已安装并完成登录的本机 Codex（`codex.exe` / `codex.cmd`）
 
-程序通过 `account/rateLimits/read` 读取额度，不发起模型请求，也不读取或保存 `auth.json` 中的凭据。用量统计扫描 `sessions` 和 `archived_sessions` 中的计量事件；会话标题、用户消息和模型可见输出的短预览（每段最多 600 字符）保存在本机索引，用于请求详情。不会保存完整对话或工具输出。
+程序先通过 `account/read` 识别 ChatGPT、API Key 或自定义 provider；只有 ChatGPT 模式才调用 `account/rateLimits/read`。额度读取不发起模型请求，也不保存 `auth.json` 中的凭据。用量统计扫描 `sessions` 和 `archived_sessions` 中的计量事件；会话标题、用户消息和模型可见输出的短预览（每段最多 600 字符）保存在本机索引，用于请求详情。不会保存完整对话或工具输出。
 
 ## 启动
 
@@ -244,7 +256,7 @@ v0.2.8 的周额度估算只对本机主日志来源的模型调用与当前账�
 
 ## 打包成 EXE
 
-`Codexio.exe` 和开发清单输出到 `build/dev/windows/`。构建暂存在 `build/staging/windows`，通过后移入开发目录；同版本旧 EXE 暂存在 `build/backups/windows`。正式归档需要单独确认发布及版本号。目标运行时保留旧文件及暂存新版，不自动结束进程。
+正式 `Codexio.exe` 在用户确认发布后由 GitHub Actions 的 Windows x64 runner 构建并直接加入草稿 Release。本地 `build_exe.ps1` 保留作 Windows 故障排查：输出仍在 `build/dev/windows/`，暂存在 `build/staging/windows`，同版本旧 EXE 暂存在 `build/backups/windows`；它不会自行发布。
 
 在已经能用 `.\run.ps1` 跑起来的电脑上执行：
 
@@ -252,12 +264,12 @@ v0.2.8 的周额度估算只对本机主日志来源的模型调用与当前账�
 .\build_exe.ps1
 ```
 
-构建前请先退出正在运行的旧版小组件。完成后得到 `build\dev\windows\Codexio.exe`。把这个文件复制到其他 Windows 10/11（x64）电脑即可双击使用。
+本地排查构建前请先退出正在运行的旧版悬浮窗。完成后得到 `build\dev\windows\Codexio.exe`。Windows 正式发布不需要用户手工下载、搬运或重新上传该文件。
 
 对方电脑仍需：
 
-1. 已安装并登录 Codex（小组件只读本机 Codex 额度，不会自带账号）
-2. 如本机用了代理访问 ChatGPT，对方也需要能访问 `chatgpt.com`
+1. 已安装 Codex，并已完成 ChatGPT／API Key 登录或配置好自定义 Responses provider
+2. 能访问其当前模型服务；Codexio 不自带账号或 API Key
 
 配置写在每个用户自己的 `%LOCALAPPDATA%\Codexio`，不写进 EXE。
 
@@ -269,24 +281,24 @@ Windows 与 Mac 共用 Release 附件 `latest.json`：顶层字段保持 Windows
 
 下载成功后，独立更新程序先验证文件和目标目录可写性，再等待 Codexio 保存设置、停止后台工作并正常退出；随后原位替换 EXE 并自动启动。文件占用时不会结束其他进程。新版启动失败时恢复并启动旧版。更新暂存及最近两份备份保存在 `%LOCALAPPDATA%\Codexio\updates`，配置和用量数据库沿用原目录。
 
-首次发布前安装并登录 GitHub CLI（安装后重新打开 PowerShell）：
+首次发布前在 Mac 安装并登录 GitHub CLI：
 
-```powershell
-winget install --id GitHub.cli -e
+```bash
+brew install gh
 gh auth login --hostname github.com --web
 ```
 
-两端日常打包完成后留在 `build/dev`。只有明确确认发布版本后才归档；例如确认某版本后（下例的版本号须替换为用户确认的版本）可执行：
+日常只构建并验收 Mac 开发包。只有用户第二次明确确认发布版本后，才执行：
 
-```powershell
-.venv\Scripts\python.exe scripts\prepare_release.py --version <确认的版本号>
-.venv\Scripts\python.exe scripts\verify_release.py --version <确认的版本号>
-.\publish_release.ps1 -Version <确认的版本号> -SkipBuild -PrepareOnly
+```bash
+.venv/bin/python scripts/publish_release_from_macos.py \
+  --version <确认的版本号> \
+  --confirm-publish
 ```
 
-检查覆盖两端版本、下载地址、文件大小与 SHA-256；缺少任一安装包或清单不匹配时停止。发布脚本使用已有的合并清单，不会丢失 Mac 信息；上传的三个文件必须全部核验通过才转为正式 Release。
+协调脚本核验 Mac APP、签名、ZIP 和清单后推送 `main`，创建空正文草稿并显式触发 Windows 工作流。工作流从同一提交构建 EXE、合并清单并验证两端版本、下载地址、文件大小与 SHA-256；缺少任一安装包或清单不匹配时保持草稿。三个文件全部通过后才转为正式 Release，随后脚本自动下载同一组附件复核并创建本地 `release/<版本号>/`。
 
-只有在用户明确授权发布后，先完成验证、打包、本地提交并推送 `main`，再运行 `publish_release.ps1 -Version <版本号> -SkipBuild`。Tag 与标题均为 `v<版本号>`，正文留空，新 Tag 基于远程 `main`；已有正式 Release 不覆盖。当前 `v0.2.4` 已发布，不应重复发布或覆盖。增加版本号也须先经用户明确确认。应用与 Windows 文件属性统一读取 `src/codexio/__init__.py` 的版本号，每次安装包变化都必须重新生成对应平台的清单字段。
+Tag 与标题均为 `v<版本号>`，正文留空，新 Tag 基于远程 `main`；已有正式 Tag、Release 或本地正式目录不覆盖。失败草稿只能对同一版本和提交显式使用 `--resume-draft` 继续；远程成功而本地归档缺失时可用 `--sync-only` 补齐。增加版本号与正式发布都须分别取得明确确认。应用与 Windows 文件属性统一读取 `src/codexio/__init__.py` 的版本号。
 
 旧版 0.1.0 需要手动换上一次 0.1.1 或更高版本，此后即可自动更新。
 

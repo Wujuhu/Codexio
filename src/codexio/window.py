@@ -102,12 +102,14 @@ STATUS_LABELS = {
     QuotaStatus.OK: "正常",
     QuotaStatus.ERROR: "读取失败",
     QuotaStatus.STALE: "数据过期",
+    QuotaStatus.NOT_APPLICABLE: "",
 }
 STATUS_COLORS = {
     QuotaStatus.READING: "#8AB4F8",
     QuotaStatus.OK: "#7DDEA0",
     QuotaStatus.ERROR: "#FF8A80",
     QuotaStatus.STALE: "#F6D56B",
+    QuotaStatus.NOT_APPLICABLE: "#9CA7BB",
 }
 _EDGE_CURSORS = {
     "tl": Qt.CursorShape.SizeFDiagCursor,
@@ -131,6 +133,7 @@ class QuotaWindow(QWidget):
         on_settings_applied: Optional[Callable[[AppSettings], None]] = None,
         on_open: Optional[Callable[[str, str], None]] = None,
         on_hide: Optional[Callable[[], None]] = None,
+        start_hidden: bool = False,
     ) -> None:
         super().__init__()
         self._settings = settings
@@ -140,6 +143,7 @@ class QuotaWindow(QWidget):
         self._on_settings_applied = on_settings_applied
         self._on_open = on_open
         self._on_hide = on_hide or self.hide
+        self._start_hidden = bool(start_hidden)
         self._usage_summary = None
         self._usage_text = ""
         self._state_dirty = True
@@ -309,12 +313,13 @@ class QuotaWindow(QWidget):
             self._hide_snap_preview()
             self.hide()
         else:
-            self.show()
-            self.setGeometry(geom)
-            self.resize(geom.size())
-            if mode == "bottom":
-                self.lower()
-                _send_to_bottom(self)
+            if not (self._start_hidden and not self._ready):
+                self.show()
+                self.setGeometry(geom)
+                self.resize(geom.size())
+                if mode == "bottom":
+                    self.lower()
+                    _send_to_bottom(self)
         self._sync_mode_actions()
         if persist:
             self._schedule_save()

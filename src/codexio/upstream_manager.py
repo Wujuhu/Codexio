@@ -55,13 +55,13 @@ class UpstreamManager(QObject):
         box.setWindowTitle("上游检测")
         if assessment["status"] == "unknown":
             box.setText("无法确认配置是否已生效")
-            box.setInformativeText("尚无当前 ChatGPT 后台进程加载配置的可靠记录。可重启以确认生效，也可稍后自行重启。现在重启会中断正在进行的请求。")
+            box.setInformativeText("尚无当前 Codex 后台进程加载配置的可靠记录。可重启以确认生效，也可稍后自行重启。现在重启会中断正在进行的请求。")
         elif self.active:
             box.setText("Codexio 已应用上游检测设置")
-            box.setInformativeText("重启 ChatGPT 后应用改动。现在重启会中断正在进行的请求。")
+            box.setInformativeText("重启 Codex 客户端后应用改动。现在重启会中断正在进行的请求。")
         else:
-            box.setText("Codexio 已恢复 ChatGPT 配置" + ("，即将退出" if operation == "quit" else ""))
-            box.setInformativeText("如果不重启 ChatGPT 可能无法正常运行。现在重启会中断正在进行的请求。")
+            box.setText("Codexio 已恢复模型服务配置" + ("，即将退出" if operation == "quit" else ""))
+            box.setInformativeText("如果不重启 Codex 客户端，旧路由可能仍在内存中。现在重启会中断正在进行的请求。")
         later = box.addButton("稍后自行重启", QMessageBox.ButtonRole.RejectRole)
         now = box.addButton("现在重启", QMessageBox.ButtonRole.AcceptRole)
         box.setDefaultButton(later)
@@ -78,9 +78,9 @@ class UpstreamManager(QObject):
         if self.busy or self.closing:
             return
         self.busy = True
-        self._status({"enable": "正在应用上游检测设置…", "disable": "正在恢复 ChatGPT 配置…",
-                      "quit": "正在恢复 ChatGPT 配置并停止代理…", "startup": "正在应用启动设置…",
-                      "recover": "正在恢复直连配置…", "restart": "正在重启 ChatGPT…"}[operation])
+        self._status({"enable": "正在应用上游检测设置…", "disable": "正在恢复模型服务配置…",
+                      "quit": "正在恢复模型服务配置并停止代理…", "startup": "正在应用启动设置…",
+                      "recover": "正在恢复当前路由…", "restart": "正在重启 Codex 客户端…"}[operation])
         def run():
             try:
                 value = dict(result=work(), restart=self.service.restart_assessment())
@@ -123,7 +123,7 @@ class UpstreamManager(QObject):
             if self.active or self.service.needs_restore:
                 self._run("disable", self.service.disable)
             else:
-                self._status("已关闭 · 官方直连")
+                self._status("已关闭 · 当前路由直连")
 
     def _finished(self, result):
         operation, value, error, after = result
@@ -170,10 +170,10 @@ class UpstreamManager(QObject):
 
     def _show_ready_status(self, *, restarted=False):
         state = self._restart_status["status"]
-        suffix = (" · 请自行重启 ChatGPT" if state == "changed" else
+        suffix = (" · 请自行重启 Codex 客户端" if state == "changed" else
                   " · 配置生效状态待确认" if state == "unknown" else
-                  " · 已重启 ChatGPT" if restarted else "")
-        self._status(("已开启" if self.active else "已关闭 · 官方直连") + suffix)
+                  " · 已重启 Codex 客户端" if restarted else "")
+        self._status(("已开启" if self.active else "已关闭 · 当前路由直连") + suffix)
 
     def _finish_action(self, operation, after=None, *, restarted=False):
         self._show_ready_status(restarted=restarted)

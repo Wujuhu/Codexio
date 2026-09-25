@@ -24,7 +24,7 @@ MODELS_DEV_URL = "https://models.dev/api.json"
 RATE_KEYS = ("input", "cache_read", "cache_write", "output")
 _FIELDS = {"input": "input_cost_per_token", "cache_read": "cache_read_input_token_cost",
            "cache_write": "cache_creation_input_token_cost", "output": "output_cost_per_token"}
-PRICING_RULE_VERSION = "codex-api-base-2026-09-23-v3-standard"
+PRICING_RULE_VERSION = "codex-api-base-2026-09-25-v4-third-party-reference"
 PRICING_BASIS = "standard_api_x_codex"
 PRICING_BASIS_LABEL = "标准 API 单价 × Codex 倍率"
 LONG_CONTEXT_THRESHOLD = 272000
@@ -307,17 +307,21 @@ class PricingCatalog:
                 or ("total_tokens" in record and _number(record["total_tokens"]) != total)
                 or str(record.get("quality", "")).lower().startswith("invalid")):
             return dict(result, pricing_status="invalid", reason="Token 分项不一致，未计算金额")
-        if str(record.get("provider", "unknown")).lower() not in ("openai", "codexio-upstream"):
-            return dict(result, reason="供应商未确认为 OpenAI")
-        model = str(record.get("model", "")).removeprefix("openai/")
+        provider = str(record.get("provider", "unknown")).strip().lower()
+        if provider in ("", "unknown"):
+            return dict(result, reason="模型供应商未记录")
+        official = provider in ("openai", "codexio-upstream")
+        model = str(record.get("model", ""))
+        if official:
+            model = model.removeprefix("openai/")
         model_rows = [r for r in self._rows if r["model"] == model]
         if not model_rows:
-            return dict(result, reason="该模型尚无价格")
+            return dict(result, reason="该模型尚无可精确匹配的 OpenAI 参考价格" if not official else "该模型尚无价格")
         raw_tier = str(record.get("service_tier") or "").strip().lower()
         missing_tier = not raw_tier or raw_tier == "auto"
         aggregate = str(record.get("quality", "")).split(":", 1)[0] in (
             "aggregate", "cumulative", "cumulative_observation", "unresolved")
-        estimated = missing_tier or aggregate
+        estimated = missing_tier or aggregate or not official
         tier = "default" if missing_tier or raw_tier == "standard" else str(raw_tier)
         if tier == "fast":
             tier = "priority"
@@ -343,6 +347,8 @@ class PricingCatalog:
             reasons.append("原始记录未提供明确服务档位，按默认 Standard 标准价估计")
         if aggregate:
             reasons.append("累计观测不能证明单次请求上下文与模型归属，仅供消费参考")
+        if not official:
+            reasons.append("第三方供应商 %s 按同名 OpenAI 模型价格估算，可能与第三方账单不同" % (provider or "unknown"))
         return dict(result, usd=usd, pricing_status="estimated" if estimated else "priced", rates=dict(rates),
                     reason="；".join(reasons))
 
