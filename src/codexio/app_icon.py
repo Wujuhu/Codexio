@@ -18,6 +18,7 @@ MASTER_PNG = "app.png"
 MASTER_SVG = "app.svg"
 ICON_SIZES = (16, 24, 32, 48, 64, 128, 256)
 MARK_FILL = 0.90
+MARK_SCALE = 1.20
 
 
 def _icon_roots() -> list[Path]:
@@ -109,7 +110,12 @@ def paint_app_mark(painter: QPainter, rect: QRectF) -> None:
     painter.save()
     painter.translate(rect.center().x() - side / 2, rect.center().y() - side / 2)
     painter.scale(side / 512, side / 512)
-    painter.fillRect(QRectF(0, 0, 512, 512), QColor("#FFFFFF"))
+    background = QPainterPath()
+    background.addRoundedRect(QRectF(0, 0, 512, 512), 112, 112)
+    painter.fillPath(background, QColor("#FFFFFF"))
+    painter.translate(256, 256)
+    painter.scale(MARK_SCALE, MARK_SCALE)
+    painter.translate(-256, -256)
     pen = QPen(QColor("#333744"), 38)
     pen.setCapStyle(Qt.PenCapStyle.RoundCap)
     pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)

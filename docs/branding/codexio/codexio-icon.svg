@@ -9,8 +9,8 @@
       <stop offset="100%" stop-color="#30369E" />
     </linearGradient>
   </defs>
-  <rect width="512" height="512" fill="#FFFFFF" />
-  <g transform="translate(256, 256)">
+  <rect width="512" height="512" rx="112" ry="112" fill="#FFFFFF" />
+  <g transform="translate(256, 256) scale(1.2)">
     <path d="M -60,-120 L -136,0 L -60,120" fill="none" stroke="#333744" stroke-width="38" stroke-linecap="round" stroke-linejoin="round" />
     <path d="M 60,-120 L 136,0 L 60,120" fill="none" stroke="#333744" stroke-width="38" stroke-linecap="round" stroke-linejoin="round" />
     <g>
