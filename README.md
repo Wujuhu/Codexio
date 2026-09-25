@@ -18,7 +18,7 @@ Windows / macOS 桌面额度与用量面板，通过 Codex `app-server` 读取�
 - 全部活动品牌资源切换为 Cobalt "X" 浅色蓝色方案，覆盖应用内品牌、macOS APP／Dock、Windows EXE、窗口和托盘；SVG、PNG、七尺寸 ICO 与代码兜底绘制保持一致。
 - “设置 → 应用”将“刷新与估算”移动到全部卡片最底部；周额度估算默认周期改为 30 分钟，并一次性迁移旧版保存的 10 分钟默认值。
 - macOS 中、大尺寸小组件在模型与思考强度后显示 Fast 档位和日志实际报告的上下文上限，例如 `GPT-6-Astra · Max · Fast · 828K`；最小组件仍只显示模型与思考强度。缺少实际 `model_context_window` 时不使用配置值或模型目录猜测。
-- Codex 使用 API Key 或自定义 Responses provider 时继续记录请求、Token、缓存、时长、服务档位、provider 与上下文，但停止 ChatGPT 额度读取和周估值，并隐藏主界面、设置、小组件、Windows 悬浮窗与托盘中的额度内容。
+- Codex 使用 API Key 或自定义 Responses provider 时继续记录请求、Token、缓存、时长、服务档位、provider 与上下文，但停止 ChatGPT 额度读取和周估值；主界面、设置、小组件、Windows 悬浮窗与托盘仍保留额度区域，并以空值显示。
 - 第三方 provider 的同名 OpenAI 模型按 OpenAI 价格作参考估值并明确标记，无法精确匹配的模型保持未定价。
 - 上游检测可接管 ChatGPT、OpenAI API 和自定义 Responses provider，只临时改写当前有效 `base_url`；认证字段原样保留，恢复记录不再复制整份配置。
 - Mac 继续本地开发打包。用户第二次明确确认发布后，Mac 协调脚本推送 `main`、创建草稿并触发 Windows x64 Actions；Windows EXE 在工作流中直接加入经完整核验的三附件 Release。
@@ -61,7 +61,7 @@ Mac 端要求 macOS 15 或更新系统，复用 Windows 主界面与计价、去
 - Dock 与界面图标直接使用 SVG 原稿，打包时按每个目标尺寸生成 16–1024 px 的 ICNS 资源。
 - 日志表格的水平滚动条常驻；其余滚动条仅在滚动时显示，停止滚动 3 秒后隐藏，内容宽度保持稳定。
 - 默认数据目录为 `~/Library/Application Support/Codexio`。读取 Codex 本机日志，写入独立的 Codexio 索引；模拟预览使用独立目录。
-- 原生 WidgetKit 桌面小组件提供小、中、大三种尺寸，显示进行中的主请求或最近一次请求、估算费用和时长；较大尺寸增加 Token、缓存信息。中、大组件追加 Fast 与实际上下文，最小组件不追加。ChatGPT 模式继续显示 5 小时和周额度；API／自定义 provider 模式完全移除额度区。新快照内容产生后立即向系统申请刷新，主程序与退出后的后台服务使用同一规则；macOS 决定实际显示时机。将 APP 放到“应用程序”并至少启动一次后，可在桌面右键“编辑小组件”中搜索 Codexio。普通 APP 更新保持小组件标识，设计为无需手动重新添加。
+- 原生 WidgetKit 桌面小组件提供小、中、大三种尺寸，显示进行中的主请求或最近一次请求、估算费用和时长；较大尺寸增加 Token、缓存信息。中、大组件追加 Fast 与实际上下文，最小组件不追加。ChatGPT 模式显示 5 小时和周额度；API／自定义 provider 模式保留相同额度区域，但数值显示为空。新快照内容产生后立即向系统申请刷新，主程序与退出后的后台服务使用同一规则；macOS 决定实际显示时机。将 APP 放到“应用程序”并至少启动一次后，可在桌面右键“编辑小组件”中搜索 Codexio。普通 APP 更新保持小组件标识，设计为无需手动重新添加。
 
 开发需要 Python 3.12 或 3.13。首次运行自动创建项目内 `.venv` 并安装依赖：
 

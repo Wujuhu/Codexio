@@ -257,35 +257,34 @@ private struct CodexioWidgetView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        if quota.applicable != false {
-            Divider().padding(.vertical, family == .systemLarge ? 9 : 7)
-            let showFiveHour = quota.has_five_hour ?? (quota.five_hour != nil)
-            let showWeek = quota.has_week ?? (quota.week != nil)
-            if family == .systemSmall {
-                if showFiveHour {
-                    QuotaLine(title: "5 小时", remaining: quota.five_hour,
-                              resetAt: quota.five_hour_reset_at, timeOnly: true)
-                } else {
-                    QuotaLine(title: "周", remaining: quota.week, resetAt: quota.week_reset_at)
-                }
-            } else if showFiveHour && showWeek {
-                GeometryReader { geometry in
-                    HStack(spacing: 0) {
-                        QuotaLine(title: "5 小时", remaining: quota.five_hour,
-                                  resetAt: quota.five_hour_reset_at, timeOnly: true)
-                            .frame(width: geometry.size.width / 2 - 12)
-                        Color.clear.frame(width: 12)
-                        QuotaLine(title: "周", remaining: quota.week, resetAt: quota.week_reset_at)
-                            .frame(width: geometry.size.width / 2)
-                    }
-                }
-                .frame(height: 24)
-            } else if showFiveHour {
+        Divider().padding(.vertical, family == .systemLarge ? 9 : 7)
+        let quotaUnavailable = quota.applicable == false
+        let showFiveHour = quotaUnavailable || (quota.has_five_hour ?? (quota.five_hour != nil))
+        let showWeek = quotaUnavailable || (quota.has_week ?? (quota.week != nil))
+        if family == .systemSmall {
+            if showFiveHour {
                 QuotaLine(title: "5 小时", remaining: quota.five_hour,
                           resetAt: quota.five_hour_reset_at, timeOnly: true)
             } else {
                 QuotaLine(title: "周", remaining: quota.week, resetAt: quota.week_reset_at)
             }
+        } else if showFiveHour && showWeek {
+            GeometryReader { geometry in
+                HStack(spacing: 0) {
+                    QuotaLine(title: "5 小时", remaining: quota.five_hour,
+                              resetAt: quota.five_hour_reset_at, timeOnly: true)
+                        .frame(width: geometry.size.width / 2 - 12)
+                    Color.clear.frame(width: 12)
+                    QuotaLine(title: "周", remaining: quota.week, resetAt: quota.week_reset_at)
+                        .frame(width: geometry.size.width / 2)
+                }
+            }
+            .frame(height: 24)
+        } else if showFiveHour {
+            QuotaLine(title: "5 小时", remaining: quota.five_hour,
+                      resetAt: quota.five_hour_reset_at, timeOnly: true)
+        } else {
+            QuotaLine(title: "周", remaining: quota.week, resetAt: quota.week_reset_at)
         }
         Spacer(minLength: 0)
     }

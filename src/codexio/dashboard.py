@@ -1219,7 +1219,6 @@ class Dashboard(QMainWindow):
         self._recent_rows = []
         self._latest_record = None
         layout.addWidget(self._latest_box)
-        self._sync_quota_visibility()
         return page
 
     def _build_trends(self) -> QWidget:
@@ -1609,7 +1608,6 @@ class Dashboard(QMainWindow):
                 signal = widget.editingFinished
             signal.connect(lambda *args, key=key, widget=widget: self._save_setting(key, self._control_value(widget)))
         self._settings_sections.setCurrentRow(0)
-        self._sync_quota_visibility()
         return page
 
     def set_upstream_status(self, message, active=False, busy=False):
@@ -1983,15 +1981,14 @@ class Dashboard(QMainWindow):
         self._quota_state = state
         applicable = state.get("applicable", True) if isinstance(state, dict) else getattr(state, "applicable", True)
         self._quota_applicable = applicable is not False
-        self._sync_quota_visibility()
         status = state.get("status") if isinstance(state, dict) else getattr(state, "status", None)
         status = getattr(status, "value", status)
         if status in ("ok", "error", "not_applicable"):
             self._initial_quota_done = True
         self._dirty_pages.update(("overview", "subscription"))
-        if self._quota_applicable and self._page_is_active("settings"):
+        if self._page_is_active("settings"):
             self._preview_widget()
-        if self._quota_applicable and self._active_page in ("overview", "subscription") and self._page_is_active(self._active_page):
+        if self._active_page in ("overview", "subscription") and self._page_is_active(self._active_page):
             self._render_quota(state)
             if self._active_page == "subscription":
                 self._render_subscription()
@@ -1999,17 +1996,13 @@ class Dashboard(QMainWindow):
             self._update_startup_progress()
 
     def _render_quota(self, state) -> None:
-        if not self._quota_applicable:
-            if hasattr(self, "_overview_quota_note"):
-                self._overview_quota_note.hide()
-            return
         def get(obj, key, default=None):
             return obj.get(key, default) if isinstance(obj, dict) else getattr(obj, key, default)
         for key, meter in self._quota_widgets.get(self._active_page, {}).items():
             window = get(state, key)
             remaining, resets = get(window, "remaining_percent"), get(window, "resets_at")
             reset = format_reset_time(resets) if isinstance(resets, datetime) else "—"
-            note = "等待额度数据"
+            note = "等待额度数据" if self._quota_applicable else "暂无额度数据"
             if isinstance(resets, datetime):
                 seconds = max(0, (resets.astimezone() - datetime.now().astimezone()).total_seconds())
                 note = ("约 %d 天后重置" % math.ceil(seconds / 86400) if seconds >= 86400 else
@@ -2047,7 +2040,8 @@ class Dashboard(QMainWindow):
                     cell.setToolTip("\n".join(str(value) for value in (date.replace("\n", " "), get(item, "title"), get(item, "description"), get(item, "id")) if value))
                     self._reset_details_table.setItem(index, column, cell)
             if details is None:
-                note = "接口尚未提供逐次截止时间。" if credits is not None else "等待重置次数与明细。"
+                note = ("接口尚未提供逐次截止时间。" if credits is not None else
+                        "等待重置次数与明细。" if self._quota_applicable else "暂无重置次数与明细。")
             elif isinstance(credits, int) and credits > len(entries):
                 note = "另有 %d 次可用，接口尚未返回对应明细。" % (credits - len(entries))
             else:
@@ -2085,8 +2079,6 @@ class Dashboard(QMainWindow):
     def open_page(self, name: str = "overview", period: Optional[str] = None) -> None:
         aliases = {"usage": "trends", "detail": "logs", "requests": "logs", "tokens": "overview", "prices": "pricing"}
         name = aliases.get(name, name)
-        if name == "subscription" and not self._quota_applicable:
-            name = "overview"
         if name not in PAGE_NAMES:
             name = "overview"
         self._active_page = name
@@ -2150,7 +2142,6 @@ class Dashboard(QMainWindow):
         self._widget_toggle.blockSignals(True)
         self._widget_toggle.setChecked(bool(config.get("widget_visible", True)))
         self._widget_toggle.blockSignals(False)
-        self._sync_quota_visibility()
         self._config_dirty.update(PAGE_NAMES)
         self._dirty_pages.update(PAGE_NAMES)
         self._apply_theme()
@@ -2194,7 +2185,7 @@ class Dashboard(QMainWindow):
             self._recent_table.set_theme(self._theme)
             for widget in self._overview_comparisons.values():
                 widget.set_theme(self._theme)
-        if "settings" in self._pages and self._quota_applicable:
+        if "settings" in self._pages:
             self._preview_widget()
         if "pricing" in self._pages:
             self._size_price_columns()
@@ -2214,40 +2205,10 @@ class Dashboard(QMainWindow):
             self._apply_theme()
 
     def _toggle_widget(self, visible: bool) -> None:
-        if self._loading or not self._quota_applicable:
+        if self._loading:
             return
         self._config["widget_visible"] = visible
         self._callback("toggle_widget", visible)
-
-    def _sync_quota_visibility(self) -> None:
-        applicable = self._quota_applicable
-        if hasattr(self, "_account_button"):
-            self._account_button.setVisible(applicable)
-        if hasattr(self, "_navigation"):
-            self._navigation.set_page_visible("subscription", applicable)
-        if hasattr(self, "_widget_toggle"):
-            self._widget_toggle.setVisible(not self._is_macos and applicable)
-        if hasattr(self, "_refresh_button"):
-            self._refresh_button.setToolTip("刷新额度与用量" if applicable else "刷新用量")
-        for meter in self._quota_widgets.get("overview", {}).values():
-            meter.setVisible(applicable)
-        if hasattr(self, "_overview_quota_note") and not applicable:
-            self._overview_quota_note.hide()
-        if hasattr(self, "_quota_setting_controls"):
-            for label, field in self._quota_setting_controls:
-                if label is not None:
-                    label.setVisible(applicable)
-                field.setVisible(applicable)
-        if hasattr(self, "_account_since"):
-            self._account_since.setVisible(applicable)
-        if hasattr(self, "_floating_settings_index") and hasattr(self, "_settings_sections"):
-            item = self._settings_sections.item(self._floating_settings_index)
-            if item is not None:
-                item.setHidden(not applicable)
-            if not applicable and self._settings_sections.currentRow() == self._floating_settings_index:
-                self._settings_sections.setCurrentRow(0)
-        if not applicable and self._active_page == "subscription" and hasattr(self, "_stack"):
-            self.open_page("overview")
 
     def _set_auto_update(self, value: bool) -> None:
         if self._loading:
@@ -2648,13 +2609,13 @@ class Dashboard(QMainWindow):
             self._callback("price_override", self._selected_price_model, None)
 
     def _update_estimate(self) -> None:
-        selected = select_estimates(self._data)
+        selected = select_estimates(self._data if self._quota_applicable else {})
         value = selected["primary"]
         amount = estimate_amount(value)
-        self._estimate_value.setText(amount if amount != "—" else "待采样")
+        self._estimate_value.setText(amount if amount != "—" else "待采样" if self._quota_applicable else "—")
 
     def _fill_estimate_history(self, view):
-        estimates = estimate_history(self._data)
+        estimates = estimate_history(self._data) if self._quota_applicable else []
         pages = max(1, math.ceil(len(estimates) / 10))
         self._estimate_page = min(getattr(self, "_estimate_page", 0), pages - 1)
         visible = estimates[self._estimate_page * 10:(self._estimate_page + 1) * 10]
