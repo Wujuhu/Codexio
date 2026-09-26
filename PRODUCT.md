@@ -1,6 +1,6 @@
 # Codexio product context
 
-> v0.3.1 的 Mac 原生重构以 [新规划](docs/v0.3.1/PLAN.md)为准。本文较早的 C 原型和 PySide6 布局要求仍可解释现有 Windows 行为，但不应覆盖本轮 Mac 界面设计；数据口径与用户已确认的产品事实继续适用。
+> v0.3.1 的 Mac 原生重构以 [新规划](docs/v0.3.1/PLAN.md)为准。本文较早的 C 原型和 PySide6 布局要求仍可解释现有 Windows 行为，但不应覆盖本轮 Mac 界面设计；数据口径与用户已确认的产品事实继续适用。v0.3.1 已确认的双平台变更是订阅页可使用一次额度重置，以及删除 SSH 来源功能；下方旧能力清单描述的是 0.2.10 现状。
 
 <!-- impeccable:product-schema 1 -->
 

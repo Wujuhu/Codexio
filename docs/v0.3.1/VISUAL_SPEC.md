@@ -16,13 +16,15 @@
 
 ### 找到的公开桌面截图
 
-- [新版 Codex 所在的 ChatGPT 桌面端实图](https://d2908q01vomqb2.cloudfront.net/f1f836cb4ea6efb2a0b1b99f41ad8b103eff4b59/2026/07/22/ML-21450-3.png)，来源：[AWS 官方文章](https://aws.amazon.com/blogs/machine-learning/get-started-with-openai-gpt-5-6-sol-terra-and-luna-on-amazon-bedrock/)。这张显示新版 Codex 模式的侧栏和主内容区。
-- [Claude Desktop 官方首页实图](https://cdn.prod.website-files.com/68a44d4040f98a4adf2207b6/69a8c30634a6c3e545269791_69a8a456caa28723041a6eea_699e1b746d83c9fb55a56d31_698be3352261cf694fdae308_698bdd295c5f5d680c01e63c_Screenshot%25252525202026-02-09%2525252520at%25252525204.38.22%25252525E2%2525252580%25252525AFPM.png)与[工作区实图](https://cdn.prod.website-files.com/68a44d4040f98a4adf2207b6/699e1b736d83c9fb55a56d2a_698be3342261cf694fdae301_698bdd78a6031117e6bb41d6_Screenshot%2525202026-02-09%252520at%25252012.52.07%2525E2%252580%2525AFPM.png)，来源：[Claude 官方教程](https://claude.com/resources/tutorials/navigating-the-claude-desktop-app)。
+- [新版 Codex 本地参考图](references/07-codex-current.png)，来源：[AWS 官方文章](https://aws.amazon.com/blogs/machine-learning/get-started-with-openai-gpt-5-6-sol-terra-and-luna-on-amazon-bedrock/)。这张显示新版 Codex 模式的侧栏和主内容区。
+- [Claude Desktop 本地首页图](references/08-claude-home.png)与[本地工作区图](references/09-claude-workspace.png)，来源：[Claude 官方教程](https://claude.com/resources/tutorials/navigating-the-claude-desktop-app)。下载地址与 SHA-256 见 [参考图来源](references/SOURCES.md)。
 - 若公开图未展示某个必要的设置或详情状态，优先参照大厂开源的 [Microsoft Code - OSS 工作台](https://github.com/microsoft/vscode)及其[界面指南](https://github.com/microsoft/vscode-docs/blob/main/api/ux-guidelines/overview.md)补全结构，不回到上一版自造的卡片样式。Code - OSS 源代码为 MIT 许可，实际 Mac 界面仍用 SwiftUI / AppKit 实现。
 
-![当前新版 Codex 桌面端参考画面](https://d2908q01vomqb2.cloudfront.net/f1f836cb4ea6efb2a0b1b99f41ad8b103eff4b59/2026/07/22/ML-21450-3.png)
+![当前新版 Codex 桌面端参考画面](references/07-codex-current.png)
 
-![Claude Desktop 官方参考画面](https://cdn.prod.website-files.com/68a44d4040f98a4adf2207b6/69a8c30634a6c3e545269791_69a8a456caa28723041a6eea_699e1b746d83c9fb55a56d31_698be3352261cf694fdae308_698bdd295c5f5d680c01e63c_Screenshot%25252525202026-02-09%2525252520at%25252525204.38.22%25252525E2%2525252580%25252525AFPM.png)
+![Claude Desktop 官方首页参考画面](references/08-claude-home.png)
+
+![Claude Desktop 官方工作区参考画面](references/09-claude-workspace.png)
 
 ## 2. 主窗口通用外壳
 
@@ -76,7 +78,7 @@
 ```text
 日志       [用户请求 | 模型调用]    [日期范围]
 
-[搜索输入、会话或 ID] [模型] [状态／档位] [来源]
+[搜索输入、会话或 ID] [模型] [状态／档位]
 
 ┌───────────────────────────────┬───────────────────────────────┐
 │  扁平列表／表格                 │  稳定详情栏                   │
@@ -111,13 +113,13 @@ Token / 费用趋势 [可选择曲线] [清楚标轴和单位]
 个人订阅资料        5 小时额度（Nowdex 排版）  周额度（Nowdex 排版）
 [编辑资料]           剩余／重置                剩余／重置
 
-主动重置：可靠的可用次数与逐次截止信息
+主动重置：可靠的可用次数与逐次截止信息 [使用一次重置]
 
 整周额度估值（显式标“估算”）
 周期记录：周期 / 已用 / 费用估值 / 状态
 ```
 
-未填写的订阅资料继续空白，不推断续费或套餐。额度与估值在视觉上分层；重置次数只展示已有可靠数据。
+“主动重置”区域在可用次数的同一行放 **[使用一次重置]** 按钮。按钮正常状态、不可用状态和处理中状态使用参照客户端的原生控件样式；它不放进小组件或菜单栏。未填写的订阅资料继续空白，不推断续费或套餐。额度与估值在视觉上分层；重置次数只展示服务端已有可靠数据。
 
 ### 3.5 定价
 
@@ -137,12 +139,12 @@ Standard / Fast / 有效上下文条件按现有数据逐行展示
 
 ```text
 设置侧栏           内容区
-  外观     →       主题 / 侧栏 / 日志来源列
-  数据源   →       本机与 SSH 列表 / Codex 路径 / 历史归属 / 重扫
+  外观     →       主题 / 侧栏
+  数据源   →       本机 Codex 路径 / 索引状态 / 本地重扫
   应用     →       菜单栏 / 自动更新 / 上游检测 / 刷新间隔 / 数据目录
 ```
 
-设置行、开关、选择器、辅助文字及保存反馈参考 Claude Desktop。上游检测会临时改本机路由，此处保留必要的短说明和重启选择；其他普通设置不再堆叠长篇注释。
+**不再出现“本机／SSH 列表”、SSH 添加／编辑／移除按钮、SSH 凭据、来源过滤器／来源列或多来源历史归属入口。** 程序只自动读取当前本机 Codex 记录。旧索引中的历史记录保留，停止新的 SSH 扫描；“上游检测”与 SSH 来源无关，仍可独立设置。设置行、开关、选择器、辅助文字及保存反馈参考 Claude Desktop。上游检测会临时改本机路由，此处保留必要的短说明和重启选择；其他普通设置不再堆叠长篇注释。
 
 ## 4. 新额度小组件：原图就是视觉目标
 
@@ -179,9 +181,21 @@ WidgetKit 由系统决定实际展示尺寸和刷新时机。加载、失败、�
 
 | 区域 | 结构草图与视觉来源 |
 | --- | --- |
-| 订阅资料、模型基础价、数据源、历史归属 | Claude 风格的原生表单：明确标题、少量成组字段、取消和具体动作按钮；不使用笼统“保存／继续” |
+| 订阅资料、模型基础价 | Claude 风格的原生表单：明确标题、少量成组字段、取消和具体动作按钮；不使用笼统“保存／继续” |
+| 使用一次额度重置 | 订阅页同一行显示“可用次数”与“使用一次重置”；点按后用原生确认框写明将消耗一次、当前账户和不可撤销，确认后才调用服务端 |
 | 更新与上游检测重启 | 原生确认框：说明将发生的动作；提供“现在重启／稍后自行重启”等真实选项，不借悬浮说明交代重要后果 |
 | 读取中、失败、过期、不适用、空日志、未定价 | 保留主布局，用明确短文案和 `—` 表达；未定价不显示 `$0.00`，额度过期不显示貌似当前的旧百分比 |
+
+### 6.1 “使用一次重置”的完整交互
+
+1. 仅 ChatGPT 适用账户且 `rateLimitResetCredits.availableCount > 0` 时可点击；数量未知、零次、正在提交或模拟模式下不执行真实消耗。按钮可见但禁用时就近写明原因。
+2. 点击后打开确认框，文案为“将消耗当前账户的 1 次额度重置，无法撤销。是否继续？”；确认框同时显示刚读取的可用次数。取消不调用接口。
+3. 确认后对同一次操作生成并保存一个 UUID `idempotencyKey`；一次点击只发送一次 `account/rateLimitResetCredit/consume`。未指定逐张信用券时省略 `creditId`，由服务端选择下一张。处理中锁定按钮，重复点击不会产生新请求。
+4. `reset` 和 `alreadyRedeemed` 都按一次成功处理，然后调用 `account/rateLimits/read` 重新取得额度和剩余次数；刷新失败时显示“已提交，等待同步”，不凭空把额度改成 100%。
+5. `nothingToReset` 显示“当前没有可重置的额度窗口”；`noCredit` 显示“没有可用重置次数”。网络超时结果不明时保留同一个幂等键，只提供“重试本次”以免重复消耗。账户切换后不把旧账户的待处理键用于新账户。
+6. Mac Swift 版和 Windows 现有版使用同一产品文案与服务端结果语义。设计或冒烟使用隔离模拟数据，不调用真实消耗接口。
+
+这套请求与结果来自 [OpenAI Docs 的 Codex App Server 文档](https://learn.chatgpt.com/docs/app-server)。重置次数是已获得的**额度重置**，不是订阅费用或可购买的 ChatGPT 余额。
 
 ## 7. 完整设计冻结所需的最后对照
 
