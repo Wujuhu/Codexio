@@ -212,9 +212,60 @@
 
 Windows 悬浮窗与托盘随系统语言显示上述标签；其现有布局和功能范围继续保持。Mac 旧请求组件只替换固定标签的语言，不重做其小、中、大 UI。
 
+### 3.7 本地活动、额度归因和菜单栏数字
+
+| Key | 简体中文 | English |
+| --- | --- | --- |
+| `usage.activity` | 活动 | Activity |
+| `usage.trend` | 用量趋势 | Usage trend |
+| `usage.topChats` | 聊天排行 | Top chats |
+| `usage.localRecords` | 本机记录 | Local records |
+| `usage.localScan` | 本地扫描时间 | Local scan time |
+| `usage.totalTokens` | 累计 Token 数 | Lifetime tokens |
+| `usage.peakDailyTokens` | 单日峰值 Token | Peak daily tokens |
+| `usage.longestChat` | 最长聊天时长 | Longest chat |
+| `usage.currentStreak` | 当前连续天数 | Current streak |
+| `usage.longestStreak` | 最长连续天数 | Longest streak |
+| `usage.tokenActivity` | Token 活动 | Token activity |
+| `usage.daily` | 每日 | Daily |
+| `usage.weekly` | 每周 | Weekly |
+| `usage.cumulative` | 累计 | Cumulative |
+| `usage.insights` | 活动洞察 | Activity insights |
+| `usage.fast` | 快速模式 | Fast mode |
+| `usage.standard` | 标准 | Standard |
+| `usage.mostUsedEffort` | 最常用的推理强度 | Most used reasoning |
+| `usage.localShareBasis` | 按模型调用次数统计模式占比 | Mode shares by model calls |
+| `usage.recorded` | 已记录 | Recorded |
+| `usage.unknown` | 未知 | Unknown |
+| `usage.unattributed` | 未归类 | Unattributed |
+| `usage.partial` | 部分数据 | Partial data |
+| `plan.history` | 套餐用量历史 | Plan usage history |
+| `plan.byModel` | 按模型 | By model |
+| `plan.period` | 周期 | Period |
+| `plan.usedPercent` | 已使用限额百分比 | Limit used |
+| `plan.asOf` | 统计截至 | Usage as of |
+| `plan.approximate` | 约 | Approx. |
+| `chat.ranking` | 聊天用量排行 | Chat usage ranking |
+| `chat.weeklyPercent` | 占每周限额的 % | % of weekly limit |
+| `chat.creditsUsed` | 已用额度 | Credits used |
+| `chat.reasoning` | 推理强度 | Reasoning |
+| `chat.speed` | 速度 | Speed |
+| `chat.open` | 打开聊天 | Open chat |
+| `chat.scope` | 当前周额度 · 本机可用聊天 | Current weekly allowance · local chats |
+| `chat.noDetails` | 当前账户尚未提供这项明细 | This account has not provided these details |
+| `chat.localRanking` | 查看本机 Token 排行 | View local token ranking |
+| `menu.quotaService` | Codex | Codex |
+| `menu.content` | 菜单栏内容 | Menu bar content |
+| `menu.weeklyRemaining` | 图标 + 周额度剩余 | Icon + weekly remaining |
+| `menu.fiveHourRemaining` | 图标 + 5 小时额度剩余 | Icon + 5-hour remaining |
+| `menu.iconOnly` | 仅图标 | Icon only |
+
+图 5 的 `Lifetime tokens` 指本机可读历史，必须同时保留 `Local records` 范围标记；不能翻成“账户累计”。图 7 的速度是服务端消费分组，不是 Token/s。模型 ID 保留原文；未知推理强度保留可辨识的原值，不擅自映射为最高。
+
 ## 4. 动态内容与版式规则
 
 - 日期、星期、重置倒计时、相对更新时间和复数交给各平台本地化格式化能力；时区仍是用户设备本地时区。语言切换不能改变额度计算、存储的时间戳或费用数值。
+- 本地热力图按设备时区分桶；服务端报告的统计截至时间可按参考图显示明确的 UTC，或完整转换成本机时区后标明时区。服务端周期开始／结束按实际字段，不能根据热力图自然周推测。
 - 美元费用始终表示 USD，显示两位小数；分组分隔符和小数点按用户地区格式化。`1M Token` 等计量单位在两种语言下含义一致。
 - 英文按钮和表头可能更宽。文字优先完整显示；窄窗口可换行或让表格水平滚动，不能压缩关键数值、截断“Use reset”或把确认正文放进悬浮提示。
 - WidgetKit 小组件和菜单栏使用与主窗口相同的语言选择。Widget 文案空间不足时使用本目录定义的短标签，而不是单独发明术语；已有请求组件的版式不变。
