@@ -1,5 +1,7 @@
 # Codexio product context
 
+> v0.3.1 的 Mac 原生重构以 [新规划](docs/v0.3.1/PLAN.md)为准。本文较早的 C 原型和 PySide6 布局要求仍可解释现有 Windows 行为，但不应覆盖本轮 Mac 界面设计；数据口径与用户已确认的产品事实继续适用。
+
 <!-- impeccable:product-schema 1 -->
 
 ## Platform
