@@ -127,9 +127,17 @@
 | `subscription.weeklyEstimate` | 整周额度估值 | Full-week estimate |
 | `reset.section` | 主动重置 | Rate-limit resets |
 | `reset.availableCount` | 可用次数 | Available resets |
+| `reset.itemFallback` | 重置 {number} | Reset {number} |
+| `reset.expiresAt` | 截止时间 | Expires |
+| `reset.noExpiry` | 无到期限制 | No expiration |
+| `reset.expiryUnknown` | 截止时间未提供 | Expiration unavailable |
+| `reset.detailsUnavailable` | 逐次明细暂不可用，无法选择使用。 | Individual reset details are unavailable. You can’t choose a reset yet. |
+| `reset.partialDetails` | 仅显示 {shown} / {available} 次重置 | Showing {shown} of {available} resets |
+| `reset.redeeming` | 使用中 | Redeeming |
+| `reset.redeemed` | 已使用 | Redeemed |
 | `reset.use` | **使用重置** | **Use reset** |
-| `reset.confirmTitle` | 使用 1 次额度重置？ | Use one reset? |
-| `reset.confirmBody` | 这会消耗当前账户的 1 次重置，无法撤销。 | This will consume one reset for the current account. It can’t be undone. |
+| `reset.confirmTitle` | 使用这次额度重置？ | Use this reset? |
+| `reset.confirmBody` | 这会消耗当前账户中所选的重置，无法撤销。 | This will consume the selected reset for the current account. It can’t be undone. |
 | `reset.inProgress` | 正在使用重置… | Using reset… |
 | `reset.success` | 重置已使用，正在同步额度… | Reset used. Syncing limits… |
 | `reset.alreadyRedeemed` | 这次重置已完成，正在同步额度… | This reset was already completed. Syncing limits… |
@@ -139,7 +147,7 @@
 | `reset.retryAttempt` | 重试本次 | Retry attempt |
 | `reset.notSupported` | 当前账户不能使用额度重置。 | Resets aren’t available for this account. |
 
-按钮和确认按钮在两种语言里使用同一个短名称：**使用重置 / Use reset**。说明正文负责交代“消耗一次、无法撤销”；按钮不再写“使用一次重置”。数字 `0 / 1 / 2` 与“次可用”采用复数资源，不在源码中直接拼接。
+“主动重置”只在标题处显示可用总数，下面逐张列出服务端提供的名称、状态和截止时间，每张的右侧都有自己的 **使用重置 / Use reset** 按钮。确认框点名所选条目并再次显示它的截止时间；不提供会替用户选“下一张”的总按钮。说明正文负责交代“消耗所选一次、无法撤销”。数字 `0 / 1 / 2` 与“次可用”采用复数资源，不在源码中直接拼接。
 
 ### 3.5 定价、设置、更新与菜单栏
 

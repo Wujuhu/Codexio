@@ -7,7 +7,7 @@
 - [x] Mac 全量 Swift 重构与 Windows 既有 UI 的边界已明确。
 - [x] 订阅页使用重置与删除 SSH 来源功能的 **Mac／Windows 双平台范围**已由用户确认。
 - [x] **简体中文／英文界面覆盖 Mac 与 Windows** 已由用户确认；按钮短文案“使用重置 / Use reset”、系统语言默认选择、两端字体与核心文案写入[本地化规范](LOCALIZATION.md)。
-- [x] 使用重置的官方方法、参数、幂等规则、四种结果和事后重新读取额度要求已从 [OpenAI Docs](https://learn.chatgpt.com/docs/app-server)核实；现有本地 `app-server` 客户端具备通用请求能力。
+- [x] 使用重置的官方方法、逐次 `credits[].id` → `creditId` 参数、幂等规则、四种结果、明细可能缺失以及事后重新读取额度要求已从 [OpenAI Docs](https://learn.chatgpt.com/docs/app-server)与本地协议类型核实；现有本地 `app-server` 客户端具备通用请求能力。
 - [x] Codex、Claude 和 Nowdex 的九张视觉参考图已保存到[仓库本地](references/SOURCES.md)，并核对网络图片的类型、大小与 SHA-256。
 - [x] 六页、菜单栏、新额度小组件、现有请求小组件保留、重置确认、SSH 退场与异常状态均有 [设计要求](VISUAL_SPEC.md)。
 - [x] 六页、设置三分区、日志常态与悬停详情、菜单栏的中英文[静态评审稿](mockups/README.md)已形成；主界面额度数字和默认宽度已按用户反馈修订。
@@ -35,7 +35,7 @@
 | 2. 旧数据兼容 | 梳理当前配置、价格目录、日志索引和 Widget 快照字段；实现只读旧数据／安全迁移 | 用户原有设置和索引可继续使用，失败可回退且不删除原文件 | 不以“全新大版本”为由清空本机历史 |
 | 3. SSH 功能退场，两端 | 从 Mac 新架构与 Windows 现有实现移除 SSH 扫描、连接和来源管理；设置页删除本机／SSH 列表、来源增删改、来源列／筛选和多来源归属入口 | 后续无 SSH 连接或扫描；本机 Codex 自动来源仍可读取；旧索引记录保留，不自动删除 | 不误删与 SSH 无关的上游检测功能或用户历史 |
 | 4. 额度与账户 | 移植 Codex 发现、`app-server` 连接、账户模式、五小时／周窗口、通知刷新和错误状态 | Swift 端能拿到与旧版同口径的额度；API／自定义 provider 模式显示不适用 | 不用本地 Token 推算官方余额，不在重置时刻伪造 100% |
-| 5. 重置按钮，两端 | Mac Swift 与 Windows Python 都接入 `account/rateLimitResetCredit/consume`，订阅页加入“使用重置”及逐次确认；共用同一结果文案与幂等处理规则 | 一次明确确认只对应一张已获得的重置；`reset`／`alreadyRedeemed` 刷新额度；`nothingToReset`／`noCredit` 显示准确结果；模拟模式不会消耗真实次数 | 不在页面打开、刷新或冒烟中自动消耗；超时不换幂等键重试 |
+| 5. 逐次重置，两端 | Mac Swift 与 Windows Python 在订阅页完整读取重置明细，按每张 `credits[].id` 显示截止时间与行末“使用重置”；确认后把所选 `id` 传作 `creditId` 并调用 `account/rateLimitResetCredit/consume` | 每张可用重置有单独按钮；一次确认只对用户选的那张生效；`reset`／`alreadyRedeemed` 刷新额度与列表；明细缺失时不提供通用代选按钮；模拟模式不会消耗真实次数 | 不在页面打开、刷新或冒烟中自动消耗；超时重试不换 `creditId` 或幂等键 |
 | 6. 用量与价格 | 只移植本机增量扫描、去重、主请求与模型调用分组、已确认 Token、费用和估值 | 六页所需数据由同一 Swift 数据层提供；新旧统计口径一致，旧 SSH 历史仍可读 | 不双算缓存 Token，不把未知价格显示成 0 |
 | 7. 主窗口与中英文 | 先按当前新版 Codex 完成原生外壳／侧栏／标题栏，再按较宽的设计稿完成概览、日志双模式、用量、订阅、定价、设置；日志末列“详情 / Details”悬停浮层；Mac 使用 String Catalog，Windows 使用集中翻译资源 | 两端六页、菜单与弹窗随系统 UI 语言显示；额度数字层级克制，英文主要字段不因窗口默认宽度意外换行；订阅有“使用重置 / Use reset” | 不添加固定日志详情栏，不复刻旧 Qt 的多层卡片、长注释和无意义悬停提示；不遗漏动态状态、复数或 Widget 文案 |
 | 8. 菜单栏 | 以 Nowdex #6 的面板视觉为直接样板，接入同一额度与今日／七日数据 | 关主窗口仍可查看；刷新、打开主窗口、设置、退出正确；无第二套采集器 | 不把 Nowdex 截图里的 Cursor/Grok 等服务新增到 Codexio |
@@ -58,7 +58,7 @@
 - Mac 与 Windows 在产品行为和数据口径上保持一致，但不强迫共用语言。Windows Python 仅为本轮明确要求的重置按钮与 SSH 来源退场而修改，不因 Mac UI 重构进行其他视觉改版。
 - 旧请求 Widget 的 UI **不得变化**。在重构过程中若 SwiftUI 系统渲染与现有视觉略有差异，优先调整宿主或渲染兼容以恢复旧外观，而不是宣布新版设计。
 - Mac／Windows 的用户可见文案覆盖简体中文和英文，默认使用系统首选界面语言；没有匹配资源时回退英文。Mac 不指定自定义界面字体，Windows 使用系统界面字体。旧请求 Widget 仅翻译固定标签，其布局与视觉不变。
-- `account/rateLimitResetCredit/consume` 只在订阅页用户逐次确认后调用；每次操作的幂等键要持续到结果确定。Windows 与 Mac 使用相同的服务端结果语义，绝不以点击按钮后本地改变百分比冒充成功。
+- `account/rateLimitResetCredit/consume` 只在订阅页用户挑选某张重置并逐次确认后调用；将该明细的 `id` 作为 `creditId`，其幂等键与 `creditId` 要持续到结果确定。Windows 与 Mac 使用相同的服务端结果语义，绝不以点击按钮后本地改变百分比冒充成功。
 - SSH 数据源及其设置入口从两端移除；旧索引数据保留为历史记录。仍可手动指定本机 Codex 路径；“上游检测”继续独立工作。
 - 新额度 Widget 小组件和菜单栏的刷新须遵循系统节奏；不能承诺逐秒实时。原始会话日志、Codex 凭据和系统 WidgetKit 数据库不被修改。
 - 保留现有自动更新的 ZIP、稳定宿主、签名校验和失败回滚规则。开发包只放 `build`，正式发布仍使用同版本 Mac ZIP、Windows EXE 与一份合并 `latest.json`。

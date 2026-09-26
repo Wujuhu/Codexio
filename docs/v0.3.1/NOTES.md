@@ -9,7 +9,7 @@
 - `docs/macos.md` 记录：0.2.9 已移除右上角菜单栏图标和旧预览；当前保留的是 macOS **应用菜单**与 Dock。`README.md` 前面的旧版本章节仍描述过菜单栏预览，那是历史行为。v0.3.1 要设计的是新的原生菜单栏状态项和面板。
 - 现有 WidgetKit 只有一个 `Codexio 请求` 配置，支持小、中、大三个尺寸；小尺寸仍以最近请求为主。**这三个尺寸的 UI 必须完全保留原样**，包括字级、布局、图形、颜色和内容顺序。新增额度专用的小尺寸组件必须有独立配置和稳定标识，避免升级后现有请求组件消失或变成另一种内容。
 - 小组件通过有界的 `widget_snapshot.json` 读取精简数据，不接触 Codex 原始日志或凭据。当前快照已包含额度和今日汇总，但快照的发布时机与读取权限仍需在 Swift 迁移时保持可靠。
-- 现有“订阅 → 主动重置”只显示可用次数与逐次信息，没有使用按钮。官方 Codex App Server 已提供 `account/rateLimitResetCredit/consume`，该方法需幂等键并返回 `reset`、`alreadyRedeemed`、`nothingToReset` 或 `noCredit`；本轮规划将 Mac 与 Windows 都接入此方法，不在设计阶段调用它。
+- 现有“订阅 → 主动重置”只显示可用次数与逐次信息，没有使用按钮。官方 Codex App Server 已提供 `account/rateLimitResetCredit/consume`，可把列表中所选条目的 `id` 作为 `creditId` 使用；该方法需幂等键并返回 `reset`、`alreadyRedeemed`、`nothingToReset` 或 `noCredit`。本轮规划 Mac 与 Windows 每张明细各有一枚按钮，不在设计阶段调用接口。
 - 本轮用户明确要求 Mac 与 Windows 都删除 SSH 来源功能及设置中的“本机／SSH 列表”。当前版本的本机来源与 SSH 来源共用列表；新版本将保留自动本机扫描，停止 SSH 连接和后续采集，旧索引记录不主动删除。
 - 当前 Mac 最低系统目标为 macOS 15；已在 Apple Silicon / macOS 27 实测，macOS 15 真机仍待验收。正式可支持的系统版本与芯片架构在设计冻结后、实施前再次核对。
 
@@ -22,7 +22,7 @@
 | App 生命周期、单实例、窗口恢复、菜单、Dock | `macos_app.py`、`dashboard_host.py` | 关窗不退出；重复打开恢复主窗口；菜单栏与主窗口状态一致 |
 | 六页 UI、筛选、日志详情、设置 | `dashboard.py` 及相关绘制模块 | 转为 Swift 原生控件和状态驱动视图，不仅包一层 Swift 窗口 |
 | ChatGPT 额度及账户模式 | `app_server.py`、`rate_limits.py`、`worker.py` | 仍只从本机 Codex `app-server` 读取真实额度；API Key／自定义 provider 模式显示不适用 |
-| 已获得额度重置的使用，Mac 与 Windows | `app_server.py`、`rate_limits.py`、`worker.py`、`dashboard.py` 及新 Swift 对应层 | 订阅页每次确认后调用官方 `account/rateLimitResetCredit/consume`；幂等键持久到结果确定，随后重新读额度与可用次数 |
+| 已获得额度重置的使用，Mac 与 Windows | `app_server.py`、`rate_limits.py`、`worker.py`、`dashboard.py` 及新 Swift 对应层 | 订阅页完整读取明细，逐张显示截止时间和行末按钮；所选 `id` 传作 `creditId`，幂等键持久到结果确定，随后重新读额度、可用次数与明细 |
 | 日志索引、去重、请求分组、用量 | `usage_collector.py`、`usage_store.py`、`usage_queries.py`、`usage_worker.py` 等 | 保留只读扫描、已确认 Token、用户请求与子代理归属、时区和跨日口径；兼容旧索引或明确安全迁移方案 |
 | 价格、费用、订阅估值 | `pricing.py`、`confirmed_usage.py`、`rolling_estimation.py` 等 | 保留现有价格目录、参考估值与未知值语义；费用不是实际账单 |
 | 本机／SSH 来源 | `remote_collector.py`、`analytics_config.py`、`usage_worker.py`、设置和日志筛选 | 两端删除 SSH 连接、增删改 UI 与来源过滤；自动本机扫描保留，旧 SSH 索引记录只作历史保留 |
@@ -42,7 +42,7 @@ Windows 仍使用现有 Python 实现，但本轮明确的**重置按钮和 SSH 
 4. **新鲜度**：主窗口、菜单栏与小组件对同一份状态使用一致的更新时间与过期规则；UI 未拿到数据时显示 `—` 和原因，不展示貌似真实的旧百分比。
 5. **隐私**：菜单栏和额度小组件默认只放额度及摘要，不直接外露用户请求文本；Widget 扩展只读取精简快照，不读取凭据或完整日志。
 6. **SSH 退场**：不再建立远程连接或定时扫描。旧 SSH 配置不再出现在设置或参与启动；历史索引行保留，原始远程日志和用户旧数据库不删除。新本机日志继续正常采集，“上游检测”单独保留。
-7. **重置操作**：只对当前适用 ChatGPT 账户显示可操作按钮；可用次数须来自 `rateLimitResetCredits.availableCount`。每次都由用户确认，结果和重试遵守官方幂等规则，不能用 UI 本地值代替服务端结果。按钮不触发真实额度重置的模拟或冒烟。
+7. **重置操作**：只对当前适用 ChatGPT 账户且服务端返回 `status=available`、非空 `id` 的逐次明细显示可操作按钮。可用总数来自 `rateLimitResetCredits.availableCount`；每张明细的截止时间来自 `expiresAt`，null 与字段缺失分开显示。用户选择一张并确认后才消费；结果和重试绑定同一 `creditId` 与幂等键，不能用 UI 本地值代替服务端结果。明细缺失或被截断时如实显示，不生成通用代选按钮；模拟或冒烟不触发真实重置。
 8. **迁移**：旧用户的设置、已建立的索引、历史价格与窗口偏好需要有兼容或安全迁移方案。迁移失败时保留原数据，不以重建为由删除用户信息。
 
 ## 4. Widget 与菜单栏生命周期

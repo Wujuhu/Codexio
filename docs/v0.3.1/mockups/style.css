@@ -144,10 +144,14 @@ body { margin: 0; background: var(--outer); color: var(--text); }
 .profile-grid .quota-top { display: block; }
 .profile-grid .quota .percent { display: block; margin-top: 13px; font-size: 31px; white-space: nowrap; }
 .profile-grid .quota .segments { margin-top: 12px; }
-.reset-row { display: flex; justify-content: space-between; align-items: center; gap: 20px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 16px 0; }
-.reset-row .count { color: var(--muted); font-size: 12px; }
-.reset-row b { font-size: 15px; }
-.reset-row .button-row { margin-left: auto; }
+.reset-section { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 14px 0 3px; }
+.reset-heading { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding-bottom: 10px; }
+.reset-heading b { font-size: 15px; }
+.reset-heading .count { color: var(--muted); font-size: 12px; }
+.reset-credit-row { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 12px 0; border-top: 1px solid var(--line); }
+.reset-credit-row b { font-size: 13px; font-weight: 560; }
+.reset-credit-row .expiry { color: var(--muted); font-size: 12px; margin-top: 5px; }
+.reset-credit-row .quiet-button { min-width: 112px; }
 .estimate { display: flex; align-items: baseline; gap: 15px; padding: 22px 0; }
 .estimate strong { font-size: 28px; font-weight: 570; }
 .estimate small { color: var(--muted); }
