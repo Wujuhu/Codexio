@@ -47,7 +47,7 @@ components:
 
 # Design System: Codexio
 
-> 适用范围：本文记录现有 Windows/PySide6 界面的设计，不约束 v0.3.1 的 macOS 原生重构。Mac 新设计以 [v0.3.1 总规划](docs/v0.3.1/PLAN.md)及其视觉对照为准；现有请求小组件的小、中、大 UI 按用户要求保留原样。
+> 适用范围：本文记录现有 Windows/PySide6 界面的设计，不约束 v0.3.1 的 macOS 原生重构。Mac 新设计以 [v0.3.1 总规划](docs/v0.3.1/PLAN.md)及其视觉对照为准；现有请求小组件的小、中、大 UI 按用户要求保留原样。v0.3.1 的 Mac 和 Windows 新界面文字均跟随系统语言，Mac 使用 macOS 系统字体、Windows 使用 Windows 系统 UI 字体；本文旧的 Times New Roman 字标建议不适用于 v0.3.1。
 
 ## Overview
 
