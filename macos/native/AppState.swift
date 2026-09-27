@@ -16,6 +16,9 @@ final class AppState: ObservableObject {
     @Published var usage = UsageSnapshot()
     @Published var quota = QuotaState()
     @Published var prices: [PriceRow] = []
+    @Published var modelIDs = Set<String>()
+    @Published var priceUpdated: Date?
+    @Published var priceWarning: String?
     @Published var weeklyEstimates: [Object] = []
     @Published var selectedPage = "overview"
     @Published var settingsSection = "appearance"
@@ -59,6 +62,8 @@ final class AppState: ObservableObject {
     var onUpstreamChange: ((Bool) -> Void)?
     var onOpenWindow: (() -> Void)?
     var onQuit: (() -> Void)?
+    var onCancelQuit: (() -> Void)?
+    var onRestartCodex: ((@escaping () -> Void) -> Void)?
     var accountRoot: URL { URL(fileURLWithPath:ProcessInfo.processInfo.environment["CODEX_HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex").path) }
 
     init(paths: AppPaths) throws {
@@ -139,11 +144,14 @@ final class AppState: ObservableObject {
                 computationKey = key; computedUsage = result
             }
             result.updated = Date()
-            let prices = catalog.rows
+            let prices = catalog.rows, priceUpdated = catalog.updated, priceWarning = catalog.warning
+            let models = paths.mock ? Set(["gpt-6-astra","gpt-5.6-sol","gpt-6-luna"]) : Set(readObject(accountRoot.appendingPathComponent("models_cache.json")).objects("models").filter { row in
+                !row.flag("hidden") && row.string("visibility") != "hide" && (row["hidden"] is Bool || row.string("visibility") == "list")
+            }.map {$0.string("slug",$0.string("model",$0.string("id")))}.filter {!$0.isEmpty})
             let estimates = try estimator.process(calls:result.calls,priceVersion:catalog.version)
             DispatchQueue.main.async { [weak self] in
                 guard let self, !self.stopped else { return }
-                self.usage = result; self.prices = prices; self.weeklyEstimates = estimates; if finishLoading { self.loading = false }; self.publishWidget()
+                self.usage = result; self.prices = prices; self.modelIDs = models; self.priceUpdated = priceUpdated; self.priceWarning = priceWarning; self.weeklyEstimates = estimates; if finishLoading { self.loading = false }; self.publishWidget()
                 if self.reportsVisible && self.reportedCandidates == 0 && !result.chatCandidates.isEmpty { self.refreshReports(force:true) }
             }
         } catch { DispatchQueue.main.async { [weak self] in self?.errorMessage = error.localizedDescription; self?.loading = false } }
@@ -156,22 +164,25 @@ final class AppState: ObservableObject {
             guard let self else { return }
             do {
                 try self.client.start(hint:hint)
+                let identityBefore = try? BackendCredentials.load(root:accountRoot).account
                 let account = try self.client.request("account/read",["refreshToken":false]).object("account")
                 var next = QuotaState(); next.account = account
-                if let identity = try? BackendCredentials.load(root:accountRoot).account { next.account["identityKey"] = identity.key }
                 let config = try self.client.request("config/read",["includeLayers":false]).object("config")
                 let provider = config.string("model_provider","openai")
                 next.applicable = account.string("type") == "chatgpt" && ["openai","codexio-upstream"].contains(provider)
                 if next.applicable {
                     let limits = try self.client.request("account/rateLimits/read",["excludeResetCreditDetails":false]); next.update(limits)
-                    if let week = next.week, let used = week.used, let reset = week.reset, let identity = try? BackendCredentials.load(root:accountRoot).account {
+                    let identityAfter = try? BackendCredentials.load(root:accountRoot).account
+                    guard identityBefore == identityAfter, limits.string("accountId").isEmpty || identityAfter == nil || limits.string("accountId") == identityAfter?.accountID else { self.client.close(); throw AppFailure(L("账户已变更，请重新刷新", "The account changed. Refresh again.")) }
+                    if let identityAfter { next.account["identityKey"] = identityAfter.key }
+                    if let week = next.week, let used = week.used, let reset = week.reset, let identity = identityAfter {
                         let buckets = limits.object("rateLimitsByLimitId")
                         let sample: Object = ["timestamp":Date().timeIntervalSince1970,"used_percent":used,"reset_at":reset.timeIntervalSince1970,"account_key":identity.key,"plan_type":account.string("planType"),"limit_id":"codex","sole_codex_pool":Set(buckets.keys) == Set(["codex"])]
                         let interval = self.preferences.analytics.integer("week_estimate_interval_minutes") ?? 30
                         self.dataQueue.async { self.estimator.add(sample,intervalMinutes:interval) }
                     }
                 }
-                else { next.error = L("此账户不提供 ChatGPT 额度", "ChatGPT limits are not available for this account") }
+                else { next.error = L("此账户不提供 ChatGPT 额度", "ChatGPT limits are not available for this account"); self.dataQueue.async { self.estimator.invalidate() } }
                 DispatchQueue.main.async {
                     guard !self.stopped else { return }
                     if self.quota.account.string("identityKey") != next.account.string("identityKey") || self.quota.account.string("planType") != next.account.string("planType") { self.invalidateReports(); self.pendingResets.removeAll() }
@@ -198,6 +209,12 @@ final class AppState: ObservableObject {
                 let prior = try self.database.query("SELECT key FROM usage_meta WHERE key LIKE ?",["reset-operation:"+account.key+":%"])
                 guard !prior.contains(where:{$0.string("key") != operationKey}) else { throw AppFailure(L("请先确认上一次重置的结果", "Confirm the previous reset result first")) }
                 var operation = self.database.object("usage_meta",key:operationKey)
+                let limits = try self.client.request("account/rateLimits/read",["excludeResetCreditDetails":false])
+                guard limits.string("accountId").isEmpty || limits.string("accountId") == account.accountID else { self.client.close(); throw AppFailure(L("账户已变更，请重新选择重置", "The account changed. Select the reset again.")) }
+                if operation.isEmpty {
+                    let available = limits.object("rateLimitResetCredits").objects("credits").map(ResetCredit.init)
+                    guard available.contains(where:{$0.id == selected.id && $0.available}) else { throw AppFailure(L("这次重置已不可用", "This reset is no longer available")) }
+                }
                 if operation.isEmpty { operation = ["idempotencyKey":UUID().uuidString,"creditId":selected.id,"credit":selected.raw,"account":account.key,"createdAt":iso()]; try self.database.put("usage_meta",key:operationKey,value:operation) }
                 guard try BackendCredentials.load(root:accountRoot).account == account else { throw AppFailure(L("账户已变更，请重新选择", "The account changed. Select the reset again.")) }
                 let result = try self.client.request("account/rateLimitResetCredit/consume",["creditId":selected.id,"idempotencyKey":operation.string("idempotencyKey")])
@@ -307,7 +324,7 @@ final class AppState: ObservableObject {
             request = value
         }
         let today = usage.summaries["today"] ?? UsageSummary()
-        let snapshot: Object = ["schema":1,"updated_at":Date().timeIntervalSince1970,"request":request,"today":["cost_usd":today.cost as Any? ?? NSNull(),"tokens":today.tokens as Any? ?? NSNull(),"requests":today.requests,"cache_hit_rate":today.cacheRate as Any? ?? NSNull()],"quota":["applicable":quota.applicable,"five_hour":(quota.fresh ? quota.five?.remaining : nil) as Any? ?? NSNull(),"week":(quota.fresh ? quota.week?.remaining : nil) as Any? ?? NSNull(),"has_five_hour":quota.five != nil,"has_week":quota.week != nil,"five_hour_reset_at":(quota.fresh ? quota.five?.reset?.timeIntervalSince1970 : nil) as Any? ?? NSNull(),"week_reset_at":(quota.fresh ? quota.week?.reset?.timeIntervalSince1970 : nil) as Any? ?? NSNull(),"reset_count":quota.availableCount as Any? ?? NSNull()]]
+        let snapshot: Object = ["schema":1,"updated_at":Date().timeIntervalSince1970,"request":request,"today":["cost_usd":today.cost as Any? ?? NSNull(),"tokens":today.tokens as Any? ?? NSNull(),"requests":today.requests,"cache_hit_rate":today.cacheRate as Any? ?? NSNull()],"quota":["applicable":quota.applicable,"updated_at":quota.updated?.timeIntervalSince1970 as Any? ?? NSNull(),"five_hour":(quota.fresh ? quota.five?.remaining : nil) as Any? ?? NSNull(),"week":(quota.fresh ? quota.week?.remaining : nil) as Any? ?? NSNull(),"has_five_hour":quota.five != nil,"has_week":quota.week != nil,"five_hour_reset_at":(quota.fresh ? quota.five?.reset?.timeIntervalSince1970 : nil) as Any? ?? NSNull(),"week_reset_at":(quota.fresh ? quota.week?.reset?.timeIntervalSince1970 : nil) as Any? ?? NSNull(),"reset_count":(quota.fresh ? quota.availableCount : nil) as Any? ?? NSNull()]]
         var content = snapshot; content.removeValue(forKey:"updated_at")
         let signature = identity(content)
         guard signature != snapshotSignature || Date().timeIntervalSince(snapshotWritten) >= 300 else { return }
@@ -324,18 +341,29 @@ final class AppState: ObservableObject {
         dataQueue.async { [weak self] in
             guard let self else { return }
             do {
-                for day in 0..<21 {
-                    let date = Calendar.current.date(byAdding:.day,value:-day,to:Date().addingTimeInterval(-120))!
-                    let session = "mock-chat-\(day%4)", turn = "mock-turn-\(day)"
-                    let input = 30000+day*1500, output = 6000+day*350
-                    try self.database.writeRecord(["id":"response:\(session):\(turn)","session_id":session,"turn_id":turn,"timestamp":iso(date),"model":day%2 == 0 ? "gpt-6-astra" : "gpt-5.6-sol","provider":"openai","reasoning_effort":"high","service_tier":day%3 == 0 ? "priority" : "default","quality":"response","input_tokens":input,"cached_input_tokens":input/2,"cache_write_input_tokens":0,"output_tokens":output,"reasoning_output_tokens":output/3,"total_tokens":input+output,"prompt_preview":L("整理原生应用设计", "Refine the native app design"),"output_preview":L("已整理页面结构和本机统计。", "Page structure and local statistics are ready."),"source_id":"local","duration_ms":138000])
-                    try self.database.writeTurn(["id":"turn:\(session):\(turn)","session_id":session,"turn_id":turn,"started_at":iso(date.addingTimeInterval(-138)),"ended_at":iso(date),"started_inferred":false,"verified":true,"status":"completed","prompt_preview":L("整理原生应用设计", "Refine the native app design"),"source_ids":["local"]])
+                let today = Calendar.current.startOfDay(for:Date()), now = Date()
+                let titles = [L("完成 Codexio 原生重构", "Finish the Codexio native rebuild"),L("优化日志详情与用量统计", "Refine log details and usage statistics"),L("适配新版 Codex 客户端", "Support the updated Codex client"),L("整理菜单栏和小组件设计", "Refine the menu bar and widgets")]
+                for day in 0..<365 where day < 6 || day % 7 != 3 {
+                    for call in 0..<(day == 0 ? 4 : 1) {
+                        let date = Calendar.current.date(byAdding:.day,value:-day,to:today)!.addingTimeInterval(day == 0 ? max(1,min(now.timeIntervalSince(today)-10,Double(call+1)*1800)) : Double(9+day%10)*3600)
+                        let session = "mock-chat-\(day == 0 ? call : day%4)", turn = "mock-turn-\(day)-\(call)", title = titles[day == 0 ? call : day%4]
+                        let input = 30000+(day*1543)%270000+call*13000, output = 6000+(day*357)%42000+call*1500
+                        try self.database.writeRecord(["id":"response:\(session):\(turn)","session_id":session,"turn_id":turn,"timestamp":iso(date),"model":(day+call)%2 == 0 ? "gpt-6-astra" : "gpt-5.6-sol","provider":"openai","reasoning_effort":day%4 == 0 ? "max" : "high","service_tier":(day+call)%3 == 0 ? "priority" : "default","quality":"response","input_tokens":input,"cached_input_tokens":input/2,"cache_write_input_tokens":0,"output_tokens":output,"reasoning_output_tokens":output/3,"total_tokens":input+output,"prompt_preview":title,"output_preview":L("已完成原生界面与本机统计调整，保留每条调用的模型、速度、推理强度和费用明细。", "Native UI and local statistics are updated, with model, speed, reasoning and cost details retained for every call."),"source_id":"local","duration_ms":138000])
+                        try self.database.writeTurn(["id":"turn:\(session):\(turn)","session_id":session,"turn_id":turn,"started_at":iso(date.addingTimeInterval(-138)),"ended_at":iso(date),"started_inferred":false,"verified":true,"status":"completed","prompt_preview":title,"output_preview":L("页面和统计已完成。", "Pages and statistics are ready."),"source_ids":["local"]])
+                    }
                 }
                 self.publishUsage()
                 DispatchQueue.main.async {
-                    var state = QuotaState(); state.account = ["type":"chatgpt","email":"demo@example.invalid","planType":"pro"]
-                    state.update(["rateLimits":["primary":["usedPercent":26,"windowDurationMins":300,"resetsAt":Date().addingTimeInterval(7200).timeIntervalSince1970],"secondary":["usedPercent":77,"windowDurationMins":10080,"resetsAt":Date().addingTimeInterval(432000).timeIntervalSince1970]],"rateLimitResetCredits":["availableCount":2,"credits":[["id":"mock-reset-1","status":"available","resetType":"codexRateLimits","expiresAt":Date().addingTimeInterval(864000).timeIntervalSince1970],["id":"mock-reset-2","status":"available","resetType":"codexRateLimits","expiresAt":Date().addingTimeInterval(1728000).timeIntervalSince1970]]]])
-                    self.quota = state; self.onQuotaChange?()
+                    var quota = QuotaState(); quota.account = ["type":"chatgpt","email":"demo@example.invalid","planType":"pro","identityKey":"mock-account"]
+                    quota.update(["rateLimits":["primary":["usedPercent":26,"windowDurationMins":300,"resetsAt":now.addingTimeInterval(7200).timeIntervalSince1970],"secondary":["usedPercent":77,"windowDurationMins":10080,"resetsAt":now.addingTimeInterval(432000).timeIntervalSince1970]],"rateLimitResetCredits":["availableCount":2,"credits":[["id":"mock-reset-1","title":L("重置 1", "Reset 1"),"status":"available","resetType":"codexRateLimits","expiresAt":now.addingTimeInterval(864000).timeIntervalSince1970],["id":"mock-reset-2","title":L("重置 2", "Reset 2"),"status":"available","resetType":"codexRateLimits","expiresAt":now.addingTimeInterval(1728000).timeIntervalSince1970]]]])
+                    self.quota = quota; self.priceUpdated = now
+                    self.preferences.analytics["subscription_profile"] = ["plan":"ChatGPT Pro","price_usd":200.0,"renewal_date":"2026-10-27"]
+                    self.planHistory = ["data_as_of":iso(now),"coverage_complete":true,"approximate":false,"periods":[["id":"mock-period","window_minutes":10080,"starts_at":iso(now.addingTimeInterval(-172800)),"ends_at":iso(now.addingTimeInterval(432000)),"accounting_complete":true,"used_basis_points":7700,"breakdowns":[["dimension":"model","rows":[["key":"gpt-6-astra","basis_points":4160],["key":"gpt-5.6-sol","basis_points":2580],["key":"gpt-6-luna","basis_points":960]]]]]]]
+                    self.chatUsage = ["data_as_of":iso(now),"threads":(0..<4).map { index -> Object in
+                        let percent = [11.52,8.31,5.83,0.0077][index]
+                        return ["thread_id":"mock-chat-\(index)","data_status":index == 3 ? "partial" : "available","weekly_limit_percent":percent,"balance_usage_credits":"0","groups":[["model":"gpt-6-astra","reasoning_effort":"max","speed":"fast","weekly_limit_percent":percent*0.87,"balance_usage_credits":"0"],["model":"gpt-5.6-sol","reasoning_effort":"low","speed":"standard","weekly_limit_percent":percent*0.13,"balance_usage_credits":"0"]]]
+                    }]
+                    self.onQuotaChange?()
                 }
             } catch { DispatchQueue.main.async { self.errorMessage = error.localizedDescription; self.loading = false } }
         }

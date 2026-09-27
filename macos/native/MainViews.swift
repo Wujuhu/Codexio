@@ -40,7 +40,8 @@ struct MainView: View {
                 }
             }.background(Color(nsColor:.textBackgroundColor))
         }
-        .frame(minWidth:1000,minHeight:700)
+        .frame(minWidth:min(1000,(NSScreen.main?.visibleFrame.width ?? 1440)-24),minHeight:min(700,(NSScreen.main?.visibleFrame.height ?? 900)-24))
+        .background(Color(nsColor:.windowBackgroundColor))
         .preferredColorScheme(state.theme == "dark" ? .dark : state.theme == "light" ? .light : nil)
         .onChange(of:state.selectedPage) { _,page in if page == "subscription" || (page == "trends" && state.usageSection == "threads") { state.refreshReports() } }
     }
@@ -91,6 +92,8 @@ struct MainView: View {
 struct OverviewView: View {
     @ObservedObject var state: AppState
     @State private var period = "today"
+    private var range: UsageRange { UsageRange(period:period) }
+    private var recent: [UsageRow] { Array(state.usage.requests.filter { range.contains($0) && $0.raw.string("record_kind") == "user_request" && !$0.raw.flag("is_subagent") }.prefix(4)) }
     var body: some View {
         ScrollView {
             VStack(alignment:.leading,spacing:25) {
@@ -103,9 +106,9 @@ struct OverviewView: View {
                 Divider()
                 HStack { SectionHeading(title:L("本机用量", "Local usage")); PeriodPicker(selection:$period) }
                 SummaryMetrics(summary:state.usage.summaries[period] ?? UsageSummary())
-                VStack(alignment:.leading,spacing:18) { SectionHeading(title:L("用量趋势", "Usage trend")); TrendChart(days:Array(state.usage.activity.days.suffix(period == "month" ? 30 : period == "all" ? 365 : 7))) }.padding(20).overlay(RoundedRectangle(cornerRadius:13).stroke(.secondary.opacity(0.15)))
+                VStack(alignment:.leading,spacing:18) { SectionHeading(title:L("用量趋势", "Usage trend")); TrendChart(days:range.buckets(state.usage.calls.filter {$0.local && range.contains($0)},granularity:period == "today" ? "hour" : period == "all" ? "week" : "day")) }.padding(20).overlay(RoundedRectangle(cornerRadius:13).stroke(.secondary.opacity(0.15)))
                 HStack { SectionHeading(title:L("最近请求", "Recent requests")); Button(L("查看全部", "View all")) { state.selectedPage = "logs" }.buttonStyle(.plain).foregroundStyle(.secondary) }
-                ForEach(Array(state.usage.requests.prefix(4))) { row in
+                ForEach(recent) { row in
                     HStack(spacing:20) {
                         Text(dateText(row.date,timeOnly:true)).font(.system(size:12)).foregroundStyle(.secondary).frame(width:80,alignment:.leading)
                         Text(row.raw.string("prompt_preview")).font(.system(size:13)).lineLimit(1).frame(maxWidth:.infinity,alignment:.leading)
@@ -115,7 +118,7 @@ struct OverviewView: View {
                     }.padding(.vertical,5)
                     Divider()
                 }
-                if state.usage.requests.isEmpty { EmptyState(title:state.loading ? L("正在读取本机记录", "Loading local records") : L("暂无请求", "No requests yet")) }
+                if recent.isEmpty { EmptyState(title:state.loading ? L("正在读取本机记录", "Loading local records") : L("暂无请求", "No requests yet")) }
             }.padding(32)
         }
     }

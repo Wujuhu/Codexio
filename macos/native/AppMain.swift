@@ -15,6 +15,7 @@ enum CodexioMain {
             if let index = arguments.firstIndex(of:"--native-update-job"), arguments.indices.contains(index+1) { try NativeUpdater.installJob(URL(fileURLWithPath:arguments[index+1])); return }
             if let index = arguments.firstIndex(of:"--upstream-helper"), arguments.indices.contains(index+1) { try UpstreamRelay.run(directory:URL(fileURLWithPath:arguments[index+1])); return }
             let mock = arguments.contains("--mock")
+            if arguments.contains("--mock-gallery") && !mock { throw AppFailure("--mock-gallery requires --mock") }
             var smoke: URL?
             if let index = arguments.firstIndex(of:"--smoke-test") {
                 guard mock, arguments.indices.contains(index+1) else { throw AppFailure("--smoke-test requires --mock and an output directory") }
@@ -53,6 +54,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     private var updater: NativeUpdater?
     private var upstream: UpstreamCoordinator?
     private var isTerminating = false
+    private var gallery: MockGallery?
     private var smokeTimer: Timer?
     private var smokeStep = 0
     private var smokeStarted = Date()
@@ -65,6 +67,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         menu()
         state.onOpenWindow = { [weak self] in self?.showWindow() }
         state.onQuit = { NSApp.terminate(nil) }
+        state.onCancelQuit = { [weak self] in self?.isTerminating = false; self?.showWindow(); NSApp.reply(toApplicationShouldTerminate:false) }
+        state.onRestartCodex = { [weak self] completion in self?.promptCodexRestart(completion:completion) }
         state.onQuotaChange = { [weak self] in self?.status?.update() }
         state.onSettingsChange = { [weak self] in self?.applyAppearance(); self?.status?.update() }
         if !state.paths.mock {
@@ -85,7 +89,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             DistributedNotificationCenter.default().addObserver(self,selector:#selector(showWindow),name:.init("com.wujuhu.codexio.show"),object:nil)
         }
         applyAppearance(); state.start(); showWindow()
-        if smoke != nil { startSmoke() }
+        if let index = CommandLine.arguments.firstIndex(of:"--mock-gallery"), CommandLine.arguments.indices.contains(index+1), state.paths.mock, let window {
+            gallery = MockGallery(state:state,window:window,directory:URL(fileURLWithPath:CommandLine.arguments[index+1]))
+            gallery?.start()
+        } else if smoke != nil { startSmoke() }
         else {
             DispatchQueue.main.asyncAfter(deadline:.now()+4) { [weak self] in self?.upstream?.recoverAndResume() }
             if ProcessInfo.processInfo.environment["CODEXIO_SKIP_UPDATE_ONCE"] == nil {
@@ -98,9 +105,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             let available = NSScreen.main?.visibleFrame ?? NSRect(x:0,y:0,width:1440,height:900)
             let geometry = state.preferences.analytics["native_geometry"] as? [Double]
             let width = min(geometry?[safe:2] ?? 1380,available.width-24), height = min(geometry?[safe:3] ?? 900,available.height-24)
-            let window = NSWindow(contentRect:NSRect(x:0,y:0,width:max(1000,width),height:max(700,height)),styleMask:[.titled,.closable,.miniaturizable,.resizable,.fullSizeContentView],backing:.buffered,defer:false)
+            let minimum = NSSize(width:min(1000,available.width-24),height:min(700,available.height-24))
+            let window = NSWindow(contentRect:NSRect(x:0,y:0,width:max(minimum.width,width),height:max(minimum.height,height)),styleMask:[.titled,.closable,.miniaturizable,.resizable,.fullSizeContentView],backing:.buffered,defer:false)
             window.title = "Codexio"; window.titleVisibility = .hidden; window.titlebarAppearsTransparent = true
-            window.contentView = NSHostingView(rootView:MainView(state:state)); window.minSize = NSSize(width:1000,height:700); window.isReleasedWhenClosed = false; window.delegate = self; window.center()
+            window.contentView = NSHostingView(rootView:MainView(state:state)); window.minSize = minimum; window.isReleasedWhenClosed = false; window.delegate = self; window.center()
             if let geometry, geometry.count == 4 {
                 let origin = NSPoint(x:geometry[0],y:geometry[1])
                 if NSScreen.screens.contains(where:{$0.visibleFrame.contains(origin)}) { window.setFrameOrigin(origin) }
@@ -136,6 +144,26 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         guard !state.paths.mock, let frame = window?.frame else { return }
         state.preferences.analytics["native_geometry"] = [frame.minX,frame.minY,frame.width,frame.height]
         try? state.preferences.save()
+    }
+    private func promptCodexRestart(completion: @escaping () -> Void) {
+        guard !state.paths.mock else { completion(); return }
+        let clients = ["com.openai.codex","com.openai.chat"].flatMap {NSRunningApplication.runningApplications(withBundleIdentifier:$0)}.filter {!$0.isTerminated}
+        guard !clients.isEmpty else { completion(); return }
+        let alert = NSAlert(); alert.messageText = L("重新打开 Codex 以应用路由？", "Reopen Codex to apply the route?")
+        alert.informativeText = L("路由配置已更新。可以等待当前任务结束后自行重启；现在重启会先请求客户端正常退出。", "The route configuration is updated. You can reopen after the current task finishes. Restart now requests a normal quit first.")
+        alert.addButton(withTitle:L("稍后自行重启", "Reopen later")); alert.addButton(withTitle:L("现在重启", "Restart now"))
+        guard alert.runModal() == .alertSecondButtonReturn else { completion(); return }
+        let apps = Set(clients.compactMap(\.bundleURL))
+        for client in clients { _ = client.terminate() }
+        DispatchQueue.global(qos:.utility).async {
+            let deadline = Date().addingTimeInterval(20)
+            while clients.contains(where:{!$0.isTerminated}) && Date() < deadline { Thread.sleep(forTimeInterval:0.1) }
+            DispatchQueue.main.async {
+                if clients.contains(where:{!$0.isTerminated}) { self.state.upstreamStatus = L("客户端尚未退出，请在任务结束后自行重新打开", "The client is still running; reopen it when the task finishes") }
+                else { for app in apps { NSWorkspace.shared.openApplication(at:app,configuration:NSWorkspace.OpenConfiguration(),completionHandler:nil) } }
+                completion()
+            }
+        }
     }
     private func applyAppearance() { NSApp.appearance = state.theme == "dark" ? NSAppearance(named:.darkAqua) : state.theme == "light" ? NSAppearance(named:.aqua) : nil }
     @objc private func showSettings() { state.selectedPage = "settings"; showWindow() }

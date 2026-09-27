@@ -1969,6 +1969,22 @@
         }
       }
     },
+    "上游路由未能恢复": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The upstream route could not be restored"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上游路由未能恢复"
+          }
+        }
+      }
+    },
     "上游路由被外部修改，已保留转发；请重试恢复": {
       "localizations": {
         "en": {
@@ -2689,6 +2705,38 @@
         }
       }
     },
+    "优化 Codexio 的日志详情与额度显示": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Refine Codexio log details and allowance display"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "优化 Codexio 的日志详情与额度显示"
+          }
+        }
+      }
+    },
+    "优化日志详情与用量统计": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Refine log details and usage statistics"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "优化日志详情与用量统计"
+          }
+        }
+      }
+    },
     "会话：": {
       "localizations": {
         "en": {
@@ -2829,6 +2877,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "保留当前模型供应商与认证方式。仅显示响应实际返回的模型型号，历史请求无法补查；退出 Codexio 会恢复配置。"
+          }
+        }
+      }
+    },
+    "保留恢复记录并退出": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep recovery data and quit"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保留恢复记录并退出"
           }
         }
       }
@@ -3613,6 +3677,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "原始记录未提供明确服务档位，按默认 Standard 标准价估计"
+          }
+        }
+      }
+    },
+    "原请求小组件 · 小 / 中 / 大": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Existing request widgets · small / medium / large"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "原请求小组件 · 小 / 中 / 大"
           }
         }
       }
@@ -4705,6 +4785,22 @@
         }
       }
     },
+    "完成 Codexio 原生重构": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Finish the Codexio native rebuild"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "完成 Codexio 原生重构"
+          }
+        }
+      }
+    },
     "定价": {
       "localizations": {
         "en": {
@@ -4733,6 +4829,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "客户端启动参数或环境变量覆盖了模型路由，未进行接管"
+          }
+        }
+      }
+    },
+    "客户端尚未退出，请在任务结束后自行重新打开": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The client is still running; reopen it when the task finishes"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "客户端尚未退出，请在任务结束后自行重新打开"
           }
         }
       }
@@ -5133,6 +5245,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "已完成"
+          }
+        }
+      }
+    },
+    "已完成原生界面与本机统计调整，保留每条调用的模型、速度、推理强度和费用明细。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Native UI and local statistics are updated, with model, speed, reasoning and cost details retained for every call."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已完成原生界面与本机统计调整，保留每条调用的模型、速度、推理强度和费用明细。"
           }
         }
       }
@@ -6993,6 +7121,22 @@
         }
       }
     },
+    "整理菜单栏和小组件设计": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Refine the menu bar and widgets"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "整理菜单栏和小组件设计"
+          }
+        }
+      }
+    },
     "整轮累计": {
       "localizations": {
         "en": {
@@ -8221,6 +8365,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "最近 7 天"
+          }
+        }
+      }
+    },
+    "最近同步": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Last synced"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最近同步"
           }
         }
       }
@@ -13009,6 +13169,22 @@
         }
       }
     },
+    "路由配置已更新。可以等待当前任务结束后自行重启；现在重启会先请求客户端正常退出。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The route configuration is updated. You can reopen after the current task finishes. Restart now requests a normal quit first."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "路由配置已更新。可以等待当前任务结束后自行重启；现在重启会先请求客户端正常退出。"
+          }
+        }
+      }
+    },
     "转发服务中断": {
       "localizations": {
         "en": {
@@ -13361,6 +13537,22 @@
         }
       }
     },
+    "返回应用": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Return to app"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "返回应用"
+          }
+        }
+      }
+    },
     "这会消耗当前账户中所选的重置，无法撤销。": {
       "localizations": {
         "en": {
@@ -13549,6 +13741,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "退出程序"
+          }
+        }
+      }
+    },
+    "适配新版 Codex 客户端": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Support the updated Codex client"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "适配新版 Codex 客户端"
           }
         }
       }
@@ -13873,6 +14081,22 @@
         }
       }
     },
+    "重新打开 Codex 以应用路由？": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reopen Codex to apply the route?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新打开 Codex 以应用路由？"
+          }
+        }
+      }
+    },
     "重新扫描": {
       "localizations": {
         "en": {
@@ -13965,6 +14189,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "重置 %s"
+          }
+        }
+      }
+    },
+    "重置 1": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reset 1"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重置 1"
+          }
+        }
+      }
+    },
+    "重置 2": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reset 2"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重置 2"
           }
         }
       }
@@ -14109,6 +14365,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "需要本机 Codex 的 ChatGPT 登录状态"
+          }
+        }
+      }
+    },
+    "页面和统计已完成。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pages and statistics are ready."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "页面和统计已完成。"
           }
         }
       }
@@ -14269,6 +14541,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "额度变化达到 2 个百分点后开始计算。"
+          }
+        }
+      }
+    },
+    "额度小组件 · 三种样式": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allowance widgets · three styles"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "额度小组件 · 三种样式"
           }
         }
       }

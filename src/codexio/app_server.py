@@ -229,7 +229,7 @@ class AppServerClient:
         return result if isinstance(result, dict) else {}
 
     def read_rate_limits(self) -> dict:
-        result = self.request(RATE_LIMITS_METHOD, timeout=self._request_timeout)
+        result = self.request(RATE_LIMITS_METHOD, {"excludeResetCreditDetails": False}, timeout=self._request_timeout)
         if not isinstance(result, dict):
             raise AppServerError("account/rateLimits/read 返回了无效结果")
         return result

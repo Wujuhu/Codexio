@@ -7,11 +7,12 @@ struct PricingView: View {
     @State private var selected: String?
     @State private var editing = false
     private var selectedModel: String? { state.prices.first {$0.id == selected}?.model }
-    private var filtered: [PriceRow] { state.prices.filter {search.isEmpty || $0.model.localizedCaseInsensitiveContains(search)} }
+    private var filtered: [PriceRow] { state.prices.filter {(state.modelIDs.isEmpty || state.modelIDs.contains($0.model)) && (search.isEmpty || $0.model.localizedCaseInsensitiveContains(search))} }
     var body: some View {
         VStack(alignment:.leading,spacing:20) {
             HStack { PageHeading(title:Pages.title("pricing")); Button(L("立即同步", "Sync now")) { state.syncPrices() } }
-            StatusNote(text:L("美元 / 1M Token", "USD / 1M tokens"))
+            HStack { StatusNote(text:L("美元 / 1M Token", "USD / 1M tokens")); Spacer(); Text(L("最近同步", "Last synced")+" · "+dateText(state.priceUpdated)).font(.caption).foregroundStyle(.secondary) }
+            if let warning = state.priceWarning { StatusNote(text:warning) }
             HStack {
                 TextField(L("搜索模型", "Search models"),text:$search).textFieldStyle(.roundedBorder)
                 Button(L("编辑基础价", "Edit base price")) { editing = true }.disabled(selectedModel == nil)

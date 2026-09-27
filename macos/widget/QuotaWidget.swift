@@ -42,12 +42,12 @@ struct QuotaProvider: AppIntentTimelineProvider {
 struct QuotaWidgetView: View {
     @Environment(\.colorScheme) private var systemScheme
     let entry: QuotaEntry
-    private var dark: Bool { entry.configuration.appearance == .dark || entry.configuration.appearance == .system && systemScheme == .dark }
-    private var fresh: Bool { entry.snapshot.map {Date().timeIntervalSince1970-$0.updated_at < 900 && $0.quota.applicable != false} ?? false }
+    private var dark: Bool { entry.configuration.appearance == .dark || entry.configuration.appearance == .system && (systemScheme == .dark || entry.configuration.style == .dual) }
+    private var fresh: Bool { entry.snapshot.map {Date().timeIntervalSince1970-($0.quota.updated_at ?? $0.updated_at) < 900 && $0.quota.applicable != false && ($0.quota.week != nil || $0.quota.five_hour != nil)} ?? false }
     private var color: Color { entry.configuration.style == .dual ? Color(red:0.88,green:0.49,blue:0.36) : Color.blue }
     private func remaining(_ week: Bool) -> Double? { guard fresh else { return nil }; return week ? entry.snapshot?.quota.week : entry.snapshot?.quota.five_hour }
     private func reset(_ week: Bool) -> Double? { week ? entry.snapshot?.quota.week_reset_at : entry.snapshot?.quota.five_hour_reset_at }
-    private func percentage(_ value: Double?) -> String { value.map {String(format:"%.0f%%",max(0,min(100,$0)))} ?? "—" }
+    private func percentage(_ value: Double?) -> String { guard let value else { return "—" }; return value > 0 && value < 1 ? "<1%" : String(format:"%.0f%%",max(0,min(100,value))) }
     private func countdown(_ value: Double?) -> String {
         guard let value, fresh, value > Date().timeIntervalSince1970 else { return "—" }
         let seconds = Int(value-Date().timeIntervalSince1970), days = seconds/86400
@@ -55,13 +55,25 @@ struct QuotaWidgetView: View {
         return days > 0 ? "\(days)d "+time : time
     }
     var body: some View {
-        content
-            .padding(14)
-            .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading)
-            .containerBackground(for:.widget) { dark ? Color(red:0.055,green:0.058,blue:0.065) : Color.white }
-            .environment(\.colorScheme,dark ? .dark : .light)
+        card
+            .containerBackground(for:.widget) { background }
             .widgetURL(URL(string:"codexio://subscription"))
     }
+    private var background: Color { dark ? Color(red:0.055,green:0.058,blue:0.065) : Color.white }
+    private var card: some View {
+        content
+            .background(alignment:.bottomTrailing) {
+                if entry.configuration.style == .segmented {
+                    Image(systemName:"chevron.left.forwardslash.chevron.right").font(.system(size:70,weight:.ultraLight)).foregroundStyle(Color.primary.opacity(dark ? 0.035 : 0.045)).offset(x:15,y:10)
+                }
+            }
+            .padding(14)
+            .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading)
+            .environment(\.colorScheme,dark ? .dark : .light)
+    }
+    #if CODEXIO_APP_WIDGET_PREVIEW
+    var preview: some View { card.background(background) }
+    #endif
     @ViewBuilder private var content: some View {
         if entry.configuration.style == .single { single }
         else {
@@ -89,7 +101,7 @@ struct QuotaWidgetView: View {
             }.font(.system(size:10))
             Divider()
             HStack(spacing:5) { Image(systemName:"clock.arrow.circlepath"); Text(WL("重置时间", "Resets in")); Spacer(minLength:1); Text(countdown(reset(week))).monospacedDigit() }.font(.system(size:10))
-            if let count = entry.snapshot?.quota.reset_count {
+            if fresh, let count = entry.snapshot?.quota.reset_count {
                 HStack(spacing:5) { Image(systemName:"arrow.counterclockwise.circle.fill"); Text(WL("重置次数", "Resets")); Spacer(); Text("\(count)×").monospacedDigit() }.font(.system(size:10))
             }
         }
@@ -99,7 +111,7 @@ struct QuotaWidgetView: View {
         return VStack(alignment:.leading,spacing:4) {
             HStack(alignment:.lastTextBaseline) {
                 VStack(alignment:.leading,spacing:3) {
-                    Text(week ? WL("每周", "Weekly") : WL("5 小时", "5 hour")).font(.system(size:11,weight:.medium))
+                    Text((week ? WL("每周", "Weekly") : WL("5 小时", "5 hour"))+(segmented ? " · "+WL("剩余", "Remaining") : "")).font(.system(size:11,weight:.medium)).lineLimit(1).minimumScaleFactor(0.8)
                     if segmented { Text(countdown(reset(week))).font(.system(size:9)).foregroundStyle(.secondary) }
                 }
                 Spacer(minLength:2)
@@ -113,7 +125,7 @@ struct QuotaWidgetView: View {
         HStack(spacing:4) {
             Image(systemName:"arrow.triangle.2.circlepath")
             if !fresh { Text(entry.snapshot?.quota.applicable == false ? WL("不可用", "Unavailable") : WL("等待更新", "Waiting")) }
-            else if let snapshot = entry.snapshot { Text(Date(timeIntervalSince1970:snapshot.updated_at),style:.relative) }
+            else if let snapshot = entry.snapshot { Text(Date(timeIntervalSince1970:snapshot.quota.updated_at ?? snapshot.updated_at),style:.relative) }
         }.font(.system(size:9,weight:.medium)).foregroundStyle(.secondary).lineLimit(1)
     }
     private func meter(_ value: Double?,segmented: Bool) -> some View {

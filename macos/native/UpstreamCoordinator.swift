@@ -36,7 +36,7 @@ final class UpstreamCoordinator {
         let enabled = state.preferences.analytics.flag("upstream_detection_enabled")
         queue.async { [weak self] in
             guard let self else { return }
-            do { try self.restore(); if enabled { try self.start() } }
+            do { try self.restore(); if enabled { try self.start(); DispatchQueue.main.async { self.state.onRestartCodex?({}) } } }
             catch { self.report(error.localizedDescription) }
         }
     }
@@ -49,7 +49,7 @@ final class UpstreamCoordinator {
                 DispatchQueue.main.async {
                     self.state.setPreference("upstream_detection_enabled",enabled)
                     self.state.upstreamStatus = L("配置已更新；重新打开 Codex 后生效", "Configuration updated; reopen Codex to apply it")
-                    self.state.refreshQuota()
+                    self.state.refreshQuota(); self.state.onRestartCodex?({})
                 }
             } catch { self.report(error.localizedDescription) }
         }
@@ -117,8 +117,20 @@ final class UpstreamCoordinator {
         guard !state.paths.mock else { completion(); return }
         queue.async { [weak self] in
             guard let self else { DispatchQueue.main.async(execute:completion); return }
-            do { try self.restore(); self.client.close(); DispatchQueue.main.async(execute:completion) }
-            catch { self.report(error.localizedDescription); self.client.close(); DispatchQueue.main.async(execute:completion) }
+            let changed = !readObject(self.journalURL).isEmpty
+            do {
+                try self.restore(); self.client.close()
+                DispatchQueue.main.async { if changed, let prompt = self.state.onRestartCodex { prompt(completion) } else { completion() } }
+            }
+            catch {
+                self.report(error.localizedDescription); self.client.close()
+                DispatchQueue.main.async {
+                    let alert = NSAlert(); alert.messageText = L("上游路由未能恢复", "The upstream route could not be restored")
+                    alert.informativeText = error.localizedDescription
+                    alert.addButton(withTitle:L("返回应用", "Return to app")); alert.addButton(withTitle:L("保留恢复记录并退出", "Keep recovery data and quit"))
+                    if alert.runModal() == .alertSecondButtonReturn { completion() } else { self.state.onCancelQuit?() }
+                }
+            }
         }
     }
 }

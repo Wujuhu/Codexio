@@ -115,8 +115,13 @@ struct TrendChart: View {
                     context.stroke(path,with:.color(series == 0 ? .blue : .green),style:StrokeStyle(lineWidth:compactStyle ? 1.8 : 2.2,lineCap:.round,lineJoin:.round))
                 }
             }.frame(height:compactStyle ? 85 : 170)
-            HStack { Text(days.first?.date.formatted(.dateTime.month().day()) ?? "—"); Spacer(); Text(days.last?.date.formatted(.dateTime.month().day()) ?? "—") }.font(.system(size:11)).foregroundStyle(.secondary)
+            HStack { Text(axisLabel(days.first?.date)); Spacer(); Text(axisLabel(days.last?.date)) }.font(.system(size:11)).foregroundStyle(.secondary)
         }.accessibilityElement(children:.combine).accessibilityLabel(L("Token 和费用趋势", "Token and cost trends"))
+    }
+    private func axisLabel(_ date: Date?) -> String {
+        guard let date else { return "—" }
+        if let first = days.first?.date, let last = days.last?.date, Calendar.current.isDate(first,inSameDayAs:last) { return date.formatted(.dateTime.hour().minute()) }
+        return date.formatted(.dateTime.month().day())
     }
 }
 

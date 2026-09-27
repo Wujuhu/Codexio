@@ -31,6 +31,7 @@ struct QuotaSnapshot: Decodable {
     let five_hour_reset_at: Double?
     let week_reset_at: Double?
     var reset_count: Int? = nil
+    var updated_at: Double? = nil
 }
 
 struct TodaySnapshot: Decodable {
@@ -169,7 +170,11 @@ private struct QuotaLine: View {
 }
 
 private struct Metric: View {
+    #if CODEXIO_APP_WIDGET_PREVIEW
+    @Environment(\.codexioPreviewFamily) private var family
+    #else
     @Environment(\.widgetFamily) private var family
+    #endif
     let title: String
     let value: String
 
@@ -184,7 +189,11 @@ private struct Metric: View {
 }
 
 private struct CodexioWidgetView: View {
+    #if CODEXIO_APP_WIDGET_PREVIEW
+    @Environment(\.codexioPreviewFamily) private var family
+    #else
     @Environment(\.widgetFamily) private var family
+    #endif
     let entry: CodexioEntry
 
     @ViewBuilder
@@ -294,7 +303,7 @@ private struct CodexioWidgetView: View {
         Spacer(minLength: 0)
     }
 
-    var body: some View {
+    var content: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let snapshot = entry.snapshot, let request = snapshot.request {
                 let fresh = Date().timeIntervalSince1970 - snapshot.updated_at < 900
@@ -312,11 +321,29 @@ private struct CodexioWidgetView: View {
             }
         }
         .padding(family == .systemSmall ? 13 : 15)
-        .containerBackground(for: .widget) {
-            Color(nsColor: .controlBackgroundColor)
-        }
+    }
+    var body: some View {
+        #if CODEXIO_APP_WIDGET_PREVIEW
+        content.background(Color(nsColor:.controlBackgroundColor))
+        #else
+        content.containerBackground(for:.widget) { Color(nsColor:.controlBackgroundColor) }
+        #endif
     }
 }
+
+#if CODEXIO_APP_WIDGET_PREVIEW
+private struct PreviewFamilyKey: EnvironmentKey { static let defaultValue = WidgetFamily.systemSmall }
+private extension EnvironmentValues {
+    var codexioPreviewFamily: WidgetFamily {
+        get { self[PreviewFamilyKey.self] }
+        set { self[PreviewFamilyKey.self] = newValue }
+    }
+}
+func requestWidgetPreview(_ snapshot: Snapshot,family: WidgetFamily) -> some View {
+    CodexioWidgetView(entry:CodexioEntry(date:Date(),snapshot:snapshot))
+        .environment(\.codexioPreviewFamily,family).background(Color(nsColor:.controlBackgroundColor))
+}
+#endif
 
 private struct CodexioRequestWidget: Widget {
     var body: some WidgetConfiguration {
@@ -330,6 +357,7 @@ private struct CodexioRequestWidget: Widget {
     }
 }
 
+#if !CODEXIO_APP_WIDGET_PREVIEW
 @main
 struct CodexioWidgetBundle: WidgetBundle {
     var body: some Widget {
@@ -337,3 +365,5 @@ struct CodexioWidgetBundle: WidgetBundle {
         CodexioQuotaWidget()
     }
 }
+
+#endif

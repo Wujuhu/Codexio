@@ -181,6 +181,8 @@ class ChatUsagePanel(QWidget):
         for row in rows:
             identity = row.get("thread_id", "")
             title = local.get(identity, {}).get("title") or identity
+            if row.get("data_status") in ("partial", "unavailable"):
+                title += " · " + (tr("部分数据") if row["data_status"] == "partial" else tr("暂不可用"))
             amount = number(row.get("local_tokens" if self.local else "weekly_limit_percent"))
             credits = number(row.get("balance_usage_credits"))
             item = RankItem([str(title), compact_number(int(amount)) if self.local and amount is not None else percentage(amount, 4 if amount is not None and 0 < amount < Decimal("0.01") else 2), str(credits) if credits is not None else "—"], [None, amount, credits])
@@ -213,4 +215,7 @@ class ChatUsagePanel(QWidget):
             self.tree.setItemWidget(detail, 0, panel); detail.setSizeHint(0, QSize(0, max(145, panel.sizeHint().height())))
         self.tree.setSortingEnabled(True); self.tree.sortItems(1, Qt.SortOrder.DescendingOrder)
         self.tree.setVisible(bool(rows))
-        self.note.setText(tr("仅统计本机记录") if self.local else (tr("当前周额度 · 本机可用聊天") + " · " + tr("统计截至 ") + str(self.report.get("data_as_of") or "—")) if rows else self.error or tr("当前账户尚未提供这项明细"))
+        note = tr("仅统计本机记录") if self.local else (tr("当前周额度 · 本机可用聊天") + " · " + tr("统计截至 ") + str(self.report.get("data_as_of") or "—")) if rows else self.error or tr("当前账户尚未提供这项明细")
+        if rows and self.error and not self.local:
+            note += " · " + self.error
+        self.note.setText(note)

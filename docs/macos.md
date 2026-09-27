@@ -47,7 +47,7 @@ Contents/Resources/codex-cli/
 
 原请求小、中、大 Widget 的 `kind = com.wujuhu.codexio.request`、内容顺序、几何和视觉保留，仅固定文案本地化。新增额度 Widget 使用 `com.wujuhu.codexio.quota`，提供单额度、双额度、分段刻度双额度三种最小尺寸样式。
 
-Widget Bundle 为 `com.wujuhu.codexio.widget`，本次构建号 **14**、短版本 **1.13**。扩展只读取上限 32 KiB 的精简快照，主程序与原生后台服务采用相同刷新规则；系统决定实际显示时机。
+Widget Bundle 为 `com.wujuhu.codexio.widget`，本次构建号 **15**、短版本 **1.14**。扩展只读取上限 32 KiB 的精简快照，主程序与原生后台服务采用相同刷新规则；系统决定实际显示时机。
 
 唯一稳定宿主是 `/Applications/Codexio.app`。从其他路径启动完整 APP 时，校验版本、签名与 Widget 后原子接管；新进程确认启动及当前扩展注册后才清理旧备份。注册当前路径成功后，再注销 Codexio 的其他旧路径。接管失败恢复旧版。构建／模拟／冒烟不会触发真实宿主接管或系统注册。
 

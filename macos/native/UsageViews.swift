@@ -71,8 +71,7 @@ struct LocalActivityView: View {
                 Picker("",selection:$aggregation) { Text(L("每日", "Daily")).tag("day"); Text(L("每周", "Weekly")).tag("week"); Text(L("累计", "Cumulative")).tag("cumulative") }.labelsHidden().pickerStyle(.segmented).frame(width:210)
             }.padding(.top,10)
             heatmap
-            HStack { Text(stats.days.first?.date.formatted(.dateTime.month().year()) ?? "—"); Spacer(); Text(stats.days.last?.date.formatted(.dateTime.month().year()) ?? "—") }.font(.system(size:12)).foregroundStyle(.secondary)
-            if let hovered { Text(hovered.date.formatted(date:.abbreviated,time:.omitted)+" · "+compact(hovered.tokens.map(Double.init))+" Token").font(.system(size:12)).foregroundStyle(.secondary) }
+            Text(hovered.map {$0.date.formatted(date:.abbreviated,time:.omitted)+" · "+compact($0.tokens.map(Double.init))+" Token"} ?? " ").font(.system(size:12)).foregroundStyle(.secondary).frame(height:16)
             SectionHeading(title:L("活动洞察", "Activity insights")).padding(.top,10)
             HStack(spacing:55) {
                 HStack { Text(L("快速模式", "Fast mode")).foregroundStyle(.secondary); Spacer(); Text(percent(stats.fastPercent)).monospacedDigit() }
@@ -101,6 +100,7 @@ struct LocalActivityView: View {
         let columns = max(1,(values.count+offset+rows-1)/rows)
         return GeometryReader { geometry in
             let side = max(4,min(16,(geometry.size.width-CGFloat(columns-1)*4)/CGFloat(columns)))
+            VStack(alignment:.leading,spacing:10) {
             HStack(alignment:.top,spacing:4) {
                 ForEach(0..<columns,id:\.self) { column in
                     VStack(spacing:4) {
@@ -109,14 +109,23 @@ struct LocalActivityView: View {
                             if values.indices.contains(index) {
                                 let day = values[index], amount = day.tokens ?? 0
                                 RoundedRectangle(cornerRadius:3).fill(amount > 0 ? Color.blue.opacity(0.2+0.8*pow(Double(amount)/Double(maximum),0.45)) : Color.secondary.opacity(0.14)).frame(width:side,height:aggregation == "week" ? 44 : side)
-                                    .onHover { inside in if inside { hovered = day } }
+                                    .onHover { inside in hovered = inside ? day : nil }
                                     .accessibilityLabel(day.date.formatted(date:.abbreviated,time:.omitted)+" "+compact(day.tokens.map(Double.init))+" Token")
                             } else { Color.clear.frame(width:side,height:side) }
                         }
                     }
                 }
             }
-        }.frame(height:aggregation == "week" ? 44 : 137)
+            let months = values.indices.filter { ($0 == 0 && Calendar.current.component(.day,from:values[$0].date) <= 20) || ($0 > 0 && Calendar.current.component(.month,from:values[$0].date) != Calendar.current.component(.month,from:values[$0-1].date)) }
+            ZStack(alignment:.topLeading) {
+                ForEach(months,id:\.self) { index in
+                    Text(values[index].date.formatted(.dateTime.month(.abbreviated)))
+                        .font(.system(size:11)).foregroundStyle(.secondary)
+                        .offset(x:CGFloat((index+offset)/rows)*(side+4))
+                }
+            }.frame(height:16)
+            }
+        }.frame(height:aggregation == "week" ? 70 : 164)
     }
 }
 
@@ -200,7 +209,7 @@ struct ChatRankingView: View {
                     Button { page += 1 } label: { Image(systemName:"chevron.right") }.disabled((page+1)*25 >= rows.count)
                 }.font(.system(size:11)).foregroundStyle(.secondary)
             }
-        }
+        }.onAppear { if state.paths.mock && CommandLine.arguments.contains("--mock-gallery") { expanded.insert("mock-chat-0") } }
     }
     private func rowView(_ row: Object) -> some View {
         let id = row.string("thread_id"), isExpanded = expanded.contains(id)

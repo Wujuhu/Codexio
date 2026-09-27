@@ -205,7 +205,7 @@ private final class RelayConnection: NSObject, URLSessionDataDelegate, @unchecke
         if error != nil { finish(); return }
         connection.send(content:Data("0\r\n\r\n".utf8),completion:.contentProcessed { [weak self] _ in self?.finish() })
     }
-    func urlSession(_ session: URLSession,task: URLSessionTask,willPerformHTTPRedirection response: HTTPURLResponse,newRequest request: URLRequest,completionHandler: @escaping (URLRequest?)->Void) { completionHandler(request.url?.host == origin.host ? request : nil) }
+    func urlSession(_ session: URLSession,task: URLSessionTask,willPerformHTTPRedirection response: HTTPURLResponse,newRequest request: URLRequest,completionHandler: @escaping (URLRequest?)->Void) { completionHandler(request.url?.host == origin.host && request.url?.scheme == origin.scheme && request.url?.port == origin.port ? request : nil) }
     private func fail(_ status: Int) {
         guard !responseStarted else { finish(); return }
         connection.send(content:Data("HTTP/1.1 \(status) Relay Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8),completion:.contentProcessed { [weak self] _ in self?.finish() })

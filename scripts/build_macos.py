@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
 STAGING = BUILD / "staging/macos"
 DESTINATION = BUILD / "dev/macos"
-WIDGET_VERSION = 14  # Increase for widget UI, registration, or host-lifecycle changes.
+WIDGET_VERSION = 15  # Increase for widget UI, registration, or host-lifecycle changes.
 
 
 def run(*args, **kwargs):
@@ -86,11 +86,11 @@ def build_native(bundle, version):
     resources.mkdir(parents=True)
     environment = swift_environment()
     target = platform.machine() + "-apple-macos15.0"
-    sources = sorted((ROOT / "macos/native").glob("*.swift"))
+    sources = sorted((ROOT / "macos/native").glob("*.swift")) + sorted((ROOT / "macos/widget").glob("*.swift"))
     cache = BUILD / "cache/swift"
     cache.mkdir(parents=True, exist_ok=True)
     run("xcrun", "swiftc", "-swift-version", "5", "-O", "-whole-module-optimization", "-target", target,
-        "-parse-as-library", "-module-name", "Codexio", "-module-cache-path", cache,
+        "-parse-as-library", "-D", "CODEXIO_APP_WIDGET_PREVIEW", "-module-name", "Codexio", "-module-cache-path", cache,
         *sources, "-o", executable, env=environment)
     info = {
         "CFBundleIdentifier": "com.wujuhu.codexio", "CFBundleExecutable": "Codexio",
