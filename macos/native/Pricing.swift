@@ -54,7 +54,10 @@ final class PricingCatalog {
             }
         }
         ratesByModel = Dictionary(grouping:rows,by: { $0.model })
-        version = identity(rows.map(\.raw)); updated = parsedDate(cache["updated_at"])
+        version = identity(["rule":1,"rows":rows.map { row -> Object in
+            var value = row.raw; value.removeValue(forKey:"updated_at"); return value
+        }] as Object)
+        updated = parsedDate(cache["updated_at"])
     }
     func price(_ raw: Object) -> Object {
         var value = raw; value["cost_usd"] = NSNull(); value["pricing_status"] = "unpriced"; value["price_version"] = version
@@ -86,7 +89,9 @@ final class PricingCatalog {
         try atomicJSON(overrides,to:directory.appendingPathComponent("pricing_overrides.json")); rebuild(); try archive()
     }
     private func archive() throws {
-        try atomicJSON(["price_version":version,"created_at":iso(),"standard_rows":bases,"rows":rows.map(\.raw),"unit":"USD per million tokens"],to:directory.appendingPathComponent("versions/\(version).json"))
+        let destination = directory.appendingPathComponent("versions/\(version).json")
+        guard !FileManager.default.fileExists(atPath:destination.path) else { return }
+        try atomicJSON(["price_version":version,"created_at":iso(),"standard_rows":bases,"rows":rows.map(\.raw),"unit":"USD per million tokens"],to:destination)
     }
     func sync(force: Bool = false) throws {
         let retry: TimeInterval = cache.string("status") == "offline" ? 3600 : 86400

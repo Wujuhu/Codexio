@@ -44,6 +44,34 @@ func jsonData(_ value: Any) throws -> Data {
 func jsonObject(_ data: Data) -> Object { (try? JSONSerialization.jsonObject(with: data)) as? Object ?? [:] }
 func jsonString(_ value: Any) -> String { (try? jsonData(value)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}" }
 func readObject(_ url: URL) -> Object { (try? Data(contentsOf: url)).map(jsonObject) ?? [:] }
+struct FileStamp: Equatable {
+    let exists: Bool
+    let size: UInt64
+    let modified: Date?
+    let device: UInt64
+    let inode: UInt64
+    init(_ url: URL) {
+        let fields = try? FileManager.default.attributesOfItem(atPath:url.path)
+        exists = fields != nil; size = (fields?[.size] as? NSNumber)?.uint64Value ?? 0
+        modified = fields?[.modificationDate] as? Date
+        device = (fields?[.systemNumber] as? NSNumber)?.uint64Value ?? 0
+        inode = (fields?[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0
+    }
+}
+final class ObjectFileCache {
+    private var entries: [URL:(FileStamp,Object)] = [:]
+    func read(_ url: URL) -> Object {
+        let stamp = FileStamp(url)
+        if let entry = entries[url], entry.0 == stamp { return entry.1 }
+        let value: Object
+        if stamp.exists {
+            guard let data = try? Data(contentsOf:url), let decoded = (try? JSONSerialization.jsonObject(with:data)) as? Object else { return entries[url]?.1 ?? [:] }
+            value = decoded
+        } else { value = [:] }
+        if entries.count >= 8 { entries.removeAll(keepingCapacity:true) }
+        entries[url] = (stamp,value); return value
+    }
+}
 func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
 func identity(_ value: Any) -> String { digest((try? jsonData(value)) ?? Data()) }
 
@@ -265,6 +293,11 @@ struct QuotaState {
     var fresh: Bool { applicable && error == nil && updated.map { Date().timeIntervalSince($0) < 900 } == true }
     var five: QuotaWindow? { windows.first { $0.minutes == 300 } }
     var week: QuotaWindow? { windows.first { $0.minutes == 10080 } }
+    var contentKey: String {
+        identity(["account":account,"applicable":applicable,"detailsKnown":detailsKnown,
+                  "availableCount":availableCount as Any? ?? NSNull(),"error":error as Any? ?? NSNull(),
+                  "windows":windows.map { ["id":$0.id,"minutes":$0.minutes,"used":$0.used as Any? ?? NSNull(),"reset":$0.reset?.timeIntervalSince1970 as Any? ?? NSNull()] as Object },"credits":credits.map(\.raw)] as Object)
+    }
     mutating func update(_ response: Object) {
         let buckets = response.object("rateLimitsByLimitId")
         let bucket = buckets.object("codex").isEmpty ? response.object("rateLimits") : buckets.object("codex")

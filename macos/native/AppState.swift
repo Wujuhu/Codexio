@@ -11,17 +11,22 @@ final class AppState: ObservableObject {
     let estimator: WeeklyEstimator
     let client = CodexClient()
     let clock = ScanClock()
+    let quotaClock = ScanClock()
+    private lazy var usageCache = UsageSnapshotCache(database:database,catalog:catalog)
+    private let objectFiles = ObjectFileCache()
     let overviewProjection = AsyncProjection(TrendProjection())
     let trendProjection = AsyncProjection(TrendProjection())
     let logProjection = AsyncProjection(LogProjection())
     private let snapshotQueue = DispatchQueue(label:"com.wujuhu.codexio.widget-snapshot",qos:.utility)
     private(set) var pricesRevision = ""
-    private var displayedEstimates = ""
+    private var displayedEstimates = -1
     let dataQueue = DispatchQueue(label:"com.wujuhu.codexio.data",qos:.utility)
     let accountQueue = DispatchQueue(label:"com.wujuhu.codexio.account",qos:.utility)
     let reportQueue = DispatchQueue(label:"com.wujuhu.codexio.reports",qos:.utility)
     @Published var usage = UsageSnapshot()
-    @Published var quota = QuotaState()
+    private(set) var quota = QuotaState()
+    private var displayedQuotaKey = ""
+    private var displayedQuotaFresh = false
     @Published var prices: [PriceRow] = []
     @Published var modelIDs = Set<String>()
     @Published var priceUpdated: Date?
@@ -59,11 +64,9 @@ final class AppState: ObservableObject {
     private var reportLoadedAt: Date?
     private var reportRetryAt = Date.distantPast
     private var reportedCandidates = 0
+    private var reportInFlight = false
     private var snapshotSignature = ""
     private var snapshotWritten = Date.distantPast
-    private var computationKey = ""
-    private var computedUsage: UsageSnapshot?
-    private var computationExpires = Date.distantPast
     var onQuotaChange: (() -> Void)?
     var onSettingsChange: (() -> Void)?
     var onCheckUpdate: (() -> Void)?
@@ -127,7 +130,7 @@ final class AppState: ObservableObject {
             if initial { self.publishUsage() }
             do {
                 try self.indexer.scan(roots) { current,total in
-                    if current == total || current % 50 == 0 { DispatchQueue.main.async { let text = "\(current) / \(total)"; if self.scanProgress != text { self.scanProgress = text } } }
+                    if initial && (current == total || current % 50 == 0) { DispatchQueue.main.async { let text = "\(current) / \(total)"; if self.scanProgress != text { self.scanProgress = text } } }
                 }
                 self.publishUsage()
             } catch { DispatchQueue.main.async { self.errorMessage = error.localizedDescription; self.loading = false } }
@@ -136,33 +139,13 @@ final class AppState: ObservableObject {
     }
     private func publishUsage(finishLoading: Bool = true) {
         do {
-            let revision = try database.query("SELECT SUM(revision) AS value FROM usage_revisions").first?.integer("value") ?? 0
-            let upstreamFile = paths.data.appendingPathComponent("upstream.sqlite")
-            let upstream = try? Database(upstreamFile,readOnly:true)
-            let upstreamRevision = (try? upstream?.query("SELECT COUNT(*) AS count, MAX(observed_at) AS stamp FROM observations").first) ?? [:]
-            let key = "\(revision):\(identity(upstreamRevision)):\(catalog.version):\(Calendar.current.dateInterval(of:.hour,for:Date())!.start.timeIntervalSince1970)"
-            var result: UsageSnapshot
-            if key == computationKey, Date() < computationExpires, let cached = computedUsage { result = cached }
-            else {
-                var records = try database.records()
-                if let upstream, let models = try? upstream.query("SELECT response_id,model FROM observations") {
-                    let detected = Dictionary(models.map {($0.string("response_id"),$0.string("model"))},uniquingKeysWith:{$1})
-                    for index in records.indices { records[index]["upstream_model"] = detected[records[index].string("response_id")] }
-                }
-                let turns = try database.metadata("usage_turns")
-                result = Analytics.build(records:records,turns:turns,links:try database.metadata("usage_agent_links"),catalog:catalog)
-                let statusExpiry = turns.filter {$0.string("status") == "running"}.compactMap { parsedDate($0["observed_at"])?.addingTimeInterval(901) }.filter {$0 > Date()}.min()
-                let futureRecord = records.compactMap {parsedDate($0["timestamp"])}.filter {$0 > Date()}.min()
-                computationExpires = [statusExpiry,futureRecord,Calendar.current.date(byAdding:.day,value:1,to:Calendar.current.startOfDay(for:Date()))].compactMap {$0}.min() ?? .distantFuture
-                computationKey = key; computedUsage = result
-            }
-            result.updated = Date()
+            let result = try usageCache.load()
             let prices = catalog.rows, priceUpdated = catalog.updated, priceWarning = catalog.warning
-            let models = paths.mock ? Set(["gpt-6-astra","gpt-5.6-sol","gpt-6-luna"]) : Set(readObject(accountRoot.appendingPathComponent("models_cache.json")).objects("models").filter { row in
+            let models = paths.mock ? Set(["gpt-6-astra","gpt-5.6-sol","gpt-6-luna"]) : Set(objectFiles.read(accountRoot.appendingPathComponent("models_cache.json")).objects("models").filter { row in
                 !row.flag("hidden") && row.string("visibility") != "hide" && (row["hidden"] is Bool || row.string("visibility") == "list")
             }.map {$0.string("slug",$0.string("model",$0.string("id")))}.filter {!$0.isEmpty})
             let estimates = try estimator.process(calls:result.calls,priceVersion:catalog.version)
-            let estimatesKey = identity(estimates), priceVersion = catalog.version
+            let estimatesKey = estimator.revision, priceVersion = catalog.version
             DispatchQueue.main.async { [weak self] in
                 guard let self, !self.stopped else { return }
                 if self.usage.revision != result.revision { self.usage = result }
@@ -212,14 +195,25 @@ final class AppState: ObservableObject {
                 DispatchQueue.main.async {
                     guard !self.stopped else { return }
                     if self.quota.account.string("identityKey") != next.account.string("identityKey") || self.quota.account.string("planType") != next.account.string("planType") { self.invalidateReports(); self.pendingResets.removeAll() }
-                    self.quota = next; self.pendingResets = Set(pending.map {$0.string("creditId")}); self.refreshing = false; self.onQuotaChange?(); self.publishWidget()
+                    self.applyQuota(next)
+                    let pendingIDs = Set(pending.map {$0.string("creditId")})
+                    if self.pendingResets != pendingIDs { self.pendingResets = pendingIDs }
+                    self.refreshing = false; self.publishWidget()
                     if self.reportsVisible { self.refreshReports() }
                 }
             } catch {
                 if !self.client.running { self.client.close() }
-                DispatchQueue.main.async { guard !self.stopped else { return }; self.quota.error = error.localizedDescription; self.refreshing = false; self.onQuotaChange?(); self.publishWidget() }
+                DispatchQueue.main.async { guard !self.stopped else { return }; var next = self.quota; next.error = error.localizedDescription; self.applyQuota(next); self.refreshing = false; self.publishWidget() }
             }
         }
+    }
+    private func applyQuota(_ next: QuotaState) {
+        let key = next.contentKey, fresh = next.fresh
+        let changed = key != displayedQuotaKey || fresh != displayedQuotaFresh
+        if changed { objectWillChange.send() }
+        quota = next; displayedQuotaKey = key; displayedQuotaFresh = fresh
+        if quotaClock.updated != next.updated { quotaClock.updated = next.updated }
+        if changed { onQuotaChange?() }
     }
     func consumeReset(_ selected: ResetCredit,expectedAccount: String) {
         guard !paths.mock, !resetBusy, quota.fresh, selected.available || pendingResets.contains(selected.id), quota.credits.contains(where:{$0.id == selected.id}) else { return }
@@ -265,7 +259,9 @@ final class AppState: ObservableObject {
         }
     }
     func invalidateReports() {
-        reportGeneration = UUID(); reportLoadedAt = nil; reportedCandidates = 0; planHistory = [:]; chatUsage = [:]; reportError = nil; reportsLoading = false
+        reportGeneration = UUID(); reportLoadedAt = nil; reportedCandidates = 0; reportInFlight = false
+        if !planHistory.isEmpty { planHistory = [:] }; if !chatUsage.isEmpty { chatUsage = [:] }
+        if reportError != nil { reportError = nil }; if reportsLoading { reportsLoading = false }
     }
     private var reportsVisible: Bool { mainWindowVisible && (selectedPage == "subscription" || (selectedPage == "trends" && usageSection == "threads")) }
     func refreshVisibleReports() { if reportsVisible { refreshReports() } }
@@ -274,11 +270,13 @@ final class AppState: ObservableObject {
         return ((try? database.query("SELECT data FROM usage_meta WHERE key LIKE ?",["reset-operation:"+account+":%"])) ?? []).map {jsonObject(Data($0.string("data").utf8))}.filter {!$0.string("creditId").isEmpty}
     }
     func refreshReports(force: Bool = false) {
-        guard !paths.mock, mainWindowVisible, !reportsLoading, !stopped, !quota.account.isEmpty else { return }
+        guard !paths.mock, mainWindowVisible, !reportInFlight, !stopped, !quota.account.isEmpty else { return }
         guard Date() >= reportRetryAt else { return }
         if !force, let date = reportLoadedAt, Date().timeIntervalSince(date) < 60 { return }
         guard quota.applicable else { return }
-        reportsLoading = true; reportError = nil
+        reportInFlight = true
+        if force || (planHistory.isEmpty && chatUsage.isEmpty) { reportsLoading = true }
+        if force && reportError != nil { reportError = nil }
         let generation = UUID(); reportGeneration = generation
         let candidates = usage.chatCandidates, root = accountRoot, expectedAccount = quota.account.string("identityKey")
         reportQueue.async { [weak self] in
@@ -296,19 +294,26 @@ final class AppState: ObservableObject {
             DispatchQueue.main.async {
                 guard !self.stopped, self.reportGeneration == generation, self.quota.account.string("identityKey") == expectedAccount else { return }
                 guard identityMatches else { self.invalidateReports(); self.refreshQuota(); return }
-                if !history.isEmpty { self.planHistory = history }
-                if !chats.isEmpty { self.chatUsage = chats }
-                self.reportsLoading = false; self.reportLoadedAt = Date()
+                if !history.isEmpty && !NSDictionary(dictionary:history).isEqual(to:self.planHistory) { self.planHistory = history }
+                if !chats.isEmpty && !NSDictionary(dictionary:chats).isEqual(to:self.chatUsage) { self.chatUsage = chats }
+                if self.reportsLoading { self.reportsLoading = false }; self.reportInFlight = false; self.reportLoadedAt = Date()
                 self.reportRetryAt = retryAt; self.reportedCandidates = candidates.count
-                self.reportError = errors.isEmpty ? nil : Array(Set(errors)).joined(separator:" · ")
+                let error = errors.isEmpty ? nil : Array(Set(errors)).sorted().joined(separator:" · ")
+                if self.reportError != error { self.reportError = error }
             }
         }
     }
     func setPreference(_ key: String, _ value: Any, general: Bool = false) {
+        let previous = general ? preferences.general[key] : preferences.analytics[key]
+        if let previous, jsonString(previous) == jsonString(value) { return }
         if general { preferences.general[key] = value } else { preferences.analytics[key] = value }
         do { try preferences.save() } catch { errorMessage = error.localizedDescription }
-        theme = preferences.analytics.string("theme","system"); menuVisible = preferences.analytics.flag("menu_bar_visible",true); menuContent = preferences.analytics.string("menu_bar_content","week")
-        configureTimers(); onSettingsChange?(); objectWillChange.send()
+        if key == "theme" { theme = preferences.analytics.string("theme","system") }
+        if key == "menu_bar_visible" { menuVisible = preferences.analytics.flag("menu_bar_visible",true) }
+        if key == "menu_bar_content" { menuContent = preferences.analytics.string("menu_bar_content","week") }
+        if ["usage_refresh_interval_seconds","refresh_interval_seconds"].contains(key) { configureTimers() }
+        if ["theme","menu_bar_visible","menu_bar_content"].contains(key) { onSettingsChange?() }
+        objectWillChange.send()
     }
     func toggleSidebar() { sidebarVisible.toggle(); persistSidebar() }
     func persistSidebar() {
@@ -383,7 +388,7 @@ final class AppState: ObservableObject {
                 DispatchQueue.main.async {
                     var quota = QuotaState(); quota.account = ["type":"chatgpt","email":"demo@example.invalid","planType":"pro","identityKey":"mock-account"]
                     quota.update(["rateLimits":["primary":["usedPercent":26,"windowDurationMins":300,"resetsAt":now.addingTimeInterval(7200).timeIntervalSince1970],"secondary":["usedPercent":77,"windowDurationMins":10080,"resetsAt":now.addingTimeInterval(432000).timeIntervalSince1970]],"rateLimitResetCredits":["availableCount":2,"credits":[["id":"mock-reset-1","title":L("重置 1", "Reset 1"),"status":"available","resetType":"codexRateLimits","expiresAt":now.addingTimeInterval(864000).timeIntervalSince1970],["id":"mock-reset-2","title":L("重置 2", "Reset 2"),"status":"available","resetType":"codexRateLimits","expiresAt":now.addingTimeInterval(1728000).timeIntervalSince1970]]]])
-                    self.quota = quota; self.priceUpdated = now
+                    self.applyQuota(quota); self.priceUpdated = now
                     self.preferences.analytics["subscription_profile"] = ["plan":"ChatGPT Pro","price_usd":200.0,"renewal_date":"2026-10-27"]
                     self.planHistory = ["data_as_of":iso(now),"coverage_complete":true,"approximate":false,"periods":[["id":"mock-period","window_minutes":10080,"starts_at":iso(now.addingTimeInterval(-172800)),"ends_at":iso(now.addingTimeInterval(432000)),"accounting_complete":true,"used_basis_points":7700,"breakdowns":[["dimension":"model","rows":[["key":"gpt-6-astra","basis_points":4160],["key":"gpt-5.6-sol","basis_points":2580],["key":"gpt-6-luna","basis_points":960]]]]]]]
                     self.chatUsage = ["data_as_of":iso(now),"threads":(0..<4).map { index -> Object in

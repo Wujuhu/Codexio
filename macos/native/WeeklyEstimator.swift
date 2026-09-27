@@ -8,6 +8,10 @@ final class WeeklyEstimator {
     private var latest: Object?
     private var pending: [Object] = []
     private var interval = 30
+    private var cachedRows: [Object]?
+    private var cachedPrices = ""
+    private var databaseVersion: Int?
+    private(set) var revision = 0
     init(_ database: Database) throws {
         self.database = database
         try database.script("CREATE TABLE IF NOT EXISTS usage_week_intervals(id INTEGER PRIMARY KEY AUTOINCREMENT,end_at TEXT NOT NULL,data TEXT NOT NULL); CREATE INDEX IF NOT EXISTS week_intervals_end ON usage_week_intervals(end_at DESC,id DESC);")
@@ -46,9 +50,12 @@ final class WeeklyEstimator {
                     let row: Object = ["start":iso(Date(timeIntervalSince1970:beginning)),"end":iso(Date(timeIntervalSince1970:end)),"account_key":sample.string("account_key"),"plan_type":sample.string("plan_type"),"limit_id":"codex","reset_at":sample["reset_at"]!,"sole_codex_pool":start.flag("sole_codex_pool"),"start_percent":start["used_percent"]!,"end_percent":sample["used_percent"]!,"delta_percent":delta,"consumed_tokens":tokens,"consumed_usd":dollars,"estimated_total_usd":100*dollars/delta,"price_version":priceVersion]
                     try database.run("INSERT INTO usage_week_intervals(end_at,data) VALUES(?,?)",[row.string("end"),jsonString(row)])
                     try database.run("DELETE FROM usage_week_intervals WHERE id NOT IN (SELECT id FROM usage_week_intervals ORDER BY end_at DESC,id DESC LIMIT 100)")
+                    cachedRows = nil
                 }
             }
         }
+        let version = try database.query("PRAGMA data_version").first?.integer("data_version")
+        if let cachedRows, cachedPrices == priceVersion, databaseVersion == version { return cachedRows }
         let rows = try database.query("SELECT id,data FROM usage_week_intervals ORDER BY end_at DESC,id DESC LIMIT 100")
         var result: [Object] = []
         for stored in rows {
@@ -61,6 +68,7 @@ final class WeeklyEstimator {
             }
             row["id"] = stored["id"]; result.append(row)
         }
+        cachedRows = result; cachedPrices = priceVersion; databaseVersion = version; revision += 1
         return result
     }
 }

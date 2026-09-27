@@ -5,21 +5,23 @@ final class UsageIndexer {
     private var cancelled = false
     private struct Signature: Equatable { let size: Int; let modified: Double }
     private var scannedFiles: [String:Signature] = [:]
-    private var titleReadAt: [String:Date] = [:]
+    private struct FileList { let files: [URL]; let directories: [URL:FileStamp]; let checked: TimeInterval }
+    private var fileLists: [URL:FileList] = [:]
+    private var titleInputs: [URL:[URL:FileStamp]] = [:]
+    private let rolloutPattern = try! NSRegularExpression(pattern:#"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"#)
     private let counters = ["input_tokens","cached_input_tokens","cache_write_input_tokens","output_tokens","reasoning_output_tokens","total_tokens"]
     init(_ database: Database) { self.database = database }
     func cancel() { cancelled = true }
     func rescan() throws {
-        scannedFiles.removeAll(); titleReadAt.removeAll()
+        scannedFiles.removeAll(); titleInputs.removeAll(); fileLists.removeAll()
         try database.transaction {
             try database.run("DELETE FROM usage_cursors WHERE key LIKE 'native-v1:%' OR key LIKE 'usage:local:%' OR key LIKE 'usage:local:%:%'")
         }
     }
 
     private func rolloutID(_ url: URL) -> String {
-        let pattern = #"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"#
         let name = url.lastPathComponent
-        let matches = (try? NSRegularExpression(pattern:pattern).matches(in:name,range:NSRange(name.startIndex...,in:name))) ?? []
+        let matches = rolloutPattern.matches(in:name,range:NSRange(name.startIndex...,in:name))
         if let range = matches.last.flatMap({Range($0.range,in:name)}) { return String(name[range]).lowercased() }
         return String(identity(name).prefix(32))
     }
@@ -28,47 +30,64 @@ final class UsageIndexer {
         for root in roots {
             if cancelled { return }
             try titles(root)
-            var selected: [String:(URL,Int)] = [:]
-            for folder in ["sessions","archived_sessions"] {
-                guard let iterator = FileManager.default.enumerator(at:root.appendingPathComponent(folder),includingPropertiesForKeys:[.isSymbolicLinkKey,.fileSizeKey],options:[.skipsHiddenFiles]) else { continue }
-                for case let file as URL in iterator {
-                    if cancelled { return }
-                    let info = try? file.resourceValues(forKeys:[.isSymbolicLinkKey,.fileSizeKey])
-                    if info?.isSymbolicLink == true { iterator.skipDescendants(); continue }
-                    guard file.pathExtension == "jsonl" else { continue }
-                    let key = rolloutID(file), size = info?.fileSize ?? 0
-                    if selected[key] == nil || selected[key]!.1 < size { selected[key] = (file,size) }
-                }
-            }
-            let files = selected.values.map(\.0).sorted { $0.path < $1.path }
+            let files = sessionFiles(root)
             for (index,file) in files.enumerated() {
                 if cancelled { return }
                 try scanFile(file,root:root); progress(index+1,files.count)
             }
         }
+        let active = Set(roots)
+        fileLists = fileLists.filter {active.contains($0.key)}; titleInputs = titleInputs.filter {active.contains($0.key)}
+        let paths = Set(fileLists.values.flatMap {$0.files.map(\.path)})
+        scannedFiles = scannedFiles.filter {paths.contains($0.key)}
+    }
+    private func sessionFiles(_ root: URL) -> [URL] {
+        let now = ProcessInfo.processInfo.systemUptime
+        if let cached = fileLists[root], now-cached.checked < 60,
+           cached.directories.allSatisfy({FileStamp($0.key) == $0.value}) { return cached.files }
+        var directories = Set([root]), selected: [String:(URL,Int)] = [:]
+        for folder in ["sessions","archived_sessions"] {
+            let directory = root.appendingPathComponent(folder); directories.insert(directory)
+            guard let iterator = FileManager.default.enumerator(at:directory,includingPropertiesForKeys:[.isSymbolicLinkKey,.isDirectoryKey,.fileSizeKey],options:[.skipsHiddenFiles]) else { continue }
+            for case let file as URL in iterator {
+                if cancelled { return [] }
+                let info = try? file.resourceValues(forKeys:[.isSymbolicLinkKey,.isDirectoryKey,.fileSizeKey])
+                if info?.isSymbolicLink == true { iterator.skipDescendants(); continue }
+                if info?.isDirectory == true { directories.insert(file); continue }
+                guard file.pathExtension == "jsonl" else { continue }
+                let key = rolloutID(file), size = info?.fileSize ?? 0
+                if selected[key] == nil || selected[key]!.1 < size { selected[key] = (file,size) }
+            }
+        }
+        let files = selected.values.map(\.0).sorted {$0.path < $1.path}
+        fileLists[root] = FileList(files:files,directories:Dictionary(uniqueKeysWithValues:directories.map {($0,FileStamp($0))}),checked:now)
+        return files
     }
     private func titles(_ root: URL) throws {
-        if let stamp = titleReadAt[root.path], Date().timeIntervalSince(stamp) < 60 { return }
-        var values: [String:String] = [:]
         let index = root.appendingPathComponent("session_index.jsonl")
-        if let data = try? Data(contentsOf:index), data.count < 32_000_000, let text = String(data:data,encoding:.utf8) {
+        let states = (try? FileManager.default.contentsOfDirectory(at:root,includingPropertiesForKeys:nil))?.filter { $0.lastPathComponent.hasPrefix("state") && $0.pathExtension == "sqlite" } ?? []
+        let inputs = [index]+states.flatMap {[$0,$0.deletingLastPathComponent().appendingPathComponent($0.lastPathComponent+"-wal")]}
+        let signatures = Dictionary(uniqueKeysWithValues:inputs.map {($0,FileStamp($0))})
+        if titleInputs[root] == signatures { return }
+        var values: [String:String] = [:], complete = true
+        if signatures[index]?.exists == true && (signatures[index]?.size ?? 0) < 32_000_000 {
+            guard let data = try? Data(contentsOf:index), let text = String(data:data,encoding:.utf8) else { return }
             for line in text.split(separator:"\n") {
                 let row = jsonObject(Data(line.utf8)), id = row.string("id",row.string("thread_id")), title = row.string("thread_name",row.string("title"))
                 if !id.isEmpty && !title.hasPrefix("# AGENTS.md") { values[id] = String(title.prefix(400)) }
             }
         }
-        let states = (try? FileManager.default.contentsOfDirectory(at:root,includingPropertiesForKeys:nil))?.filter { $0.lastPathComponent.hasPrefix("state") && $0.pathExtension == "sqlite" } ?? []
         for file in states.sorted(by:{$0.lastPathComponent < $1.lastPathComponent}) {
             if let db = try? Database(file,readOnly:true), let rows = try? db.query("SELECT id,title FROM threads") {
                 for row in rows where !row.string("id").isEmpty { values[row.string("id")] = String(row.string("title").prefix(400)) }
-            }
+            } else { complete = false }
         }
         try database.updateTitles(values)
-        titleReadAt[root.path] = Date()
+        if complete { titleInputs[root] = signatures }
     }
     private func scanFile(_ file: URL, root: URL) throws {
-        let info = try file.resourceValues(forKeys:[.fileSizeKey,.contentModificationDateKey])
-        let size = info.fileSize ?? 0, modified = info.contentModificationDate?.timeIntervalSince1970 ?? 0
+        let info = try FileManager.default.attributesOfItem(atPath:file.path)
+        let size = (info[.size] as? NSNumber)?.intValue ?? 0, modified = (info[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
         let signature = Signature(size:size,modified:modified)
         if scannedFiles[file.path] == signature { return }
         let rollout = rolloutID(file), key = "native-v1:" + String(identity(root.path).prefix(16)) + ":" + rollout

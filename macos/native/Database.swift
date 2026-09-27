@@ -97,12 +97,15 @@ final class Database {
         try run("INSERT INTO \(table)(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",[key,jsonString(value)])
     }
     func records() throws -> [Object] {
-        try query("SELECT r.data,t.title,EXISTS(SELECT 1 FROM usage_record_sources s WHERE s.record_id=r.id AND (s.source_id='local' OR s.source_id LIKE 'local:%')) AS local_origin FROM usage_records r LEFT JOIN usage_session_titles t ON r.session_id=t.session_id ORDER BY r.timestamp DESC").map { row in
+        try recordPayloads().map { row in
             var value = jsonObject(Data(row.string("data").utf8))
             if !row.string("title").isEmpty { value["session_title"] = row.string("title") }
             value["local_origin"] = row.integer("local_origin") == 1 || value.string("source_id").hasPrefix("local")
             return value
         }
+    }
+    func recordPayloads() throws -> [Object] {
+        try query("SELECT r.id,r.data,t.title,EXISTS(SELECT 1 FROM usage_record_sources s WHERE s.record_id=r.id AND (s.source_id='local' OR s.source_id LIKE 'local:%')) AS local_origin FROM usage_records r LEFT JOIN usage_session_titles t ON r.session_id=t.session_id ORDER BY r.timestamp DESC")
     }
     func metadata(_ table: String) throws -> [Object] {
         guard ["usage_turns","usage_agent_links"].contains(table) else { return [] }

@@ -5,27 +5,34 @@ struct UsageRow: Identifiable {
     let id: String
     let date: Date?
     let runningSince: Date?
+    let tokens: Int?
+    let cost: Double?
+    let local: Bool
+    let confirmedCall: Bool
+    let inputTokens: Int?
+    let cachedTokens: Int?
+    let outputTokens: Int?
     init(raw: Object) {
         self.raw = raw; id = raw.string("id"); date = parsedDate(raw["timestamp"]); runningSince = parsedDate(raw["duration_started_at"])
+        tokens = Self.tokenCount(raw)
+        if ["","priced","estimated"].contains(raw.string("pricing_status")), let value = raw.number("cost_usd"), value >= 0 { cost = value } else { cost = nil }
+        local = raw.flag("local_origin") || raw.string("source_id").hasPrefix("local")
+        let quality = String(raw.string("quality").split(separator:":").first ?? "")
+        confirmedCall = ["","response","legacy_last"].contains(quality) || (quality == "cumulative_delta" && id.hasPrefix("response:"))
+        inputTokens = raw.integer("input_tokens"); cachedTokens = raw.integer("cached_input_tokens"); outputTokens = raw.integer("output_tokens")
     }
     var title: String { raw.string("session_title").isEmpty ? raw.string("prompt_preview",raw.string("session_id")) : raw.string("session_title") }
     var modelLabel: String {
         let requested = raw.string("model"), observed = raw.string("upstream_model")
         return modelName(requested)+(observed.isEmpty || observed == requested ? "" : " → "+modelName(observed))
     }
-    var tokens: Int? {
+    private static func tokenCount(_ raw: Object) -> Int? {
         guard let total = raw.integer("total_tokens"), !raw.string("quality").hasPrefix("invalid") else { return nil }
         if raw["input_tokens"] != nil || raw["output_tokens"] != nil {
             guard let input = raw.integer("input_tokens"), let output = raw.integer("output_tokens"), total == input+output else { return nil }
         }
         return total
     }
-    var confirmedCall: Bool {
-        let quality = String(raw.string("quality").split(separator:":").first ?? "")
-        return ["","response","legacy_last"].contains(quality) || (quality == "cumulative_delta" && id.hasPrefix("response:"))
-    }
-    var cost: Double? { guard ["","priced","estimated"].contains(raw.string("pricing_status")), let n = raw.number("cost_usd"), n >= 0 else { return nil }; return n }
-    var local: Bool { raw.flag("local_origin") || raw.string("source_id").hasPrefix("local") }
     var duration: Double? {
         if raw.flag("duration_running"), let start = runningSince { return max(0,Date().timeIntervalSince(start)) + (raw.number("duration_base_ms") ?? 0)/1000 }
         return raw.number("duration_ms").map {$0/1000}
@@ -49,8 +56,8 @@ struct UsageSummary {
             if let n = row.tokens { tokens = (tokens ?? 0)+n }
             if let n = row.cost { cost = (cost ?? 0)+n } else { unknownCosts += 1 }
             if row.confirmedCall { calls += 1 }
-            if let i = row.raw.integer("input_tokens"), let c = row.raw.integer("cached_input_tokens"), c <= i { input += i; cached += c }
-            output += row.raw.integer("output_tokens") ?? 0
+            if let i = row.inputTokens, let c = row.cachedTokens, c <= i { input += i; cached += c }
+            output += row.outputTokens ?? 0
         }
     }
 }
@@ -93,10 +100,7 @@ struct UsageSnapshot {
     var models: [String] = []
     var localChatRows: [Object] = []
     func members(of row: UsageRow) -> [UsageRow] { (row.raw["member_ids"] as? [String] ?? []).compactMap {callsByID[$0]} }
-    var widgetRequest: UsageRow? {
-        let main = requests.filter {$0.raw.string("record_kind") == "user_request" && !$0.raw.flag("is_subagent") && $0.local}
-        return main.first(where:{$0.raw.string("status") == "running"}) ?? main.first
-    }
+    var widgetRequest: UsageRow?
 }
 
 enum Analytics {
@@ -116,9 +120,9 @@ enum Analytics {
         if let ms = turn.number("duration_ms"), ms >= 0 { return (end.addingTimeInterval(-ms/1000),end) }
         return nil
     }
-    static func build(records: [Object], turns inputTurns: [Object], links: [Object] = [], catalog: PricingCatalog, now: Date = Date()) -> UsageSnapshot {
+    static func build(records: [Object], turns inputTurns: [Object], links: [Object] = [], catalog: PricingCatalog, now: Date = Date(), preparedCalls: [UsageRow]? = nil) -> UsageSnapshot {
         var result = UsageSnapshot()
-        result.calls = records.map { UsageRow(raw:catalog.price($0)) }.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+        result.calls = (preparedCalls ?? records.map { UsageRow(raw:catalog.price($0)) }).sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
         let bySession = Dictionary(grouping:inputTurns,by:{$0.string("session_id")}).mapValues {$0.sorted {$0.string("started_at") < $1.string("started_at")}}
         let turns = inputTurns.map { original -> Object in
             var row = original
@@ -200,6 +204,8 @@ enum Analytics {
             result.requests.append(UsageRow(raw:row))
         }
         result.requests.sort { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+        let mainRequests = result.requests.filter {$0.raw.string("record_kind") == "user_request" && !$0.raw.flag("is_subagent") && $0.local}
+        result.widgetRequest = mainRequests.first(where:{$0.raw.string("status") == "running"}) ?? mainRequests.first
         let calendar = Calendar.current, startToday = calendar.startOfDay(for:now)
         let periods: [(String,Date)] = [("today",startToday),("week",calendar.date(byAdding:.day,value:-6,to:startToday)!),("month",calendar.date(byAdding:.day,value:-29,to:startToday)!),("all",.distantPast)]
         let local = result.calls.filter {$0.local && ($0.date ?? .distantFuture) <= now}

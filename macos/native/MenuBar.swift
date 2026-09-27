@@ -24,7 +24,7 @@ struct MenuBarView: View {
                     Button { state.refreshQuota(); state.refreshUsage() } label: { Image(systemName:"arrow.clockwise").frame(width:24,height:24) }.buttonStyle(.borderless).accessibilityLabel(L("刷新", "Refresh"))
                 }.padding(.horizontal,6).padding(.bottom,3)
                 card {
-                    HStack { Text("Codex").font(.system(size:18,weight:.semibold)); Spacer(); if let stamp = state.quota.updated { Text(stamp,style:.relative).font(.system(size:10)).foregroundStyle(.secondary) } }
+                    HStack { Text("Codex").font(.system(size:18,weight:.semibold)); Spacer(); ScanStamp(clock:state.quotaClock,relative:true).font(.system(size:10)).foregroundStyle(.secondary) }
                     meter(state.quota.five,title:L("5 小时额度", "5-hour limit"))
                     meter(state.quota.week,title:L("周额度", "Weekly limit"))
                     if let error = state.quota.error { StatusNote(text:error) }
