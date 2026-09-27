@@ -9,6 +9,10 @@ enum Branding {
         return image
     }
     static func logo(dark: Bool) -> NSImage { dark ? self.dark : light }
+    static let dockIcon: NSImage = NSImage(size:NSSize(width:1024,height:1024),flipped:false) { rect in
+        light.draw(in:rect.insetBy(dx:rect.width*0.09,dy:rect.height*0.09))
+        return true
+    }
     static func menuIcon() -> NSImage {
         let image = mark.copy() as! NSImage; image.size = NSSize(width:18,height:18); image.isTemplate = true; return image
     }
@@ -20,7 +24,7 @@ enum Branding {
                 let pixels = size*scale
                 guard let bitmap = NSBitmapImageRep(bitmapDataPlanes:nil,pixelsWide:pixels,pixelsHigh:pixels,bitsPerSample:8,samplesPerPixel:4,hasAlpha:true,isPlanar:false,colorSpaceName:.deviceRGB,bytesPerRow:0,bitsPerPixel:0), let context = NSGraphicsContext(bitmapImageRep:bitmap) else { throw AppFailure("Cannot render the app icon") }
                 NSGraphicsContext.saveGraphicsState(); NSGraphicsContext.current = context; context.imageInterpolation = .high
-                image.draw(in:NSRect(x:0,y:0,width:pixels,height:pixels),from:.zero,operation:.copy,fraction:1)
+                image.draw(in:NSRect(x:Double(pixels)*0.09,y:Double(pixels)*0.09,width:Double(pixels)*0.82,height:Double(pixels)*0.82),from:.zero,operation:.copy,fraction:1)
                 NSGraphicsContext.restoreGraphicsState()
                 guard let data = bitmap.representation(using:.png,properties:[:]) else { throw AppFailure("Cannot encode the app icon") }
                 try data.write(to:directory.appendingPathComponent("icon_\(size)x\(size)"+(scale == 2 ? "@2x" : "")+".png"))

@@ -33,10 +33,11 @@ enum MenuBarField {
         default: return L("任务 ", "Task ")+compact(current?.tokens.map(Double.init))
         }
     }
-    static func text(_ state: AppState) -> String { state.menuFields.map {value($0,state:state)}.joined(separator:" · ") }
+    static func text(_ state: AppState) -> String { state.menuFields.map {value($0,state:state)}.joined(separator:"  ") }
 }
 
-final class TaskStatusImageView: NSImageView {
+final class TaskStatusImageView: NSView {
+    private let glyph = CALayer()
     private static let ring: NSImage = {
         let image = Bundle.main.url(forResource:"c-dot-ring-static",withExtension:"png").flatMap {NSImage(contentsOf:$0)} ?? Branding.menuIcon()
         image.size = NSSize(width:18,height:18); image.isTemplate = true; return image
@@ -51,18 +52,18 @@ final class TaskStatusImageView: NSImageView {
     override var isFlipped: Bool { false }
     override var intrinsicContentSize: NSSize { NSSize(width:18,height:18) }
     override init(frame: NSRect) {
-        super.init(frame:frame); wantsLayer = true; imageScaling = .scaleProportionallyUpOrDown
-        contentTintColor = .labelColor
+        super.init(frame:frame); wantsLayer = true
+        glyph.anchorPoint = CGPoint(x:0.5,y:0.5); layer?.addSublayer(glyph)
         observer = NSWorkspace.shared.notificationCenter.addObserver(forName:NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,object:nil,queue:.main) { [weak self] _ in self?.updateAnimation() }
     }
     required init?(coder: NSCoder) { fatalError() }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     func setRunning(_ value: Bool) {
         guard !configured || running != value else { return }
-        configured = true; running = value; image = value ? Self.ring : Self.completed; updateAnimation()
+        configured = true; running = value; updateGlyph(); updateAnimation()
     }
     private func updateAnimation() {
-        guard let layer else { return }
+        let layer = glyph
         if running && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             guard layer.animation(forKey:"task-ring") == nil else { return }
             let animation = CAKeyframeAnimation(keyPath:"transform.rotation.z")
@@ -72,7 +73,29 @@ final class TaskStatusImageView: NSImageView {
             layer.add(animation,forKey:"task-ring")
         } else { layer.removeAnimation(forKey:"task-ring") }
     }
-    func stopAnimation() { layer?.removeAnimation(forKey:"task-ring") }
+    override func layout() {
+        super.layout()
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        glyph.bounds = CGRect(x:0,y:0,width:18,height:18)
+        glyph.position = CGPoint(x:bounds.midX,y:bounds.midY)
+        CATransaction.commit()
+    }
+    override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); updateGlyph() }
+    private func updateGlyph() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            let source = running ? Self.ring : Self.completed
+            let tinted = NSImage(size:NSSize(width:18,height:18),flipped:false) { rect in
+                source.draw(in:rect)
+                NSColor.labelColor.setFill(); rect.fill(using:.sourceIn)
+                return true
+            }
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            glyph.contents = tinted.cgImage(forProposedRect:nil,context:nil,hints:nil)
+            glyph.contentsScale = window?.backingScaleFactor ?? 2
+            CATransaction.commit()
+        }
+    }
+    func stopAnimation() { glyph.removeAnimation(forKey:"task-ring") }
     deinit { if let observer { NSWorkspace.shared.notificationCenter.removeObserver(observer) } }
 }
 
@@ -95,10 +118,8 @@ struct MenuBarReadout: View {
         HStack(spacing:7) {
             Image(nsImage:Branding.menuIcon()).resizable().frame(width:18,height:18)
             ForEach(fields,id:\.self) { field in
-                if field != fields.first { Text("·").foregroundStyle(.secondary) }
                 if field == "task", let running {
                     TaskStatusImage(running:running).frame(width:18,height:18)
-                    if running { Text(values[field] ?? "") }
                 } else { Text(values[field] ?? "—") }
             }
         }.font(.system(size:12,weight:.medium)).monospacedDigit().fixedSize()

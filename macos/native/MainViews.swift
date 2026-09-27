@@ -147,25 +147,25 @@ struct OverviewView: View {
         ScrollView {
             VStack(alignment:.leading,spacing:22) {
                 PageHeading(title:Pages.title("overview"))
-                HStack(spacing:28) {
+                HStack(spacing:12) {
                     QuotaCard(window:state.quota.five,title:L("5 小时额度", "5-hour limit"),fresh:state.quota.fresh)
                     QuotaCard(window:state.quota.week,title:L("周额度", "Weekly limit"),fresh:state.quota.fresh)
                 }
                 if let error = state.quota.error { StatusNote(text:error) }
                 Divider()
-                HStack { SectionHeading(title:L("本机用量", "Local usage")); PeriodPicker(selection:$period) }
+                HStack { SectionHeading(title:L("本机用量", "Local usage")); Spacer(); PeriodPicker(selection:$period).fixedSize() }
                 SummaryMetrics(summary:projection.value.summary)
                 VStack(alignment:.leading,spacing:16) { SectionHeading(title:L("用量趋势", "Usage trend")); TrendChart(days:projection.value.days) }.padding(18).overlay(RoundedRectangle(cornerRadius:13).stroke(.secondary.opacity(0.15)))
                 HStack { SectionHeading(title:L("最近请求", "Recent requests")); Button(L("查看全部", "View all")) { state.selectedPage = "logs" }.buttonStyle(.plain).foregroundStyle(.secondary) }
-                ForEach(projection.value.recent) { row in
-                    HStack(spacing:16) {
-                        Text(dateText(row.date,timeOnly:true)).font(.system(size:12)).foregroundStyle(.secondary).frame(width:70,alignment:.leading)
-                        Text(row.raw.string("prompt_preview")).font(.system(size:13)).lineLimit(1).frame(maxWidth:.infinity,alignment:.leading)
-                        Text(row.modelLabel).font(.system(size:12)).foregroundStyle(.secondary).lineLimit(1)
-                        Text(money(row.cost)).font(.system(size:13)).monospacedDigit().frame(width:70,alignment:.trailing)
-                        DetailsLink(row:row,members:state.usage.members(of:row)).frame(width:48,height:23)
-                    }.padding(.vertical,5)
-                    Divider()
+                if !projection.value.recent.isEmpty {
+                    CompactTable(columns:LogFields.columns(["content","model","total","cost","duration","details"]).map { column in
+                        var column = column; column.maximum = column.width+300; return column
+                    },
+                        rows:projection.value.recent.map { row in LogFields.row(row,timeOnly:true) { state.usage.members(of:row) } },
+                        revision:key,preferences:state.preferences,storageKey:"overview-recent")
+                        .frame(height:CGFloat(projection.value.recent.count)*45+42)
+                        .clipShape(RoundedRectangle(cornerRadius:14))
+                        .overlay(RoundedRectangle(cornerRadius:14).stroke(.secondary.opacity(0.16)))
                 }
                 if projection.value.recent.isEmpty { EmptyState(title:state.loading ? L("正在读取本机记录", "Loading local records") : L("暂无请求", "No requests yet")) }
             }.padding(26)
@@ -177,7 +177,7 @@ struct PeriodPicker: View {
     @Binding var selection: String
     var custom = false
     var body: some View {
-        Picker("",selection:$selection) { Text(L("今日", "Today")).tag("today"); Text(L("近 7 天", "Last 7 days")).tag("week"); Text(L("近 30 天", "Last 30 days")).tag("month"); Text(L("历史", "All time")).tag("all"); if custom { Text(L("自选日期", "Custom")).tag("custom") } }.pickerStyle(.segmented).labelsHidden().frame(maxWidth:custom ? 470 : 365)
+        Picker("",selection:$selection) { Text(L("今日", "Today")).tag("today"); Text(L("近 7 天", "Last 7 days")).tag("week"); Text(L("近 30 天", "Last 30 days")).tag("month"); Text(L("历史", "All time")).tag("all"); if custom { Text(L("自选日期", "Custom")).tag("custom") } }.pickerStyle(.segmented).labelsHidden().fixedSize()
     }
 }
 
@@ -212,10 +212,11 @@ struct LogsView: View {
     }
     var body: some View {
         VStack(alignment:.leading,spacing:14) {
-            HStack { PageHeading(title:Pages.title("logs")); PeriodPicker(selection:$period,custom:true) }
+            PageHeading(title:Pages.title("logs"))
+            HStack { PeriodPicker(selection:$period,custom:true); Spacer() }
             if period == "custom" { DateRangeControls(from:$from,through:$through) }
             HStack(spacing:10) {
-                Picker("",selection:$mode) { Text(L("用户请求", "User requests")).tag("requests"); Text(L("模型调用", "Model calls")).tag("calls") }.labelsHidden().pickerStyle(.segmented).frame(width:190)
+                Picker("",selection:$mode) { Text(L("用户请求", "User requests")).tag("requests"); Text(L("模型调用", "Model calls")).tag("calls") }.labelsHidden().pickerStyle(.segmented).fixedSize()
                 TextField(L("搜索输入、聊天或 ID", "Search prompt, chat or ID"),text:$query).textFieldStyle(.roundedBorder).focused($searchFocused)
                 Menu(L("显示字段", "Columns")) {
                     ForEach(LogFields.all.filter {$0 != "content" && $0 != "details"},id:\.self) { field in
@@ -225,9 +226,9 @@ struct LogsView: View {
                 }.fixedSize()
             }
             HStack(spacing:10) {
-                Picker("",selection:$model) { Text(L("全部模型", "All models")).tag("all"); ForEach(state.usage.models,id:\.self) { Text($0).tag($0) } }.labelsHidden().frame(width:170)
-                Picker("",selection:$tier) { Text(L("全部速度", "All speeds")).tag("all"); Text("Fast").tag("priority"); Text(L("标准", "Standard")).tag("default"); Text(L("未知", "Unknown")).tag("unknown") }.labelsHidden().frame(width:115)
-                if mode == "requests" { Picker("",selection:$status) { Text(L("全部状态", "All statuses")).tag("all"); Text(L("已完成", "Completed")).tag("completed"); Text(L("进行中", "In progress")).tag("running"); Text(L("未知", "Unknown")).tag("unknown") }.labelsHidden().frame(width:115) }
+                Picker("",selection:$model) { Text(L("全部模型", "All models")).tag("all"); ForEach(state.usage.models,id:\.self) { Text($0).tag($0) } }.labelsHidden().fixedSize()
+                Picker("",selection:$tier) { Text(L("全部速度", "All speeds")).tag("all"); Text("Fast").tag("priority"); Text(L("标准", "Standard")).tag("default"); Text(L("未知", "Unknown")).tag("unknown") }.labelsHidden().fixedSize()
+                if mode == "requests" { Picker("",selection:$status) { Text(L("全部状态", "All statuses")).tag("all"); Text(L("已完成", "Completed")).tag("completed"); Text(L("进行中", "In progress")).tag("running"); Text(L("未知", "Unknown")).tag("unknown") }.labelsHidden().fixedSize() }
                 Spacer()
             }
             CompactTable(columns:LogFields.columns(fields),rows:projection.value.rows.map { row in LogFields.row(row,timeOnly:period == "today") {state.usage.members(of:row)} },revision:projection.value.revision.uuidString+period,preferences:state.preferences,storageKey:"logs")

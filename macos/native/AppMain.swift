@@ -88,7 +88,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             }
             DistributedNotificationCenter.default().addObserver(self,selector:#selector(showWindow),name:.init("com.wujuhu.codexio.show"),object:nil)
         }
-        NSApp.applicationIconImage = Branding.logo(dark:false)
+        NSApp.applicationIconImage = Branding.dockIcon
         applyAppearance(); state.announceWidgetHost(); state.start(); showWindow()
         if let index = CommandLine.arguments.firstIndex(of:"--mock-gallery"), CommandLine.arguments.indices.contains(index+1), state.paths.mock, let window {
             gallery = MockGallery(state:state,window:window,directory:URL(fileURLWithPath:CommandLine.arguments[index+1]))

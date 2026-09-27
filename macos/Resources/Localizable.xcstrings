@@ -1409,22 +1409,6 @@
         }
       }
     },
-    "Credits 余额扣除量，与每周限额占比分开统计。": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Credits balance deductions are separate from weekly allowance usage."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Credits 余额扣除量，与每周限额占比分开统计。"
-          }
-        }
-      }
-    },
     "Fast 模式": {
       "localizations": {
         "en": {
@@ -2765,22 +2749,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "价格  "
-          }
-        }
-      }
-    },
-    "价格与续费日期可手动补充": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Price and renewal date can be added manually"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "价格与续费日期可手动补充"
           }
         }
       }
@@ -9185,22 +9153,6 @@
         }
       }
     },
-    "未提供": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Not provided"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "未提供"
-          }
-        }
-      }
-    },
     "未登录 ChatGPT / Codex": {
       "localizations": {
         "en": {
@@ -14909,6 +14861,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "重试本次"
+          }
+        }
+      }
+    },
+    "附件消息": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Attachment message"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "附件消息"
           }
         }
       }

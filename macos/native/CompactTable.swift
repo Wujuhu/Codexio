@@ -38,7 +38,7 @@ private final class GridTextCell: NSView {
     override init(frame: NSRect) {
         super.init(frame:frame)
         main.font = .systemFont(ofSize:12); main.lineBreakMode = .byTruncatingTail
-        main.isSelectable = true; main.maximumNumberOfLines = 2
+        main.isSelectable = true; main.maximumNumberOfLines = 1
         secondary.font = .systemFont(ofSize:10); secondary.textColor = .secondaryLabelColor
         secondary.lineBreakMode = .byTruncatingTail
         addSubview(main); addSubview(secondary)
@@ -47,6 +47,7 @@ private final class GridTextCell: NSView {
     func apply(_ value: GridText,alignment: NSTextAlignment) {
         main.stringValue = value.main; secondary.stringValue = value.secondary
         main.alignment = alignment; secondary.alignment = alignment
+        main.toolTip = value.main
         secondary.isHidden = value.secondary.isEmpty; needsLayout = true
     }
     override func layout() {
@@ -54,8 +55,9 @@ private final class GridTextCell: NSView {
         let width = max(0,bounds.width-16)
         if secondary.isHidden { main.frame = NSRect(x:8,y:max(0,(bounds.height-18)/2),width:width,height:18) }
         else {
-            main.frame = NSRect(x:8,y:20,width:width,height:max(18,bounds.height-24))
-            secondary.frame = NSRect(x:8,y:4,width:width,height:14)
+            let bottom = max(0,(bounds.height-34)/2)
+            main.frame = NSRect(x:8,y:bottom+16,width:width,height:18)
+            secondary.frame = NSRect(x:8,y:bottom,width:width,height:14)
         }
     }
 }
@@ -88,7 +90,7 @@ struct CompactTable: NSViewRepresentable {
     var columns: [GridColumn]
     var rows: [GridRow]
     var revision: String
-    var rowHeight: CGFloat = 52
+    var rowHeight: CGFloat = 44
     var selection: Binding<String?>? = nil
     var preferences: Preferences? = nil
     var storageKey = ""
@@ -103,6 +105,7 @@ struct CompactTable: NSViewRepresentable {
         table.intercellSpacing = NSSize(width:0,height:1)
         table.gridStyleMask = [.solidHorizontalGridLineMask]
         table.usesAlternatingRowBackgroundColors = false
+        table.selectionHighlightStyle = selection == nil ? .none : .regular
         table.allowsEmptySelection = true; table.allowsMultipleSelection = false
         table.allowsColumnReordering = false; table.allowsColumnResizing = true
         table.allowsExpansionToolTips = false
@@ -195,6 +198,7 @@ struct CompactTable: NSViewRepresentable {
             let cell = tableView.makeView(withIdentifier:id,owner:nil) as? GridTextCell ?? GridTextCell(frame:.zero)
             cell.identifier = id; cell.apply(value.text(definition.id),alignment:definition.alignment); return cell
         }
+        func tableView(_ tableView: NSTableView,shouldSelectRow row: Int) -> Bool { parent.selection != nil }
         func tableViewSelectionDidChange(_ notification: Notification) {
             guard let table, let binding = parent.selection else { return }
             let value = parent.rows.indices.contains(table.selectedRow) ? parent.rows[table.selectedRow].id : nil
@@ -236,7 +240,7 @@ enum LogFields {
         case "total": return L("总 Token", "Total tokens")
         case "cached": return L("缓存读取", "Cached input")
         case "cache_write": return L("缓存写入", "Cache write")
-        case "cache_rate": return L("缓存命中率", "Cache hit")
+        case "cache_rate": return L("命中率", "Hit rate")
         case "cost": return L("费用", "Cost")
         case "duration": return L("耗时", "Duration")
         case "effort": return L("推理强度", "Reasoning")
@@ -248,9 +252,8 @@ enum LogFields {
     }
     static func columns(_ keys: [String]) -> [GridColumn] {
         keys.map { key in
-            let width: CGFloat = key == "content" ? 190 : key == "model" ? 130 : key == "time" ? 118 : key == "details" ? 50 : key == "cache_rate" ? 84 : key == "duration" ? 86 : key == "cost" ? 76 : 70
-            let left = ["content","model","time"].contains(key)
-            return GridColumn(id:key,title:title(key),width:width,maximum:key == "content" ? 285 : key == "model" ? 180 : nil,alignment:left ? .left : key == "details" ? .center : .right)
+            let width: CGFloat = key == "content" ? 190 : key == "model" ? 180 : key == "time" ? 118 : key == "details" ? 50 : key == "cache_rate" ? 84 : key == "duration" ? 86 : key == "cost" ? 76 : 70
+            return GridColumn(id:key,title:title(key),width:width,maximum:key == "content" ? 285 : key == "model" ? 230 : nil,alignment:.center)
         }
     }
     static func row(_ row: UsageRow,timeOnly: Bool,details: @escaping () -> [UsageRow]) -> GridRow {

@@ -68,25 +68,29 @@ struct QuotaCard: View {
                 Spacer(minLength:12)
                 Text(L("重置", "Resets")+" "+dateText(window?.reset,timeOnly:window?.minutes == 300))
             }.font(.system(size:11)).foregroundStyle(.secondary).lineLimit(1)
-        }.frame(maxWidth:.infinity,alignment:.leading)
+        }.frame(maxWidth:.infinity,alignment:.leading).modifier(BubbleCard())
+    }
+}
+
+struct BubbleCard: ViewModifier {
+    func body(content: Content) -> some View {
+        content.padding(18).background(Color.primary.opacity(0.025),in:RoundedRectangle(cornerRadius:18))
+            .overlay(RoundedRectangle(cornerRadius:18).stroke(.secondary.opacity(0.16),lineWidth:1))
     }
 }
 
 struct SummaryMetrics: View {
     let summary: UsageSummary
     var body: some View {
-        HStack(spacing:0) {
-            metric(L("费用估算", "Estimated cost"),money(summary.cost))
-            Divider().frame(height:50)
-            metric(L("Token 总数", "Total tokens"),compact(summary.tokens.map(Double.init)))
-            Divider().frame(height:50)
+        HStack(spacing:12) {
+            metric(L("费用", "Cost"),money(summary.cost))
+            metric(L("总 Token", "Total tokens"),compact(summary.tokens.map(Double.init)))
             metric(L("用户请求", "User requests"),String(summary.requests))
-            Divider().frame(height:50)
-            metric(L("缓存命中率", "Cache hit rate"),percent(summary.cacheRate.map {$0*100},digits:1))
-        }.padding(.vertical,16)
+            metric(L("命中率", "Hit rate"),percent(summary.cacheRate.map {$0*100},digits:1))
+        }
     }
     private func metric(_ label: String,_ value: String) -> some View {
-        VStack(alignment:.leading,spacing:8) { Text(label).font(.system(size:12)).foregroundStyle(.secondary); Text(value).font(.system(size:27,weight:.medium)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.8) }.frame(maxWidth:.infinity,alignment:.leading).padding(.horizontal,18)
+        VStack(alignment:.leading,spacing:8) { Text(label).font(.system(size:12)).foregroundStyle(.secondary); Text(value).font(.system(size:27,weight:.medium)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.8) }.frame(maxWidth:.infinity,alignment:.leading).modifier(BubbleCard())
     }
 }
 
@@ -114,7 +118,7 @@ struct TrendChart: View {
                     }
                     context.stroke(path,with:.color(series == 0 ? .blue : .green),style:StrokeStyle(lineWidth:compactStyle ? 1.8 : 2.2,lineCap:.round,lineJoin:.round))
                 }
-            }.frame(height:compactStyle ? 85 : 170)
+            }.frame(height:compactStyle ? 85 : 170).overlay { UsageHoverSurface(days:days) }
             HStack { Text(axisLabel(days.first?.date)); Spacer(); Text(axisLabel(days.last?.date)) }.font(.system(size:11)).foregroundStyle(.secondary)
         }.accessibilityElement(children:.combine).accessibilityLabel(L("Token 和费用趋势", "Token and cost trends"))
     }
@@ -202,7 +206,7 @@ struct LogDetail: View {
                 if !row.raw.string("upstream_model").isEmpty { field(L("响应返回模型", "Response model"),modelName(row.raw.string("upstream_model"))) }
                 field(L("推理强度", "Reasoning"),effortName(row.raw.string("reasoning_effort")))
                 field(L("速度", "Speed"),normalizedTier(row.raw.string("service_tier")) == "priority" ? L("快速模式", "Fast mode") : normalizedTier(row.raw.string("service_tier")) == "default" ? L("标准", "Standard") : L("未知", "Unknown"))
-                field(L("费用估算", "Estimated cost"),money(row.cost))
+                field(L("费用", "Cost"),money(row.cost))
                 field(L("耗时", "Duration"),durationText(row.duration))
                 field(L("输入 Token", "Input tokens"),compact(row.raw.number("input_tokens")))
                 field(L("缓存读取", "Cached input"),compact(row.raw.number("cached_input_tokens")))
@@ -245,5 +249,91 @@ struct DateRangeControls: View {
             DatePicker(L("至", "To"),selection:$through,in:...Date(),displayedComponents:.date)
             Spacer()
         }.datePickerStyle(.field).font(.system(size:12)).fixedSize(horizontal:false,vertical:true)
+    }
+}
+
+struct UsageHoverSurface: NSViewRepresentable {
+    let days: [DayUsage]
+    var rows = 0
+    var offset = 0
+    var cellSize: CGFloat = 16
+    func makeNSView(context: Context) -> UsageHoverView { UsageHoverView(frame:.zero) }
+    func updateNSView(_ view: UsageHoverView,context: Context) {
+        view.update(days:days,rows:rows,offset:offset,cellSize:cellSize)
+    }
+    static func dismantleNSView(_ view: UsageHoverView,coordinator: ()) { view.close() }
+}
+
+final class UsageHoverView: NSView {
+    private var days: [DayUsage] = []
+    private var rows = 0, offset = 0
+    private var cellSize: CGFloat = 16
+    private var tracking: NSTrackingArea?
+    private var selected: Int?
+    private var current: DayUsage?
+    private let popover = NSPopover()
+    override var isFlipped: Bool { true }
+    override init(frame: NSRect) {
+        super.init(frame:frame); popover.behavior = .transient; popover.animates = false
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    func update(days: [DayUsage],rows: Int,offset: Int,cellSize: CGFloat) {
+        self.days = days; self.rows = rows; self.offset = offset; self.cellSize = cellSize
+        if let selected, !days.indices.contains(selected) || days[selected] != current { close() }
+    }
+    override func updateTrackingAreas() {
+        if let tracking { removeTrackingArea(tracking) }
+        tracking = NSTrackingArea(rect:bounds,options:[.activeInActiveApp,.mouseMoved,.mouseEnteredAndExited,.inVisibleRect],owner:self,userInfo:nil)
+        addTrackingArea(tracking!); super.updateTrackingAreas()
+    }
+    override func mouseEntered(with event: NSEvent) { mouseMoved(with:event) }
+    override func mouseExited(with event: NSEvent) { close() }
+    override func viewWillMove(toWindow newWindow: NSWindow?) { if newWindow == nil { close() }; super.viewWillMove(toWindow:newWindow) }
+    override func mouseMoved(with event: NSEvent) {
+        guard !days.isEmpty, bounds.width > 0 else { return }
+        let point = convert(event.locationInWindow,from:nil)
+        let index: Int, anchor: NSRect
+        if rows > 0 {
+            let column = Int(max(0,point.x)/(cellSize+4)), rowHeight: CGFloat = rows == 1 ? 44 : cellSize
+            let row = Int(max(0,point.y)/(rowHeight+4))
+            index = column*rows+row-offset
+            guard row < rows, point.x.truncatingRemainder(dividingBy:cellSize+4) <= cellSize,
+                  point.y.truncatingRemainder(dividingBy:rowHeight+4) <= rowHeight else { close(); return }
+            anchor = NSRect(x:CGFloat(column)*(cellSize+4),y:CGFloat(row)*(rowHeight+4),width:cellSize,height:rowHeight)
+        } else {
+            index = min(days.count-1,max(0,Int((point.x/bounds.width*CGFloat(max(1,days.count-1))).rounded())))
+            anchor = NSRect(x:CGFloat(index)/CGFloat(max(1,days.count-1))*bounds.width,y:0,width:1,height:bounds.height)
+        }
+        guard days.indices.contains(index) else { close(); return }
+        guard selected != index || !popover.isShown else { return }
+        selected = index; current = days[index]; needsDisplay = true
+        popover.contentViewController = NSHostingController(rootView:UsagePointDetail(day:days[index],hourly:rows == 0))
+        popover.contentSize = NSSize(width:230,height:152)
+        if popover.isShown { popover.positioningRect = anchor }
+        else { popover.show(relativeTo:anchor,of:self,preferredEdge:.minY) }
+    }
+    override func draw(_ dirtyRect: NSRect) {
+        guard rows == 0, let selected else { return }
+        NSColor.secondaryLabelColor.withAlphaComponent(0.3).setStroke()
+        let x = CGFloat(selected)/CGFloat(max(1,days.count-1))*bounds.width
+        let path = NSBezierPath(); path.move(to:NSPoint(x:x,y:0)); path.line(to:NSPoint(x:x,y:bounds.height)); path.lineWidth = 1; path.stroke()
+    }
+    func close() { popover.close(); selected = nil; current = nil; needsDisplay = true }
+}
+
+private struct UsagePointDetail: View {
+    let day: DayUsage
+    let hourly: Bool
+    var body: some View {
+        VStack(alignment:.leading,spacing:12) {
+            Text(hourly ? day.date.formatted(.dateTime.month().day().hour().minute()) : day.date.formatted(date:.abbreviated,time:.omitted))
+                .font(.system(size:12,weight:.semibold))
+            detail("Token",day.tokens.map { $0.formatted() } ?? "—")
+            detail(L("费用", "Cost"),money(day.cost))
+            detail(L("请求数", "Requests"),String(day.requests))
+        }.font(.system(size:12)).padding(18).frame(width:230,height:152)
+    }
+    private func detail(_ title: String,_ value: String) -> some View {
+        HStack { Text(title).foregroundStyle(.secondary); Spacer(); Text(value).monospacedDigit() }
     }
 }

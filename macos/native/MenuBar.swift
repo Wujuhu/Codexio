@@ -33,7 +33,7 @@ struct MenuBarView: View {
                     HStack(alignment:.firstTextBaseline) {
                         VStack(alignment:.leading,spacing:5) { Text(compact(summary.tokens.map(Double.init))).font(.system(size:28,weight:.medium)).monospacedDigit(); Text("Token").font(.system(size:10)).foregroundStyle(.secondary) }
                         Spacer()
-                        VStack(alignment:.trailing,spacing:5) { Text(money(summary.cost)).font(.system(size:22,weight:.medium)).monospacedDigit(); Text(L("预估费用", "Estimated cost")).font(.system(size:10)).foregroundStyle(.secondary) }
+                        VStack(alignment:.trailing,spacing:5) { Text(money(summary.cost)).font(.system(size:22,weight:.medium)).monospacedDigit(); Text(L("费用", "Cost")).font(.system(size:10)).foregroundStyle(.secondary) }
                     }
                     GeometryReader { geometry in
                         let total = max(1,summary.input+summary.output)
@@ -50,7 +50,7 @@ struct MenuBarView: View {
                     }
                 }
                 card {
-                    HStack { Text(L("最近 7 天", "Last 7 days")).fontWeight(.medium); Spacer(); Text(L("费用估算", "Estimated cost")).foregroundStyle(.secondary) }.font(.system(size:12))
+                    HStack { Text(L("最近 7 天", "Last 7 days")).fontWeight(.medium); Spacer(); Text(L("费用", "Cost")).foregroundStyle(.secondary) }.font(.system(size:12))
                     TrendChart(days:Array(state.usage.activity.days.suffix(7)),compactStyle:true)
                 }
             }.padding(14)

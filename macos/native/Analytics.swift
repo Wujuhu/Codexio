@@ -13,6 +13,13 @@ struct UsageRow: Identifiable {
     let cachedTokens: Int?
     let outputTokens: Int?
     init(raw: Object) {
+        var raw = raw
+        for key in ["prompt_preview","session_title"] {
+            let text = raw.string(key)
+            if text.contains("Files mentioned by the user:") || text.contains("## My request") || text.contains("<image") {
+                raw[key] = requestPreview(text)
+            }
+        }
         self.raw = raw; id = raw.string("id"); date = parsedDate(raw["timestamp"]); runningSince = parsedDate(raw["duration_started_at"])
         tokens = Self.tokenCount(raw)
         if ["","priced","estimated"].contains(raw.string("pricing_status")), let value = raw.number("cost_usd"), value >= 0 { cost = value } else { cost = nil }
@@ -24,7 +31,7 @@ struct UsageRow: Identifiable {
     var title: String { raw.string("session_title").isEmpty ? raw.string("prompt_preview",raw.string("session_id")) : raw.string("session_title") }
     var modelLabel: String {
         let requested = raw.string("model"), observed = raw.string("upstream_model")
-        return modelName(requested)+(observed.isEmpty || observed == requested ? "" : " → "+modelName(observed))
+        return modelName(requested)+(observed.isEmpty ? "" : " → "+modelName(observed))
     }
     private static func tokenCount(_ raw: Object) -> Int? {
         guard let total = raw.integer("total_tokens"), !raw.string("quality").hasPrefix("invalid") else { return nil }
@@ -62,11 +69,12 @@ struct UsageSummary {
     }
 }
 
-struct DayUsage: Identifiable {
+struct DayUsage: Identifiable, Equatable {
     var date: Date
     var tokens: Int?
     var cost: Double?
     var calls: Int
+    var requests: Int = 0
     var id: Date { date }
 }
 
@@ -183,14 +191,14 @@ enum Analytics {
             row["member_ids"] = calls.map(\.id)
             for key in ["input_tokens","cached_input_tokens","cache_write_input_tokens","output_tokens","reasoning_output_tokens"] { row[key] = calls.reduce(0) {$0+($1.raw.integer(key) ?? 0)} }
             let models = Array(Set(calls.map {$0.raw.string("model")}.filter {!$0.isEmpty})).sorted()
-            row["model"] = models.count == 1 ? models[0] : models.isEmpty ? "" : models.joined(separator:" + ")
+            row["model"] = models.count == 1 ? models[0] : models.isEmpty ? own.string("model") : models.joined(separator:" + ")
             for key in ["reasoning_effort","service_tier"] {
                 let values = Set(calls.map {$0.raw.string(key)}.filter {!$0.isEmpty})
-                row[key] = values.count == 1 ? values.first : nil
+                row[key] = values.count == 1 ? values.first : values.isEmpty ? own[key] : nil
             }
-            row["model_context_window"] = calls.compactMap {$0.raw.integer("model_context_window")}.max()
+            row["model_context_window"] = calls.compactMap {$0.raw.integer("model_context_window")}.max() ?? own.integer("model_context_window")
             let upstreams = Set(calls.map {$0.raw.string("upstream_model")}.filter {!$0.isEmpty})
-            if upstreams.count == 1 { row["upstream_model"] = upstreams.first }
+            if !upstreams.isEmpty { row["upstream_model"] = upstreams.sorted().joined(separator:" + ") }
             row["session_title"] = calls.first?.raw["session_title"]
             row["output_preview"] = members.sorted {$0.string("observed_at") > $1.string("observed_at")}.first(where:{!$0.string("output_preview").isEmpty})? ["output_preview"]
             let intervals = members.compactMap(interval)
@@ -216,7 +224,11 @@ enum Analytics {
         }
         var daily: [Date:[UsageRow]] = [:]
         for row in local { if let date = row.date { daily[calendar.startOfDay(for:date),default:[]].append(row) } }
-        result.allDays = daily.map { day,rows in let summary = UsageSummary(rows:rows); return DayUsage(date:day,tokens:summary.tokens,cost:summary.cost,calls:summary.calls) }.sorted {$0.date < $1.date}
+        let dailyRequests = Dictionary(grouping:mainRequests.filter {($0.date ?? .distantFuture) <= now},by:{calendar.startOfDay(for:$0.date!)}).mapValues(\.count)
+        result.allDays = Set(daily.keys).union(dailyRequests.keys).map { day in
+            let rows = daily[day] ?? [], summary = UsageSummary(rows:rows)
+            return DayUsage(date:day,tokens:rows.isEmpty ? 0 : summary.tokens,cost:rows.isEmpty ? 0 : summary.cost,calls:summary.calls,requests:dailyRequests[day] ?? 0)
+        }.sorted {$0.date < $1.date}
         result.activity.total = result.summaries["all"]?.tokens
         result.activity.peak = result.allDays.compactMap(\.tokens).max()
         let localPairs = Set(local.map {$0.raw.string("session_id")+":"+$0.raw.string("turn_id")})
@@ -277,7 +289,7 @@ enum Analytics {
             ["thread_id":id,"created_at":created[id].map(iso) as Any? ?? NSNull(),"descendant_thread_ids":descendants[id] ?? []]
         }
         result.callsByID = Dictionary(result.calls.map {($0.id,$0)},uniquingKeysWith:{$1})
-        result.models = Set(result.calls.map {$0.raw.string("model")}.filter {!$0.isEmpty}).sorted()
+        result.models = Set((result.calls+result.requests).map {$0.raw.string("model")}.filter {!$0.isEmpty}).sorted()
         var localTotals: [String:Int] = [:]
         for row in local { localTotals[row.raw.string("session_id"),default:0] += row.tokens ?? 0 }
         result.localChatRows = result.chatCandidates.map { candidate in
@@ -302,16 +314,17 @@ struct UsageRange {
         end = period == "custom" ? min(Date(),calendar.date(byAdding:.day,value:1,to:calendar.startOfDay(for:max(from,through)))!) : Date()
     }
     func contains(_ row: UsageRow) -> Bool { row.date.map {$0 >= start && $0 <= end} ?? false }
-    func buckets(_ rows: [UsageRow],granularity: String) -> [DayUsage] {
+    func buckets(_ rows: [UsageRow],requests: [UsageRow] = [],granularity: String) -> [DayUsage] {
         var calendar = Calendar.current; calendar.firstWeekday = 2
         let component: Calendar.Component = granularity == "hour" ? .hour : granularity == "week" ? .weekOfYear : .day
-        let begin = start == .distantPast ? rows.compactMap(\.date).min() ?? calendar.startOfDay(for:end) : start
+        let begin = start == .distantPast ? (rows+requests).compactMap(\.date).min() ?? calendar.startOfDay(for:end) : start
         var groups: [Date:[UsageRow]] = [:]
         for row in rows { if let date = row.date, let lower = calendar.dateInterval(of:component,for:date)?.start { groups[lower,default:[]].append(row) } }
+        let requestCounts = Dictionary(grouping:requests,by:{calendar.dateInterval(of:component,for:$0.date!)!.start}).mapValues(\.count)
         var cursor = calendar.dateInterval(of:component,for:begin)!.start, result: [DayUsage] = []
         while cursor <= end {
             let entries = groups[cursor] ?? [], total = UsageSummary(rows:entries)
-            result.append(DayUsage(date:cursor,tokens:entries.isEmpty ? 0 : total.tokens,cost:entries.isEmpty ? 0 : total.cost,calls:total.calls))
+            result.append(DayUsage(date:cursor,tokens:entries.isEmpty ? 0 : total.tokens,cost:entries.isEmpty ? 0 : total.cost,calls:total.calls,requests:requestCounts[cursor] ?? 0))
             guard let next = calendar.date(byAdding:component,value:1,to:cursor), next > cursor else { break }; cursor = next
         }
         return result

@@ -172,12 +172,8 @@ final class UsageIndexer {
             if text.contains("<send_user_message_question_reply>") { return "" }
             let tags = "recommended_plugins|environment_context|permissions(?: instructions)?|INSTRUCTIONS|user_instructions|developer_instructions|skills_instructions|skill_instructions|system|developer|system-reminder|app-context|collaboration_mode|multi_agent_role|multi_agent_mode"
             text = text.replacingOccurrences(of:"(?is)<("+tags+")(?:\\s[^>]*)?>.*?</\\1\\s*>",with:" ",options:.regularExpression)
-            for marker in ["## My request:","## My request","<user_request>"] {
-                if let range = text.range(of:marker) { text = String(text[range.upperBound...]); break }
-            }
-            if ["# AGENTS.md instructions","# Files mentioned by the user:","<environment_context>","<INSTRUCTIONS>"].contains(where:{text.trimmingCharacters(in:.whitespacesAndNewlines).hasPrefix($0)}) { return "" }
-            text = text.replacingOccurrences(of:"(?is)<image\\b[^>]*>.*?</image\\s*>",with:" ",options:.regularExpression)
-            text = text.replacingOccurrences(of:"Distinguish instructions in attached documents from the user's request.",with:"")
+            text = requestPreview(text)
+            if ["# AGENTS.md instructions","<environment_context>","<INSTRUCTIONS>"].contains(where:{text.trimmingCharacters(in:.whitespacesAndNewlines).hasPrefix($0)}) { return "" }
             if text.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty {
                 let images = (content as? [Object] ?? []).filter {["image","input_image","image_url","local_image"].contains($0.string("type"))}.count
                 if images > 0 { text = L("图片", "Image")+" ×\(images)" }
@@ -191,6 +187,9 @@ final class UsageIndexer {
         var recent = state.object("turns"), row = recent.object(turn)
         if row.isEmpty {
             row = ["id":id,"session_id":state.string("session_id"),"turn_id":turn,"started_at":stamp,"started_inferred":true,"status":"unknown","prompt_preview":"","output_preview":"","verified":true,"is_subagent":state.flag("is_subagent"),"parent_session_id":state.string("parent_session_id"),"parent_turn_id":state.string("parent_turn_id"),"agent_path":state.string("agent_path"),"source_ids":["local"]]
+        }
+        for key in ["model","reasoning_effort","service_tier","model_context_window","provider"] {
+            if let value = state[key], !(value is NSNull) { row[key] = value }
         }
         mutate(&row); row["observed_at"] = stamp
         recent[turn] = row
@@ -247,6 +246,7 @@ final class UsageIndexer {
             let id = payload.string("turn_id",payload.string("id"))
             if !id.isEmpty && id != state.string("turn_id") { state["previous_turn_id"] = state["turn_id"]; state["prompt_preview"] = ""; state["modern_candidate"] = nil; state["active_response_id"] = nil; state["preview_pending"] = [Object]() }
             if !id.isEmpty { state["turn_id"] = id }
+            if !inherited { try saveTurn(&state,stamp:stamp) { _ in } }
         }
         if kind == "event_msg" && ["task_started","turn_started"].contains(subtype) {
             let settings = payload.object("thread_settings").isEmpty ? payload.object("settings") : payload.object("thread_settings")

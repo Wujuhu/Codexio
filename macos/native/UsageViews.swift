@@ -32,13 +32,15 @@ struct UsageView: View {
 struct LocalActivityView: View {
     @ObservedObject var state: AppState
     @State private var aggregation = "day"
-    @State private var hovered: DayUsage?
     private var stats: ActivityStats { state.usage.activity }
     private var buckets: [DayUsage] {
         let days = stats.days
         if aggregation == "cumulative" {
-            var total = 0
-            return days.map { day in total += day.tokens ?? 0; return DayUsage(date:day.date,tokens:total,cost:nil,calls:day.calls) }
+            var total = 0, calls = 0, requests = 0, cost = 0.0
+            return days.map { day in
+                total += day.tokens ?? 0; calls += day.calls; requests += day.requests; cost += day.cost ?? 0
+                return DayUsage(date:day.date,tokens:total,cost:cost,calls:calls,requests:requests)
+            }
         }
         if aggregation == "week" {
             var calendar = Calendar.current; calendar.firstWeekday = 2
@@ -46,7 +48,7 @@ struct LocalActivityView: View {
             for day in days {
                 let start = calendar.dateInterval(of:.weekOfYear,for:day.date)!.start
                 var bucket = groups[start] ?? DayUsage(date:start,tokens:0,cost:0,calls:0)
-                bucket.tokens = (bucket.tokens ?? 0)+(day.tokens ?? 0); bucket.cost = (bucket.cost ?? 0)+(day.cost ?? 0); bucket.calls += day.calls
+                bucket.tokens = (bucket.tokens ?? 0)+(day.tokens ?? 0); bucket.cost = (bucket.cost ?? 0)+(day.cost ?? 0); bucket.calls += day.calls; bucket.requests += day.requests
                 groups[start] = bucket
             }
             return groups.values.sorted {$0.date < $1.date}
@@ -71,20 +73,11 @@ struct LocalActivityView: View {
                 Picker("",selection:$aggregation) { Text(L("每日", "Daily")).tag("day"); Text(L("每周", "Weekly")).tag("week"); Text(L("累计", "Cumulative")).tag("cumulative") }.labelsHidden().pickerStyle(.segmented).frame(width:210)
             }.padding(.top,10)
             heatmap
-            Text(hovered.map {$0.date.formatted(date:.abbreviated,time:.omitted)+" · "+compact($0.tokens.map(Double.init))+" Token"} ?? " ").font(.system(size:12)).foregroundStyle(.secondary).frame(height:16)
             SectionHeading(title:L("活动洞察", "Activity insights")).padding(.top,10)
             HStack(spacing:55) {
                 HStack { Text(L("快速模式", "Fast mode")).foregroundStyle(.secondary); Spacer(); Text(percent(stats.fastPercent)).monospacedDigit() }
                 HStack { Text(L("最常用的推理强度", "Most used reasoning")).foregroundStyle(.secondary); Spacer(); Text(effortName(stats.effort)+" · "+percent(stats.effortPercent)).monospacedDigit() }
             }.font(.system(size:16))
-            HStack {
-                Text(L("本机记录 · 按模型调用次数统计模式占比", "Local records · mode shares by model calls"))
-                Spacer()
-                ScanStamp(clock:state.clock)
-            }.font(.system(size:11)).foregroundStyle(.secondary)
-            if stats.durationPartial || stats.unknownSpeed > 0 || stats.unknownEffort > 0 {
-                StatusNote(text:[stats.durationPartial ? L("时长仅含已记录区间", "Durations include recorded intervals only") : "",stats.unknownSpeed > 0 ? L("速度未知", "Unknown speed")+" \(stats.unknownSpeed)/\(stats.calls)" : "",stats.unknownEffort > 0 ? L("推理强度未知", "Unknown reasoning")+" \(stats.unknownEffort)/\(stats.calls)" : ""].filter {!$0.isEmpty}.joined(separator:" · "))
-            }
             Divider()
             Button { state.usageSection = "threads" } label: { HStack { Text(L("聊天用量排行", "Chat usage ranking")); Spacer(); Image(systemName:"arrow.right") } }.buttonStyle(.plain)
         }
@@ -109,13 +102,13 @@ struct LocalActivityView: View {
                             if values.indices.contains(index) {
                                 let day = values[index], amount = day.tokens ?? 0
                                 RoundedRectangle(cornerRadius:3).fill(amount > 0 ? Color.blue.opacity(0.2+0.8*pow(Double(amount)/Double(maximum),0.45)) : Color.secondary.opacity(0.14)).frame(width:side,height:aggregation == "week" ? 44 : side)
-                                    .onHover { inside in hovered = inside ? day : nil }
                                     .accessibilityLabel(day.date.formatted(date:.abbreviated,time:.omitted)+" "+compact(day.tokens.map(Double.init))+" Token")
                             } else { Color.clear.frame(width:side,height:side) }
                         }
                     }
                 }
             }
+            .overlay(alignment:.topLeading) { UsageHoverSurface(days:values,rows:rows,offset:offset,cellSize:side) }
             let months = values.indices.filter { ($0 == 0 && Calendar.current.component(.day,from:values[$0].date) <= 20) || ($0 > 0 && Calendar.current.component(.month,from:values[$0].date) != Calendar.current.component(.month,from:values[$0-1].date)) }
             ZStack(alignment:.topLeading) {
                 ForEach(months,id:\.self) { index in
@@ -146,16 +139,17 @@ struct UsageTrendsView: View {
     var body: some View {
         VStack(alignment:.leading,spacing:22) {
             HStack {
-                PeriodPicker(selection:$period,custom:true); Spacer()
-                Picker("",selection:$model) { Text(L("全部模型", "All models")).tag("all"); ForEach(state.usage.models,id:\.self) { Text($0).tag($0) } }.labelsHidden().frame(width:170)
+                PeriodPicker(selection:$period,custom:true)
+                Picker("",selection:$model) { Text(L("全部模型", "All models")).tag("all"); ForEach(state.usage.models,id:\.self) { Text($0).tag($0) } }.labelsHidden().fixedSize()
+                Spacer()
             }
             HStack {
-                if period == "custom" { DateRangeControls(from:$from,through:$through) }; Spacer()
-                Picker("",selection:$granularity) { Text(L("每小时", "Hourly")).tag("hour"); Text(L("每天", "Daily")).tag("day"); Text(L("每周", "Weekly")).tag("week") }.labelsHidden().pickerStyle(.segmented).frame(width:210)
+                if period == "custom" { DateRangeControls(from:$from,through:$through) }
+                Picker("",selection:$granularity) { Text(L("每小时", "Hourly")).tag("hour"); Text(L("每天", "Daily")).tag("day"); Text(L("每周", "Weekly")).tag("week") }.labelsHidden().pickerStyle(.segmented).fixedSize()
+                Spacer()
             }
             SummaryMetrics(summary:projection.value.summary)
             TrendChart(days:projection.value.days).padding(18).overlay(RoundedRectangle(cornerRadius:14).stroke(.secondary.opacity(0.15)))
-            StatusNote(text:L("本机记录 · 费用按模型价格估算", "Local records · cost estimated from model prices"))
             if projection.value.summary.unknownCosts > 0 { StatusNote(text:L("未定价调用", "Unpriced calls")+" · \(projection.value.summary.unknownCosts)") }
         }.onAppear(perform:load).onChange(of:key) { _,_ in load() }
         .onChange(of:period) { _,value in granularity = value == "today" ? "hour" : value == "all" ? "week" : "day" }
@@ -189,8 +183,6 @@ struct ChatRankingView: View {
                 SectionHeading(title:localMode ? L("本机 Token 排行", "Local token ranking") : L("聊天用量排行", "Chat usage ranking"))
                 Button { localMode.toggle(); expanded.removeAll(); page = 0 } label: { Text(localMode ? L("查看额度排行", "View allowance ranking") : L("本机 Token", "Local tokens")) }.buttonStyle(.plain).foregroundStyle(.secondary)
             }
-            StatusNote(text:localMode ? L("仅统计本机记录", "Computed from local records only") : L("当前周额度 · 本机可用聊天", "Current weekly allowance · local chats"))
-            if !localMode { StatusNote(text:L("Credits 余额扣除量，与每周限额占比分开统计。", "Credits balance deductions are separate from weekly allowance usage.")) }
             if state.reportsLoading && !localMode { ProgressView().controlSize(.small) }
             if let error = state.reportError, !localMode, !rows.isEmpty { StatusNote(text:error) }
             if rows.isEmpty {

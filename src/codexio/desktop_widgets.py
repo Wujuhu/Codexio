@@ -627,7 +627,10 @@ def preview_title(record):
     text = " ".join(_user_preview(record.get("prompt_preview") or "").split())
     if text:
         return text
-    title = str(record.get("session_title") or "").strip()
+    original = str(record.get("session_title") or "").strip()
+    title = _user_preview(original)
+    if not title and ("Files mentioned by the user:" in original or "Files mentioned by the user:" in str(record.get("prompt_preview") or "")):
+        return tr("附件消息")
     if title:
         return tr("会话：") + title
     session = str(record.get("session_id") or "")
@@ -755,7 +758,7 @@ class LedgerTable(QTableWidget):
         self.setShowGrid(False)
         self.setWordWrap(False)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.horizontalHeader().setHighlightSections(False)
         self.horizontalHeader().setStretchLastSection(False)
@@ -771,7 +774,7 @@ class LedgerTable(QTableWidget):
             headers = [tr("用户请求 / 发起时间"), tr("模型"), tr("费用"), tr("状态")]
             self.weights = [46, 24, 20, 10]
         else:
-            headers = [tr("用户请求 / 发起时间") if grouped else tr("关联输入 / 计量时间"), tr("模型"), tr("输入"), tr("输出"), tr("缓存命中率"), tr("费用"), tr("耗时")]
+            headers = [tr("用户请求 / 发起时间") if grouped else tr("关联输入 / 计量时间"), tr("模型"), tr("输入"), tr("输出"), tr("命中率"), tr("费用"), tr("耗时")]
             headers += [tr("来源"), tr("详情")] if grouped else [tr("来源")]
             self.weights = [26, 14, 7, 7, 10, 12, 8, 8, 6] if grouped else [28, 15, 7, 7, 11, 13, 9, 8]
         changed = self.set_headers(headers)

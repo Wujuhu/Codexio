@@ -48,7 +48,7 @@ struct TrendProjection {
         let rows = snapshot.calls.filter {$0.local && range.contains($0) && (model == "all" || $0.raw.string("model") == model)}
         let ids = model == "all" ? Set<String>() : Set(rows.map(\.id))
         let requests = snapshot.requests.filter {$0.local && !$0.raw.flag("is_subagent") && $0.raw.string("record_kind") == "user_request" && range.contains($0) && (model == "all" || !ids.isDisjoint(with:$0.raw["member_ids"] as? [String] ?? []))}
-        return TrendProjection(summary:UsageSummary(rows:rows,requests:requests.count),days:range.buckets(rows,granularity:granularity),recent:Array(requests.prefix(4)))
+        return TrendProjection(summary:UsageSummary(rows:rows,requests:requests.count),days:range.buckets(rows,requests:requests,granularity:granularity),recent:Array(requests.prefix(4)))
     }
 }
 

@@ -18,13 +18,12 @@ struct SubscriptionView: View {
                     VStack(alignment:.leading,spacing:12) {
                         Text(profile.string("plan").isEmpty ? (state.quota.account.string("planType").isEmpty ? L("个人订阅资料", "Subscription profile") : "ChatGPT "+planName(state.quota.account.string("planType"))) : profile.string("plan")).font(.system(size:16,weight:.semibold))
                         if !state.quota.account.string("email").isEmpty { Text(state.quota.account.string("email")).lineLimit(1).textSelection(.enabled) }
-                        Text(L("订阅价格", "Subscription price")+" · "+(profile.number("price_usd").map {money($0)} ?? L("未提供", "Not provided")))
-                        Text(L("续费日期", "Renewal date")+" · "+(profile.string("renewal_date").isEmpty ? L("未提供", "Not provided") : profile.string("renewal_date")))
-                        if profile.number("price_usd") == nil || profile.string("renewal_date").isEmpty { Text(L("价格与续费日期可手动补充", "Price and renewal date can be added manually")).font(.system(size:10)) }
+                        if let price = profile.number("price_usd") { Text(L("订阅价格", "Subscription price")+" · "+money(price)) }
+                        if !profile.string("renewal_date").isEmpty { Text(L("续费日期", "Renewal date")+" · "+profile.string("renewal_date")) }
                         Button(L("编辑资料", "Edit profile")) { editingProfile = true }.padding(.top,4)
                     }.font(.system(size:12)).foregroundStyle(.secondary).frame(width:205,alignment:.leading)
                     Divider().frame(height:120)
-                    HStack(alignment:.top,spacing:25) {
+                    HStack(alignment:.top,spacing:12) {
                         QuotaCard(window:state.quota.five,title:L("5 小时额度", "5-hour limit"),fresh:state.quota.fresh,size:31,stacked:true)
                         QuotaCard(window:state.quota.week,title:L("周额度", "Weekly limit"),fresh:state.quota.fresh,size:31,stacked:true)
                     }

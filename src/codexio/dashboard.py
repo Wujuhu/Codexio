@@ -1084,9 +1084,9 @@ class Dashboard(QMainWindow):
         self._overview_cache = plain_label("—")
         self._overview_comparisons = {}
         for key, label, value in (("usd", tr("费用"), self._overview_cost),
-                                 ("tokens", "Total Token", self._overview_tokens),
+                                 ("tokens", tr("总 Token"), self._overview_tokens),
                                  ("user_requests", tr("用户请求数"), self._overview_requests),
-                                 ("cache_hit_rate", tr("缓存命中率"), self._overview_cache)):
+                                 ("cache_hit_rate", tr("命中率"), self._overview_cache)):
             box, content = card()
             content.setSpacing(9)
             content.addWidget(plain_label(label, muted=True))
@@ -1176,8 +1176,8 @@ class Dashboard(QMainWindow):
         metrics.setContentsMargins(0, 0, 0, 0)
         metrics.setSpacing(16)
         self._trend_metric_values, self._trend_comparisons = {}, {}
-        for key, title in (("usd", tr("费用")), ("tokens", "Total Token"), ("user_requests", tr("用户请求数")),
-                           ("cache_hit_rate", tr("缓存命中率"))):
+        for key, title in (("usd", tr("费用")), ("tokens", tr("总 Token")), ("user_requests", tr("用户请求数")),
+                           ("cache_hit_rate", tr("命中率"))):
             box, content = card()
             content.setSpacing(9)
             content.addWidget(plain_label(title, muted=True))
