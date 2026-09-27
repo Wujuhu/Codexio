@@ -17,26 +17,9 @@ enum Pages {
 
 struct MainView: View {
     @ObservedObject var state: AppState
-    @State private var draggedPage: String?
-    @State private var resizingFrom: Double?
-    private var navigation: [String] {
-        let saved = state.preferences.analytics["navigation_order"] as? [String] ?? Pages.all
-        return ["overview"] + saved.filter {$0 != "overview" && Pages.all.contains($0)} + Pages.all.filter {$0 != "overview" && !saved.contains($0)}
-    }
     var body: some View {
         HStack(spacing:0) {
-            sidebar.frame(width:state.sidebarVisible ? state.sidebarWidth : 62)
-                .overlay(alignment:.trailing) {
-                    Rectangle().fill(Color.secondary.opacity(0.16)).frame(width:1)
-                        .frame(width:8).contentShape(Rectangle())
-                        .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
-                        .gesture(DragGesture(minimumDistance:1).onChanged { value in
-                            if resizingFrom == nil { resizingFrom = state.sidebarVisible ? state.sidebarWidth : 62 }
-                            let width = (resizingFrom ?? 238)+value.translation.width
-                            if width < 140 { state.sidebarVisible = false }
-                            else { state.sidebarVisible = true; state.sidebarWidth = min(320,width) }
-                        }.onEnded { _ in resizingFrom = nil; state.persistSidebar() })
-                }
+            SidebarView(state:state)
             VStack(spacing:0) {
                 HStack(spacing:18) {
                     Button { state.toggleSidebar() } label: { Image(systemName:"sidebar.left") }.buttonStyle(.plain).accessibilityLabel(L("切换侧边栏", "Toggle sidebar"))
@@ -57,7 +40,28 @@ struct MainView: View {
         .preferredColorScheme(state.theme == "dark" ? .dark : state.theme == "light" ? .light : nil)
         .onChange(of:state.selectedPage) { _,page in if page == "subscription" || (page == "trends" && state.usageSection == "threads") { state.refreshReports() } }
     }
-    private var sidebar: some View {
+    @ViewBuilder private var page: some View {
+        switch state.selectedPage {
+        case "overview": OverviewView(state:state)
+        case "logs": LogsView(state:state)
+        case "trends": UsageView(state:state)
+        case "subscription": SubscriptionView(state:state)
+        case "pricing": PricingView(state:state)
+        default: SettingsView(state:state)
+        }
+    }
+}
+
+private struct SidebarView: View {
+    @ObservedObject var state: AppState
+    @State private var draggedPage: String?
+    @State private var resizingFrom: CGFloat?
+    @State private var previewWidth: CGFloat?
+    private var navigation: [String] {
+        let saved = state.preferences.analytics["navigation_order"] as? [String] ?? Pages.all
+        return ["overview"] + saved.filter {$0 != "overview" && Pages.all.contains($0)} + Pages.all.filter {$0 != "overview" && !saved.contains($0)}
+    }
+    var body: some View {
         VStack(alignment:.leading,spacing:0) {
             if state.sidebarVisible {
                 HStack {
@@ -67,14 +71,8 @@ struct MainView: View {
                 }.padding(.horizontal,16).padding(.top,30).padding(.bottom,24)
             } else { Color.clear.frame(height:76) }
             ForEach(navigation,id:\.self) { page in
-                Button { state.selectedPage = page } label: {
-                    HStack(spacing:12) {
-                        NavigationGlyph(name:page).stroke(style:StrokeStyle(lineWidth:1.6,lineCap:.round,lineJoin:.round)).frame(width:20,height:20)
-                        if state.sidebarVisible { Text(Pages.title(page)).font(.system(size:14,weight:state.selectedPage == page ? .medium : .regular)).lineLimit(1); Spacer(minLength:0) }
-                    }.foregroundStyle(.primary).padding(.horizontal,state.sidebarVisible ? 11 : 0).frame(maxWidth:.infinity).frame(height:40)
-                        .background(state.selectedPage == page ? Color.primary.opacity(0.075) : Color.clear,in:RoundedRectangle(cornerRadius:8))
-                }.buttonStyle(.plain).padding(.horizontal,8).padding(.bottom,4).accessibilityLabel(Pages.title(page))
-                    .onDrag { draggedPage = page; return NSItemProvider(object:page as NSString) }
+                SidebarNavigationRow(page:page,selected:state.selectedPage == page,expanded:state.sidebarVisible,draggedPage:$draggedPage) { if state.selectedPage != page { state.selectedPage = page } }
+                    .padding(.horizontal,8).padding(.bottom,4)
                     .onDrop(of:["public.text"],isTargeted:nil) { _ in
                         guard let from = draggedPage, from != "overview", page != "overview", from != page else { return false }
                         var order = navigation.filter {$0 != from}; guard let index = order.firstIndex(of:page) else { return false }
@@ -87,20 +85,50 @@ struct MainView: View {
                     VStack(alignment:.leading,spacing:5) {
                         Text(state.quota.account.string("planType").isEmpty ? L("本机 Codex", "Local Codex") : "ChatGPT · "+planName(state.quota.account.string("planType"))).font(.system(size:12)).lineLimit(1)
                         Text(state.quota.account.string("email")).font(.system(size:10)).foregroundStyle(.secondary).lineLimit(1)
-                    }.frame(maxWidth:.infinity,alignment:.leading).padding(16)
+                    }.frame(maxWidth:.infinity,alignment:.leading).padding(16).contentShape(Rectangle())
                 }.buttonStyle(.plain)
             } else { Button { state.selectedPage = "subscription" } label: { Image(systemName:"person.crop.circle").frame(maxWidth:.infinity).frame(height:48) }.buttonStyle(.plain).accessibilityLabel(Pages.title("subscription")) }
-        }.background(Color(nsColor:.windowBackgroundColor))
-    }
-    @ViewBuilder private var page: some View {
-        switch state.selectedPage {
-        case "overview": OverviewView(state:state)
-        case "logs": LogsView(state:state)
-        case "trends": UsageView(state:state)
-        case "subscription": SubscriptionView(state:state)
-        case "pricing": PricingView(state:state)
-        default: SettingsView(state:state)
+        }.frame(width:previewWidth ?? (state.sidebarVisible ? state.sidebarWidth : 62))
+        .background(Color(nsColor:.windowBackgroundColor))
+        .overlay(alignment:.trailing) {
+            Rectangle().fill(Color.secondary.opacity(0.16)).frame(width:1).allowsHitTesting(false)
+            HorizontalResizeHandle(begin:{ resizingFrom = state.sidebarVisible ? state.sidebarWidth : 62 },change:{ delta in
+                guard let resizingFrom else { return }
+                previewWidth = max(state.sidebarVisible ? 140 : 62,min(320,resizingFrom+delta))
+            },end:{ delta in
+                guard let resizingFrom else { return }
+                let width = resizingFrom+delta
+                if width < 140 { state.sidebarVisible = false }
+                else { state.sidebarWidth = min(320,width); state.sidebarVisible = true }
+                previewWidth = nil; self.resizingFrom = nil; state.persistSidebar()
+            }).frame(width:8)
         }
+    }
+}
+
+private struct SidebarNavigationRow: View {
+    let page: String
+    let selected: Bool
+    let expanded: Bool
+    @Binding var draggedPage: String?
+    let action: () -> Void
+    @State private var hovered = false
+    var body: some View {
+        NavigationButton(title:Pages.title(page),selected:selected,action:action)
+            .overlay {
+                HStack(spacing:12) {
+                    NavigationGlyph(name:page).stroke(style:StrokeStyle(lineWidth:1.6,lineCap:.round,lineJoin:.round)).frame(width:20,height:20)
+                    if expanded { Text(Pages.title(page)).font(.system(size:14,weight:selected ? .medium : .regular)).lineLimit(1); Spacer(minLength:0) }
+                }.foregroundStyle(.primary).padding(.leading,expanded ? 11 : 0).padding(.trailing,expanded ? 26 : 0).allowsHitTesting(false)
+            }
+            .overlay(alignment:.trailing) {
+                if expanded && page != "overview" {
+                    Image(systemName:"line.3.horizontal").font(.system(size:10)).foregroundStyle(.secondary)
+                        .frame(width:24,height:40).contentShape(Rectangle()).opacity(hovered ? 0.6 : 0)
+                        .onDrag { draggedPage = page; return NSItemProvider(object:page as NSString) }
+                        .accessibilityLabel(L("调整导航顺序", "Reorder navigation"))
+                }
+            }.frame(height:40).onHover { hovered = $0 }
     }
 }
 
@@ -201,7 +229,7 @@ struct LogsView: View {
                 if mode == "requests" { Picker("",selection:$status) { Text(L("全部状态", "All statuses")).tag("all"); Text(L("已完成", "Completed")).tag("completed"); Text(L("进行中", "In progress")).tag("running"); Text(L("未知", "Unknown")).tag("unknown") }.labelsHidden().frame(width:115) }
                 Spacer()
             }
-            CompactTable(columns:LogFields.columns(fields),rows:projection.value.rows.map { row in LogFields.row(row,timeOnly:period == "today") {state.usage.members(of:row)} },revision:projection.value.revision.uuidString+period)
+            CompactTable(columns:LogFields.columns(fields),rows:projection.value.rows.map { row in LogFields.row(row,timeOnly:period == "today") {state.usage.members(of:row)} },revision:projection.value.revision.uuidString+period,preferences:state.preferences,storageKey:"logs")
                 .overlay(RoundedRectangle(cornerRadius:10).stroke(.secondary.opacity(0.16)))
             HStack {
                 Text("\(projection.value.count) "+(mode == "requests" ? L("条请求", "requests") : L("次调用", "calls"))).foregroundStyle(.secondary)

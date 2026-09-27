@@ -1341,7 +1341,9 @@ class Dashboard(QMainWindow):
         self._price_table.horizontalHeader().installEventFilter(self)
         self._price_table.verticalHeader().setDefaultSectionSize(50)
         self._price_table.horizontalHeader().setStretchLastSection(False)
-        self._price_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._price_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        for column, width in enumerate((220, 130, 130, 130, 130)):
+            self._price_table.setColumnWidth(column, width)
         self._price_table.itemSelectionChanged.connect(self._price_selection_changed)
         self._price_table.cellDoubleClicked.connect(lambda *_: self._edit_selected_price())
         layout.addWidget(self._price_table, 1)
@@ -1630,6 +1632,9 @@ class Dashboard(QMainWindow):
                              preview_dismissed=self._log_preview_dismissed)
             elif name == "settings":
                 value["section"] = self._settings_sections.currentRow()
+            if name in ("pricing", "trends"):
+                grid = self._price_table if name == "pricing" else self._chat_usage_panel.tree
+                value["column_widths"] = [grid.columnWidth(column) for column in range(grid.columnCount())]
             state[name] = value
         return state
 
@@ -1656,6 +1661,11 @@ class Dashboard(QMainWindow):
             self._trend_date_row.setVisible(self._trend_period.currentData() == "custom")
         elif name == "settings":
             self._settings_sections.setCurrentRow(int(state.get("section", 0)))
+        if name in ("pricing", "trends"):
+            grid = self._price_table if name == "pricing" else self._chat_usage_panel.tree
+            for column, width in enumerate(state.get("column_widths", [])[:grid.columnCount()]):
+                if isinstance(width, (int, float)) and 48 <= width <= 1200:
+                    grid.setColumnWidth(column, int(width))
 
     def _apply_requested_period(self, name: str) -> None:
         period = self._period_overrides.pop(name, None)

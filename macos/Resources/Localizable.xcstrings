@@ -13089,6 +13089,22 @@
         }
       }
     },
+    "调整导航顺序": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reorder navigation"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "调整导航顺序"
+          }
+        }
+      }
+    },
     "调用 ": {
       "localizations": {
         "en": {

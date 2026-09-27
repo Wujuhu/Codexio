@@ -159,7 +159,12 @@ class ChatUsagePanel(QWidget):
         self.title = label(tr("聊天用量排行")); self.title.setProperty("subheading", True); heading.addWidget(self.title, 1)
         self.toggle = QPushButton(tr("本机 Token")); self.toggle.clicked.connect(self._toggle); heading.addWidget(self.toggle)
         reload = QPushButton(tr("刷新")); reload.clicked.connect(refresh); heading.addWidget(reload); layout.addLayout(heading)
-        self.tree = QTreeWidget(); self.tree.setMinimumHeight(340); self.tree.header().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.tree = QTreeWidget(); self.tree.setColumnCount(3); self.tree.setMinimumHeight(340)
+        self.tree.header().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.tree.header().setStretchLastSection(False); self.tree.header().setMinimumSectionSize(70)
+        self.tree.header().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
+        for column, width in enumerate((380, 190, 150)):
+            self.tree.setColumnWidth(column, width)
         self.tree.setIndentation(22); self.tree.itemClicked.connect(lambda item, _column: item.setExpanded(not item.isExpanded()) if item.childCount() else None)
         layout.addWidget(self.tree); self.note = label("", True); self.note.setWordWrap(True); layout.addWidget(self.note)
 
@@ -177,6 +182,8 @@ class ChatUsagePanel(QWidget):
         self.title.setText(tr("本机 Token 排行") if self.local else tr("聊天用量排行"))
         self.toggle.setText(tr("查看额度排行") if self.local else tr("本机 Token"))
         self.tree.setHeaderLabels([tr("聊天"), "Token" if self.local else tr("占每周限额的 %"), "" if self.local else tr("已用 Credits")])
+        for column in range(3):
+            self.tree.headerItem().setTextAlignment(column, Qt.AlignmentFlag.AlignCenter)
         self.tree.setColumnHidden(2, self.local)
         for row in rows:
             identity = row.get("thread_id", "")
@@ -187,6 +194,8 @@ class ChatUsagePanel(QWidget):
             credits = number(row.get("balance_usage_credits"))
             item = RankItem([str(title), compact_number(int(amount)) if self.local and amount is not None else percentage(amount, 4 if amount is not None and 0 < amount < Decimal("0.01") else 2), ("0" if credits == 0 else format(credits, "f").rstrip("0").rstrip(".") if "." in format(credits, "f") else format(credits, "f")) if credits is not None else "—"], [None, amount, credits])
             self.tree.addTopLevelItem(item)
+            for column in range(3):
+                item.setTextAlignment(column, Qt.AlignmentFlag.AlignCenter)
             detail = QTreeWidgetItem(); item.addChild(detail); detail.setFirstColumnSpanned(True)
             panel = QWidget(); grid = QGridLayout(panel); grid.setContentsMargins(18, 12, 18, 18)
             if not self.local:

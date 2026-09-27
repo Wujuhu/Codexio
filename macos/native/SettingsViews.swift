@@ -19,21 +19,20 @@ struct PricingView: View {
                 Button(L("恢复自动基础价", "Restore automatic price")) { if let model = selectedModel { state.overridePrice(model:model,rates:nil) } }.disabled(selectedModel == nil)
             }
             CompactTable(columns:[
-                GridColumn(id:"model",title:L("模型", "Model"),width:180,maximum:240),
-                GridColumn(id:"condition",title:L("条件", "Condition"),width:138,maximum:166),
-                GridColumn(id:"input",title:L("输入", "Input"),width:104,maximum:122,alignment:.right),
-                GridColumn(id:"cache_read",title:L("缓存读取", "Cached input"),width:104,maximum:122,alignment:.right),
-                GridColumn(id:"cache_write",title:L("缓存写入", "Cache write"),width:104,maximum:122,alignment:.right),
-                GridColumn(id:"output",title:L("输出", "Output"),width:104,maximum:122,alignment:.right)
+                GridColumn(id:"model",title:L("模型", "Model"),width:180,maximum:240,alignment:.center),
+                GridColumn(id:"condition",title:L("条件", "Condition"),width:138,maximum:166,alignment:.center),
+                GridColumn(id:"input",title:L("输入", "Input"),width:104,maximum:122,alignment:.center),
+                GridColumn(id:"cache_read",title:L("缓存读取", "Cached input"),width:104,maximum:122,alignment:.center),
+                GridColumn(id:"cache_write",title:L("缓存写入", "Cache write"),width:104,maximum:122,alignment:.center),
+                GridColumn(id:"output",title:L("输出", "Output"),width:104,maximum:122,alignment:.center)
             ],rows:filtered.map { row in GridRow(id:row.id,text: { column in
                 if column == "model" { return GridText(main:row.model) }
                 if column == "condition" { return GridText(main:(row.raw.string("service_tier") == "priority" ? "Fast" : "Standard")+((row.raw.integer("threshold") ?? 0) > 0 ? " >272K" : "")) }
                 return GridText(main:money(row.raw.number(column)))
-            }) },revision:state.pricesRevision+search+state.modelIDs.sorted().joined(separator:","),rowHeight:30,selection:$selected)
+            }) },revision:state.pricesRevision+search+state.modelIDs.sorted().joined(separator:","),rowHeight:30,selection:$selected,preferences:state.preferences,storageKey:"pricing")
                 .overlay(RoundedRectangle(cornerRadius:10).stroke(.secondary.opacity(0.16)))
         }.padding(26).sheet(isPresented:$editing) { if let model = selectedModel { PriceEditor(state:state,model:model) } }
     }
-    private func priceCell(_ value: Double?) -> some View { Text(money(value)).font(.system(size:13)).monospacedDigit().frame(maxWidth:.infinity,alignment:.trailing) }
 }
 
 struct PriceEditor: View {

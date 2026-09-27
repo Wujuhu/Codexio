@@ -16,6 +16,23 @@ struct GridRow {
     var detail: (() -> (UsageRow,[UsageRow]))? = nil
 }
 
+enum TableColumnWidths {
+    static func load(_ preferences: Preferences?,key: String) -> [String:CGFloat] {
+        let values = preferences?.analytics.object("native_table_widths").object(key) ?? [:]
+        return values.compactMapValues { value in
+            guard let number = value as? NSNumber, number.doubleValue.isFinite else { return nil }
+            return CGFloat(max(48,min(1200,number.doubleValue)))
+        }
+    }
+    static func save(_ widths: [String:CGFloat],preferences: Preferences?,key: String) {
+        guard let preferences, !key.isEmpty else { return }
+        var tables = preferences.analytics.object("native_table_widths")
+        tables[key] = widths.mapValues {Double($0)}
+        preferences.analytics["native_table_widths"] = tables
+        try? preferences.save()
+    }
+}
+
 private final class GridTextCell: NSView {
     let main = NSTextField(labelWithString:""), secondary = NSTextField(labelWithString:"")
     override init(frame: NSRect) {
@@ -73,6 +90,8 @@ struct CompactTable: NSViewRepresentable {
     var revision: String
     var rowHeight: CGFloat = 52
     var selection: Binding<String?>? = nil
+    var preferences: Preferences? = nil
+    var storageKey = ""
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView(), table = NSTableView()
@@ -85,7 +104,7 @@ struct CompactTable: NSViewRepresentable {
         table.gridStyleMask = [.solidHorizontalGridLineMask]
         table.usesAlternatingRowBackgroundColors = false
         table.allowsEmptySelection = true; table.allowsMultipleSelection = false
-        table.allowsColumnReordering = false; table.allowsColumnResizing = false
+        table.allowsColumnReordering = false; table.allowsColumnResizing = true
         table.allowsExpansionToolTips = false
         table.delegate = context.coordinator; table.dataSource = context.coordinator
         scroll.documentView = table; context.coordinator.table = table; context.coordinator.scroll = scroll
@@ -99,16 +118,19 @@ struct CompactTable: NSViewRepresentable {
         guard let table = coordinator.table else { return }
         let columnKey = columns.map {$0.id+":"+$0.title}.joined(separator:"|")
         if coordinator.columnsKey != columnKey {
+            coordinator.fitting = true
             for column in table.tableColumns { table.removeTableColumn(column) }
             for definition in columns {
                 let column = NSTableColumn(identifier:.init(definition.id))
-                column.title = definition.title; column.width = definition.width; column.minWidth = definition.width
-                column.maxWidth = definition.maximum ?? definition.width
+                column.title = definition.title; column.minWidth = 48; column.maxWidth = 1200
+                column.width = coordinator.widths[definition.id] ?? definition.width
+                column.resizingMask = .userResizingMask
                 column.headerCell.alignment = definition.alignment; column.headerCell.font = .systemFont(ofSize:11,weight:.medium)
                 table.addTableColumn(column)
             }
             coordinator.columnsKey = columnKey; coordinator.lastWidth = -1
             scroll.contentView.scroll(to:.zero)
+            coordinator.fitting = false
         }
         let key = revision+"|"+columnKey
         if coordinator.dataKey != key {
@@ -120,6 +142,7 @@ struct CompactTable: NSViewRepresentable {
     }
     static func dismantleNSView(_ scroll: NSScrollView,coordinator: Coordinator) {
         coordinator.timer?.invalidate()
+        coordinator.flushWidths()
         if let observer = coordinator.observer { NotificationCenter.default.removeObserver(observer) }
     }
     final class Coordinator: NSObject,NSTableViewDataSource,NSTableViewDelegate {
@@ -130,7 +153,25 @@ struct CompactTable: NSViewRepresentable {
         var lastWidth: CGFloat = -1
         var observer: NSObjectProtocol?
         var timer: Timer?
-        init(_ parent: CompactTable) { self.parent = parent }
+        var widths: [String:CGFloat]
+        var fitting = false
+        private var saveWork: DispatchWorkItem?
+        init(_ parent: CompactTable) {
+            self.parent = parent; widths = TableColumnWidths.load(parent.preferences,key:parent.storageKey)
+        }
+        func tableViewColumnDidResize(_ notification: Notification) {
+            guard !fitting, let table else { return }
+            for column in table.tableColumns { widths[column.identifier.rawValue] = column.width }
+            resizeDocument()
+            saveWork?.cancel()
+            let work = DispatchWorkItem { [weak self] in self?.flushWidths() }
+            saveWork = work; DispatchQueue.main.asyncAfter(deadline:.now()+0.3,execute:work)
+        }
+        func flushWidths() {
+            guard saveWork != nil else { return }
+            saveWork?.cancel(); saveWork = nil
+            TableColumnWidths.save(widths,preferences:parent.preferences,key:parent.storageKey)
+        }
         func configureTimer() {
             timer?.invalidate(); timer = nil
             guard parent.rows.contains(where:{$0.dynamic}), parent.columns.contains(where:{$0.id == "duration"}) else { return }
@@ -162,16 +203,22 @@ struct CompactTable: NSViewRepresentable {
         func fit() {
             guard let table, let scroll else { return }
             let available = scroll.contentSize.width
-            guard abs(lastWidth-available) > 0.5 else { return }; lastWidth = available
-            let base = parent.columns.reduce(CGFloat(0)) {$0+$1.width}
-            var spare = max(0,available-base)
-            let flexible = parent.columns.filter {($0.maximum ?? $0.width) > $0.width}
+            guard abs(lastWidth-available) > 0.5 else { resizeDocument(); return }; lastWidth = available
+            fitting = true; defer { fitting = false }
+            let base = parent.columns.reduce(CGFloat(0)) {$0+(widths[$1.id] ?? $1.width)}
+            let spare = max(0,available-base)
+            let flexible = parent.columns.filter {widths[$0.id] == nil && ($0.maximum ?? $0.width) > $0.width}
             for (index,definition) in parent.columns.enumerated() where table.tableColumns.indices.contains(index) {
                 let addition = flexible.isEmpty ? 0 : min(max(0,(definition.maximum ?? definition.width)-definition.width),spare/CGFloat(flexible.count))
-                table.tableColumns[index].width = definition.width+addition
+                table.tableColumns[index].width = widths[definition.id] ?? (definition.width+addition)
             }
-            spare = table.tableColumns.reduce(CGFloat(0)) {$0+$1.width}
-            table.setFrameSize(NSSize(width:max(available,spare),height:max(scroll.contentSize.height,CGFloat(parent.rows.count)*(parent.rowHeight+1))))
+            resizeDocument()
+        }
+        private func resizeDocument() {
+            guard let table, let scroll else { return }
+            let total = table.tableColumns.reduce(CGFloat(0)) {$0+$1.width}
+            let size = NSSize(width:max(scroll.contentSize.width,total),height:max(scroll.contentSize.height,CGFloat(parent.rows.count)*(parent.rowHeight+1)))
+            if table.frame.size != size { table.setFrameSize(size) }
         }
     }
 }

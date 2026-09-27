@@ -310,7 +310,7 @@ final class AppState: ObservableObject {
         theme = preferences.analytics.string("theme","system"); menuVisible = preferences.analytics.flag("menu_bar_visible",true); menuContent = preferences.analytics.string("menu_bar_content","week")
         configureTimers(); onSettingsChange?(); objectWillChange.send()
     }
-    func toggleSidebar() { sidebarVisible.toggle(); setPreference("sidebar_collapsed",!sidebarVisible) }
+    func toggleSidebar() { sidebarVisible.toggle(); persistSidebar() }
     func persistSidebar() {
         preferences.analytics["native_sidebar_width"] = sidebarWidth
         preferences.analytics["sidebar_collapsed"] = !sidebarVisible
