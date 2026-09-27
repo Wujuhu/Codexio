@@ -895,5 +895,6 @@
   "较昨天": "vs. yesterday",
   "较前 7 天": "vs. previous 7 days",
   "较前 30 天": "vs. previous 30 days",
-  "模型调用  {:,}": "Model calls  {:,}"
+  "模型调用  {:,}": "Model calls  {:,}",
+  "已用 Credits": "Credits used"
 }

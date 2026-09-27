@@ -80,7 +80,7 @@ struct LocalActivityView: View {
             HStack {
                 Text(L("本机记录 · 按模型调用次数统计模式占比", "Local records · mode shares by model calls"))
                 Spacer()
-                Text(L("本地扫描", "Local scan")+" "+dateText(state.usage.updated,timeOnly:true))
+                HStack(spacing:4) { Text(L("本地扫描", "Local scan")); ScanStamp(clock:state.clock) }
             }.font(.system(size:11)).foregroundStyle(.secondary)
             if stats.durationPartial || stats.unknownSpeed > 0 || stats.unknownEffort > 0 {
                 StatusNote(text:[stats.durationPartial ? L("时长仅含已记录区间", "Durations include recorded intervals only") : "",stats.unknownSpeed > 0 ? L("速度未知", "Unknown speed")+" \(stats.unknownSpeed)/\(stats.calls)" : "",stats.unknownEffort > 0 ? L("推理强度未知", "Unknown reasoning")+" \(stats.unknownEffort)/\(stats.calls)" : ""].filter {!$0.isEmpty}.joined(separator:" · "))
@@ -131,35 +131,34 @@ struct LocalActivityView: View {
 
 struct UsageTrendsView: View {
     @ObservedObject var state: AppState
+    @ObservedObject private var projection: AsyncProjection<TrendProjection>
     @State private var period = "week"
     @State private var model = "all"
     @State private var granularity = "day"
     @State private var from = Calendar.current.date(byAdding:.day,value:-6,to:Date())!
     @State private var through = Date()
-    private var range: UsageRange { UsageRange(period:period,from:from,through:through) }
-    private var rows: [UsageRow] { state.usage.calls.filter {$0.local && range.contains($0) && (model == "all" || $0.raw.string("model") == model)} }
-    private var summary: UsageSummary {
-        let ids = Set(rows.map(\.id))
-        let requests = state.usage.requests.filter {$0.local && !$0.raw.flag("is_subagent") && $0.raw.string("record_kind") == "user_request" && range.contains($0) && (model == "all" || !ids.isDisjoint(with: $0.raw["member_ids"] as? [String] ?? []))}.count
-        return UsageSummary(rows:rows,requests:requests)
+    init(state: AppState) { self.state = state; projection = state.trendProjection }
+    private var key: String { [state.usage.revision.uuidString,period,model,granularity,period == "custom" ? String(Calendar.current.startOfDay(for:from).timeIntervalSince1970) : "",period == "custom" ? String(Calendar.current.startOfDay(for:through).timeIntervalSince1970) : ""].joined(separator:"|") }
+    private func load() {
+        let snapshot = state.usage, range = UsageRange(period:period,from:from,through:through), model = model, granularity = granularity
+        projection.load(key:key) { TrendProjection.build(snapshot,range:range,model:model,granularity:granularity) }
     }
     var body: some View {
-        VStack(alignment:.leading,spacing:25) {
+        VStack(alignment:.leading,spacing:22) {
             HStack {
-                PeriodPicker(selection:$period,custom:true)
-                Spacer()
-                Picker("",selection:$model) { Text(L("全部模型", "All models")).tag("all"); ForEach(Array(Set(state.usage.calls.map {$0.raw.string("model")})).sorted(),id:\.self) { Text($0).tag($0) } }.labelsHidden().frame(width:170)
+                PeriodPicker(selection:$period,custom:true); Spacer()
+                Picker("",selection:$model) { Text(L("全部模型", "All models")).tag("all"); ForEach(state.usage.models,id:\.self) { Text($0).tag($0) } }.labelsHidden().frame(width:170)
             }
             HStack {
-                if period == "custom" { DateRangeControls(from:$from,through:$through) }
-                Spacer()
+                if period == "custom" { DateRangeControls(from:$from,through:$through) }; Spacer()
                 Picker("",selection:$granularity) { Text(L("每小时", "Hourly")).tag("hour"); Text(L("每天", "Daily")).tag("day"); Text(L("每周", "Weekly")).tag("week") }.labelsHidden().pickerStyle(.segmented).frame(width:210)
             }
-            SummaryMetrics(summary:summary)
-            TrendChart(days:range.buckets(rows,granularity:granularity)).padding(20).overlay(RoundedRectangle(cornerRadius:14).stroke(.secondary.opacity(0.15)))
+            SummaryMetrics(summary:projection.value.summary)
+            TrendChart(days:projection.value.days).padding(18).overlay(RoundedRectangle(cornerRadius:14).stroke(.secondary.opacity(0.15)))
             StatusNote(text:L("本机记录 · 费用按模型价格估算", "Local records · cost estimated from model prices"))
-            if summary.unknownCosts > 0 { StatusNote(text:L("未定价调用", "Unpriced calls")+" · \(summary.unknownCosts)") }
-        }.onChange(of:period) { _,value in granularity = value == "today" ? "hour" : value == "all" ? "week" : "day" }
+            if projection.value.summary.unknownCosts > 0 { StatusNote(text:L("未定价调用", "Unpriced calls")+" · \(projection.value.summary.unknownCosts)") }
+        }.onAppear(perform:load).onChange(of:key) { _,_ in load() }
+        .onChange(of:period) { _,value in granularity = value == "today" ? "hour" : value == "all" ? "week" : "day" }
     }
 }
 
@@ -170,14 +169,7 @@ struct ChatRankingView: View {
     @State private var sortMetric = "weekly_limit_percent"
     @State private var page = 0
     private var rows: [Object] {
-        if localMode {
-            var totals: [String:Int] = [:]
-            for row in state.usage.calls where row.local { totals[row.raw.string("session_id"),default:0] += row.tokens ?? 0 }
-            return state.usage.chatCandidates.map { candidate in
-                let ids = [candidate.string("thread_id")] + (candidate["descendant_thread_ids"] as? [String] ?? [])
-                return ["thread_id":candidate.string("thread_id"),"local_tokens":ids.reduce(0) {$0+(totals[$1] ?? 0)}] as Object
-            }.sorted {($0.integer("local_tokens") ?? 0) > ($1.integer("local_tokens") ?? 0)}
-        }
+        if localMode { return state.usage.localChatRows }
         return state.chatUsage.objects("threads").sorted { ($0.decimal(sortMetric) ?? -1) > ($1.decimal(sortMetric) ?? -1) }
     }
     private var visible: [Object] { Array(rows.dropFirst(page*25).prefix(25)) }
@@ -188,6 +180,7 @@ struct ChatRankingView: View {
                 Button { localMode.toggle(); expanded.removeAll(); page = 0 } label: { Text(localMode ? L("查看额度排行", "View allowance ranking") : L("本机 Token", "Local tokens")) }.buttonStyle(.plain).foregroundStyle(.secondary)
             }
             StatusNote(text:localMode ? L("仅统计本机记录", "Computed from local records only") : L("当前周额度 · 本机可用聊天", "Current weekly allowance · local chats"))
+            if !localMode { StatusNote(text:L("Credits 余额扣除量，与每周限额占比分开统计。", "Credits balance deductions are separate from weekly allowance usage.")) }
             if state.reportsLoading && !localMode { ProgressView().controlSize(.small) }
             if let error = state.reportError, !localMode, !rows.isEmpty { StatusNote(text:error) }
             if rows.isEmpty {
@@ -197,7 +190,7 @@ struct ChatRankingView: View {
                     HStack {
                         Text(L("聊天", "Chat")).frame(maxWidth:.infinity,alignment:.leading)
                         if !localMode { Button(L("占每周限额的 %", "% of weekly limit")) { sortMetric = "weekly_limit_percent" }.buttonStyle(.plain).frame(width:180,alignment:.trailing) }
-                        Button(localMode ? "Token" : L("已用额度", "Credits used")) { sortMetric = "balance_usage_credits" }.buttonStyle(.plain).frame(width:115,alignment:.trailing)
+                        Button(localMode ? "Token" : L("已用 Credits", "Credits used")) { sortMetric = "balance_usage_credits" }.buttonStyle(.plain).frame(width:115,alignment:.trailing)
                     }.font(.system(size:12)).foregroundStyle(.secondary).padding(20)
                     ForEach(visible,id:\.threadIdentity) { row in rowView(row) }
                 }.clipShape(RoundedRectangle(cornerRadius:18)).overlay(RoundedRectangle(cornerRadius:18).stroke(.secondary.opacity(0.22)))
@@ -223,7 +216,7 @@ struct ChatRankingView: View {
                         if row.string("data_status") == "partial" { Text(L("部分数据", "Partial data")).font(.caption).foregroundStyle(.secondary) }
                     }.frame(maxWidth:.infinity,alignment:.leading)
                     if !localMode { Text(precisePercent(row.number("weekly_limit_percent"))).monospacedDigit().frame(width:180,alignment:.trailing) }
-                    Text(localMode ? compact(row.number("local_tokens")) : row.string("balance_usage_credits","—")).monospacedDigit().frame(width:115,alignment:.trailing)
+                    Text(localMode ? compact(row.number("local_tokens")) : creditsText(row.decimal("balance_usage_credits"))).monospacedDigit().frame(width:115,alignment:.trailing)
                 }.font(.system(size:15)).padding(20).contentShape(Rectangle())
             }.buttonStyle(.plain)
             if isExpanded {

@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
 STAGING = BUILD / "staging/macos"
 DESTINATION = BUILD / "dev/macos"
-WIDGET_VERSION = 15  # Increase for widget UI, registration, or host-lifecycle changes.
+WIDGET_VERSION = 16  # Increase for widget UI, registration, or host-lifecycle changes.
 
 
 def run(*args, **kwargs):
@@ -63,6 +63,8 @@ def localization_resources(destination):
         "单额度窗口": "Single-limit window", "外观": "Appearance", "跟随系统": "Follow system",
         "浅色": "Light", "深色": "Dark", "周额度": "Weekly limit", "5 小时额度": "5-hour limit",
         "仅显示额度，提供三种样式": "Allowance only, with three styles",
+        "Codex 单额度": "Codex Weekly Allowance", "Codex 双额度": "Codex Dual Allowance",
+        "Codex 刻度额度": "Codex Segmented Allowance", "查看 Codex 剩余额度与重置时间": "View Codex remaining allowance and reset times",
     })
     strings = {key: {"localizations": {"en": {"stringUnit": {"state": "translated", "value": value}},
                                       "zh-Hans": {"stringUnit": {"state": "translated", "value": key}}}}
@@ -125,25 +127,11 @@ def embed_widget(bundle):
     executable.parent.mkdir(parents=True, exist_ok=True)
     cache.mkdir(parents=True, exist_ok=True)
     target = platform.machine() + "-apple-macos15.0"
-    protocols = cache / "protocols.json"
-    protocols.write_text(json.dumps(["AppIntent", "AppEntity", "AppEnum", "WidgetConfigurationIntent"]), encoding="utf-8")
-    constants = cache / "CodexioWidget.swiftconstvalues"
     run("xcrun", "swiftc", "-swift-version", "5", "-O", "-whole-module-optimization", "-target", target,
         "-application-extension", "-parse-as-library", "-module-name", "CodexioWidget",
-        "-emit-const-values-path", constants, "-const-gather-protocols-list", protocols,
         "-Xlinker", "-e", "-Xlinker", "_NSExtensionMain", *sources, "-o", executable, env=environment)
-    source_list, const_list = cache / "sources.txt", cache / "constants.txt"
-    source_list.write_text("\n".join(map(str, sources)) + "\n", encoding="utf-8")
-    const_list.write_text(str(constants) + "\n", encoding="utf-8")
-    sdk = subprocess.check_output(["xcrun", "--show-sdk-path"], env=environment, text=True, encoding="utf-8").strip()
-    compiler = subprocess.check_output(["xcrun", "--find", "swiftc"], env=environment, text=True, encoding="utf-8").strip()
-    xcode_version = subprocess.check_output(["xcodebuild", "-version"], env=environment, text=True, encoding="utf-8").strip().splitlines()[-1].split()[-1]
     resources = extension / "Contents/Resources"
     resources.mkdir(parents=True, exist_ok=True)
-    run("xcrun", "appintentsmetadataprocessor", "--output", resources, "--toolchain-dir", Path(compiler).parents[2],
-        "--module-name", "CodexioWidget", "--sdk-root", sdk, "--xcode-version", xcode_version,
-        "--platform-family", "macOS", "--deployment-target", "15.0", "--target-triple", target,
-        "--source-file-list", source_list, "--swift-const-vals-list", const_list, env=environment)
     localization_resources(resources)
     (extension / "Contents/Info.plist").write_bytes(plistlib.dumps({
         "CFBundleIdentifier": "com.wujuhu.codexio.widget", "CFBundleExecutable": "CodexioWidget",
@@ -156,7 +144,6 @@ def embed_widget(bundle):
     run("codesign", "--force", "--sign", "-", "--timestamp=none", "--entitlements", entitlements, extension)
     run("codesign", "--force", "--sign", "-", "--timestamp=none", bundle)
     run("codesign", "--verify", "--strict", extension)
-    assert (resources / "Metadata.appintents").is_dir(), "缺少小组件 App Intent 元数据"
 
 
 def main():

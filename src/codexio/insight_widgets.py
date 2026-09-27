@@ -176,7 +176,7 @@ class ChatUsagePanel(QWidget):
         rows = self.threads if self.local else self.report.get("threads", [])
         self.title.setText(tr("本机 Token 排行") if self.local else tr("聊天用量排行"))
         self.toggle.setText(tr("查看额度排行") if self.local else tr("本机 Token"))
-        self.tree.setHeaderLabels([tr("聊天"), "Token" if self.local else tr("占每周限额的 %"), "" if self.local else tr("已用额度")])
+        self.tree.setHeaderLabels([tr("聊天"), "Token" if self.local else tr("占每周限额的 %"), "" if self.local else tr("已用 Credits")])
         self.tree.setColumnHidden(2, self.local)
         for row in rows:
             identity = row.get("thread_id", "")
@@ -185,7 +185,7 @@ class ChatUsagePanel(QWidget):
                 title += " · " + (tr("部分数据") if row["data_status"] == "partial" else tr("暂不可用"))
             amount = number(row.get("local_tokens" if self.local else "weekly_limit_percent"))
             credits = number(row.get("balance_usage_credits"))
-            item = RankItem([str(title), compact_number(int(amount)) if self.local and amount is not None else percentage(amount, 4 if amount is not None and 0 < amount < Decimal("0.01") else 2), str(credits) if credits is not None else "—"], [None, amount, credits])
+            item = RankItem([str(title), compact_number(int(amount)) if self.local and amount is not None else percentage(amount, 4 if amount is not None and 0 < amount < Decimal("0.01") else 2), ("0" if credits == 0 else format(credits, "f").rstrip("0").rstrip(".") if "." in format(credits, "f") else format(credits, "f")) if credits is not None else "—"], [None, amount, credits])
             self.tree.addTopLevelItem(item)
             detail = QTreeWidgetItem(); item.addChild(detail); detail.setFirstColumnSpanned(True)
             panel = QWidget(); grid = QGridLayout(panel); grid.setContentsMargins(18, 12, 18, 18)

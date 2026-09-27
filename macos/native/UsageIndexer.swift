@@ -3,10 +3,14 @@ import Foundation
 final class UsageIndexer {
     let database: Database
     private var cancelled = false
+    private struct Signature: Equatable { let size: Int; let modified: Double }
+    private var scannedFiles: [String:Signature] = [:]
+    private var titleReadAt: [String:Date] = [:]
     private let counters = ["input_tokens","cached_input_tokens","cache_write_input_tokens","output_tokens","reasoning_output_tokens","total_tokens"]
     init(_ database: Database) { self.database = database }
     func cancel() { cancelled = true }
     func rescan() throws {
+        scannedFiles.removeAll(); titleReadAt.removeAll()
         try database.transaction {
             try database.run("DELETE FROM usage_cursors WHERE key LIKE 'native-v1:%' OR key LIKE 'usage:local:%' OR key LIKE 'usage:local:%:%'")
         }
@@ -44,6 +48,7 @@ final class UsageIndexer {
         }
     }
     private func titles(_ root: URL) throws {
+        if let stamp = titleReadAt[root.path], Date().timeIntervalSince(stamp) < 60 { return }
         var values: [String:String] = [:]
         let index = root.appendingPathComponent("session_index.jsonl")
         if let data = try? Data(contentsOf:index), data.count < 32_000_000, let text = String(data:data,encoding:.utf8) {
@@ -59,10 +64,13 @@ final class UsageIndexer {
             }
         }
         try database.updateTitles(values)
+        titleReadAt[root.path] = Date()
     }
     private func scanFile(_ file: URL, root: URL) throws {
         let info = try file.resourceValues(forKeys:[.fileSizeKey,.contentModificationDateKey])
         let size = info.fileSize ?? 0, modified = info.contentModificationDate?.timeIntervalSince1970 ?? 0
+        let signature = Signature(size:size,modified:modified)
+        if scannedFiles[file.path] == signature { return }
         let rollout = rolloutID(file), key = "native-v1:" + String(identity(root.path).prefix(16)) + ":" + rollout
         var cursor = database.object("usage_cursors",key:key)
         if cursor.isEmpty {
@@ -90,7 +98,7 @@ final class UsageIndexer {
             }
         }
         var offset = cursor.integer("offset") ?? 0
-        if offset == size && cursor.number("modified") == modified { return }
+        if offset == size && cursor.number("modified") == modified { scannedFiles[file.path] = signature; return }
         let handle = try FileHandle(forReadingFrom:file); defer { try? handle.close() }
         var valid = offset <= size && cursor.integer("parser") == 1
         if valid && offset > 0 {
@@ -120,6 +128,7 @@ final class UsageIndexer {
             if !oversized { try checkpoint(handle:handle,key:key,state:state,offset:offset,modified:modified) }
         }
         if !oversized { try checkpoint(handle:handle,key:key,state:state,offset:offset,modified:modified) }
+        if !cancelled { scannedFiles[file.path] = signature }
     }
     private func checkpoint(handle: FileHandle,key: String,state: Object,offset: Int,modified: Double) throws {
         let current = try handle.offset(), length = min(offset,4096)

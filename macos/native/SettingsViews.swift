@@ -18,15 +18,20 @@ struct PricingView: View {
                 Button(L("编辑基础价", "Edit base price")) { editing = true }.disabled(selectedModel == nil)
                 Button(L("恢复自动基础价", "Restore automatic price")) { if let model = selectedModel { state.overridePrice(model:model,rates:nil) } }.disabled(selectedModel == nil)
             }
-            Table(filtered,selection:$selected) {
-                TableColumn(L("模型", "Model")) { row in Text(row.model).font(.system(size:13)) }.width(min:150,ideal:220)
-                TableColumn(L("条件", "Condition")) { row in Text((row.raw.string("service_tier") == "priority" ? "Fast" : "Standard")+((row.raw.integer("threshold") ?? 0) > 0 ? " >272K" : "")).font(.system(size:12)).foregroundStyle(.secondary) }.width(min:95,ideal:125)
-                TableColumn(L("输入", "Input")) { priceCell($0.raw.number("input")) }
-                TableColumn(L("缓存读取", "Cached input")) { priceCell($0.raw.number("cache_read")) }
-                TableColumn(L("缓存写入", "Cache write")) { priceCell($0.raw.number("cache_write")) }
-                TableColumn(L("输出", "Output")) { priceCell($0.raw.number("output")) }
-            }.tableStyle(.inset(alternatesRowBackgrounds:false))
-        }.padding(32).sheet(isPresented:$editing) { if let model = selectedModel { PriceEditor(state:state,model:model) } }
+            CompactTable(columns:[
+                GridColumn(id:"model",title:L("模型", "Model"),width:180,maximum:240),
+                GridColumn(id:"condition",title:L("条件", "Condition"),width:138,maximum:166),
+                GridColumn(id:"input",title:L("输入", "Input"),width:104,maximum:122,alignment:.right),
+                GridColumn(id:"cache_read",title:L("缓存读取", "Cached input"),width:104,maximum:122,alignment:.right),
+                GridColumn(id:"cache_write",title:L("缓存写入", "Cache write"),width:104,maximum:122,alignment:.right),
+                GridColumn(id:"output",title:L("输出", "Output"),width:104,maximum:122,alignment:.right)
+            ],rows:filtered.map { row in GridRow(id:row.id,text: { column in
+                if column == "model" { return GridText(main:row.model) }
+                if column == "condition" { return GridText(main:(row.raw.string("service_tier") == "priority" ? "Fast" : "Standard")+((row.raw.integer("threshold") ?? 0) > 0 ? " >272K" : "")) }
+                return GridText(main:money(row.raw.number(column)))
+            }) },revision:state.pricesRevision+search+state.modelIDs.sorted().joined(separator:","),rowHeight:30,selection:$selected)
+                .overlay(RoundedRectangle(cornerRadius:10).stroke(.secondary.opacity(0.16)))
+        }.padding(26).sheet(isPresented:$editing) { if let model = selectedModel { PriceEditor(state:state,model:model) } }
     }
     private func priceCell(_ value: Double?) -> some View { Text(money(value)).font(.system(size:13)).monospacedDigit().frame(maxWidth:.infinity,alignment:.trailing) }
 }
@@ -122,6 +127,11 @@ struct SettingsView: View {
     }
     private var app: some View {
         VStack(spacing:0) {
+            row(L("当前版本", "Current version")+" · Codexio "+BuildInfo.version) {
+                if state.updateAvailable { Button(L("退出并更新", "Quit and update")) { state.onInstallUpdate?() } }
+                else { Button(L("检查更新", "Check for updates")) { state.onCheckUpdate?() }.disabled(state.paths.mock) }
+            }
+            if !state.updateStatus.isEmpty { StatusNote(text:state.updateStatus).padding(.vertical,8) }
             row(L("菜单栏", "Menu bar")) { Toggle("",isOn:Binding(get:{state.menuVisible},set:{state.setPreference("menu_bar_visible",$0)})).labelsHidden().toggleStyle(.switch) }
             row(L("菜单栏内容", "Menu bar content")) {
                 Picker("",selection:Binding(get:{state.menuContent},set:{state.setPreference("menu_bar_content",$0)})) { Text(L("图标 + 周额度剩余", "Icon + weekly remaining")).tag("week"); Text(L("图标 + 5 小时剩余", "Icon + 5-hour remaining")).tag("five"); Text(L("仅图标", "Icon only")).tag("icon") }.labelsHidden().frame(width:230)
@@ -133,11 +143,6 @@ struct SettingsView: View {
             row(L("额度刷新", "Limit refresh")) { Picker("",selection:Binding(get:{state.preferences.general.integer("refresh_interval_seconds") ?? 60},set:{state.setPreference("refresh_interval_seconds",$0,general:true)})) { ForEach([30,60,300],id:\.self) { Text("\($0) s").tag($0) } }.labelsHidden().frame(width:110) }
             row(L("日志刷新", "Log refresh")) { Picker("",selection:Binding(get:{state.preferences.analytics.integer("usage_refresh_interval_seconds") ?? 10},set:{state.setPreference("usage_refresh_interval_seconds",$0)})) { ForEach([5,10,30,60],id:\.self) { Text("\($0) s").tag($0) } }.labelsHidden().frame(width:110) }
             row(L("额度估算间隔", "Estimate interval")) { Picker("",selection:Binding(get:{state.preferences.analytics.integer("week_estimate_interval_minutes") ?? 30},set:{state.setPreference("week_estimate_interval_minutes",$0)})) { ForEach([10,30,60],id:\.self) { Text("\($0) min").tag($0) } }.labelsHidden().frame(width:110) }
-            row("Codexio "+BuildInfo.version) {
-                if state.updateAvailable { Button(L("退出并更新", "Quit and update")) { state.onInstallUpdate?() } }
-                else { Button(L("检查并更新", "Check for updates")) { state.onCheckUpdate?() }.disabled(state.paths.mock) }
-            }
-            if !state.updateStatus.isEmpty { StatusNote(text:state.updateStatus).padding(.vertical,10) }
         }
     }
     private func row<V:View>(_ title: String,@ViewBuilder content: ()->V) -> some View { VStack(spacing:0) { HStack(spacing:20) { Text(title).font(.system(size:13)); Spacer(minLength:16); content() }.padding(.vertical,16); Divider() } }

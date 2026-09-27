@@ -993,6 +993,54 @@
         }
       }
     },
+    "Codex 刻度额度": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex Segmented Allowance"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex 刻度额度"
+          }
+        }
+      }
+    },
+    "Codex 单额度": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex Weekly Allowance"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex 单额度"
+          }
+        }
+      }
+    },
+    "Codex 双额度": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex Dual Allowance"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex 双额度"
+          }
+        }
+      }
+    },
     "Codex 可执行文件": {
       "localizations": {
         "en": {
@@ -1341,6 +1389,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Codexio：本机 Codex 额度与用量统计"
+          }
+        }
+      }
+    },
+    "Credits 余额扣除量，与每周限额占比分开统计。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Credits balance deductions are separate from weekly allowance usage."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Credits 余额扣除量，与每周限额占比分开统计。"
           }
         }
       }
@@ -1821,6 +1885,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "上一页"
+          }
+        }
+      }
+    },
+    "上下文": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Context"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上下文"
           }
         }
       }
@@ -2605,6 +2685,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "价格  "
+          }
+        }
+      }
+    },
+    "价格与续费日期可手动补充": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Price and renewal date can be added manually"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "价格与续费日期可手动补充"
           }
         }
       }
@@ -4273,6 +4369,22 @@
         }
       }
     },
+    "周额度估算": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weekly allowance estimates"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "周额度估算"
+          }
+        }
+      }
+    },
     "周额度剩余": {
       "localizations": {
         "en": {
@@ -5473,6 +5585,22 @@
         }
       }
     },
+    "已用 Credits": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Credits used"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已用 Credits"
+          }
+        }
+      }
+    },
     "已用额度": {
       "localizations": {
         "en": {
@@ -6001,6 +6129,22 @@
         }
       }
     },
+    "当前版本": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Current version"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前版本"
+          }
+        }
+      }
+    },
     "当前账号观测起点：": {
       "localizations": {
         "en": {
@@ -6269,6 +6413,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "恢复自动基础价"
+          }
+        }
+      }
+    },
+    "恢复默认字段": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reset columns"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复默认字段"
           }
         }
       }
@@ -7697,6 +7857,22 @@
         }
       }
     },
+    "显示字段": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Columns"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示字段"
+          }
+        }
+      }
+    },
     "显示悬浮窗": {
       "localizations": {
         "en": {
@@ -8721,6 +8897,22 @@
         }
       }
     },
+    "未提供": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not provided"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未提供"
+          }
+        }
+      }
+    },
     "未登录 ChatGPT / Codex": {
       "localizations": {
         "en": {
@@ -9425,6 +9617,22 @@
         }
       }
     },
+    "查看 Codex 剩余额度与重置时间": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "View Codex remaining allowance and reset times"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查看 Codex 剩余额度与重置时间"
+          }
+        }
+      }
+    },
     "查看会话标题和该轮用户输入": {
       "localizations": {
         "en": {
@@ -9613,6 +9821,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "检查并更新"
+          }
+        }
+      }
+    },
+    "检查更新": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check for updates"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "检查更新"
           }
         }
       }
@@ -10726,7 +10950,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "User request"
+            "value": "User requests"
           }
         },
         "zh-Hans": {
@@ -12641,6 +12865,22 @@
         }
       }
     },
+    "请求 / 时间": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Request / time"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请求 / 时间"
+          }
+        }
+      }
+    },
     "请求数": {
       "localizations": {
         "en": {
@@ -13398,7 +13638,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Prompt"
+            "value": "Prompt preview"
           }
         },
         "zh-Hans": {

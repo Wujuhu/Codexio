@@ -15,6 +15,7 @@ final class PricingCatalog {
     private(set) var updated: Date?
     private(set) var warning: String?
     private(set) var version = ""
+    private var ratesByModel: [String:[PriceRow]] = [:]
     init(_ directory: URL) {
         self.directory = directory
         cache = readObject(directory.appendingPathComponent("pricing_cache.json"))
@@ -52,6 +53,7 @@ final class PricingCatalog {
                 }
             }
         }
+        ratesByModel = Dictionary(grouping:rows,by: { $0.model })
         version = identity(rows.map(\.raw)); updated = parsedDate(cache["updated_at"])
     }
     func price(_ raw: Object) -> Object {
@@ -62,7 +64,7 @@ final class PricingCatalog {
         let provider = raw.string("provider","unknown"), official = ["openai","codexio-upstream"].contains(provider)
         guard provider != "unknown", !provider.isEmpty else { return value }
         let model = official ? raw.string("model").replacingOccurrences(of:"openai/",with:"") : raw.string("model")
-        let candidates = rows.filter { $0.model == model }
+        let candidates = ratesByModel[model] ?? []
         let tier = normalizedTier(raw.string("service_tier"))
         let threshold = candidates.map { $0.raw.integer("threshold") ?? 0 }.filter { values[0] > $0 }.max() ?? 0
         guard let selected = candidates.first(where: { $0.raw.string("service_tier") == (tier == "unknown" ? "default" : tier) && $0.raw.integer("threshold") == threshold }) else { return value }

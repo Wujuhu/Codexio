@@ -165,6 +165,7 @@ struct DetailsLink: NSViewRepresentable {
     final class Coordinator: NSObject {
         var row: UsageRow
         var members: [UsageRow]
+        var loadMembers: (() -> [UsageRow])?
         weak var anchor: HoverLinkView?
         let popover = NSPopover()
         var anchorInside = false
@@ -174,7 +175,7 @@ struct DetailsLink: NSViewRepresentable {
         @objc func clicked() { if popover.isShown { popover.close() } else { show() } }
         func show() {
             work?.cancel(); guard let anchor, !popover.isShown else { return }
-            let content = LogDetail(row:row,members:members).onHover { [weak self] inside in self?.popupInside = inside; if !inside { self?.scheduleClose() } }
+            let content = LogDetail(row:row,members:loadMembers?() ?? members).onHover { [weak self] inside in self?.popupInside = inside; if !inside { self?.scheduleClose() } }
             popover.contentViewController = NSHostingController(rootView:content)
             popover.contentSize = NSSize(width:360,height:500)
             popover.show(relativeTo:anchor.bounds,of:anchor,preferredEdge:.minX)
@@ -233,35 +234,6 @@ struct LogDetail: View {
         }.frame(width:360,height:500)
     }
     private func field(_ label: String,_ value: String) -> some View { HStack(alignment:.firstTextBaseline) { Text(label).foregroundStyle(.secondary); Spacer(minLength:12); Text(value).multilineTextAlignment(.trailing) } }
-}
-
-struct UsageRange {
-    let start: Date
-    let end: Date
-    init(period: String,from: Date = Date(),through: Date = Date()) {
-        let calendar = Calendar.current, today = calendar.startOfDay(for:Date())
-        switch period {
-        case "all": start = .distantPast
-        case "custom": start = calendar.startOfDay(for:min(from,through))
-        default: start = calendar.date(byAdding:.day,value:period == "today" ? 0 : period == "week" ? -6 : -29,to:today)!
-        }
-        end = period == "custom" ? min(Date(),calendar.date(byAdding:.day,value:1,to:calendar.startOfDay(for:max(from,through)))!) : Date()
-    }
-    func contains(_ row: UsageRow) -> Bool { row.date.map {$0 >= start && $0 <= end} ?? false }
-    func buckets(_ rows: [UsageRow],granularity: String) -> [DayUsage] {
-        var calendar = Calendar.current; calendar.firstWeekday = 2
-        let component: Calendar.Component = granularity == "hour" ? .hour : granularity == "week" ? .weekOfYear : .day
-        let begin = start == .distantPast ? rows.compactMap(\.date).min() ?? calendar.startOfDay(for:end) : start
-        var groups: [Date:[UsageRow]] = [:]
-        for row in rows { if let date = row.date, let lower = calendar.dateInterval(of:component,for:date)?.start { groups[lower,default:[]].append(row) } }
-        var cursor = calendar.dateInterval(of:component,for:begin)!.start, result: [DayUsage] = []
-        while cursor <= end {
-            let entries = groups[cursor] ?? [], total = UsageSummary(rows:entries)
-            result.append(DayUsage(date:cursor,tokens:entries.isEmpty ? 0 : total.tokens,cost:entries.isEmpty ? 0 : total.cost,calls:total.calls))
-            guard let next = calendar.date(byAdding:component,value:1,to:cursor), next > cursor else { break }; cursor = next
-        }
-        return result
-    }
 }
 
 struct DateRangeControls: View {

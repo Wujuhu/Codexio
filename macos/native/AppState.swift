@@ -10,6 +10,13 @@ final class AppState: ObservableObject {
     let indexer: UsageIndexer
     let estimator: WeeklyEstimator
     let client = CodexClient()
+    let clock = ScanClock()
+    let overviewProjection = AsyncProjection(TrendProjection())
+    let trendProjection = AsyncProjection(TrendProjection())
+    let logProjection = AsyncProjection(LogProjection())
+    private let snapshotQueue = DispatchQueue(label:"com.wujuhu.codexio.widget-snapshot",qos:.utility)
+    private(set) var pricesRevision = ""
+    private var displayedEstimates = ""
     let dataQueue = DispatchQueue(label:"com.wujuhu.codexio.data",qos:.utility)
     let accountQueue = DispatchQueue(label:"com.wujuhu.codexio.account",qos:.utility)
     let reportQueue = DispatchQueue(label:"com.wujuhu.codexio.reports",qos:.utility)
@@ -25,6 +32,7 @@ final class AppState: ObservableObject {
     @Published var usageSection = "activity"
     @Published var theme = "system"
     @Published var sidebarVisible = true
+    @Published var sidebarWidth: Double = 238
     @Published var menuVisible = true
     @Published var menuContent = "week"
     @Published var loading = true
@@ -46,6 +54,7 @@ final class AppState: ObservableObject {
     private var scanning = false
     private var refreshing = false
     private var stopped = false
+    var mainWindowVisible = false
     private var reportGeneration = UUID()
     private var reportLoadedAt: Date?
     private var reportRetryAt = Date.distantPast
@@ -71,6 +80,7 @@ final class AppState: ObservableObject {
         database = try Database(paths.database); catalog = PricingCatalog(paths.pricing); indexer = UsageIndexer(database); estimator = try WeeklyEstimator(database)
         theme = preferences.analytics.string("theme","system")
         sidebarVisible = !preferences.analytics.flag("sidebar_collapsed")
+        sidebarWidth = min(320,max(140,preferences.analytics.number("native_sidebar_width") ?? preferences.analytics.number("sidebar_width") ?? 238))
         menuVisible = preferences.analytics.flag("menu_bar_visible",true)
         menuContent = preferences.analytics.string("menu_bar_content","week")
         client.onNotification = { [weak self] method, _ in
@@ -96,10 +106,13 @@ final class AppState: ObservableObject {
         guard !paths.mock else { return }
         scanTimer = Timer.scheduledTimer(withTimeInterval:max(5,preferences.analytics.number("usage_refresh_interval_seconds") ?? 10),repeats:true) { [weak self] _ in self?.refreshUsage() }
         quotaTimer = Timer.scheduledTimer(withTimeInterval:max(30,preferences.general.number("refresh_interval_seconds") ?? 60),repeats:true) { [weak self] _ in self?.refreshQuota() }
+        scanTimer?.tolerance = 1
+        quotaTimer?.tolerance = 5
         priceTimer = Timer.scheduledTimer(withTimeInterval:3600,repeats:true) { [weak self] _ in
             guard let self, self.preferences.analytics.flag("auto_sync_prices",true) else { return }
             self.dataQueue.async { try? self.catalog.sync(); self.publishUsage() }
         }
+        priceTimer?.tolerance = 180
     }
     func stop() {
         stopped = true; scanTimer?.invalidate(); quotaTimer?.invalidate(); priceTimer?.invalidate(); indexer.cancel(); client.close()
@@ -111,10 +124,10 @@ final class AppState: ObservableObject {
         scanning = true; let roots = preferences.roots; let initial = loading
         dataQueue.async { [weak self] in
             guard let self else { return }
-            if initial { self.publishUsage(finishLoading:false) }
+            if initial { self.publishUsage() }
             do {
                 try self.indexer.scan(roots) { current,total in
-                    if current == total || current % 50 == 0 { DispatchQueue.main.async { self.scanProgress = "\(current) / \(total)" } }
+                    if current == total || current % 50 == 0 { DispatchQueue.main.async { let text = "\(current) / \(total)"; if self.scanProgress != text { self.scanProgress = text } } }
                 }
                 self.publishUsage()
             } catch { DispatchQueue.main.async { self.errorMessage = error.localizedDescription; self.loading = false } }
@@ -127,7 +140,7 @@ final class AppState: ObservableObject {
             let upstreamFile = paths.data.appendingPathComponent("upstream.sqlite")
             let upstream = try? Database(upstreamFile,readOnly:true)
             let upstreamRevision = (try? upstream?.query("SELECT COUNT(*) AS count, MAX(observed_at) AS stamp FROM observations").first) ?? [:]
-            let key = "\(revision):\(identity(upstreamRevision)):\(catalog.version):\(Calendar.current.startOfDay(for:Date()).timeIntervalSince1970)"
+            let key = "\(revision):\(identity(upstreamRevision)):\(catalog.version):\(Calendar.current.dateInterval(of:.hour,for:Date())!.start.timeIntervalSince1970)"
             var result: UsageSnapshot
             if key == computationKey, Date() < computationExpires, let cached = computedUsage { result = cached }
             else {
@@ -149,9 +162,17 @@ final class AppState: ObservableObject {
                 !row.flag("hidden") && row.string("visibility") != "hide" && (row["hidden"] is Bool || row.string("visibility") == "list")
             }.map {$0.string("slug",$0.string("model",$0.string("id")))}.filter {!$0.isEmpty})
             let estimates = try estimator.process(calls:result.calls,priceVersion:catalog.version)
+            let estimatesKey = identity(estimates), priceVersion = catalog.version
             DispatchQueue.main.async { [weak self] in
                 guard let self, !self.stopped else { return }
-                self.usage = result; self.prices = prices; self.modelIDs = models; self.priceUpdated = priceUpdated; self.priceWarning = priceWarning; self.weeklyEstimates = estimates; if finishLoading { self.loading = false }; self.publishWidget()
+                if self.usage.revision != result.revision { self.usage = result }
+                self.clock.updated = result.updated
+                if self.pricesRevision != priceVersion { self.prices = prices; self.pricesRevision = priceVersion }
+                if self.modelIDs != models { self.modelIDs = models }
+                if self.priceUpdated != priceUpdated { self.priceUpdated = priceUpdated }
+                if self.priceWarning != priceWarning { self.priceWarning = priceWarning }
+                if self.displayedEstimates != estimatesKey { self.weeklyEstimates = estimates; self.displayedEstimates = estimatesKey }
+                if finishLoading && self.loading { self.loading = false }; self.publishWidget()
                 if self.reportsVisible && self.reportedCandidates == 0 && !result.chatCandidates.isEmpty { self.refreshReports(force:true) }
             }
         } catch { DispatchQueue.main.async { [weak self] in self?.errorMessage = error.localizedDescription; self?.loading = false } }
@@ -183,10 +204,15 @@ final class AppState: ObservableObject {
                     }
                 }
                 else { next.error = L("此账户不提供 ChatGPT 额度", "ChatGPT limits are not available for this account"); self.dataQueue.async { self.estimator.invalidate() } }
+                let pending = self.pendingResetOperations(account:next.account.string("identityKey"))
+                for operation in pending where !next.credits.contains(where:{$0.id == operation.string("creditId")}) {
+                    var credit = operation.object("credit"); credit["id"] = operation.string("creditId"); credit["status"] = "pending_confirmation"
+                    next.credits.append(ResetCredit(raw:credit))
+                }
                 DispatchQueue.main.async {
                     guard !self.stopped else { return }
                     if self.quota.account.string("identityKey") != next.account.string("identityKey") || self.quota.account.string("planType") != next.account.string("planType") { self.invalidateReports(); self.pendingResets.removeAll() }
-                    self.quota = next; self.restorePendingResets(); self.refreshing = false; self.onQuotaChange?(); self.publishWidget()
+                    self.quota = next; self.pendingResets = Set(pending.map {$0.string("creditId")}); self.refreshing = false; self.onQuotaChange?(); self.publishWidget()
                     if self.reportsVisible { self.refreshReports() }
                 }
             } catch {
@@ -241,22 +267,14 @@ final class AppState: ObservableObject {
     func invalidateReports() {
         reportGeneration = UUID(); reportLoadedAt = nil; reportedCandidates = 0; planHistory = [:]; chatUsage = [:]; reportError = nil; reportsLoading = false
     }
-    private var reportsVisible: Bool { selectedPage == "subscription" || (selectedPage == "trends" && usageSection == "threads") }
-    private func restorePendingResets() {
-        let account = quota.account.string("identityKey"); guard !account.isEmpty else { return }
-        let rows = (try? database.query("SELECT data FROM usage_meta WHERE key LIKE ?",["reset-operation:"+account+":%"])) ?? []
-        pendingResets.removeAll()
-        for row in rows {
-            let operation = jsonObject(Data(row.string("data").utf8)), id = operation.string("creditId")
-            guard !id.isEmpty else { continue }; pendingResets.insert(id)
-            if !quota.credits.contains(where:{$0.id == id}) {
-                var credit = operation.object("credit"); credit["id"] = id; credit["status"] = "pending_confirmation"
-                quota.credits.append(ResetCredit(raw:credit))
-            }
-        }
+    private var reportsVisible: Bool { mainWindowVisible && (selectedPage == "subscription" || (selectedPage == "trends" && usageSection == "threads")) }
+    func refreshVisibleReports() { if reportsVisible { refreshReports() } }
+    private func pendingResetOperations(account: String) -> [Object] {
+        guard !account.isEmpty else { return [] }
+        return ((try? database.query("SELECT data FROM usage_meta WHERE key LIKE ?",["reset-operation:"+account+":%"])) ?? []).map {jsonObject(Data($0.string("data").utf8))}.filter {!$0.string("creditId").isEmpty}
     }
     func refreshReports(force: Bool = false) {
-        guard !paths.mock, !reportsLoading, !stopped, !quota.account.isEmpty else { return }
+        guard !paths.mock, mainWindowVisible, !reportsLoading, !stopped, !quota.account.isEmpty else { return }
         guard Date() >= reportRetryAt else { return }
         if !force, let date = reportLoadedAt, Date().timeIntervalSince(date) < 60 { return }
         guard quota.applicable else { return }
@@ -293,6 +311,11 @@ final class AppState: ObservableObject {
         configureTimers(); onSettingsChange?(); objectWillChange.send()
     }
     func toggleSidebar() { sidebarVisible.toggle(); setPreference("sidebar_collapsed",!sidebarVisible) }
+    func persistSidebar() {
+        preferences.analytics["native_sidebar_width"] = sidebarWidth
+        preferences.analytics["sidebar_collapsed"] = !sidebarVisible
+        do { try preferences.save() } catch { errorMessage = error.localizedDescription }
+    }
     func rescan() {
         guard !paths.mock, !scanning else { return }
         dataQueue.async { [weak self] in
@@ -326,16 +349,20 @@ final class AppState: ObservableObject {
         let today = usage.summaries["today"] ?? UsageSummary()
         let snapshot: Object = ["schema":1,"updated_at":Date().timeIntervalSince1970,"request":request,"today":["cost_usd":today.cost as Any? ?? NSNull(),"tokens":today.tokens as Any? ?? NSNull(),"requests":today.requests,"cache_hit_rate":today.cacheRate as Any? ?? NSNull()],"quota":["applicable":quota.applicable,"updated_at":quota.updated?.timeIntervalSince1970 as Any? ?? NSNull(),"five_hour":(quota.fresh ? quota.five?.remaining : nil) as Any? ?? NSNull(),"week":(quota.fresh ? quota.week?.remaining : nil) as Any? ?? NSNull(),"has_five_hour":quota.five != nil,"has_week":quota.week != nil,"five_hour_reset_at":(quota.fresh ? quota.five?.reset?.timeIntervalSince1970 : nil) as Any? ?? NSNull(),"week_reset_at":(quota.fresh ? quota.week?.reset?.timeIntervalSince1970 : nil) as Any? ?? NSNull(),"reset_count":(quota.fresh ? quota.availableCount : nil) as Any? ?? NSNull()]]
         var content = snapshot; content.removeValue(forKey:"updated_at")
+        var quotaContent = content.object("quota"); quotaContent.removeValue(forKey:"updated_at"); content["quota"] = quotaContent
         let signature = identity(content)
         guard signature != snapshotSignature || Date().timeIntervalSince(snapshotWritten) >= 300 else { return }
-        do {
-            guard try jsonData(snapshot).count <= 32768 else { return }
-            try atomicJSON(snapshot,to:paths.snapshot)
-            let canonical = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Codexio/widget_snapshot.json")
-            if paths.snapshot != canonical, ProcessInfo.processInfo.environment["CODEXIO_DATA_DIR"] == nil { try atomicJSON(snapshot,to:canonical) }
-            snapshotSignature = signature; snapshotWritten = Date()
-            WidgetCenter.shared.reloadTimelines(ofKind:BuildInfo.requestKind); WidgetCenter.shared.reloadTimelines(ofKind:BuildInfo.quotaKind)
-        } catch { errorMessage = error.localizedDescription }
+        snapshotSignature = signature; snapshotWritten = Date()
+        let paths = self.paths
+        snapshotQueue.async { [weak self] in
+            do {
+                guard try jsonData(snapshot).count <= 32768 else { return }
+                try atomicJSON(snapshot,to:paths.snapshot)
+                let canonical = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Codexio/widget_snapshot.json")
+                if paths.snapshot != canonical, ProcessInfo.processInfo.environment["CODEXIO_DATA_DIR"] == nil { try atomicJSON(snapshot,to:canonical) }
+                WidgetCenter.shared.reloadAllTimelines()
+            } catch { DispatchQueue.main.async { self?.errorMessage = error.localizedDescription } }
+        }
     }
     private func seedMock() {
         dataQueue.async { [weak self] in

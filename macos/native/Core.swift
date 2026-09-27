@@ -53,23 +53,47 @@ func atomicJSON(_ value: Any, to url: URL) throws {
     try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
 }
 
+private final class DateFormatters {
+    let fractional = ISO8601DateFormatter()
+    let whole = ISO8601DateFormatter()
+    let day = DateFormatter()
+    let dateTime = DateFormatter()
+    let time = DateFormatter()
+    let duration = DateComponentsFormatter()
+    var dates: [String:Date] = [:]
+    init() {
+        fractional.formatOptions = [.withInternetDateTime,.withFractionalSeconds]
+        whole.formatOptions = [.withInternetDateTime]
+        day.locale = Locale(identifier:"en_US_POSIX"); day.dateFormat = "yyyy-MM-dd"; day.timeZone = .autoupdatingCurrent
+        dateTime.dateStyle = .medium; dateTime.timeStyle = .short
+        time.dateStyle = .none; time.timeStyle = .short
+        duration.unitsStyle = .abbreviated
+    }
+    static var current: DateFormatters {
+        let key = "com.wujuhu.codexio.date-formatters"
+        if let value = Thread.current.threadDictionary[key] as? DateFormatters { return value }
+        let value = DateFormatters(); Thread.current.threadDictionary[key] = value; return value
+    }
+}
+
 func parsedDate(_ value: Any?) -> Date? {
     if let number = finiteNumber(value) { return Date(timeIntervalSince1970: number) }
     guard let text = value as? String, !text.isEmpty else { return nil }
-    let f = ISO8601DateFormatter()
-    f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    if let date = f.date(from: text) { return date }
-    f.formatOptions = [.withInternetDateTime]
-    if let date = f.date(from: text) { return date }
-    let d = DateFormatter(); d.locale = Locale(identifier: "en_US_POSIX"); d.dateFormat = "yyyy-MM-dd"; d.timeZone = .current
-    return d.date(from: text)
+    let formatters = DateFormatters.current
+    if let date = formatters.dates[text] { return date }
+    let date = formatters.fractional.date(from:text) ?? formatters.whole.date(from:text) ?? formatters.day.date(from:text)
+    if let date {
+        if formatters.dates.count >= 32768 { formatters.dates.removeAll(keepingCapacity:true) }
+        formatters.dates[text] = date
+    }
+    return date
 }
 func iso(_ date: Date = Date()) -> String {
-    let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f.string(from: date)
+    DateFormatters.current.fractional.string(from:date)
 }
 func dateText(_ date: Date?, timeOnly: Bool = false) -> String {
     guard let date else { return "—" }
-    let f = DateFormatter(); f.dateStyle = timeOnly ? .none : .medium; f.timeStyle = .short; return f.string(from: date)
+    return (timeOnly ? DateFormatters.current.time : DateFormatters.current.dateTime).string(from:date)
 }
 func compact(_ value: Double?) -> String {
     guard let value, value.isFinite else { return "—" }
@@ -85,8 +109,26 @@ func percent(_ value: Double?, digits: Int = 0) -> String {
 }
 func durationText(_ seconds: Double?) -> String {
     guard let seconds, seconds >= 0 else { return "—" }
-    let f = DateComponentsFormatter(); f.allowedUnits = seconds >= 3600 ? [.hour,.minute,.second] : [.minute,.second]; f.unitsStyle = .abbreviated
+    let f = DateFormatters.current.duration; f.allowedUnits = seconds >= 3600 ? [.hour,.minute,.second] : [.minute,.second]
     return f.string(from: seconds) ?? "—"
+}
+func creditsText(_ value: Decimal?) -> String {
+    guard let value, !value.isNaN else { return "—" }
+    if value == 0 { return "0" }
+    return NSDecimalNumber(decimal:value).description(withLocale:Locale(identifier:"en_US_POSIX"))
+}
+func planName(_ value: String) -> String {
+    switch value.lowercased().replacingOccurrences(of:"_",with:"") {
+    case "prolite": return "Pro Lite"
+    case "pro20x": return "Pro 20×"
+    case "pro": return "Pro"
+    case "plus": return "Plus"
+    case "free": return "Free"
+    case "team": return "Team"
+    case "business": return "Business"
+    case "enterprise": return "Enterprise"
+    default: return value
+    }
 }
 func modelName(_ value: String) -> String {
     value.replacingOccurrences(of: "gpt-", with: "GPT-").replacingOccurrences(of: "-astra", with: " Astra").replacingOccurrences(of: "-sol", with: " Sol").replacingOccurrences(of: "-luna", with: " Luna").replacingOccurrences(of: "-terra", with: " Terra")
@@ -156,14 +198,27 @@ struct AppPaths {
 
 final class Preferences {
     private let paths: AppPaths
-    var general: Object
-    var analytics: Object
+    private let lock = NSRecursiveLock()
+    private var generalValues: Object = [:]
+    private var analyticsValues: Object = [:]
+    var general: Object {
+        get { lock.lock(); defer { lock.unlock() }; return generalValues }
+        set { lock.lock(); generalValues = newValue; lock.unlock() }
+    }
+    var analytics: Object {
+        get { lock.lock(); defer { lock.unlock() }; return analyticsValues }
+        set { lock.lock(); analyticsValues = newValue; lock.unlock() }
+    }
     init(_ paths: AppPaths) {
         self.paths = paths
         general = readObject(paths.data.appendingPathComponent("settings.json"))
         analytics = readObject(paths.data.appendingPathComponent("analytics_settings.json"))
         let defaults: Object = ["theme":"system", "menu_bar_visible":true, "menu_bar_content":"week", "macos_auto_update":true, "usage_refresh_interval_seconds":10, "week_estimate_interval_minutes":30, "sidebar_collapsed":false, "native_sidebar_width":258]
         for (key,value) in defaults where analytics[key] == nil { analytics[key] = value }
+        if analytics.integer("native_sidebar_resize_version") != 1 {
+            analytics["native_sidebar_width"] = analytics.number("sidebar_width") ?? 238
+            analytics["native_sidebar_resize_version"] = 1
+        }
         for key in ["ssh_sources","history_assignments","show_log_source","lan_sources","share_tokens"] { analytics.removeValue(forKey: key) }
     }
     var roots: [URL] {

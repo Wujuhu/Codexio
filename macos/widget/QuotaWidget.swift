@@ -1,50 +1,27 @@
-import AppIntents
 import SwiftUI
 import WidgetKit
 
-enum QuotaStyle: String, AppEnum {
-    case single, dual, segmented
-    static var typeDisplayRepresentation: TypeDisplayRepresentation { "额度样式" }
-    static var caseDisplayRepresentations: [QuotaStyle:DisplayRepresentation] { [.single:"单额度",.dual:"双额度",.segmented:"双额度刻度条"] }
-}
-enum QuotaScope: String, AppEnum {
-    case week, five
-    static var typeDisplayRepresentation: TypeDisplayRepresentation { "额度窗口" }
-    static var caseDisplayRepresentations: [QuotaScope:DisplayRepresentation] { [.week:"周额度",.five:"5 小时额度"] }
-}
-enum QuotaAppearance: String, AppEnum {
-    case system, light, dark
-    static var typeDisplayRepresentation: TypeDisplayRepresentation { "外观" }
-    static var caseDisplayRepresentations: [QuotaAppearance:DisplayRepresentation] { [.system:"跟随系统",.light:"浅色",.dark:"深色"] }
-}
-
-struct QuotaConfiguration: WidgetConfigurationIntent {
-    static var title: LocalizedStringResource { "Codex 额度" }
-    static var description: IntentDescription { "选择额度样式、窗口和外观" }
-    @Parameter(title:"样式",default:.single) var style: QuotaStyle
-    @Parameter(title:"单额度窗口",default:.week) var scope: QuotaScope
-    @Parameter(title:"外观",default:.system) var appearance: QuotaAppearance
-}
-
+enum QuotaStyle: String { case single, dual, segmented }
 struct QuotaEntry: TimelineEntry {
     var date: Date
     var snapshot: Snapshot?
-    var configuration: QuotaConfiguration
+    var style: QuotaStyle
 }
-struct QuotaProvider: AppIntentTimelineProvider {
-    func placeholder(in context: Context) -> QuotaEntry { QuotaEntry(date:Date(),snapshot:nil,configuration:QuotaConfiguration()) }
-    func snapshot(for configuration: QuotaConfiguration,in context: Context) async -> QuotaEntry { QuotaEntry(date:Date(),snapshot:Snapshot.read(),configuration:configuration) }
-    func timeline(for configuration: QuotaConfiguration,in context: Context) async -> Timeline<QuotaEntry> {
-        let date = Date(); return Timeline(entries:[QuotaEntry(date:date,snapshot:Snapshot.read(),configuration:configuration)],policy:.after(date.addingTimeInterval(900)))
+struct QuotaProvider: TimelineProvider {
+    let style: QuotaStyle
+    func placeholder(in context: Context) -> QuotaEntry { QuotaEntry(date:Date(),snapshot:nil,style:style) }
+    func getSnapshot(in context: Context,completion: @escaping (QuotaEntry) -> Void) { completion(QuotaEntry(date:Date(),snapshot:Snapshot.read(),style:style)) }
+    func getTimeline(in context: Context,completion: @escaping (Timeline<QuotaEntry>) -> Void) {
+        let date = Date(); completion(Timeline(entries:[QuotaEntry(date:date,snapshot:Snapshot.read(),style:style)],policy:.after(date.addingTimeInterval(900))))
     }
 }
 
 struct QuotaWidgetView: View {
     @Environment(\.colorScheme) private var systemScheme
     let entry: QuotaEntry
-    private var dark: Bool { entry.configuration.appearance == .dark || entry.configuration.appearance == .system && (systemScheme == .dark || entry.configuration.style == .dual) }
+    private var dark: Bool { entry.style == .dual || systemScheme == .dark }
     private var fresh: Bool { entry.snapshot.map {Date().timeIntervalSince1970-($0.quota.updated_at ?? $0.updated_at) < 900 && $0.quota.applicable != false && ($0.quota.week != nil || $0.quota.five_hour != nil)} ?? false }
-    private var color: Color { entry.configuration.style == .dual ? Color(red:0.88,green:0.49,blue:0.36) : Color.blue }
+    private var color: Color { entry.style == .dual ? Color(red:0.88,green:0.49,blue:0.36) : Color.blue }
     private func remaining(_ week: Bool) -> Double? { guard fresh else { return nil }; return week ? entry.snapshot?.quota.week : entry.snapshot?.quota.five_hour }
     private func reset(_ week: Bool) -> Double? { week ? entry.snapshot?.quota.week_reset_at : entry.snapshot?.quota.five_hour_reset_at }
     private func percentage(_ value: Double?) -> String { guard let value else { return "—" }; return value > 0 && value < 1 ? "<1%" : String(format:"%.0f%%",max(0,min(100,value))) }
@@ -63,7 +40,7 @@ struct QuotaWidgetView: View {
     private var card: some View {
         content
             .background(alignment:.bottomTrailing) {
-                if entry.configuration.style == .segmented {
+                if entry.style == .segmented {
                     Image(systemName:"chevron.left.forwardslash.chevron.right").font(.system(size:70,weight:.ultraLight)).foregroundStyle(Color.primary.opacity(dark ? 0.035 : 0.045)).offset(x:15,y:10)
                 }
             }
@@ -75,7 +52,7 @@ struct QuotaWidgetView: View {
     var preview: some View { card.background(background) }
     #endif
     @ViewBuilder private var content: some View {
-        if entry.configuration.style == .single { single }
+        if entry.style == .single { single }
         else {
             VStack(alignment:.leading,spacing:8) {
                 HStack { Text("Codex").font(.system(size:13,weight:.semibold)); Spacer(minLength:4); freshness }
@@ -85,7 +62,7 @@ struct QuotaWidgetView: View {
         }
     }
     private var single: some View {
-        let week = entry.configuration.scope == .week, value = remaining(week)
+        let week = true, value = remaining(true)
         return VStack(alignment:.leading,spacing:6) {
             freshness
             HStack(alignment:.firstTextBaseline) {
@@ -107,7 +84,7 @@ struct QuotaWidgetView: View {
         }
     }
     private func dualRow(week: Bool) -> some View {
-        let segmented = entry.configuration.style == .segmented
+        let segmented = entry.style == .segmented
         return VStack(alignment:.leading,spacing:4) {
             HStack(alignment:.lastTextBaseline) {
                 VStack(alignment:.leading,spacing:3) {
@@ -135,20 +112,27 @@ struct QuotaWidgetView: View {
                     ForEach(0..<26,id:\.self) { index in RoundedRectangle(cornerRadius:1).fill(value.map {Double(index)/26 < $0/100} == true ? color : Color.secondary.opacity(0.18)) }
                 }
             } else {
-                Capsule().fill(color.opacity(dark ? 0.18 : 0.12)).overlay(alignment:.leading) { Capsule().fill(entry.configuration.style == .single ? (dark ? .white : .black) : color).frame(width:geometry.size.width*max(0,min(100,value ?? 0))/100) }
+                Capsule().fill(color.opacity(dark ? 0.18 : 0.12)).overlay(alignment:.leading) { Capsule().fill(entry.style == .single ? (dark ? .white : .black) : color).frame(width:geometry.size.width*max(0,min(100,value ?? 0))/100) }
             }
         }
     }
 }
 
+private func quotaConfiguration(kind: String,title: LocalizedStringKey,style: QuotaStyle) -> some WidgetConfiguration {
+    StaticConfiguration(kind:kind,provider:QuotaProvider(style:style)) { entry in QuotaWidgetView(entry:entry) }
+        .configurationDisplayName(title)
+        .description("查看 Codex 剩余额度与重置时间")
+        .supportedFamilies([.systemSmall])
+        .contentMarginsDisabled()
+}
 struct CodexioQuotaWidget: Widget {
-    var body: some WidgetConfiguration {
-        AppIntentConfiguration(kind:"com.wujuhu.codexio.quota",intent:QuotaConfiguration.self,provider:QuotaProvider()) { entry in QuotaWidgetView(entry:entry) }
-            .configurationDisplayName("Codex 额度")
-            .description("仅显示额度，提供三种样式")
-            .supportedFamilies([.systemSmall])
-            .contentMarginsDisabled()
-    }
+    var body: some WidgetConfiguration { quotaConfiguration(kind:"com.wujuhu.codexio.quota",title:"Codex 单额度",style:.single) }
+}
+struct CodexioDualQuotaWidget: Widget {
+    var body: some WidgetConfiguration { quotaConfiguration(kind:"com.wujuhu.codexio.quota.dual",title:"Codex 双额度",style:.dual) }
+}
+struct CodexioSegmentedQuotaWidget: Widget {
+    var body: some WidgetConfiguration { quotaConfiguration(kind:"com.wujuhu.codexio.quota.segmented",title:"Codex 刻度额度",style:.segmented) }
 }
 
 func WL(_ chinese: String,_ english: String) -> String { NSLocalizedString(chinese,tableName:"Localizable",bundle:.main,value:english,comment:"") }

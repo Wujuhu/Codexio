@@ -54,12 +54,6 @@ struct MenuBarView: View {
                     HStack { Text(L("最近 7 天", "Last 7 days")).fontWeight(.medium); Spacer(); Text(L("费用估算", "Estimated cost")).foregroundStyle(.secondary) }.font(.system(size:12))
                     TrendChart(days:Array(state.usage.activity.days.suffix(7)),compactStyle:true)
                 }
-                HStack {
-                    Button(L("打开主界面 ↗", "Open main window ↗")) { dismiss(); state.onOpenWindow?() }
-                    Spacer()
-                    Button(L("设置", "Settings")) { dismiss(); state.selectedPage = "settings"; state.onOpenWindow?() }
-                    Button(L("退出", "Quit")) { dismiss(); state.onQuit?() }
-                }.buttonStyle(.plain).font(.system(size:11)).padding(.horizontal,6).padding(.vertical,7)
             }.padding(14)
         }.frame(width:420).background { GlassBackground() }
             .preferredColorScheme(state.theme == "dark" ? .dark : state.theme == "light" ? .light : nil)
@@ -108,7 +102,7 @@ final class MenuBarController {
         if panel?.isVisible == true { close(); return }
         guard let button = item?.button, let window = button.window else { return }
         let screen = window.screen ?? NSScreen.main
-        let height = min(780,(screen?.visibleFrame.height ?? 900)-36)
+        let height = min(724,(screen?.visibleFrame.height ?? 900)-36)
         let panel = StatusPanel(contentRect:NSRect(x:0,y:0,width:420,height:height),styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
         panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = true; panel.level = .popUpMenu; panel.hidesOnDeactivate = false; panel.isReleasedWhenClosed = false
         panel.contentView = NSHostingView(rootView:MenuBarView(state:state,dismiss:{[weak self] in self?.close()}))

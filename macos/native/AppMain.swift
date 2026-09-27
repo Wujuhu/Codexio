@@ -116,8 +116,13 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             self.window = window
         }
         window?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps:true)
+        state.mainWindowVisible = true; state.refreshVisibleReports()
     }
-    func windowShouldClose(_ sender: NSWindow) -> Bool { saveGeometry(); sender.orderOut(nil); return false }
+    func windowShouldClose(_ sender: NSWindow) -> Bool { saveGeometry(); state.mainWindowVisible = false; sender.orderOut(nil); return false }
+    func windowDidChangeOcclusionState(_ notification: Notification) {
+        state.mainWindowVisible = window?.isVisible == true && window?.occlusionState.contains(.visible) == true
+        if state.mainWindowVisible { state.refreshVisibleReports() }
+    }
     func applicationShouldHandleReopen(_ sender: NSApplication,hasVisibleWindows flag: Bool) -> Bool { showWindow(); return true }
     func application(_ application: NSApplication,open urls: [URL]) {
         if urls.contains(where:{$0.scheme == "codexio" && $0.host == "subscription"}) { state.selectedPage = "subscription" }
@@ -227,6 +232,7 @@ final class WidgetService {
         guard let lease = FileLease(paths.data.appendingPathComponent("native-widget.lock")) else { exit(0) }
         self.lease = lease; update()
         timer = Timer.scheduledTimer(withTimeInterval:15,repeats:true) { [weak self] _ in self?.update() }
+        timer?.tolerance = 5
     }
     private func update() {
         if mainIsRunning() { state?.stop(); state = nil; return }

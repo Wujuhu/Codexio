@@ -10,7 +10,7 @@ final class MockGallery {
     private var timer: Timer?
     private var index = 0
     private var prepared = false
-    private var names = ["overview","logs-detail","usage-activity","usage-trends","usage-threads","subscription","pricing","settings-appearance","settings-data","settings-app","menu","widgets-quota","widgets-request"]
+    private var names = ["overview","logs","logs-detail","usage-activity","usage-trends","usage-threads","subscription","pricing","settings-appearance","settings-data","settings-app","menu","widgets-quota","widgets-request"]
     init(state: AppState,window: NSWindow,directory: URL) {
         self.state = state; self.window = window; self.directory = directory
         if let index = CommandLine.arguments.firstIndex(of:"--gallery-only"), CommandLine.arguments.indices.contains(index+1) {
@@ -79,8 +79,7 @@ final class MockGallery {
         return Snapshot(schema:1,updated_at:now,request:RequestSnapshot(prompt:L("优化 Codexio 的日志详情与额度显示", "Refine Codexio log details and allowance display"),model:"GPT-6 Astra",reasoning_effort:L("最高", "Max"),service_tier:"priority",model_context_window:828000,cost_usd:0.52,duration_ms:138000,duration_started_at:nil,duration_running:false,input_tokens:32000,output_tokens:6800,cached_input_tokens:18000,cache_hit_rate:0.5625),quota:QuotaSnapshot(applicable:true,five_hour:74,week:23,has_five_hour:true,has_week:true,five_hour_reset_at:now+7200,week_reset_at:now+432000,reset_count:2,updated_at:now),today:TodaySnapshot(cost_usd:23.54,tokens:14179000,requests:18,cache_hit_rate:0.73))
     }
     private func quota(_ style: QuotaStyle) -> some View {
-        let configuration = QuotaConfiguration(); configuration.style = style; configuration.appearance = style == .dual ? .dark : .light
-        return QuotaWidgetView(entry:QuotaEntry(date:Date(),snapshot:snapshot,configuration:configuration)).preview.frame(width:170,height:170).clipShape(RoundedRectangle(cornerRadius:24))
+        return QuotaWidgetView(entry:QuotaEntry(date:Date(),snapshot:snapshot,style:style)).preview.frame(width:170,height:170).clipShape(RoundedRectangle(cornerRadius:24))
     }
     private func caption<V:View>(_ title: String,@ViewBuilder content: ()->V) -> some View {
         VStack(alignment:.leading,spacing:14) { content(); Text(title).font(.system(size:13)).foregroundStyle(.secondary) }

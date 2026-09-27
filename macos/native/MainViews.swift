@@ -18,19 +18,31 @@ enum Pages {
 struct MainView: View {
     @ObservedObject var state: AppState
     @State private var draggedPage: String?
+    @State private var resizingFrom: Double?
     private var navigation: [String] {
         let saved = state.preferences.analytics["navigation_order"] as? [String] ?? Pages.all
         return ["overview"] + saved.filter {$0 != "overview" && Pages.all.contains($0)} + Pages.all.filter {$0 != "overview" && !saved.contains($0)}
     }
     var body: some View {
         HStack(spacing:0) {
-            if state.sidebarVisible { sidebar.frame(width:238); Rectangle().fill(Color.secondary.opacity(0.15)).frame(width:1) }
+            sidebar.frame(width:state.sidebarVisible ? state.sidebarWidth : 62)
+                .overlay(alignment:.trailing) {
+                    Rectangle().fill(Color.secondary.opacity(0.16)).frame(width:1)
+                        .frame(width:8).contentShape(Rectangle())
+                        .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
+                        .gesture(DragGesture(minimumDistance:1).onChanged { value in
+                            if resizingFrom == nil { resizingFrom = state.sidebarVisible ? state.sidebarWidth : 62 }
+                            let width = (resizingFrom ?? 238)+value.translation.width
+                            if width < 140 { state.sidebarVisible = false }
+                            else { state.sidebarVisible = true; state.sidebarWidth = min(320,width) }
+                        }.onEnded { _ in resizingFrom = nil; state.persistSidebar() })
+                }
             VStack(spacing:0) {
                 HStack(spacing:18) {
                     Button { state.toggleSidebar() } label: { Image(systemName:"sidebar.left") }.buttonStyle(.plain).accessibilityLabel(L("切换侧边栏", "Toggle sidebar"))
                     Spacer()
                     if state.loading { ProgressView().controlSize(.small) }
-                    else if let updated = state.usage.updated { Text(updated,style:.relative).font(.system(size:12)).foregroundStyle(.secondary) }
+                    else { ScanStamp(clock:state.clock,relative:true).font(.system(size:12)).foregroundStyle(.secondary) }
                     Button { state.refresh() } label: { Image(systemName:"arrow.clockwise") }.buttonStyle(.plain).accessibilityLabel(L("刷新", "Refresh"))
                 }.padding(.horizontal,32).frame(height:48)
                 Divider()
@@ -47,21 +59,21 @@ struct MainView: View {
     }
     private var sidebar: some View {
         VStack(alignment:.leading,spacing:0) {
-            HStack {
-                Text("Codexio").font(.system(size:24,weight:.semibold))
-                Spacer()
-                Button { state.selectedPage = "logs"; NotificationCenter.default.post(name:.init("CodexioSearch"),object:nil) } label: { Image(systemName:"magnifyingglass").foregroundStyle(.secondary) }.buttonStyle(.plain).accessibilityLabel(L("搜索日志", "Search logs"))
-            }.padding(.horizontal,20).padding(.top,30).padding(.bottom,27)
+            if state.sidebarVisible {
+                HStack {
+                    Text("Codexio").font(.system(size:23,weight:.semibold)).lineLimit(1).minimumScaleFactor(0.7)
+                    Spacer(minLength:4)
+                    Button { state.selectedPage = "logs"; NotificationCenter.default.post(name:.init("CodexioSearch"),object:nil) } label: { Image(systemName:"magnifyingglass").foregroundStyle(.secondary) }.buttonStyle(.plain).accessibilityLabel(L("搜索日志", "Search logs"))
+                }.padding(.horizontal,16).padding(.top,30).padding(.bottom,24)
+            } else { Color.clear.frame(height:76) }
             ForEach(navigation,id:\.self) { page in
-                Button {
-                    state.selectedPage = page
-                } label: {
-                    HStack(spacing:14) {
+                Button { state.selectedPage = page } label: {
+                    HStack(spacing:12) {
                         NavigationGlyph(name:page).stroke(style:StrokeStyle(lineWidth:1.6,lineCap:.round,lineJoin:.round)).frame(width:20,height:20)
-                        Text(Pages.title(page)).font(.system(size:15,weight:state.selectedPage == page ? .medium : .regular))
-                        Spacer()
-                    }.foregroundStyle(.primary).padding(.horizontal,13).frame(height:42).background(state.selectedPage == page ? Color.primary.opacity(0.075) : Color.clear,in:RoundedRectangle(cornerRadius:8))
-                }.buttonStyle(.plain).padding(.horizontal,10).padding(.bottom,5)
+                        if state.sidebarVisible { Text(Pages.title(page)).font(.system(size:14,weight:state.selectedPage == page ? .medium : .regular)).lineLimit(1); Spacer(minLength:0) }
+                    }.foregroundStyle(.primary).padding(.horizontal,state.sidebarVisible ? 11 : 0).frame(maxWidth:.infinity).frame(height:40)
+                        .background(state.selectedPage == page ? Color.primary.opacity(0.075) : Color.clear,in:RoundedRectangle(cornerRadius:8))
+                }.buttonStyle(.plain).padding(.horizontal,8).padding(.bottom,4).accessibilityLabel(Pages.title(page))
                     .onDrag { draggedPage = page; return NSItemProvider(object:page as NSString) }
                     .onDrop(of:["public.text"],isTargeted:nil) { _ in
                         guard let from = draggedPage, from != "overview", page != "overview", from != page else { return false }
@@ -69,12 +81,15 @@ struct MainView: View {
                         order.insert(from,at:index); state.setPreference("navigation_order",order); draggedPage = nil; return true
                     }
             }
-            Spacer()
-            Divider()
-            VStack(alignment:.leading,spacing:5) {
-                Text(state.quota.account.string("planType").capitalized.isEmpty ? L("本机 Codex", "Local Codex") : "ChatGPT · "+state.quota.account.string("planType").capitalized).font(.system(size:13))
-                Text(state.quota.account.string("email")).font(.system(size:11)).foregroundStyle(.secondary).lineLimit(1)
-            }.padding(20)
+            Spacer(); Divider()
+            if state.sidebarVisible {
+                Button { state.selectedPage = "subscription" } label: {
+                    VStack(alignment:.leading,spacing:5) {
+                        Text(state.quota.account.string("planType").isEmpty ? L("本机 Codex", "Local Codex") : "ChatGPT · "+planName(state.quota.account.string("planType"))).font(.system(size:12)).lineLimit(1)
+                        Text(state.quota.account.string("email")).font(.system(size:10)).foregroundStyle(.secondary).lineLimit(1)
+                    }.frame(maxWidth:.infinity,alignment:.leading).padding(16)
+                }.buttonStyle(.plain)
+            } else { Button { state.selectedPage = "subscription" } label: { Image(systemName:"person.crop.circle").frame(maxWidth:.infinity).frame(height:48) }.buttonStyle(.plain).accessibilityLabel(Pages.title("subscription")) }
         }.background(Color(nsColor:.windowBackgroundColor))
     }
     @ViewBuilder private var page: some View {
@@ -91,36 +106,41 @@ struct MainView: View {
 
 struct OverviewView: View {
     @ObservedObject var state: AppState
+    @ObservedObject private var projection: AsyncProjection<TrendProjection>
     @State private var period = "today"
-    private var range: UsageRange { UsageRange(period:period) }
-    private var recent: [UsageRow] { Array(state.usage.requests.filter { range.contains($0) && $0.raw.string("record_kind") == "user_request" && !$0.raw.flag("is_subagent") }.prefix(4)) }
+    init(state: AppState) { self.state = state; projection = state.overviewProjection }
+    private var key: String { state.usage.revision.uuidString+":"+period }
+    private func load() {
+        let snapshot = state.usage, range = UsageRange(period:period), granularity = period == "today" ? "hour" : period == "all" ? "week" : "day"
+        projection.load(key:key) { TrendProjection.build(snapshot,range:range,model:"all",granularity:granularity) }
+    }
     var body: some View {
         ScrollView {
-            VStack(alignment:.leading,spacing:25) {
+            VStack(alignment:.leading,spacing:22) {
                 PageHeading(title:Pages.title("overview"))
-                HStack(spacing:32) {
+                HStack(spacing:28) {
                     QuotaCard(window:state.quota.five,title:L("5 小时额度", "5-hour limit"),fresh:state.quota.fresh)
                     QuotaCard(window:state.quota.week,title:L("周额度", "Weekly limit"),fresh:state.quota.fresh)
                 }
                 if let error = state.quota.error { StatusNote(text:error) }
                 Divider()
                 HStack { SectionHeading(title:L("本机用量", "Local usage")); PeriodPicker(selection:$period) }
-                SummaryMetrics(summary:state.usage.summaries[period] ?? UsageSummary())
-                VStack(alignment:.leading,spacing:18) { SectionHeading(title:L("用量趋势", "Usage trend")); TrendChart(days:range.buckets(state.usage.calls.filter {$0.local && range.contains($0)},granularity:period == "today" ? "hour" : period == "all" ? "week" : "day")) }.padding(20).overlay(RoundedRectangle(cornerRadius:13).stroke(.secondary.opacity(0.15)))
+                SummaryMetrics(summary:projection.value.summary)
+                VStack(alignment:.leading,spacing:16) { SectionHeading(title:L("用量趋势", "Usage trend")); TrendChart(days:projection.value.days) }.padding(18).overlay(RoundedRectangle(cornerRadius:13).stroke(.secondary.opacity(0.15)))
                 HStack { SectionHeading(title:L("最近请求", "Recent requests")); Button(L("查看全部", "View all")) { state.selectedPage = "logs" }.buttonStyle(.plain).foregroundStyle(.secondary) }
-                ForEach(recent) { row in
-                    HStack(spacing:20) {
-                        Text(dateText(row.date,timeOnly:true)).font(.system(size:12)).foregroundStyle(.secondary).frame(width:80,alignment:.leading)
+                ForEach(projection.value.recent) { row in
+                    HStack(spacing:16) {
+                        Text(dateText(row.date,timeOnly:true)).font(.system(size:12)).foregroundStyle(.secondary).frame(width:70,alignment:.leading)
                         Text(row.raw.string("prompt_preview")).font(.system(size:13)).lineLimit(1).frame(maxWidth:.infinity,alignment:.leading)
                         Text(row.modelLabel).font(.system(size:12)).foregroundStyle(.secondary).lineLimit(1)
-                        Text(money(row.cost)).font(.system(size:13)).monospacedDigit().frame(width:65,alignment:.trailing)
-                        DetailsLink(row:row,members:state.usage.calls.filter { (row.raw["member_ids"] as? [String] ?? []).contains($0.id) }).frame(width:48,height:23)
+                        Text(money(row.cost)).font(.system(size:13)).monospacedDigit().frame(width:70,alignment:.trailing)
+                        DetailsLink(row:row,members:state.usage.members(of:row)).frame(width:48,height:23)
                     }.padding(.vertical,5)
                     Divider()
                 }
-                if recent.isEmpty { EmptyState(title:state.loading ? L("正在读取本机记录", "Loading local records") : L("暂无请求", "No requests yet")) }
-            }.padding(32)
-        }
+                if projection.value.recent.isEmpty { EmptyState(title:state.loading ? L("正在读取本机记录", "Loading local records") : L("暂无请求", "No requests yet")) }
+            }.padding(26)
+        }.onAppear(perform:load).onChange(of:key) { _,_ in load() }
     }
 }
 
@@ -134,6 +154,7 @@ struct PeriodPicker: View {
 
 struct LogsView: View {
     @ObservedObject var state: AppState
+    @ObservedObject private var projection: AsyncProjection<LogProjection>
     @State private var mode = "requests"
     @State private var period = "today"
     @State private var model = "all"
@@ -144,55 +165,54 @@ struct LogsView: View {
     @State private var from = Calendar.current.date(byAdding:.day,value:-6,to:Date())!
     @State private var through = Date()
     @FocusState private var searchFocused: Bool
-    private var filtered: [UsageRow] {
-        let range = UsageRange(period:period,from:from,through:through)
-        return (mode == "requests" ? state.usage.requests : state.usage.calls).filter { row in
-            range.contains(row) && (tier == "all" || normalizedTier(row.raw.string("service_tier")) == tier) && (model == "all" || row.raw.string("model").contains(model)) && (mode == "calls" || status == "all" || row.raw.string("status","completed") == status) && (query.isEmpty || [row.title,row.raw.string("prompt_preview"),row.raw.string("output_preview"),row.raw.string("session_id"),row.id].joined(separator:" ").localizedCaseInsensitiveContains(query))
-        }
+    init(state: AppState) { self.state = state; projection = state.logProjection }
+    private var fields: [String] {
+        let saved = state.preferences.analytics["native_log_columns"] as? [String] ?? LogFields.defaults
+        return ["content"]+LogFields.all.filter {$0 != "content" && $0 != "details" && saved.contains($0)}+["details"]
     }
-    private var displayed: [UsageRow] { Array(filtered.dropFirst(min(page,max(0,(filtered.count-1)/60))*60).prefix(60)) }
+    private var filterKey: String { [mode,period,model,tier,status,query,period == "custom" ? String(Calendar.current.startOfDay(for:from).timeIntervalSince1970) : "",period == "custom" ? String(Calendar.current.startOfDay(for:through).timeIntervalSince1970) : ""].joined(separator:"|") }
+    private var key: String { state.usage.revision.uuidString+filterKey+String(page) }
+    private func load() {
+        let snapshot = state.usage, range = UsageRange(period:period,from:from,through:through)
+        let mode = mode, model = model, tier = tier, status = status, query = query, page = page
+        projection.load(key:key) { LogProjection.build(snapshot,range:range,mode:mode,model:model,tier:tier,status:status,query:query,page:page) }
+    }
+    private func toggle(_ key: String,_ enabled: Bool) {
+        var values = Set(fields); if enabled { values.insert(key) } else { values.remove(key) }
+        state.setPreference("native_log_columns",LogFields.all.filter {values.contains($0)})
+    }
     var body: some View {
-        VStack(alignment:.leading,spacing:18) {
+        VStack(alignment:.leading,spacing:14) {
             HStack { PageHeading(title:Pages.title("logs")); PeriodPicker(selection:$period,custom:true) }
             if period == "custom" { DateRangeControls(from:$from,through:$through) }
-            HStack(spacing:12) {
-                Picker("",selection:$mode) { Text(L("用户请求", "User requests")).tag("requests"); Text(L("模型调用", "Model calls")).tag("calls") }.labelsHidden().pickerStyle(.segmented).frame(width:205)
+            HStack(spacing:10) {
+                Picker("",selection:$mode) { Text(L("用户请求", "User requests")).tag("requests"); Text(L("模型调用", "Model calls")).tag("calls") }.labelsHidden().pickerStyle(.segmented).frame(width:190)
                 TextField(L("搜索输入、聊天或 ID", "Search prompt, chat or ID"),text:$query).textFieldStyle(.roundedBorder).focused($searchFocused)
-                Picker("",selection:$model) {
-                    Text(L("全部模型", "All models")).tag("all")
-                    ForEach(Array(Set(state.usage.calls.map {$0.raw.string("model")})).sorted(),id:\.self) { Text($0).tag($0) }
-                }.labelsHidden().frame(width:150)
-                Picker("",selection:$tier) { Text(L("全部速度", "All speeds")).tag("all"); Text("Fast").tag("priority"); Text(L("标准", "Standard")).tag("default"); Text(L("未知", "Unknown")).tag("unknown") }.labelsHidden().frame(width:100)
-                if mode == "requests" { Picker("",selection:$status) { Text(L("全部状态", "All statuses")).tag("all"); Text(L("已完成", "Completed")).tag("completed"); Text(L("进行中", "In progress")).tag("running"); Text(L("未知", "Unknown")).tag("unknown") }.labelsHidden().frame(width:112) }
+                Menu(L("显示字段", "Columns")) {
+                    ForEach(LogFields.all.filter {$0 != "content" && $0 != "details"},id:\.self) { field in
+                        Toggle(LogFields.title(field),isOn:Binding(get:{fields.contains(field)},set:{toggle(field,$0)}))
+                    }
+                    Divider(); Button(L("恢复默认字段", "Reset columns")) { state.setPreference("native_log_columns",LogFields.defaults) }
+                }.fixedSize()
             }
-            logTable
-            HStack {
-                Text("\(filtered.count) "+(mode == "requests" ? L("条请求", "requests") : L("次调用", "calls"))).foregroundStyle(.secondary)
+            HStack(spacing:10) {
+                Picker("",selection:$model) { Text(L("全部模型", "All models")).tag("all"); ForEach(state.usage.models,id:\.self) { Text($0).tag($0) } }.labelsHidden().frame(width:170)
+                Picker("",selection:$tier) { Text(L("全部速度", "All speeds")).tag("all"); Text("Fast").tag("priority"); Text(L("标准", "Standard")).tag("default"); Text(L("未知", "Unknown")).tag("unknown") }.labelsHidden().frame(width:115)
+                if mode == "requests" { Picker("",selection:$status) { Text(L("全部状态", "All statuses")).tag("all"); Text(L("已完成", "Completed")).tag("completed"); Text(L("进行中", "In progress")).tag("running"); Text(L("未知", "Unknown")).tag("unknown") }.labelsHidden().frame(width:115) }
                 Spacer()
-                Button { page = max(0,page-1) } label: { Image(systemName:"chevron.left") }.disabled(page == 0)
-                Text("\(min(page,max(0,(filtered.count-1)/60))+1) / \(max(1,(filtered.count+59)/60))").monospacedDigit()
-                Button { page += 1 } label: { Image(systemName:"chevron.right") }.disabled((page+1)*60 >= filtered.count)
+            }
+            CompactTable(columns:LogFields.columns(fields),rows:projection.value.rows.map { row in LogFields.row(row,timeOnly:period == "today") {state.usage.members(of:row)} },revision:projection.value.revision.uuidString+period)
+                .overlay(RoundedRectangle(cornerRadius:10).stroke(.secondary.opacity(0.16)))
+            HStack {
+                Text("\(projection.value.count) "+(mode == "requests" ? L("条请求", "requests") : L("次调用", "calls"))).foregroundStyle(.secondary)
+                Spacer()
+                Button { page = max(0,projection.value.page-1) } label: { Image(systemName:"chevron.left") }.disabled(projection.value.page == 0)
+                Text("\(projection.value.page+1) / \(projection.value.pages)").monospacedDigit()
+                Button { page = projection.value.page+1 } label: { Image(systemName:"chevron.right") }.disabled(projection.value.page+1 >= projection.value.pages)
             }.font(.system(size:12))
-        }.padding(32)
-        .onChange(of:query) { _,_ in page = 0 }.onChange(of:mode) { _,_ in page = 0 }.onChange(of:period) { _,_ in page = 0 }
-        .onChange(of:from) { _,_ in page = 0 }.onChange(of:through) { _,_ in page = 0 }.onChange(of:model) { _,_ in page = 0 }.onChange(of:tier) { _,_ in page = 0 }.onChange(of:status) { _,_ in page = 0 }
+        }.padding(26)
+        .onAppear(perform:load).onChange(of:key) { _,_ in load() }
+        .onChange(of:filterKey) { _,_ in page = 0 }
         .onReceive(NotificationCenter.default.publisher(for:.init("CodexioSearch"))) { _ in searchFocused = true }
-    }
-    private var logTable: some View {
-        Table(displayed) {
-            TableColumn(L("时间", "Time")) { row in Text(dateText(row.date,timeOnly:period == "today")).font(.system(size:12)).foregroundStyle(.secondary) }.width(min:85,ideal:115,max:165)
-            TableColumn(mode == "requests" ? L("用户请求", "User request") : L("输入预览", "Prompt")) { row in
-                VStack(alignment:.leading,spacing:3) {
-                    Text(row.raw.string("prompt_preview").isEmpty ? row.title : row.raw.string("prompt_preview")).font(.system(size:13)).lineLimit(2)
-                    if row.raw.string("status") == "running" { Text(L("进行中", "In progress")).font(.caption).foregroundStyle(.secondary) }
-                    else if row.raw.flag("is_subagent") { Text(L("子代理", "Subagent")).font(.caption).foregroundStyle(.secondary) }
-                    else if row.raw.string("record_kind") == "unassigned" { Text(L("未归属调用", "Unassigned call")).font(.caption).foregroundStyle(.secondary) }
-                }.padding(.vertical,6)
-            }.width(min:200,ideal:320)
-            TableColumn(L("模型", "Model")) { row in Text(row.modelLabel).font(.system(size:12)).lineLimit(2).foregroundStyle(.secondary) }.width(min:100,ideal:150,max:190)
-            TableColumn("Token") { row in Text(compact(row.tokens.map(Double.init))).monospacedDigit().frame(maxWidth:.infinity,alignment:.trailing) }.width(min:65,ideal:80,max:100)
-            TableColumn(L("费用", "Cost")) { row in Text(money(row.cost)).monospacedDigit().frame(maxWidth:.infinity,alignment:.trailing) }.width(min:65,ideal:80,max:100)
-            TableColumn(L("详情", "Details")) { row in DetailsLink(row:row,members:state.usage.calls.filter { (row.raw["member_ids"] as? [String] ?? []).contains($0.id) }).frame(width:48,height:26) }.width(58)
-        }.tableStyle(.inset(alternatesRowBackgrounds:false)).overlay(RoundedRectangle(cornerRadius:12).stroke(.secondary.opacity(0.15)))
     }
 }

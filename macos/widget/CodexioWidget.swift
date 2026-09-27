@@ -363,6 +363,8 @@ struct CodexioWidgetBundle: WidgetBundle {
     var body: some Widget {
         CodexioRequestWidget()
         CodexioQuotaWidget()
+        CodexioDualQuotaWidget()
+        CodexioSegmentedQuotaWidget()
     }
 }
 

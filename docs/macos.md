@@ -45,9 +45,9 @@ Contents/Resources/codex-cli/
 
 状态项默认显示周剩余额度，也可显示 5 小时额度或仅图标。浮层额度标题为 Codex，下方为今日汇总和七日趋势。macOS 26+ 使用真实系统 Liquid Glass，15 使用系统材质；减少透明度和增强对比度时使用实色背景。
 
-原请求小、中、大 Widget 的 `kind = com.wujuhu.codexio.request`、内容顺序、几何和视觉保留，仅固定文案本地化。新增额度 Widget 使用 `com.wujuhu.codexio.quota`，提供单额度、双额度、分段刻度双额度三种最小尺寸样式。
+原请求小、中、大 Widget 的 `kind = com.wujuhu.codexio.request`、内容顺序、几何和视觉保留，仅固定文案本地化。三个额度 Widget 分别使用 `com.wujuhu.codexio.quota`、`com.wujuhu.codexio.quota.dual`、`com.wujuhu.codexio.quota.segmented`，各自固定样式，以 StaticConfiguration 单独出现在组件库中。
 
-Widget Bundle 为 `com.wujuhu.codexio.widget`，本次构建号 **15**、短版本 **1.14**。扩展只读取上限 32 KiB 的精简快照，主程序与原生后台服务采用相同刷新规则；系统决定实际显示时机。
+Widget Bundle 为 `com.wujuhu.codexio.widget`，本次构建号 **16**、短版本 **1.15**。扩展只读取上限 32 KiB 的精简快照，主程序与原生后台服务采用相同刷新规则；系统决定实际显示时机。
 
 唯一稳定宿主是 `/Applications/Codexio.app`。从其他路径启动完整 APP 时，校验版本、签名与 Widget 后原子接管；新进程确认启动及当前扩展注册后才清理旧备份。注册当前路径成功后，再注销 Codexio 的其他旧路径。接管失败恢复旧版。构建／模拟／冒烟不会触发真实宿主接管或系统注册。
 
@@ -69,7 +69,7 @@ Widget Bundle 为 `com.wujuhu.codexio.widget`，本次构建号 **15**、短版�
 | `Installation.swift`、`NativeUpdater.swift`、`ZipValidation.swift` | 稳定宿主、注册、原位更新和回滚 |
 | `UpstreamCoordinator.swift`、`UpstreamRelay.swift` | 上游配置接管和原生转发 |
 | `macos/Resources/Localizable.xcstrings` | 中文与英文系统文案 |
-| `scripts/build_macos.py` | Swift 编译、AppIntent 元数据、资源、签名、冒烟、ZIP 与清单 |
+| `scripts/build_macos.py` | Swift 编译、独立静态 Widget、资源、签名、冒烟、ZIP 与清单 |
 
 ## 最小验证
 

@@ -68,7 +68,7 @@ final class WeeklyEstimator {
 struct EstimateHistoryView: View {
     @ObservedObject var state: AppState
     var body: some View {
-        VStack(alignment:.leading,spacing:14) {
+        LazyVStack(alignment:.leading,spacing:10) {
             if state.weeklyEstimates.isEmpty { StatusNote(text:L("等待同一周期内足够的额度与本机消费记录", "Waiting for enough allowance and local usage records within one period")) }
             ForEach(state.weeklyEstimates,id:\.estimateIdentity) { row in
                 HStack {

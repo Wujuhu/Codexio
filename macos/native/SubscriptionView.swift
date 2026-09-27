@@ -7,7 +7,7 @@ struct SubscriptionView: View {
     @State private var selectedAccount = ""
     @State private var editingProfile = false
     @State private var expandedPeriods: Set<String> = []
-    @State private var showLocalHistory = false
+    @State private var showLocalHistory = true
     private var profile: Object { state.preferences.analytics.object("subscription_profile") }
     private var periods: [Object] { state.planHistory.objects("periods").filter {$0.integer("window_minutes") == 10080}.sorted {$0.string("starts_at") > $1.string("starts_at")} }
     var body: some View {
@@ -16,9 +16,11 @@ struct SubscriptionView: View {
                 PageHeading(title:Pages.title("subscription"))
                 HStack(alignment:.top,spacing:28) {
                     VStack(alignment:.leading,spacing:12) {
-                        Text(profile.string("plan").isEmpty ? L("个人订阅资料", "Subscription profile") : profile.string("plan")).font(.system(size:16,weight:.semibold))
-                        Text(L("订阅价格", "Subscription price")+" · "+money(profile.number("price_usd")))
-                        Text(L("续费日期", "Renewal date")+" · "+(profile.string("renewal_date").isEmpty ? "—" : profile.string("renewal_date")))
+                        Text(profile.string("plan").isEmpty ? (state.quota.account.string("planType").isEmpty ? L("个人订阅资料", "Subscription profile") : "ChatGPT "+planName(state.quota.account.string("planType"))) : profile.string("plan")).font(.system(size:16,weight:.semibold))
+                        if !state.quota.account.string("email").isEmpty { Text(state.quota.account.string("email")).lineLimit(1).textSelection(.enabled) }
+                        Text(L("订阅价格", "Subscription price")+" · "+(profile.number("price_usd").map {money($0)} ?? L("未提供", "Not provided")))
+                        Text(L("续费日期", "Renewal date")+" · "+(profile.string("renewal_date").isEmpty ? L("未提供", "Not provided") : profile.string("renewal_date")))
+                        if profile.number("price_usd") == nil || profile.string("renewal_date").isEmpty { Text(L("价格与续费日期可手动补充", "Price and renewal date can be added manually")).font(.system(size:10)) }
                         Button(L("编辑资料", "Edit profile")) { editingProfile = true }.padding(.top,4)
                     }.font(.system(size:12)).foregroundStyle(.secondary).frame(width:205,alignment:.leading)
                     Divider().frame(height:120)
@@ -97,7 +99,7 @@ struct SubscriptionView: View {
     }
     private var localEstimates: some View {
         VStack(alignment:.leading,spacing:12) {
-            DisclosureGroup(L("本地周期与估值记录", "Local cycle estimates"),isExpanded:$showLocalHistory) {
+            DisclosureGroup(L("周额度估算", "Weekly allowance estimates"),isExpanded:$showLocalHistory) {
                 EstimateHistoryView(state:state)
             }.font(.system(size:13))
         }

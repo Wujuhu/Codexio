@@ -1,9 +1,13 @@
 import Foundation
 
 struct UsageRow: Identifiable {
-    var raw: Object
-    var id: String { raw.string("id") }
-    var date: Date? { parsedDate(raw["timestamp"]) }
+    let raw: Object
+    let id: String
+    let date: Date?
+    let runningSince: Date?
+    init(raw: Object) {
+        self.raw = raw; id = raw.string("id"); date = parsedDate(raw["timestamp"]); runningSince = parsedDate(raw["duration_started_at"])
+    }
     var title: String { raw.string("session_title").isEmpty ? raw.string("prompt_preview",raw.string("session_id")) : raw.string("session_title") }
     var modelLabel: String {
         let requested = raw.string("model"), observed = raw.string("upstream_model")
@@ -23,7 +27,7 @@ struct UsageRow: Identifiable {
     var cost: Double? { guard ["","priced","estimated"].contains(raw.string("pricing_status")), let n = raw.number("cost_usd"), n >= 0 else { return nil }; return n }
     var local: Bool { raw.flag("local_origin") || raw.string("source_id").hasPrefix("local") }
     var duration: Double? {
-        if raw.flag("duration_running"), let start = parsedDate(raw["duration_started_at"]) { return max(0,Date().timeIntervalSince(start)) + (raw.number("duration_base_ms") ?? 0)/1000 }
+        if raw.flag("duration_running"), let start = runningSince { return max(0,Date().timeIntervalSince(start)) + (raw.number("duration_base_ms") ?? 0)/1000 }
         return raw.number("duration_ms").map {$0/1000}
     }
 }
@@ -76,6 +80,7 @@ struct ActivityStats {
 }
 
 struct UsageSnapshot {
+    var revision = UUID()
     var calls: [UsageRow] = []
     var requests: [UsageRow] = []
     var summaries: [String:UsageSummary] = [:]
@@ -84,6 +89,10 @@ struct UsageSnapshot {
     var chatCandidates: [Object] = []
     var chatTitles: [String:String] = [:]
     var updated: Date?
+    var callsByID: [String:UsageRow] = [:]
+    var models: [String] = []
+    var localChatRows: [Object] = []
+    func members(of row: UsageRow) -> [UsageRow] { (row.raw["member_ids"] as? [String] ?? []).compactMap {callsByID[$0]} }
     var widgetRequest: UsageRow? {
         let main = requests.filter {$0.raw.string("record_kind") == "user_request" && !$0.raw.flag("is_subagent") && $0.local}
         return main.first(where:{$0.raw.string("status") == "running"}) ?? main.first
@@ -253,7 +262,44 @@ enum Analytics {
         result.chatCandidates = seen.filter {rootThread($0) == $0}.sorted { (created[$0] ?? .distantPast) > (created[$1] ?? .distantPast) }.map { id in
             ["thread_id":id,"created_at":created[id].map(iso) as Any? ?? NSNull(),"descendant_thread_ids":descendants[id] ?? []]
         }
+        result.callsByID = Dictionary(result.calls.map {($0.id,$0)},uniquingKeysWith:{$1})
+        result.models = Set(result.calls.map {$0.raw.string("model")}.filter {!$0.isEmpty}).sorted()
+        var localTotals: [String:Int] = [:]
+        for row in local { localTotals[row.raw.string("session_id"),default:0] += row.tokens ?? 0 }
+        result.localChatRows = result.chatCandidates.map { candidate in
+            let ids = [candidate.string("thread_id")] + (candidate["descendant_thread_ids"] as? [String] ?? [])
+            return ["thread_id":candidate.string("thread_id"),"local_tokens":ids.reduce(0) {$0+(localTotals[$1] ?? 0)}] as Object
+        }.sorted {($0.integer("local_tokens") ?? 0) > ($1.integer("local_tokens") ?? 0)}
         result.updated = now
+        return result
+    }
+}
+
+struct UsageRange {
+    let start: Date
+    let end: Date
+    init(period: String,from: Date = Date(),through: Date = Date()) {
+        let calendar = Calendar.current, today = calendar.startOfDay(for:Date())
+        switch period {
+        case "all": start = .distantPast
+        case "custom": start = calendar.startOfDay(for:min(from,through))
+        default: start = calendar.date(byAdding:.day,value:period == "today" ? 0 : period == "week" ? -6 : -29,to:today)!
+        }
+        end = period == "custom" ? min(Date(),calendar.date(byAdding:.day,value:1,to:calendar.startOfDay(for:max(from,through)))!) : Date()
+    }
+    func contains(_ row: UsageRow) -> Bool { row.date.map {$0 >= start && $0 <= end} ?? false }
+    func buckets(_ rows: [UsageRow],granularity: String) -> [DayUsage] {
+        var calendar = Calendar.current; calendar.firstWeekday = 2
+        let component: Calendar.Component = granularity == "hour" ? .hour : granularity == "week" ? .weekOfYear : .day
+        let begin = start == .distantPast ? rows.compactMap(\.date).min() ?? calendar.startOfDay(for:end) : start
+        var groups: [Date:[UsageRow]] = [:]
+        for row in rows { if let date = row.date, let lower = calendar.dateInterval(of:component,for:date)?.start { groups[lower,default:[]].append(row) } }
+        var cursor = calendar.dateInterval(of:component,for:begin)!.start, result: [DayUsage] = []
+        while cursor <= end {
+            let entries = groups[cursor] ?? [], total = UsageSummary(rows:entries)
+            result.append(DayUsage(date:cursor,tokens:entries.isEmpty ? 0 : total.tokens,cost:entries.isEmpty ? 0 : total.cost,calls:total.calls))
+            guard let next = calendar.date(byAdding:component,value:1,to:cursor), next > cursor else { break }; cursor = next
+        }
         return result
     }
 }
