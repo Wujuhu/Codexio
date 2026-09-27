@@ -14,7 +14,8 @@ final class MockGallery {
     init(state: AppState,window: NSWindow,directory: URL) {
         self.state = state; self.window = window; self.directory = directory
         if let index = CommandLine.arguments.firstIndex(of:"--gallery-only"), CommandLine.arguments.indices.contains(index+1) {
-            names = names.filter {$0 == CommandLine.arguments[index+1]}
+            let selected = CommandLine.arguments[index+1]
+            names = selected == "settings-menubar" ? [selected] : names.filter {$0 == selected}
         }
     }
     func start() {

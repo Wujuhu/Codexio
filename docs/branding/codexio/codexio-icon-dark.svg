@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-labelledby="title desc">
+  <title id="title">Codexio — Cat C · dark</title>
+  <desc id="desc">Cat ears, an open C body, and a curling tail. Vector redrawn from the supplied reference.</desc>
+  <rect width="512" height="512" rx="112" fill="#000000"/>
+  <path fill="#FFFFFF" transform="translate(256 256) scale(.54) translate(-627 -627)" d="M 378 433 C 350 376 350 303 365 253 Q 368 242 380 246 C 431 255 480 294 514 333 C 577 310 652 310 718 331 C 753 291 808 255 853 246 Q 869 241 871 253 C 888 361 868 468 766 553 C 738 493 687 457 624 459 C 529 458 450 533 449 633 C 447 738 515 813 612 815 C 683 818 729 782 784 735 C 839 690 889 668 938 680 C 995 692 1030 735 1031 787 Q 1032 803 1028 813 C 992 787 956 782 920 793 C 882 802 838 838 795 874 C 725 931 650 953 574 946 C 422 933 315 816 304 662 C 297 575 321 507 378 433 Z"/>
+</svg>

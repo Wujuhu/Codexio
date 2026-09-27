@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
 STAGING = BUILD / "staging/macos"
 DESTINATION = BUILD / "dev/macos"
-WIDGET_VERSION = 16  # Increase for widget UI, registration, or host-lifecycle changes.
+WIDGET_VERSION = 18  # Increase for widget UI, registration, or host-lifecycle changes.
 
 
 def run(*args, **kwargs):
@@ -108,6 +108,10 @@ def build_native(bundle, version):
         "NSAppTransportSecurity": {"NSAllowsArbitraryLoads": True, "NSAllowsLocalNetworking": True},
     }
     (bundle / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
+    for name in ("app-light.svg", "app-dark.svg", "app-light.png", "app-dark.png", "brand-mark.svg", "brand-mark.png"):
+        shutil.copy2(ROOT / "src/codexio/icons" / name, resources / name)
+    for source in (ROOT / "src/codexio/icons/task-status").glob("*"):
+        shutil.copy2(source, resources / source.name)
     iconset = BUILD / "cache/macos-resources/Codexio.iconset"
     run(executable, "--render-icon", iconset)
     run("iconutil", "-c", "icns", iconset, "-o", resources / "Codexio.icns")
@@ -132,6 +136,7 @@ def embed_widget(bundle):
         "-Xlinker", "-e", "-Xlinker", "_NSExtensionMain", *sources, "-o", executable, env=environment)
     resources = extension / "Contents/Resources"
     resources.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / "src/codexio/icons/brand-mark.png", resources / "brand-mark.png")
     localization_resources(resources)
     (extension / "Contents/Info.plist").write_bytes(plistlib.dumps({
         "CFBundleIdentifier": "com.wujuhu.codexio.widget", "CFBundleExecutable": "CodexioWidget",
@@ -144,6 +149,23 @@ def embed_widget(bundle):
     run("codesign", "--force", "--sign", "-", "--timestamp=none", "--entitlements", entitlements, extension)
     run("codesign", "--force", "--sign", "-", "--timestamp=none", bundle)
     run("codesign", "--verify", "--strict", extension)
+
+
+def prepare_mock_bundle(bundle, destination):
+    """Run the same executable without exposing a second WidgetKit host to macOS."""
+    refuse_running(destination)
+    if destination.exists():
+        shutil.rmtree(destination)
+    contents = destination / "Contents"
+    (contents / "MacOS").mkdir(parents=True)
+    shutil.copy2(bundle / "Contents/MacOS/Codexio", contents / "MacOS/Codexio")
+    shutil.copytree(bundle / "Contents/Resources", contents / "Resources")
+    info = plistlib.loads((bundle / "Contents/Info.plist").read_bytes())
+    info["CFBundleIdentifier"] = "com.wujuhu.codexio.mock"
+    info.pop("CFBundleURLTypes", None)
+    (contents / "Info.plist").write_bytes(plistlib.dumps(info))
+    run("codesign", "--force", "--sign", "-", "--timestamp=none", destination)
+    return contents / "MacOS/Codexio"
 
 
 def main():
@@ -177,7 +199,8 @@ def main():
     # Validate the new binary in a separate data directory, without the shell's
     # import paths or development interpreter influencing the bundled runtime.
     env = {key: value for key, value in os.environ.items() if key not in ("PYTHONPATH", "PYTHONHOME", "QT_QPA_PLATFORM", "QT_PLUGIN_PATH")}
-    run(bundle / "Contents/MacOS/Codexio", "--mock", "--smoke-test", smoke, env=env, timeout=100)
+    mock_executable = prepare_mock_bundle(bundle, BUILD / "checks/mock-host/CodexioMock.app")
+    run(mock_executable, "--mock", "--smoke-test", smoke, env=env, timeout=100)
     assert json.loads((smoke / "result.json").read_text(encoding="utf-8"))["ok"]
     from codexio.app_archive import APP_ARCHIVE_NAME
     from codexio.macos_updater import MANIFEST_NAME, _prepare_bundle

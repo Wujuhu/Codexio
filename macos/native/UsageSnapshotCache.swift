@@ -51,7 +51,8 @@ final class UsageSnapshotCache {
             result = Analytics.build(records:[],turns:turns,links:links,catalog:catalog,now:now,preparedCalls:calls)
             let statusExpiry = turns.filter {$0.string("status") == "running"}.compactMap {parsedDate($0["observed_at"])?.addingTimeInterval(900)}.filter {$0 > now}.min()
             let futureRecord = result.calls.compactMap(\.date).filter {$0 > now}.min()
-            expires = [statusExpiry,futureRecord,calendar.date(byAdding:.day,value:1,to:next.day)].compactMap {$0}.min() ?? .distantFuture
+            let futureTurn = turns.compactMap {parsedDate($0["observed_at"])}.filter {$0 > now}.min()
+            expires = [statusExpiry,futureRecord,futureTurn,calendar.date(byAdding:.day,value:1,to:next.day)].compactMap {$0}.min() ?? .distantFuture
             input = next
         }
         result.updated = now; cached = result; checked = now; hour = nextHour

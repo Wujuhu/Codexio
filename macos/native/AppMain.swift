@@ -5,7 +5,6 @@ import Foundation
 @main
 enum CodexioMain {
     static var delegate: ApplicationDelegate?
-    static var background: WidgetService?
     static func main() {
         let arguments = CommandLine.arguments
         if arguments.contains("--version") { print(BuildInfo.version); return }
@@ -13,7 +12,7 @@ enum CodexioMain {
             if arguments.contains("--mock") && ["--native-update-job","--upstream-helper","--render-icon"].contains(where:arguments.contains) { throw AppFailure("Mock mode cannot run installation or background helpers") }
             if let index = arguments.firstIndex(of:"--render-icon"), arguments.indices.contains(index+1) { try Branding.renderIconset(to:URL(fileURLWithPath:arguments[index+1])); return }
             if let index = arguments.firstIndex(of:"--native-update-job"), arguments.indices.contains(index+1) { try NativeUpdater.installJob(URL(fileURLWithPath:arguments[index+1])); return }
-            if let index = arguments.firstIndex(of:"--upstream-helper"), arguments.indices.contains(index+1) { try UpstreamRelay.run(directory:URL(fileURLWithPath:arguments[index+1])); return }
+            if ["--upstream-helper","--upstream-proxy","--widget-service","--widget-refresh"].contains(where:arguments.contains) { return }
             let mock = arguments.contains("--mock")
             if arguments.contains("--mock-gallery") && !mock { throw AppFailure("--mock-gallery requires --mock") }
             var smoke: URL?
@@ -22,11 +21,6 @@ enum CodexioMain {
                 smoke = URL(fileURLWithPath:arguments[index+1]).standardizedFileURL
             }
             let paths = try AppPaths(mock:mock,smoke:smoke)
-            if arguments.contains("--widget-service") {
-                guard !mock, Bundle.main.bundleURL.standardizedFileURL == Installation.canonical else { return }
-                NSApplication.shared.setActivationPolicy(.prohibited)
-                background = WidgetService(paths:paths); background?.start(); RunLoop.main.run(); return
-            }
             if try Installation.takeoverIfNeeded(paths:paths) { return }
             guard let lease = FileLease(paths.data.appendingPathComponent("native-main.lock")) else {
                 DistributedNotificationCenter.default().postNotificationName(.init("com.wujuhu.codexio.show"),object:nil,userInfo:nil,deliverImmediately:true); return
@@ -67,9 +61,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         menu()
         state.onOpenWindow = { [weak self] in self?.showWindow() }
         state.onQuit = { NSApp.terminate(nil) }
-        state.onCancelQuit = { [weak self] in self?.isTerminating = false; self?.showWindow(); NSApp.reply(toApplicationShouldTerminate:false) }
+        state.onCancelQuit = { [weak self] in self?.isTerminating = false; self?.updater?.installOnQuit = false; self?.upstream?.cancelQuit(); self?.showWindow(); NSApp.reply(toApplicationShouldTerminate:false) }
         state.onRestartCodex = { [weak self] completion in self?.promptCodexRestart(completion:completion) }
         state.onQuotaChange = { [weak self] in self?.status?.update() }
+        state.onMenuDataChange = { [weak self] in self?.status?.update() }
         state.onSettingsChange = { [weak self] in self?.applyAppearance(); self?.status?.update() }
         if !state.paths.mock {
             status = MenuBarController(state)
@@ -81,14 +76,20 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             state.accountQueue.async { [weak self] in
                 guard let self else { return }
                 do {
-                    try Installation.registerWidget(paths:self.state.paths); try Installation.ensureAgent(paths:self.state.paths)
-                    DispatchQueue.main.async { Installation.acknowledge(paths:self.state.paths) }
+                    try Installation.retireLegacyWidgetServices(paths:self.state.paths)
+                    try Installation.registerWidget(paths:self.state.paths)
+                    DispatchQueue.main.async {
+                        Installation.acknowledge(paths:self.state.paths)
+                        self.state.announceWidgetHost()
+                        self.state.accountQueue.async { Installation.cleanupConfirmedBackups(paths:self.state.paths) }
+                    }
                 }
                 catch { DispatchQueue.main.async { self.state.errorMessage = error.localizedDescription } }
             }
             DistributedNotificationCenter.default().addObserver(self,selector:#selector(showWindow),name:.init("com.wujuhu.codexio.show"),object:nil)
         }
-        applyAppearance(); state.start(); showWindow()
+        NSApp.applicationIconImage = Branding.logo(dark:false)
+        applyAppearance(); state.announceWidgetHost(); state.start(); showWindow()
         if let index = CommandLine.arguments.firstIndex(of:"--mock-gallery"), CommandLine.arguments.indices.contains(index+1), state.paths.mock, let window {
             gallery = MockGallery(state:state,window:window,directory:URL(fileURLWithPath:CommandLine.arguments[index+1]))
             gallery?.start()
@@ -133,15 +134,19 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         let menu = NSMenu(); let item = NSMenuItem(title:L("打开主界面", "Open main window"),action:#selector(showWindow),keyEquivalent:""); item.target = self; menu.addItem(item); return menu
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        if isTerminating || state.paths.mock { return .terminateNow }
+        if state.paths.mock { return .terminateNow }
+        if isTerminating { return .terminateLater }
         isTerminating = true; saveGeometry(); status?.close()
         upstream?.prepareQuit { [weak self] in
             guard let self else { NSApp.reply(toApplicationShouldTerminate:true); return }
             do { try self.updater?.prepareInstallerIfNeeded() }
-            catch { self.isTerminating = false; self.state.errorMessage = error.localizedDescription; NSApp.reply(toApplicationShouldTerminate:false); return }
-            self.state.stop(); NSApp.reply(toApplicationShouldTerminate:true)
+            catch { self.isTerminating = false; self.updater?.installOnQuit = false; self.upstream?.cancelQuit(); self.state.errorMessage = error.localizedDescription; NSApp.reply(toApplicationShouldTerminate:false); return }
+            self.state.finishQuit { error in
+                if let error { fputs(error.localizedDescription+"\n",stderr) }
+                NSApp.reply(toApplicationShouldTerminate:true)
+            }
         }
-        if upstream == nil { state.stop(); return .terminateNow }
+        if upstream == nil { state.finishQuit { _ in NSApp.reply(toApplicationShouldTerminate:true) } }
         return .terminateLater
     }
     func applicationWillTerminate(_ notification: Notification) { state.stop(); saveGeometry(); DistributedNotificationCenter.default().removeObserver(self) }
@@ -170,7 +175,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             }
         }
     }
-    private func applyAppearance() { NSApp.appearance = state.theme == "dark" ? NSAppearance(named:.darkAqua) : state.theme == "light" ? NSAppearance(named:.aqua) : nil }
+    private func applyAppearance() {
+        let next = state.theme == "dark" ? NSAppearance(named:.darkAqua) : state.theme == "light" ? NSAppearance(named:.aqua) : nil
+        if NSApp.appearance?.name != next?.name { NSApp.appearance = next }
+    }
     @objc private func showSettings() { state.selectedPage = "settings"; showWindow() }
     @objc private func refresh() { state.refresh() }
     @objc private func search() { state.selectedPage = "logs"; showWindow(); DispatchQueue.main.asyncAfter(deadline:.now()+0.1) { NotificationCenter.default.post(name:.init("CodexioSearch"),object:nil) } }
@@ -221,22 +229,3 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
 }
 
 extension Array { subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil } }
-
-final class WidgetService {
-    let paths: AppPaths
-    private var state: AppState?
-    private var timer: Timer?
-    private var lease: FileLease?
-    init(paths: AppPaths) { self.paths = paths }
-    func start() {
-        guard let lease = FileLease(paths.data.appendingPathComponent("native-widget.lock")) else { exit(0) }
-        self.lease = lease; update()
-        timer = Timer.scheduledTimer(withTimeInterval:15,repeats:true) { [weak self] _ in self?.update() }
-        timer?.tolerance = 5
-    }
-    private func update() {
-        if mainIsRunning() { state?.stop(); state = nil; return }
-        if state == nil { state = try? AppState(paths:paths); state?.start() }
-    }
-    private func mainIsRunning() -> Bool { FileLease(paths.data.appendingPathComponent("native-main.lock")) == nil }
-}

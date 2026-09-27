@@ -28,7 +28,7 @@
 | 价格、费用、订阅估值 | `pricing.py`、`confirmed_usage.py`、`rolling_estimation.py` 等 | 保留现有价格目录、参考估值与未知值语义；费用不是实际账单 |
 | 本机／SSH 来源 | `remote_collector.py`、`analytics_config.py`、`usage_worker.py`、设置和日志筛选 | 两端删除 SSH 连接、增删改 UI 与来源过滤；自动本机扫描保留，旧 SSH 索引记录只作历史保留 |
 | 上游检测、代理与恢复 | `upstream_*.py`、配置与进程模块 | 此功能与 SSH 数据源不同，原有配置恢复与退出协调继续有效 |
-| Widget 数据、后台刷新、宿主接管 | `macos_widget_*.py`、`macos_app_takeover.py`、`macos/widget/` | 保留唯一稳定宿主、原子快照、后台刷新及失败回滚；现有请求小／中／大 UI 不变，只新增额度组件 |
+| Widget 数据、后台刷新、宿主接管 | `macos_widget_*.py`、`macos_app_takeover.py`、`macos/widget/` | 保留唯一稳定宿主、原子快照及失败回滚；刷新依赖主程序，⌘Q 后停止，现有请求小／中／大在线布局不变 |
 | Mac 更新与发布包 | `macos_updater.py`、`scripts/build_macos.py` 等 | 继续产出完整 `Codexio.app` ZIP、合并清单，核验签名、版本、架构、大小与哈希 |
 
 Windows 仍使用现有 Python 实现，但本轮明确的**重置按钮和 SSH 功能删除**也在 Windows 完成。两端共享的是产品行为与数据规则，不要求在代码层强行共用同一语言；需要建立清晰的口径清单，避免 Swift 端在额度、费用、缓存命中率、请求计数或重置时间上漂移。
@@ -98,3 +98,5 @@ Windows 仍使用现有 Python 实现，但本轮明确的**重置按钮和 SSH 
 - [OpenAI Docs 的 Codex App Server 文档](https://learn.chatgpt.com/docs/app-server)明确给出 `account/rateLimitResetCredit/consume` 的参数、四种结果和事后重新读取额度的要求；本地协议类型也已核对。参考图实际文件、来源和哈希保存在[参考资料目录](references/SOURCES.md)。
 - 公开截图未覆盖的少数结构可查 [Microsoft Code - OSS](https://github.com/microsoft/vscode) 的开源工作台；菜单栏原生实现可参考 Apple 的系统接口，现有请求组件不借其他项目改样式。
 - [Apple WidgetFamily](https://developer.apple.com/documentation/widgetkit/widgetfamily/) 与 [macOS 小尺寸 Widget](https://developer.apple.com/documentation/widgetkit/widgetfamily/systemsmall)：用于限定最小尺寸的系统能力；[可配置 Widget](https://developer.apple.com/documentation/widgetkit/making-a-configurable-widget) 用于后续样式选择方案；[MenuBarExtra 窗口样式](https://developer.apple.com/documentation/swiftui/menubarextrastyle/window) 用于核对原生面板呈现。
+
+2026-09-27 生命周期修订：主程序是唯一采集宿主，取消独立 Widget 后台保活；普通 ⌘Q 退出所有自有服务。接管与图标实施记录见 [LIFECYCLE_AND_BRANDING.md](LIFECYCLE_AND_BRANDING.md)。

@@ -6,19 +6,14 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QRect, QRectF, Qt
-from PySide6.QtGui import QColor, QIcon, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QApplication
 
-ICON_BG = QColor("#FFFFFF")
-ICON_MARK = QColor("#2563EB")
-ICON_MARK_LIGHT = QColor("#2D6CE8")
 BUNDLED_ICON = "app.ico"
 MASTER_PNG = "app.png"
 MASTER_SVG = "app.svg"
 ICON_SIZES = (16, 24, 32, 48, 64, 128, 256)
-MARK_FILL = 0.90
-MARK_SCALE = 1.20
 
 
 def _icon_roots() -> list[Path]:
@@ -49,12 +44,13 @@ def master_png_path() -> Path:
     return _icon_roots()[0] / MASTER_PNG
 
 
-def master_svg_path() -> Path:
+def master_svg_path(theme: str = "light") -> Path:
+    name = "app-dark.svg" if theme == "dark" else MASTER_SVG
     for root in _icon_roots():
-        candidate = root / MASTER_SVG
+        candidate = root / name
         if candidate.is_file():
             return candidate
-    return _icon_roots()[0] / MASTER_SVG
+    return _icon_roots()[0] / name
 
 
 def load_app_icon() -> QIcon:
@@ -71,13 +67,27 @@ def load_app_icon() -> QIcon:
     return QIcon(render_app_pixmap(256))
 
 
-def render_app_pixmap(size: int) -> QPixmap:
-    return QPixmap.fromImage(render_app_image(size))
+def render_app_pixmap(size: int, theme: str = "light") -> QPixmap:
+    return QPixmap.fromImage(render_app_image(size, theme))
 
 
-def render_app_image(size: int) -> QImage:
+def render_brand_pixmap(size: int, color: str) -> QPixmap:
+    source = next((root / "brand-mark.svg" for root in _icon_roots() if (root / "brand-mark.svg").is_file()), None)
+    if source is None:
+        return render_app_pixmap(size)
+    image = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
+    QSvgRenderer(str(source)).render(painter, QRectF(0, 0, size, size))
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+    painter.fillRect(image.rect(), QColor(color))
+    painter.end()
+    return QPixmap.fromImage(image)
+
+
+def render_app_image(size: int, theme: str = "light") -> QImage:
     """Rasterize the vector at the final pixel size; also usable by the packager."""
-    renderer = QSvgRenderer(str(master_svg_path()))
+    renderer = QSvgRenderer(str(master_svg_path(theme)))
     if renderer.isValid():
         image = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)
         image.fill(Qt.GlobalColor.transparent)
@@ -105,39 +115,9 @@ def render_app_image(size: int) -> QImage:
 
 
 def paint_app_mark(painter: QPainter, rect: QRectF) -> None:
-    """Keep the Cobalt X identity even if the bundled raster is unavailable."""
-    side = min(rect.width(), rect.height())
-    painter.save()
-    painter.translate(rect.center().x() - side / 2, rect.center().y() - side / 2)
-    painter.scale(side / 512, side / 512)
-    background = QPainterPath()
-    background.addRoundedRect(QRectF(0, 0, 512, 512), 112, 112)
-    painter.fillPath(background, QColor("#FFFFFF"))
-    painter.translate(256, 256)
-    painter.scale(MARK_SCALE, MARK_SCALE)
-    painter.translate(-256, -256)
-    pen = QPen(QColor("#333744"), 38)
-    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-    painter.setPen(pen)
-    for direction in (-1, 1):
-        path = QPainterPath()
-        path.moveTo(256 + direction * 60, 136)
-        path.lineTo(256 + direction * 136, 256)
-        path.lineTo(256 + direction * 60, 376)
-        painter.drawPath(path)
-    cobalt = QLinearGradient(224, 224, 288, 288)
-    for stop, color in ((0, "#2563EB"), (.38, "#2D6CE8"), (.7, "#274ED4"), (1, "#30369E")):
-        cobalt.setColorAt(stop, QColor(color))
-    pen = QPen(cobalt, 14)
-    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-    painter.setPen(pen)
-    painter.drawLine(224, 224, 288, 288)
-    painter.drawLine(224, 288, 288, 224)
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor("#FFFFFF"))
-    painter.drawEllipse(QRectF(249.5, 249.5, 13, 13))
-    painter.restore()
+    renderer = QSvgRenderer(str(master_svg_path()))
+    if renderer.isValid():
+        renderer.render(painter, rect)
 
 
 def write_app_ico(path: Optional[Path] = None) -> Path:

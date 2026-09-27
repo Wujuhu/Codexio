@@ -12,7 +12,7 @@
 - [x] Mac／Windows 中英文系统语言、系统字体；Widget 固定标签本地化。
 - [x] 原生菜单栏图标加额度、Codex 组标题、Liquid Glass 与系统兼容材质。
 - [x] 新增独立最小额度 Widget 的三种样式；旧请求小／中／大组件保留几何、颜色、字体层级和 kind。
-- [x] 原生后台刷新、唯一稳定宿主、Widget 注册、ZIP 更新与失败回滚。
+- [x] 主进程拥有的刷新任务、唯一稳定宿主、Widget 注册、ZIP 更新与失败回滚；⌘Q 停止自有服务。
 - [x] 原生上游转发及配置恢复，保留 provider 与鉴权配置。
 - [x] 两端删除 SSH 采集、来源管理／筛选／列与历史归属入口；保留原始索引历史。
 - [x] Windows 逐张重置、本机五项统计、活动图切换、服务端明细和双语文案。
@@ -24,7 +24,7 @@
 
 | 范围 | 实现 |
 | --- | --- |
-| Mac 主程序 | `macos/native/` 的 24 个 Swift 文件，SwiftUI/AppKit 直接运行，应用包不嵌入 Python、Qt 或 WebView |
+| Mac 主程序 | `macos/native/` 的 Swift 源码，SwiftUI/AppKit 直接运行，应用包不嵌入 Python、Qt 或 WebView |
 | 界面 | 概览、日志、用量、订阅、定价、设置；日期／粒度／模型筛选；可复制的日志详情浮层与调用组成 |
 | 本机统计 | 图 5 的五项指标、365 天热力图、Fast 与推理强度全部取本机已确认调用，时长仅含本机可靠运行区间 |
 | 官方明细 | 图 6 按原周期边界与基点显示；图 7 用周限额和实际 Credits，展开模型、推理、速度构成 |
@@ -79,3 +79,5 @@ build/dev/macos/latest.json
 - 用户第二次明确确认发布 v0.3.1 后，按 AGENTS.md 执行发布协调脚本，由 Windows x64 CI 构建正式 EXE。
 - Windows 构建、同版本、签名／归档或哈希任一校验失败时保持草稿。
 - 当前未推送、未创建 Tag／Release、未写入正式 `release/0.3.1` 目录。
+
+本轮生命周期与猫形 C 品牌修改见 [LIFECYCLE_AND_BRANDING.md](LIFECYCLE_AND_BRANDING.md)。

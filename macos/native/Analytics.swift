@@ -99,6 +99,7 @@ struct UsageSnapshot {
     var callsByID: [String:UsageRow] = [:]
     var models: [String] = []
     var localChatRows: [Object] = []
+    var hasRunningTask = false
     func members(of row: UsageRow) -> [UsageRow] { (row.raw["member_ids"] as? [String] ?? []).compactMap {callsByID[$0]} }
     var widgetRequest: UsageRow?
 }
@@ -176,7 +177,8 @@ enum Analytics {
             row["timestamp"] = own["started_at"] ?? calls.last?.raw["timestamp"]
             row["total_tokens"] = summary.tokens; row["cost_usd"] = summary.cost; row["pricing_status"] = summary.unknownCosts > 0 ? "estimated" : "priced"
             row["call_count"] = summary.calls; row["cache_hit_rate"] = summary.cacheRate
-            row["local_origin"] = calls.contains(where:{$0.local})
+            let ownSources = (own["source_ids"] as? [String] ?? [])+[own.string("source_id")]
+            row["local_origin"] = calls.contains(where:{$0.local}) || ownSources.contains {$0 == "local" || $0.hasPrefix("local:")}
             row["is_subagent"] = own.flag("is_subagent")
             row["member_ids"] = calls.map(\.id)
             for key in ["input_tokens","cached_input_tokens","cache_write_input_tokens","output_tokens","reasoning_output_tokens"] { row[key] = calls.reduce(0) {$0+($1.raw.integer(key) ?? 0)} }
@@ -218,6 +220,12 @@ enum Analytics {
         result.activity.total = result.summaries["all"]?.tokens
         result.activity.peak = result.allDays.compactMap(\.tokens).max()
         let localPairs = Set(local.map {$0.raw.string("session_id")+":"+$0.raw.string("turn_id")})
+        result.hasRunningTask = turns.contains { turn in
+            guard turn.string("status") == "running", turn.flag("verified",true),
+                  let stamp = parsedDate(turn["observed_at"]), stamp <= now, now.timeIntervalSince(stamp) < 900 else { return false }
+            let sources = (turn["source_ids"] as? [String] ?? [])+[turn.string("source_id")]
+            return sources.contains {$0 == "local" || $0.hasPrefix("local:")} || localPairs.contains(turn.string("session_id")+":"+turn.string("turn_id"))
+        }
         let threadParents = Dictionary(turns.filter {$0.flag("is_subagent") && !$0.string("parent_session_id").isEmpty}.map {($0.string("session_id"),$0.string("parent_session_id"))},uniquingKeysWith:{$1})
         var localIntervals: [String:[(Date,Date)]] = [:]
         for turn in turns where localPairs.contains(turn.string("session_id")+":"+turn.string("turn_id")) {

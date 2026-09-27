@@ -1361,6 +1361,22 @@
         }
       }
     },
+    "Codexio 正在安装更新": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A Codexio installation is already in progress"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codexio 正在安装更新"
+          }
+        }
+      }
+    },
     "Codexio 请求": {
       "localizations": {
         "en": {
@@ -1901,6 +1917,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "上下文"
+          }
+        }
+      }
+    },
+    "上次更新：": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Last updated: "
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上次更新："
           }
         }
       }
@@ -2513,6 +2545,22 @@
         }
       }
     },
+    "今日 ": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Today "
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今日 "
+          }
+        }
+      }
+    },
     "今日 %s Token %s": {
       "localizations": {
         "en": {
@@ -2557,6 +2605,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "今日命中率"
+          }
+        }
+      }
+    },
+    "今日总 Token": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Today's total tokens"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今日总 Token"
+          }
+        }
+      }
+    },
+    "今日总费用": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Today's total cost"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今日总费用"
           }
         }
       }
@@ -2781,6 +2861,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "价格目录超过大小限制"
+          }
+        }
+      }
+    },
+    "任务 ": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Task "
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "任务 "
           }
         }
       }
@@ -4577,6 +4673,22 @@
         }
       }
     },
+    "在菜单栏显示": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show in menu bar"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在菜单栏显示"
+          }
+        }
+      }
+    },
     "增加 ": {
       "localizations": {
         "en": {
@@ -4925,6 +5037,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "定价"
+          }
+        }
+      }
+    },
+    "实时预览": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live preview"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "实时预览"
           }
         }
       }
@@ -5937,6 +6065,54 @@
         }
       }
     },
+    "当前任务 Token": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Current task tokens"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前任务 Token"
+          }
+        }
+      }
+    },
+    "当前任务状态": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Current task status"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前任务状态"
+          }
+        }
+      }
+    },
+    "当前任务费用": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Current task cost"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前任务费用"
+          }
+        }
+      }
+    },
     "当前内置模型供应商没有可安全接管的 Responses base_url": {
       "localizations": {
         "en": {
@@ -6417,6 +6593,22 @@
         }
       }
     },
+    "恢复默认": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reset to default"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复默认"
+          }
+        }
+      }
+    },
     "恢复默认字段": {
       "localizations": {
         "en": {
@@ -6541,6 +6733,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "手工 Standard 基础价"
+          }
+        }
+      }
+    },
+    "打开 Codexio 主程序": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Codexio"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开 Codexio 主程序"
           }
         }
       }
@@ -7153,6 +7361,22 @@
         }
       }
     },
+    "数据": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Data"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "数据"
+          }
+        }
+      }
+    },
     "数据待核对": {
       "localizations": {
         "en": {
@@ -7761,6 +7985,54 @@
         }
       }
     },
+    "旧版 Codexio 进程未能退出": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "An old Codexio process could not stop"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "旧版 Codexio 进程未能退出"
+          }
+        }
+      }
+    },
+    "旧版小组件后台服务未能退出": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The legacy widget service could not stop"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "旧版小组件后台服务未能退出"
+          }
+        }
+      }
+    },
+    "旧版正在退出，请完成其退出提示后重试": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Finish quitting the previous app before retrying installation"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "旧版正在退出，请完成其退出提示后重试"
+          }
+        }
+      }
+    },
     "旧路由需要先在原版 Codexio 中关闭，恢复记录已保留": {
       "localizations": {
         "en": {
@@ -7853,6 +8125,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "明天"
+          }
+        }
+      }
+    },
+    "显示内容": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Display content"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示内容"
           }
         }
       }
@@ -8225,6 +8513,22 @@
         }
       }
     },
+    "更新已下载，可立即安装": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update downloaded and ready to install"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新已下载，可立即安装"
+          }
+        }
+      }
+    },
     "更新已就绪，正常退出后安装": {
       "localizations": {
         "en": {
@@ -8541,22 +8845,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "最近 7 天"
-          }
-        }
-      }
-    },
-    "最近同步": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Last synced"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "最近同步"
           }
         }
       }
@@ -13105,6 +13393,22 @@
         }
       }
     },
+    "调整显示顺序": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reorder display"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "调整显示顺序"
+          }
+        }
+      }
+    },
     "调用 ": {
       "localizations": {
         "en": {
@@ -13741,6 +14045,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "边框颜色无效，请使用 #RRGGBB。"
+          }
+        }
+      }
+    },
+    "运行中": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Running"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "运行中"
           }
         }
       }

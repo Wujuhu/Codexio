@@ -14,6 +14,8 @@ final class CodexClient {
     private var buffer = Data()
     private var pending: [Int:ReplyBox] = [:]
     private var nextID = 0
+    private var shuttingDown = false
+    private var retired: [Process] = []
     private let lock = NSRecursiveLock()
     private let writer = NSLock()
     var onNotification: ((String,Object)->Void)?
@@ -84,6 +86,8 @@ final class CodexClient {
     }
     var running: Bool { lock.lock(); defer { lock.unlock() }; return process?.isRunning == true }
     func start(hint: String?) throws {
+        lock.lock(); let closed = shuttingDown; lock.unlock()
+        guard !closed else { throw AppFailure(L("连接已关闭", "Connection closed")) }
         if running { return }
         guard let executable = Self.discover(hint) else { throw AppFailure(L("未找到 Codex，请安装 ChatGPT 或 Codex 并登录", "Codex was not found. Install ChatGPT or Codex and sign in.")) }
         let child = Process(), out = Pipe(), err = Pipe(), stdin = Pipe()
@@ -92,7 +96,6 @@ final class CodexClient {
         var environment = ProcessInfo.processInfo.environment; environment["RUST_LOG"] = "error"
         for key in ["PYTHONHOME","PYTHONPATH","QT_PLUGIN_PATH","QT_QPA_PLATFORM"] { environment.removeValue(forKey:key) }
         child.environment = environment; child.standardInput = stdin; child.standardOutput = out; child.standardError = err
-        lock.lock(); process = child; input = stdin.fileHandleForWriting; buffer = Data(); lock.unlock()
         out.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             if data.isEmpty { handle.readabilityHandler = nil; self?.failPending(AppFailure(L("Codex 连接已关闭", "Codex connection closed"))); return }
@@ -100,7 +103,10 @@ final class CodexClient {
         }
         err.fileHandleForReading.readabilityHandler = { handle in if handle.availableData.isEmpty { handle.readabilityHandler = nil } }
         do {
-            try child.run()
+            lock.lock()
+            guard !shuttingDown else { lock.unlock(); throw AppFailure(L("连接已关闭", "Connection closed")) }
+            process = child; input = stdin.fileHandleForWriting; buffer = Data()
+            do { try child.run(); lock.unlock() } catch { lock.unlock(); throw error }
             _ = try request("initialize",["clientInfo":["name":"codexio","title":"Codexio","version":BuildInfo.version],"capabilities":["optOutNotificationMethods":["item/agentMessage/delta","item/reasoning/delta","item/commandExecution/outputDelta"]]])
             try send(["method":"initialized","params":[:]])
         } catch { close(); throw error }
@@ -148,8 +154,20 @@ final class CodexClient {
     func close() {
         lock.lock(); let old = process; process = nil; let stdin = input; input = nil; lock.unlock()
         try? stdin?.close()
-        if old?.isRunning == true { old?.terminate() }
+        if let old, old.isRunning {
+            old.terminate(); lock.lock(); retired.removeAll {!$0.isRunning}; retired.append(old); lock.unlock()
+        }
         failPending(AppFailure(L("连接已关闭", "Connection closed")))
+    }
+    func shutdown() {
+        lock.lock(); shuttingDown = true; lock.unlock(); closeAndWait()
+    }
+    func closeAndWait() {
+        close()
+        lock.lock(); let children = retired; retired.removeAll(); lock.unlock()
+        let deadline = Date().addingTimeInterval(3)
+        while children.contains(where:{$0.isRunning}) && Date() < deadline { Thread.sleep(forTimeInterval:0.03) }
+        for child in children where child.isRunning { kill(child.processIdentifier,SIGKILL); child.waitUntilExit() }
     }
     deinit { close() }
 }

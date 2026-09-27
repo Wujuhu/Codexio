@@ -39,7 +39,7 @@ final class AppState: ObservableObject {
     @Published var sidebarVisible = true
     @Published var sidebarWidth: Double = 238
     @Published var menuVisible = true
-    @Published var menuContent = "week"
+    @Published var menuFields = ["week","task"]
     @Published var loading = true
     @Published var scanProgress = ""
     @Published var errorMessage: String?
@@ -68,6 +68,8 @@ final class AppState: ObservableObject {
     private var snapshotSignature = ""
     private var snapshotWritten = Date.distantPast
     var onQuotaChange: (() -> Void)?
+    var onMenuDataChange: (() -> Void)?
+    private(set) var taskRunning: Bool?
     var onSettingsChange: (() -> Void)?
     var onCheckUpdate: (() -> Void)?
     var onInstallUpdate: (() -> Void)?
@@ -85,7 +87,7 @@ final class AppState: ObservableObject {
         sidebarVisible = !preferences.analytics.flag("sidebar_collapsed")
         sidebarWidth = min(320,max(140,preferences.analytics.number("native_sidebar_width") ?? preferences.analytics.number("sidebar_width") ?? 238))
         menuVisible = preferences.analytics.flag("menu_bar_visible",true)
-        menuContent = preferences.analytics.string("menu_bar_content","week")
+        menuFields = MenuBarField.normalize(preferences.analytics["menu_bar_fields"] as? [String] ?? ["week","task"])
         client.onNotification = { [weak self] method, _ in
             guard ["account/rateLimits/updated","account/updated"].contains(method) else { return }
             DispatchQueue.main.async {
@@ -121,13 +123,38 @@ final class AppState: ObservableObject {
         stopped = true; scanTimer?.invalidate(); quotaTimer?.invalidate(); priceTimer?.invalidate(); indexer.cancel(); client.close()
         reportGeneration = UUID()
     }
+    func finishQuit(completion: @escaping (Error?) -> Void) {
+        stop()
+        snapshotQueue.async { [self] in
+            client.shutdown()
+            do {
+                if !paths.mock {
+                    try writeWidget(["schema":1,"updated_at":Date().timeIntervalSince1970,"host_running":false,"host_pid":NSNull(),"request":NSNull(),"quota":["applicable":true],"today":NSNull()])
+                    try Installation.retireLegacyWidgetServices(paths:paths)
+                }
+                DispatchQueue.main.async { completion(nil) }
+            } catch { DispatchQueue.main.async { completion(error) } }
+        }
+    }
+    func announceWidgetHost() {
+        guard !paths.mock else { return }
+        snapshotSignature = ""; publishWidget()
+    }
+    private func writeWidget(_ snapshot: Object) throws {
+        guard !paths.mock else { return }
+        guard try jsonData(snapshot).count <= 32768 else { throw AppFailure("Widget snapshot is too large") }
+        try atomicJSON(snapshot,to:paths.snapshot)
+        let canonical = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Codexio/widget_snapshot.json")
+        if paths.snapshot != canonical, ProcessInfo.processInfo.environment["CODEXIO_DATA_DIR"] == nil { try atomicJSON(snapshot,to:canonical) }
+        WidgetCenter.shared.reloadAllTimelines()
+    }
     func refresh() { refreshUsage(); refreshQuota(); if selectedPage == "subscription" || usageSection == "threads" { refreshReports(force:true) } }
     func refreshUsage() {
         guard !scanning, !stopped, !paths.mock else { return }
         scanning = true; let roots = preferences.roots; let initial = loading
         dataQueue.async { [weak self] in
             guard let self else { return }
-            if initial { self.publishUsage() }
+            if initial { self.publishUsage(finishLoading:false) }
             do {
                 try self.indexer.scan(roots) { current,total in
                     if initial && (current == total || current % 50 == 0) { DispatchQueue.main.async { let text = "\(current) / \(total)"; if self.scanProgress != text { self.scanProgress = text } } }
@@ -148,14 +175,19 @@ final class AppState: ObservableObject {
             let estimatesKey = estimator.revision, priceVersion = catalog.version
             DispatchQueue.main.async { [weak self] in
                 guard let self, !self.stopped else { return }
-                if self.usage.revision != result.revision { self.usage = result }
+                let changed = self.usage.revision != result.revision
+                if changed { self.usage = result }
                 self.clock.updated = result.updated
                 if self.pricesRevision != priceVersion { self.prices = prices; self.pricesRevision = priceVersion }
                 if self.modelIDs != models { self.modelIDs = models }
                 if self.priceUpdated != priceUpdated { self.priceUpdated = priceUpdated }
                 if self.priceWarning != priceWarning { self.priceWarning = priceWarning }
                 if self.displayedEstimates != estimatesKey { self.weeklyEstimates = estimates; self.displayedEstimates = estimatesKey }
-                if finishLoading && self.loading { self.loading = false }; self.publishWidget()
+                if finishLoading && self.loading { self.loading = false }
+                let taskChanged = finishLoading && self.taskRunning != result.hasRunningTask
+                if taskChanged { self.taskRunning = result.hasRunningTask }
+                if changed || taskChanged { self.onMenuDataChange?() }
+                self.publishWidget()
                 if self.reportsVisible && self.reportedCandidates == 0 && !result.chatCandidates.isEmpty { self.refreshReports(force:true) }
             }
         } catch { DispatchQueue.main.async { [weak self] in self?.errorMessage = error.localizedDescription; self?.loading = false } }
@@ -310,9 +342,9 @@ final class AppState: ObservableObject {
         do { try preferences.save() } catch { errorMessage = error.localizedDescription }
         if key == "theme" { theme = preferences.analytics.string("theme","system") }
         if key == "menu_bar_visible" { menuVisible = preferences.analytics.flag("menu_bar_visible",true) }
-        if key == "menu_bar_content" { menuContent = preferences.analytics.string("menu_bar_content","week") }
+        if key == "menu_bar_fields" { menuFields = MenuBarField.normalize(preferences.analytics["menu_bar_fields"] as? [String] ?? ["week","task"]) }
         if ["usage_refresh_interval_seconds","refresh_interval_seconds"].contains(key) { configureTimers() }
-        if ["theme","menu_bar_visible","menu_bar_content"].contains(key) { onSettingsChange?() }
+        if ["theme","menu_bar_visible","menu_bar_fields"].contains(key) { onSettingsChange?() }
         objectWillChange.send()
     }
     func toggleSidebar() { sidebarVisible.toggle(); persistSidebar() }
@@ -352,20 +384,15 @@ final class AppState: ObservableObject {
             request = value
         }
         let today = usage.summaries["today"] ?? UsageSummary()
-        let snapshot: Object = ["schema":1,"updated_at":Date().timeIntervalSince1970,"request":request,"today":["cost_usd":today.cost as Any? ?? NSNull(),"tokens":today.tokens as Any? ?? NSNull(),"requests":today.requests,"cache_hit_rate":today.cacheRate as Any? ?? NSNull()],"quota":["applicable":quota.applicable,"updated_at":quota.updated?.timeIntervalSince1970 as Any? ?? NSNull(),"five_hour":(quota.fresh ? quota.five?.remaining : nil) as Any? ?? NSNull(),"week":(quota.fresh ? quota.week?.remaining : nil) as Any? ?? NSNull(),"has_five_hour":quota.five != nil,"has_week":quota.week != nil,"five_hour_reset_at":(quota.fresh ? quota.five?.reset?.timeIntervalSince1970 : nil) as Any? ?? NSNull(),"week_reset_at":(quota.fresh ? quota.week?.reset?.timeIntervalSince1970 : nil) as Any? ?? NSNull(),"reset_count":(quota.fresh ? quota.availableCount : nil) as Any? ?? NSNull()]]
+        let snapshot: Object = ["schema":1,"updated_at":Date().timeIntervalSince1970,"host_running":true,"host_pid":Int(getpid()),"request":request,"today":["cost_usd":today.cost as Any? ?? NSNull(),"tokens":today.tokens as Any? ?? NSNull(),"requests":today.requests,"cache_hit_rate":today.cacheRate as Any? ?? NSNull()],"quota":["applicable":quota.applicable,"updated_at":quota.updated?.timeIntervalSince1970 as Any? ?? NSNull(),"five_hour":(quota.fresh ? quota.five?.remaining : nil) as Any? ?? NSNull(),"week":(quota.fresh ? quota.week?.remaining : nil) as Any? ?? NSNull(),"has_five_hour":quota.five != nil,"has_week":quota.week != nil,"five_hour_reset_at":(quota.fresh ? quota.five?.reset?.timeIntervalSince1970 : nil) as Any? ?? NSNull(),"week_reset_at":(quota.fresh ? quota.week?.reset?.timeIntervalSince1970 : nil) as Any? ?? NSNull(),"reset_count":(quota.fresh ? quota.availableCount : nil) as Any? ?? NSNull()]]
         var content = snapshot; content.removeValue(forKey:"updated_at")
         var quotaContent = content.object("quota"); quotaContent.removeValue(forKey:"updated_at"); content["quota"] = quotaContent
         let signature = identity(content)
         guard signature != snapshotSignature || Date().timeIntervalSince(snapshotWritten) >= 300 else { return }
         snapshotSignature = signature; snapshotWritten = Date()
-        let paths = self.paths
         snapshotQueue.async { [weak self] in
             do {
-                guard try jsonData(snapshot).count <= 32768 else { return }
-                try atomicJSON(snapshot,to:paths.snapshot)
-                let canonical = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Codexio/widget_snapshot.json")
-                if paths.snapshot != canonical, ProcessInfo.processInfo.environment["CODEXIO_DATA_DIR"] == nil { try atomicJSON(snapshot,to:canonical) }
-                WidgetCenter.shared.reloadAllTimelines()
+                try self?.writeWidget(snapshot)
             } catch { DispatchQueue.main.async { self?.errorMessage = error.localizedDescription } }
         }
     }

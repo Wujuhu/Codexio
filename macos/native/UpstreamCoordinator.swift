@@ -7,7 +7,8 @@ final class UpstreamCoordinator {
     private let client = CodexClient()
     private var directory: URL { state.paths.data.appendingPathComponent("upstream") }
     private var journalURL: URL { directory.appendingPathComponent("route.json") }
-    private var helper: Process?
+    private var relay: UpstreamRelay?
+    private var quitting = false
     init(state: AppState) { self.state = state }
     private func nested(_ value: Object,_ path: [String]) -> Any? {
         var current: Any = value
@@ -35,7 +36,7 @@ final class UpstreamCoordinator {
         guard !state.paths.mock else { return }
         let enabled = state.preferences.analytics.flag("upstream_detection_enabled")
         queue.async { [weak self] in
-            guard let self else { return }
+            guard let self, !self.quitting else { return }
             do { try self.restore(); if enabled { try self.start(); DispatchQueue.main.async { self.state.onRestartCodex?({}) } } }
             catch { self.report(error.localizedDescription) }
         }
@@ -43,7 +44,7 @@ final class UpstreamCoordinator {
     func setEnabled(_ enabled: Bool) {
         guard !state.paths.mock else { return }
         queue.async { [weak self] in
-            guard let self else { return }
+            guard let self, !self.quitting else { return }
             do {
                 if enabled { try self.restore(); try self.start() } else { try self.restore() }
                 DispatchQueue.main.async {
@@ -75,19 +76,15 @@ final class UpstreamCoordinator {
         let runtime = directory.appendingPathComponent("native-"+nonce)
         try FileManager.default.createDirectory(at:runtime,withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
         try atomicJSON(["origin":origin,"route_token":nonce,"database":state.paths.data.appendingPathComponent("upstream.sqlite").path],to:runtime.appendingPathComponent("job.json"))
-        let binary = runtime.appendingPathComponent("CodexioRelay")
-        try FileManager.default.copyItem(at:Bundle.main.executableURL!,to:binary)
-        try FileManager.default.setAttributes([.posixPermissions:0o700],ofItemAtPath:binary.path)
-        let process = Process(); process.executableURL = binary; process.arguments = ["--upstream-helper",runtime.path]; process.standardInput = FileHandle.nullDevice; process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
-        try process.run(); helper = process
+        let relay = try UpstreamRelay(directory:runtime); try relay.start(); self.relay = relay
         let deadline = Date().addingTimeInterval(12), readyURL = runtime.appendingPathComponent("ready.json")
-        while process.isRunning && !FileManager.default.fileExists(atPath:readyURL.path) && Date() < deadline { Thread.sleep(forTimeInterval:0.05) }
+        while !FileManager.default.fileExists(atPath:readyURL.path) && !FileManager.default.fileExists(atPath:runtime.appendingPathComponent("failed.json").path) && Date() < deadline { Thread.sleep(forTimeInterval:0.05) }
         let ready = readObject(readyURL)
-        guard process.isRunning, let port = ready.integer("port"), (1...65535).contains(port) else { if process.isRunning { process.terminate() }; throw AppFailure(L("本机转发未能启动", "The local relay could not start")) }
+        guard let port = ready.integer("port"), (1...65535).contains(port) else { relay.stop(); self.relay = nil; throw AppFailure(L("本机转发未能启动", "The local relay could not start")) }
         let routed = "http://127.0.0.1:\(port)/\(nonce)/v1"
-        let journal: Object = ["route_version":3,"native":true,"root_config":state.accountRoot.appendingPathComponent("config.toml").path,"config":file,"provider_id":provider,"locator":locator,"origin":origin,"original_present":before != nil,"original_endpoint":before ?? NSNull(),"applied_endpoint":routed,"original_digest":identity([before != nil,before ?? NSNull()]),"applied_digest":identity([true,routed]),"runtime":runtime.path,"pid":Int(process.processIdentifier)]
-        try atomicJSON(journal,to:journalURL)
+        let journal: Object = ["route_version":3,"native":true,"embedded":true,"root_config":state.accountRoot.appendingPathComponent("config.toml").path,"config":file,"provider_id":provider,"locator":locator,"origin":origin,"original_present":before != nil,"original_endpoint":before ?? NSNull(),"applied_endpoint":routed,"original_digest":identity([before != nil,before ?? NSNull()]),"applied_digest":identity([true,routed]),"runtime":runtime.path,"pid":Int(getpid())]
         do {
+            try atomicJSON(journal,to:journalURL)
             try write(locator,value:routed,file:file,version:owner.string("version"))
             let effective = try read().object("config")
             guard nested(effective,basePath) as? String == routed else { throw AppFailure(L("路由未生效，正在恢复", "The route was not applied; restoring it")) }
@@ -96,7 +93,7 @@ final class UpstreamCoordinator {
     }
     private func restore() throws {
         let journal = readObject(journalURL)
-        guard !journal.isEmpty else { return }
+        guard !journal.isEmpty else { relay?.stop(); relay = nil; return }
         guard journal.integer("route_version") == 3, let locator = journal["locator"] as? [String], !locator.isEmpty else { throw AppFailure(L("旧路由需要先在原版 Codexio 中关闭，恢复记录已保留", "Disable the legacy route in the previous Codexio app first; recovery data is retained")) }
         let applied = journal.string("applied_endpoint"), before = journal["original_endpoint"] ?? NSNull(), present = journal.flag("original_present")
         guard journal.string("original_digest") == identity([present,before]), journal.string("applied_digest") == identity([true,applied]) else { throw AppFailure(L("路由恢复记录校验失败", "Route recovery information could not be verified")) }
@@ -110,17 +107,23 @@ final class UpstreamCoordinator {
         try FileManager.default.removeItem(at:journalURL)
         if !journal.string("runtime").isEmpty {
             let runtime = URL(fileURLWithPath:journal.string("runtime"))
-            if runtime.deletingLastPathComponent() == directory && runtime.lastPathComponent.hasPrefix("native-") { try atomicJSON(["restored_at":Date().timeIntervalSince1970],to:runtime.appendingPathComponent("restored.json")) }
+            if runtime.deletingLastPathComponent() == directory && runtime.lastPathComponent.range(of:#"^native-[a-f0-9]{32}$"#,options:.regularExpression) != nil {
+                try atomicJSON(["restored_at":Date().timeIntervalSince1970],to:runtime.appendingPathComponent("restored.json"))
+                let legacy = runtime.appendingPathComponent("CodexioRelay").path
+                let processes = Installation.processPaths().filter {$0.1 == legacy && $0.0 != getpid()}
+                try Installation.retire(processes)
+            }
         }
+        relay?.stop(); relay = nil
     }
     func prepareQuit(completion: @escaping () -> Void) {
         guard !state.paths.mock else { completion(); return }
         queue.async { [weak self] in
             guard let self else { DispatchQueue.main.async(execute:completion); return }
-            let changed = !readObject(self.journalURL).isEmpty
+            self.quitting = true
             do {
-                try self.restore(); self.client.close()
-                DispatchQueue.main.async { if changed, let prompt = self.state.onRestartCodex { prompt(completion) } else { completion() } }
+                try self.restore(); self.client.closeAndWait()
+                DispatchQueue.main.async(execute:completion)
             }
             catch {
                 self.report(error.localizedDescription); self.client.close()
@@ -128,9 +131,18 @@ final class UpstreamCoordinator {
                     let alert = NSAlert(); alert.messageText = L("上游路由未能恢复", "The upstream route could not be restored")
                     alert.informativeText = error.localizedDescription
                     alert.addButton(withTitle:L("返回应用", "Return to app")); alert.addButton(withTitle:L("保留恢复记录并退出", "Keep recovery data and quit"))
-                    if alert.runModal() == .alertSecondButtonReturn { completion() } else { self.state.onCancelQuit?() }
+                    if alert.runModal() == .alertSecondButtonReturn {
+                        self.queue.async { self.relay?.stop(); self.relay = nil; self.client.closeAndWait(); DispatchQueue.main.async(execute:completion) }
+                    } else { self.state.onCancelQuit?() }
                 }
             }
+        }
+    }
+    func cancelQuit() {
+        queue.async { [weak self] in
+            guard let self else { return }; self.quitting = false
+            guard self.relay == nil, self.state.preferences.analytics.flag("upstream_detection_enabled") else { return }
+            do { try self.restore(); try self.start() } catch { self.report(error.localizedDescription) }
         }
     }
 }

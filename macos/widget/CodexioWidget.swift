@@ -47,15 +47,19 @@ struct Snapshot: Decodable {
     let request: RequestSnapshot?
     let quota: QuotaSnapshot
     let today: TodaySnapshot?
+    var host_running: Bool? = nil
+    var host_pid: Int? = nil
 
     static func read() -> Snapshot? {
         guard let account = getpwuid(getuid()) else { return nil }
         let home = String(cString: account.pointee.pw_dir)
         let path = home + "/Library/Application Support/Codexio/widget_snapshot.json"
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)), data.count <= 32_768,
-              let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data), snapshot.schema == 1 else {
+              var snapshot = try? JSONDecoder().decode(Snapshot.self, from: data), snapshot.schema == 1 else {
             return nil
         }
+        let host = snapshot.host_pid.flatMap { $0 > 0 && $0 <= Int(Int32.max) ? NSRunningApplication(processIdentifier:Int32($0)) : nil }
+        snapshot.host_running = snapshot.host_running == true && host?.bundleIdentifier == "com.wujuhu.codexio" && host?.isTerminated == false
         return snapshot
     }
 }
@@ -79,7 +83,7 @@ private struct CodexioProvider: TimelineProvider {
         let snapshot = Snapshot.read()
         let interval: TimeInterval = snapshot?.request?.duration_running == true ? 300 : 1800
         completion(Timeline(entries: [CodexioEntry(date: now, snapshot: snapshot)],
-                            policy: .after(now.addingTimeInterval(interval))))
+                            policy: snapshot?.host_running == true ? .after(now.addingTimeInterval(interval)) : .never))
     }
 }
 
@@ -305,7 +309,9 @@ private struct CodexioWidgetView: View {
 
     var content: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if let snapshot = entry.snapshot, let request = snapshot.request {
+            if entry.snapshot == nil || entry.snapshot?.host_running == false {
+                WidgetLaunchPrompt()
+            } else if let snapshot = entry.snapshot, let request = snapshot.request {
                 let fresh = Date().timeIntervalSince1970 - snapshot.updated_at < 900
                 requestBody(request, quota: fresh ? snapshot.quota : QuotaSnapshot(
                     applicable: snapshot.quota.applicable,
@@ -326,8 +332,17 @@ private struct CodexioWidgetView: View {
         #if CODEXIO_APP_WIDGET_PREVIEW
         content.background(Color(nsColor:.controlBackgroundColor))
         #else
-        content.containerBackground(for:.widget) { Color(nsColor:.controlBackgroundColor) }
+        content.containerBackground(for:.widget) { Color(nsColor:.controlBackgroundColor) }.widgetURL(URL(string:"codexio://open"))
         #endif
+    }
+}
+
+struct WidgetLaunchPrompt: View {
+    var body: some View {
+        VStack(spacing:12) {
+            Image("brand-mark",bundle:.main).resizable().renderingMode(.template).scaledToFit().frame(width:42,height:42)
+            Text(WL("打开 Codexio 主程序", "Open Codexio")).font(.system(size:13,weight:.medium)).multilineTextAlignment(.center)
+        }.frame(maxWidth:.infinity,maxHeight:.infinity)
     }
 }
 

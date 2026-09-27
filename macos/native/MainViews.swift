@@ -24,9 +24,7 @@ struct MainView: View {
                 HStack(spacing:18) {
                     Button { state.toggleSidebar() } label: { Image(systemName:"sidebar.left") }.buttonStyle(.plain).accessibilityLabel(L("切换侧边栏", "Toggle sidebar"))
                     Spacer()
-                    if state.loading { ProgressView().controlSize(.small) }
-                    else { ScanStamp(clock:state.clock,relative:true).font(.system(size:12)).foregroundStyle(.secondary) }
-                    Button { state.refresh() } label: { Image(systemName:"arrow.clockwise") }.buttonStyle(.plain).accessibilityLabel(L("刷新", "Refresh"))
+                    ScanStamp(clock:state.clock).font(.system(size:12)).foregroundStyle(.secondary)
                 }.padding(.horizontal,32).frame(height:48)
                 Divider()
                 page.frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading)
@@ -65,7 +63,10 @@ private struct SidebarView: View {
         VStack(alignment:.leading,spacing:0) {
             if state.sidebarVisible {
                 HStack {
-                    Text("Codexio").font(.system(size:23,weight:.semibold)).lineLimit(1).minimumScaleFactor(0.7)
+                    HStack(spacing:1) {
+                        Image(nsImage:Branding.menuIcon()).resizable().frame(width:28,height:28)
+                        Text("odexio").font(.system(size:23,weight:.semibold)).lineLimit(1).minimumScaleFactor(0.7)
+                    }.accessibilityElement(children:.ignore).accessibilityLabel("Codexio")
                     Spacer(minLength:4)
                     Button { state.selectedPage = "logs"; NotificationCenter.default.post(name:.init("CodexioSearch"),object:nil) } label: { Image(systemName:"magnifyingglass").foregroundStyle(.secondary) }.buttonStyle(.plain).accessibilityLabel(L("搜索日志", "Search logs"))
                 }.padding(.horizontal,16).padding(.top,30).padding(.bottom,24)

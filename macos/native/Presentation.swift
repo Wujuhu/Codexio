@@ -8,12 +8,8 @@ final class ScanClock: ObservableObject {
 
 struct ScanStamp: View {
     @ObservedObject var clock: ScanClock
-    var relative = false
     var body: some View {
-        if let date = clock.updated {
-            if relative { Text(date,style:.relative) }
-            else { Text(dateText(date,timeOnly:true)) }
-        } else { Text("—") }
+        Text(lastUpdateText(clock.updated))
     }
 }
 

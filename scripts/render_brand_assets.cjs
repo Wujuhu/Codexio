@@ -8,9 +8,18 @@ async function main() {
   const icons = path.join(root, 'src', 'codexio', 'icons');
   const branding = path.join(root, 'docs', 'branding', 'codexio');
   await fs.mkdir(branding, {recursive: true});
-  const svg = await fs.readFile(path.join(icons, 'app.svg'));
+  const svg = await fs.readFile(path.join(icons, 'app-light.svg'));
+  await fs.writeFile(path.join(icons, 'app.svg'), svg);
   const raster = size => sharp(svg, {density: 288}).resize(size, size).png().toBuffer();
-  await fs.writeFile(path.join(icons, 'app.png'), await raster(512));
+  await fs.writeFile(path.join(icons, 'app.png'), await raster(1024));
+  for (const name of ['app-light', 'app-dark', 'brand-mark']) {
+    const source = await fs.readFile(path.join(icons, name + '.svg'));
+    await fs.writeFile(path.join(icons, name + '.png'), await sharp(source, {density: 288}).resize(1024, 1024, {fit: 'contain', background: '#00000000'}).png().toBuffer());
+  }
+  for (const name of ['c-dot-ring-static', 'completed']) {
+    const icon = path.join(icons, 'task-status', name);
+    await fs.writeFile(icon + '.png', await sharp(await fs.readFile(icon + '.svg'), {density: 288}).resize(144, 144).png().toBuffer());
+  }
   const sizes = [16, 24, 32, 48, 64, 128, 256];
   const payloads = await Promise.all(sizes.map(raster));
   const header = Buffer.alloc(6 + sizes.length * 16);
@@ -27,9 +36,9 @@ async function main() {
     offset += payloads[index].length;
   });
   await fs.writeFile(path.join(icons, 'app.ico'), Buffer.concat([header, ...payloads]));
-  for (const [from, to] of [['app.svg', 'codexio-icon.svg'], ['app.png', 'codexio-icon.png'], ['app.ico', 'Codexio.ico']]) {
+  for (const [from, to] of [['app.svg', 'codexio-icon.svg'], ['app.png', 'codexio-icon.png'], ['app.ico', 'Codexio.ico'], ['app-light.svg', 'codexio-icon-light.svg'], ['app-dark.svg', 'codexio-icon-dark.svg'], ['app-light.png', 'codexio-icon-light.png'], ['app-dark.png', 'codexio-icon-dark.png']]) {
     await fs.copyFile(path.join(icons, from), path.join(branding, to));
   }
-  console.log('Codexio SVG, 512px PNG, and seven-size ICO generated.');
+  console.log('Codexio light/dark SVG, 1024px PNG, and seven-size ICO generated.');
 }
 main().catch(error => { console.error(error.message); process.exitCode = 1; });

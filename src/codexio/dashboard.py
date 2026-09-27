@@ -879,15 +879,15 @@ class Dashboard(QMainWindow):
         self._sidebar_layout = side
         side.setContentsMargins(12, 20, 12, 16)
         side.setSpacing(14)
-        from codexio.app_icon import render_app_pixmap
+        from codexio.app_icon import render_brand_pixmap
         brand_row = QHBoxLayout()
         self._brand_row = brand_row
         brand_row.setContentsMargins(4, 5, 0, 0)
-        brand_row.setSpacing(4)
+        brand_row.setSpacing(1)
         brand_icon = QLabel()
         self._brand_icon = brand_icon
         brand_icon.setObjectName("brandIcon")
-        brand_pixmap = render_app_pixmap(64 if self._is_macos else 32)
+        brand_pixmap = render_brand_pixmap(64 if self._is_macos else 32, theme_colors(self._theme)["text"])
         if self._is_macos:
             brand_pixmap.setDevicePixelRatio(2)
         brand_icon.setPixmap(brand_pixmap)
@@ -895,7 +895,8 @@ class Dashboard(QMainWindow):
         brand_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         brand_icon.setAccessibleName("Codexio")
         brand_row.addWidget(brand_icon)
-        brand = plain_label("Codexio")
+        brand = plain_label("odexio")
+        brand.setAccessibleName("Codexio")
         self._brand_name = brand
         brand.setObjectName("brandName")
         brand.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -976,7 +977,7 @@ class Dashboard(QMainWindow):
         main.addWidget(self._stack, 1)
         footer = QHBoxLayout()
         footer.setContentsMargins(0, 0, 18, 0)
-        self._footer = plain_label(tr("更新时间 —"), muted=True)
+        self._footer = plain_label(tr("上次更新：") + "—", muted=True)
         self._footer.setObjectName("statusText")
         footer.addWidget(self._footer, 1)
         self._fee_caption = plain_label(tr("API 基础价 × Codex 倍率"), muted=True)
@@ -1359,7 +1360,7 @@ class Dashboard(QMainWindow):
         self._settings_sections = QListWidget()
         self._settings_sections.setObjectName("settingsSections")
         self._settings_sections.setFixedWidth(118)
-        self._settings_sections.addItems([tr("外观"), *([] if self._is_macos else [tr("悬浮窗")]), tr("数据来源"), tr("应用")])
+        self._settings_sections.addItems([tr("外观"), *([] if self._is_macos else [tr("悬浮窗")]), tr("数据"), tr("应用")])
         self._settings_stack = QStackedWidget()
         body.addWidget(self._settings_sections)
         body.addWidget(self._settings_stack, 1)
@@ -1387,7 +1388,7 @@ class Dashboard(QMainWindow):
         appearance.addStretch()
         if not self._is_macos:
             self._build_floating_settings(section)
-        sources = section(tr("数据来源"), "")
+        sources = section(tr("数据"), "")
         local_form = QFormLayout()
         self._local_root = QLineEdit(next(iter(self._config.get("codex_roots", [])), str(Path.home() / ".codex")))
         self._local_root.editingFinished.connect(self._save_local_root)
@@ -1800,7 +1801,7 @@ class Dashboard(QMainWindow):
         record_count = self._data.get("summaries", {}).get("all", {}).get("requests", 0) if self._queries else len(self._records)
         self._sidebar_status.setText(scan_text or tr("%s 条调用记录") % format(record_count, ","))
         updated = parse_timestamp(self._data.get("updated_at"))
-        self._footer.setText(tr("更新时间 ") + (updated.strftime("%H:%M:%S") if updated else "—"))
+        self._footer.setText(tr("上次更新：") + (f"{updated.month}.{updated.day} {updated:%H:%M}" if updated else "—"))
         if self._progress_message:
             self._sidebar_status.setText(self._progress_message)
         if self._usage_error:
@@ -1928,7 +1929,8 @@ class Dashboard(QMainWindow):
         elif self._active_page == "subscription":
             self._subscription_notice.setText(notice)
             self._subscription_notice.setVisible(bool(notice))
-            self._subscription_updated.setText(tr("最近更新 ") + (success.astimezone().strftime("%H:%M:%S") if isinstance(success, datetime) else "—"))
+            stamp = success.astimezone() if isinstance(success, datetime) else None
+            self._subscription_updated.setText(tr("上次更新：") + (f"{stamp.month}.{stamp.day} {stamp:%H:%M}" if stamp else "—"))
             credits = get(state, "reset_credits")
             self._reset_count.setText(tr("%s 次可用") % credits if isinstance(credits, int) and not isinstance(credits, bool) and credits >= 0 else tr("— 次可用"))
             details = get(state, "reset_credit_details")
@@ -2136,6 +2138,8 @@ class Dashboard(QMainWindow):
     def _apply_theme(self) -> None:
         apply_theme(self, self._theme)
         colors = theme_colors(self._theme)
+        from codexio.app_icon import render_brand_pixmap
+        self._brand_icon.setPixmap(render_brand_pixmap(32, colors["text"]))
         for field in self.findChildren(DatePicker):
             field.set_theme(self._theme)
         self._navigation.set_theme(self._theme)
@@ -2696,7 +2700,7 @@ class Dashboard(QMainWindow):
         title.setProperty("subheading", True)
         heading.addWidget(title)
         heading.addStretch()
-        self._subscription_updated = plain_label(tr("最近更新 —"), muted=True)
+        self._subscription_updated = plain_label(tr("上次更新：") + "—", muted=True)
         heading.addWidget(self._subscription_updated)
         contents.addLayout(heading)
         self._subscription_notice = plain_label("", muted=True, wrap=True)

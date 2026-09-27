@@ -41,14 +41,14 @@ final class NativeUpdater {
                 let prepared = directory.appendingPathComponent("Codexio.pending")
                 try Self.extract(directory.appendingPathComponent("package.bin"),to:prepared,version:version)
                 self.release = mac; self.jobDirectory = directory
-                DispatchQueue.main.async { self.state.updateAvailable = true; self.state.updateStatus = L("更新已就绪，正常退出后安装", "Update ready; installs after quitting normally"); self.checking = false }
+                DispatchQueue.main.async { self.state.updateAvailable = true; self.state.updateStatus = L("更新已下载，可立即安装", "Update downloaded and ready to install"); self.checking = false }
             } catch {
                 DispatchQueue.main.async { if manual { self.state.updateStatus = error.localizedDescription }; self.checking = false }
             }
         }
     }
     func prepareInstallerIfNeeded() throws {
-        guard !state.paths.mock, let directory = jobDirectory, installOnQuit || state.preferences.analytics.flag("macos_auto_update",true) else { return }
+        guard !state.paths.mock, let directory = jobDirectory, installOnQuit else { return }
         let target = Bundle.main.bundleURL.standardizedFileURL
         _ = try Installation.verify(target,version:BuildInfo.version)
         _ = try Installation.verify(directory.appendingPathComponent("Codexio.pending"),version:release.string("version"))
@@ -115,7 +115,7 @@ final class NativeUpdater {
             guard !FileManager.default.fileExists(atPath:pending.path), !FileManager.default.fileExists(atPath:backup.path) else { throw AppFailure("Update backup already exists") }
             guard try execute("/usr/bin/ditto",["--norsrc","--noextattr",prepared.path,pending.path],timeout:120).code == 0 else { throw AppFailure("Cannot stage the replacement") }
             _ = try Installation.verify(pending,version:job.string("version"))
-            Installation.stopOldAgent()
+            try Installation.prepareReplacement(paths:paths)
             _ = try? execute("/usr/bin/pluginkit",["-r",target.appendingPathComponent(Installation.widgetRelative).path])
             try FileManager.default.moveItem(at:target,to:backup)
             do {

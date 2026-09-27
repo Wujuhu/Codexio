@@ -48,8 +48,6 @@ final class UpstreamRelay {
     private let queue = DispatchQueue(label:"com.wujuhu.codexio.relay")
     private var listener: NWListener?
     private var connections: [UUID:RelayConnection] = [:]
-    private var lastRequest = Date()
-    private var timer: DispatchSourceTimer?
     private var lease: FileLease?
     private let directory: URL
     private let origin: URL
@@ -65,37 +63,30 @@ final class UpstreamRelay {
         database = try Database(expected)
         try database.script("CREATE TABLE IF NOT EXISTS observations(response_id TEXT PRIMARY KEY,model TEXT NOT NULL,event TEXT NOT NULL,rank INTEGER NOT NULL,observed_at REAL NOT NULL); CREATE TABLE IF NOT EXISTS revision(id INTEGER PRIMARY KEY,value INTEGER NOT NULL); INSERT OR IGNORE INTO revision VALUES(1,0);")
     }
-    static func run(directory: URL) throws {
-        let relay = try UpstreamRelay(directory:directory)
-        try relay.start(); withExtendedLifetime(relay) { dispatchMain() }
-    }
-    private func start() throws {
-        guard let lease = FileLease(directory.appendingPathComponent("relay.lock")) else { return }; self.lease = lease
+    func start() throws {
+        guard let lease = FileLease(directory.appendingPathComponent("relay.lock")) else { throw AppFailure("The relay is already running") }; self.lease = lease
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host:"127.0.0.1",port:.any)
         let listener = try NWListener(using:parameters,on:.any); self.listener = listener
         listener.stateUpdateHandler = { [weak self] status in
             guard let self else { return }
             if case .ready = status, let port = listener.port { try? atomicJSON(["pid":Int(getpid()),"port":Int(port.rawValue)],to:self.directory.appendingPathComponent("ready.json")) }
-            if case .failed = status { exit(1) }
+            if case .failed(let error) = status { try? atomicJSON(["error":error.localizedDescription],to:self.directory.appendingPathComponent("failed.json")) }
         }
         listener.newConnectionHandler = { [weak self] connection in
             guard let self else { connection.cancel(); return }
-            self.lastRequest = Date()
             let id = UUID()
-            let relay = RelayConnection(connection:connection,queue:self.queue,origin:self.origin,token:self.token,database:self.database) { [weak self] in self?.connections.removeValue(forKey:id) }
+            let relay = RelayConnection(connection:connection,queue:self.queue,origin:self.origin,token:self.token,database:self.database) { [weak self] in self?.queue.async { self?.connections.removeValue(forKey:id) } }
             self.connections[id] = relay; relay.start()
         }
         listener.start(queue:queue)
-        let timer = DispatchSource.makeTimerSource(queue:queue); self.timer = timer
-        timer.schedule(deadline:.now()+30,repeating:30)
-        timer.setEventHandler { [weak self] in
-            guard let self, FileManager.default.fileExists(atPath:self.directory.appendingPathComponent("restored.json").path), self.connections.isEmpty, Date().timeIntervalSince(self.lastRequest) > 120 else { return }
-            let hosts = NSRunningApplication.runningApplications(withBundleIdentifier:"com.openai.chat") + NSRunningApplication.runningApplications(withBundleIdentifier:"com.openai.codex")
-            let cliRunning = Installation.processPaths().contains { $0.1.hasSuffix("/codex") }
-            if hosts.isEmpty && !cliRunning { exit(0) }
+    }
+    func stop() {
+        queue.sync {
+            listener?.newConnectionHandler = nil; listener?.stateUpdateHandler = nil; listener?.cancel(); listener = nil
+            for connection in Array(connections.values) { connection.cancel() }
+            connections.removeAll(); lease = nil
         }
-        timer.resume()
     }
 }
 
@@ -210,5 +201,6 @@ private final class RelayConnection: NSObject, URLSessionDataDelegate, @unchecke
         guard !responseStarted else { finish(); return }
         connection.send(content:Data("HTTP/1.1 \(status) Relay Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8),completion:.contentProcessed { [weak self] _ in self?.finish() })
     }
+    func cancel() { finish() }
     private func finish() { guard !ended else { return }; ended = true; timeout?.cancel(); connection.cancel(); task?.cancel(); session?.invalidateAndCancel(); finished() }
 }

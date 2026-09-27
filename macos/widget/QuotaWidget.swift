@@ -12,7 +12,8 @@ struct QuotaProvider: TimelineProvider {
     func placeholder(in context: Context) -> QuotaEntry { QuotaEntry(date:Date(),snapshot:nil,style:style) }
     func getSnapshot(in context: Context,completion: @escaping (QuotaEntry) -> Void) { completion(QuotaEntry(date:Date(),snapshot:Snapshot.read(),style:style)) }
     func getTimeline(in context: Context,completion: @escaping (Timeline<QuotaEntry>) -> Void) {
-        let date = Date(); completion(Timeline(entries:[QuotaEntry(date:date,snapshot:Snapshot.read(),style:style)],policy:.after(date.addingTimeInterval(900))))
+        let date = Date(), snapshot = Snapshot.read()
+        completion(Timeline(entries:[QuotaEntry(date:date,snapshot:snapshot,style:style)],policy:snapshot?.host_running == true ? .after(date.addingTimeInterval(900)) : .never))
     }
 }
 
@@ -41,7 +42,7 @@ struct QuotaWidgetView: View {
         content
             .background(alignment:.bottomTrailing) {
                 if entry.style == .segmented {
-                    Image(systemName:"chevron.left.forwardslash.chevron.right").font(.system(size:70,weight:.ultraLight)).foregroundStyle(Color.primary.opacity(dark ? 0.035 : 0.045)).offset(x:15,y:10)
+                    Image("brand-mark",bundle:.main).resizable().renderingMode(.template).scaledToFit().frame(width:78,height:78).foregroundStyle(Color.primary.opacity(dark ? 0.035 : 0.045)).offset(x:15,y:10)
                 }
             }
             .padding(14)
@@ -52,7 +53,8 @@ struct QuotaWidgetView: View {
     var preview: some View { card.background(background) }
     #endif
     @ViewBuilder private var content: some View {
-        if entry.style == .single { single }
+        if entry.snapshot == nil || entry.snapshot?.host_running == false { WidgetLaunchPrompt() }
+        else if entry.style == .single { single }
         else {
             VStack(alignment:.leading,spacing:8) {
                 HStack { Text("Codex").font(.system(size:13,weight:.semibold)); Spacer(minLength:4); freshness }
@@ -99,11 +101,12 @@ struct QuotaWidgetView: View {
         }
     }
     private var freshness: some View {
-        HStack(spacing:4) {
-            Image(systemName:"arrow.triangle.2.circlepath")
-            if !fresh { Text(entry.snapshot?.quota.applicable == false ? WL("不可用", "Unavailable") : WL("等待更新", "Waiting")) }
-            else if let snapshot = entry.snapshot { Text(Date(timeIntervalSince1970:snapshot.quota.updated_at ?? snapshot.updated_at),style:.relative) }
-        }.font(.system(size:9,weight:.medium)).foregroundStyle(.secondary).lineLimit(1)
+        ViewThatFits(in:.horizontal) {
+            if fresh, let snapshot = entry.snapshot {
+                Text(widgetUpdateText(snapshot.quota.updated_at ?? snapshot.updated_at)).fixedSize()
+            }
+            Color.clear.frame(width:0,height:0)
+        }.font(.system(size:9,weight:.medium)).foregroundStyle(.secondary)
     }
     private func meter(_ value: Double?,segmented: Bool) -> some View {
         GeometryReader { geometry in
@@ -136,3 +139,15 @@ struct CodexioSegmentedQuotaWidget: Widget {
 }
 
 func WL(_ chinese: String,_ english: String) -> String { NSLocalizedString(chinese,tableName:"Localizable",bundle:.main,value:english,comment:"") }
+
+private func widgetUpdateText(_ timestamp: Double) -> String {
+    let key = "com.wujuhu.codexio.widget.update-formatter"
+    let formatter: DateFormatter
+    if let cached = Thread.current.threadDictionary[key] as? DateFormatter { formatter = cached }
+    else {
+        formatter = DateFormatter(); formatter.locale = Locale(identifier:"en_US_POSIX")
+        formatter.timeZone = .autoupdatingCurrent; formatter.dateFormat = "M.d HH:mm"
+        Thread.current.threadDictionary[key] = formatter
+    }
+    return WL("上次更新：", "Last updated: ")+formatter.string(from:Date(timeIntervalSince1970:timestamp))
+}

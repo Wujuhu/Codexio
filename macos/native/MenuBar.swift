@@ -21,10 +21,9 @@ struct MenuBarView: View {
                 HStack {
                     Button("Codexio ↗") { dismiss(); state.onOpenWindow?() }.buttonStyle(.plain).font(.system(size:13,weight:.medium)).foregroundStyle(.secondary)
                     Spacer()
-                    Button { state.refreshQuota(); state.refreshUsage() } label: { Image(systemName:"arrow.clockwise").frame(width:24,height:24) }.buttonStyle(.borderless).accessibilityLabel(L("刷新", "Refresh"))
                 }.padding(.horizontal,6).padding(.bottom,3)
                 card {
-                    HStack { Text("Codex").font(.system(size:18,weight:.semibold)); Spacer(); ScanStamp(clock:state.quotaClock,relative:true).font(.system(size:10)).foregroundStyle(.secondary) }
+                    HStack { Text("Codex").font(.system(size:18,weight:.semibold)); Spacer(); ScanStamp(clock:state.quotaClock).font(.system(size:10)).foregroundStyle(.secondary) }
                     meter(state.quota.five,title:L("5 小时额度", "5-hour limit"))
                     meter(state.quota.week,title:L("周额度", "Weekly limit"))
                     if let error = state.quota.error { StatusNote(text:error) }
@@ -82,21 +81,43 @@ final class MenuBarController {
     private var panel: NSPanel?
     private var localMonitor: Any?
     private var globalMonitor: Any?
+    private var readout: MenuBarReadoutHost?
+    private var frameObserver: NSObjectProtocol?
+    private var displayed = ""
     init(_ state: AppState) { self.state = state; update() }
     func update() {
         if !state.menuVisible {
-            if let item { NSStatusBar.system.removeStatusItem(item) }; item = nil; close(); return
+            removeItem(); close(); return
         }
         if item == nil {
             item = NSStatusBar.system.statusItem(withLength:NSStatusItem.variableLength)
             item?.button?.target = self; item?.button?.action = #selector(toggle)
-            item?.button?.image = Self.icon(); item?.button?.imagePosition = .imageLeft
-            item?.button?.font = .monospacedDigitSystemFont(ofSize:12,weight:.medium)
+            if let button = item?.button {
+                button.image = nil; button.title = ""
+                let view = MenuBarReadoutHost(rootView:MenuBarReadout(state:state))
+                button.addSubview(view); readout = view
+                button.postsFrameChangedNotifications = true
+                frameObserver = NotificationCenter.default.addObserver(forName:NSView.frameDidChangeNotification,object:button,queue:.main) { [weak self] _ in self?.layoutReadout() }
+            }
         }
-        let value = state.menuContent == "five" ? state.quota.five?.remaining : state.quota.week?.remaining
-        item?.length = state.menuContent == "icon" ? NSStatusItem.squareLength : 73
-        item?.button?.title = state.menuContent == "icon" ? "" : " "+percent(state.quota.fresh ? value : nil)
-        item?.button?.setAccessibilityLabel("Codex · "+(state.menuContent == "five" ? L("5 小时额度剩余", "5-hour allowance remaining") : L("周额度剩余", "Weekly allowance remaining"))+" "+percent(state.quota.fresh ? value : nil))
+        let text = MenuBarField.text(state), running = state.menuFields.contains("task") && state.taskRunning == true
+        let key = state.menuFields.joined(separator:",")+"|"+text+"|"+String(running)
+        guard key != displayed else { return }; displayed = key
+        readout?.rootView = MenuBarReadout(state:state)
+        readout?.layoutSubtreeIfNeeded()
+        item?.length = state.menuFields.isEmpty ? NSStatusItem.squareLength : ceil(readout?.fittingSize.width ?? 18)+12
+        item?.button?.setAccessibilityLabel("Codexio · "+state.menuFields.map {MenuBarField.title($0)+" "+MenuBarField.value($0,state:state)}.joined(separator:" · "))
+        layoutReadout()
+    }
+    private func layoutReadout() {
+        guard let button = item?.button, let readout else { return }
+        let size = readout.fittingSize
+        readout.frame = NSRect(x:(button.bounds.width-size.width)/2,y:(button.bounds.height-size.height)/2,width:size.width,height:size.height)
+    }
+    private func removeItem() {
+        readout?.removeFromSuperview(); readout = nil
+        if let frameObserver { NotificationCenter.default.removeObserver(frameObserver) }; frameObserver = nil
+        if let item { NSStatusBar.system.removeStatusItem(item) }; item = nil; displayed = ""
     }
     @objc func toggle() {
         if panel?.isVisible == true { close(); return }
@@ -124,14 +145,7 @@ final class MenuBarController {
         if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }; globalMonitor = nil
     }
     static func icon() -> NSImage {
-        let image = NSImage(size:NSSize(width:18,height:18),flipped:false) { _ in
-            NSColor.labelColor.setStroke()
-            let path = NSBezierPath(); path.lineWidth = 1.8; path.lineCapStyle = .round; path.lineJoinStyle = .round
-            path.move(to:NSPoint(x:6,y:15)); path.line(to:NSPoint(x:2,y:9)); path.line(to:NSPoint(x:6,y:3)); path.move(to:NSPoint(x:12,y:15)); path.line(to:NSPoint(x:16,y:9)); path.line(to:NSPoint(x:12,y:3)); path.stroke()
-            let cross = NSBezierPath(); cross.lineWidth = 1.2; cross.lineCapStyle = .round
-            cross.move(to:NSPoint(x:7,y:11)); cross.line(to:NSPoint(x:11,y:7)); cross.move(to:NSPoint(x:7,y:7)); cross.line(to:NSPoint(x:11,y:11)); cross.stroke(); return true
-        }
-        image.isTemplate = true; return image
+        Branding.menuIcon()
     }
-    deinit { close(); if let item { NSStatusBar.system.removeStatusItem(item) } }
+    deinit { close(); removeItem() }
 }

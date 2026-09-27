@@ -11,7 +11,7 @@ struct PricingView: View {
     var body: some View {
         VStack(alignment:.leading,spacing:20) {
             HStack { PageHeading(title:Pages.title("pricing")); Button(L("立即同步", "Sync now")) { state.syncPrices() } }
-            HStack { StatusNote(text:L("美元 / 1M Token", "USD / 1M tokens")); Spacer(); Text(L("最近同步", "Last synced")+" · "+dateText(state.priceUpdated)).font(.caption).foregroundStyle(.secondary) }
+            HStack { StatusNote(text:L("美元 / 1M Token", "USD / 1M tokens")); Spacer(); Text(lastUpdateText(state.priceUpdated)).font(.caption).foregroundStyle(.secondary) }
             if let warning = state.priceWarning { StatusNote(text:warning) }
             HStack {
                 TextField(L("搜索模型", "Search models"),text:$search).textFieldStyle(.roundedBorder)
@@ -73,15 +73,15 @@ struct SettingsView: View {
     @State private var logRoot = ""
     @State private var upstreamConfirmation = false
     @State private var desiredUpstream = false
-    private func sectionTitle(_ section: String) -> String { section == "appearance" ? L("外观", "Appearance") : section == "data" ? L("数据源", "Data") : L("应用", "App") }
+    private func sectionTitle(_ section: String) -> String { section == "appearance" ? L("外观", "Appearance") : section == "data" ? L("数据", "Data") : section == "menubar" ? L("菜单栏", "Menu bar") : L("应用", "App") }
     var body: some View {
         ScrollView {
             VStack(alignment:.leading,spacing:20) {
                 PageHeading(title:Pages.title("settings"))
                 HStack(alignment:.top,spacing:28) {
                     VStack(spacing:5) {
-                        ForEach(["appearance","data","app"],id:\.self) { section in
-                            Button { state.settingsSection = section } label: { Text(sectionTitle(section)).frame(maxWidth:.infinity,alignment:.leading).padding(10).background(state.settingsSection == section ? Color.primary.opacity(0.07) : .clear,in:RoundedRectangle(cornerRadius:7)) }.buttonStyle(.plain)
+                        ForEach(["appearance","data","app","menubar"],id:\.self) { section in
+                            Button { state.settingsSection = section } label: { Text(sectionTitle(section)).frame(maxWidth:.infinity,alignment:.leading).padding(10).contentShape(Rectangle()).background(state.settingsSection == section ? Color.primary.opacity(0.07) : .clear,in:RoundedRectangle(cornerRadius:7)) }.buttonStyle(.plain)
                         }
                     }.frame(width:145)
                     Divider()
@@ -90,6 +90,7 @@ struct SettingsView: View {
                         switch state.settingsSection {
                         case "appearance": appearance
                         case "data": data
+                        case "menubar": menuBar
                         default: app
                         }
                     }.frame(maxWidth:.infinity,alignment:.leading)
@@ -131,10 +132,6 @@ struct SettingsView: View {
                 else { Button(L("检查更新", "Check for updates")) { state.onCheckUpdate?() }.disabled(state.paths.mock) }
             }
             if !state.updateStatus.isEmpty { StatusNote(text:state.updateStatus).padding(.vertical,8) }
-            row(L("菜单栏", "Menu bar")) { Toggle("",isOn:Binding(get:{state.menuVisible},set:{state.setPreference("menu_bar_visible",$0)})).labelsHidden().toggleStyle(.switch) }
-            row(L("菜单栏内容", "Menu bar content")) {
-                Picker("",selection:Binding(get:{state.menuContent},set:{state.setPreference("menu_bar_content",$0)})) { Text(L("图标 + 周额度剩余", "Icon + weekly remaining")).tag("week"); Text(L("图标 + 5 小时剩余", "Icon + 5-hour remaining")).tag("five"); Text(L("仅图标", "Icon only")).tag("icon") }.labelsHidden().frame(width:230)
-            }
             row(L("自动下载更新", "Download updates automatically")) { Toggle("",isOn:Binding(get:{state.preferences.analytics.flag("macos_auto_update",true)},set:{state.setPreference("macos_auto_update",$0)})).labelsHidden().toggleStyle(.switch) }
             row(L("上游检测", "Upstream detection")) { Toggle("",isOn:Binding(get:{state.preferences.analytics.flag("upstream_detection_enabled")},set:{desiredUpstream = $0; upstreamConfirmation = true})).labelsHidden().toggleStyle(.switch).disabled(state.paths.mock) }
             if !state.upstreamStatus.isEmpty { StatusNote(text:state.upstreamStatus).padding(.vertical,8) }
@@ -142,6 +139,12 @@ struct SettingsView: View {
             row(L("额度刷新", "Limit refresh")) { Picker("",selection:Binding(get:{state.preferences.general.integer("refresh_interval_seconds") ?? 60},set:{state.setPreference("refresh_interval_seconds",$0,general:true)})) { ForEach([30,60,300],id:\.self) { Text("\($0) s").tag($0) } }.labelsHidden().frame(width:110) }
             row(L("日志刷新", "Log refresh")) { Picker("",selection:Binding(get:{state.preferences.analytics.integer("usage_refresh_interval_seconds") ?? 10},set:{state.setPreference("usage_refresh_interval_seconds",$0)})) { ForEach([5,10,30,60],id:\.self) { Text("\($0) s").tag($0) } }.labelsHidden().frame(width:110) }
             row(L("额度估算间隔", "Estimate interval")) { Picker("",selection:Binding(get:{state.preferences.analytics.integer("week_estimate_interval_minutes") ?? 30},set:{state.setPreference("week_estimate_interval_minutes",$0)})) { ForEach([10,30,60],id:\.self) { Text("\($0) min").tag($0) } }.labelsHidden().frame(width:110) }
+        }
+    }
+    private var menuBar: some View {
+        VStack(spacing:0) {
+            row(L("在菜单栏显示", "Show in menu bar")) { Toggle("",isOn:Binding(get:{state.menuVisible},set:{state.setPreference("menu_bar_visible",$0)})).labelsHidden().toggleStyle(.switch) }
+            MenuBarSettings(state:state).padding(.top,16)
         }
     }
     private func row<V:View>(_ title: String,@ViewBuilder content: ()->V) -> some View { VStack(spacing:0) { HStack(spacing:20) { Text(title).font(.system(size:13)); Spacer(minLength:16); content() }.padding(.vertical,16); Divider() } }

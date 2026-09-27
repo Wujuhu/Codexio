@@ -80,7 +80,7 @@ struct LocalActivityView: View {
             HStack {
                 Text(L("本机记录 · 按模型调用次数统计模式占比", "Local records · mode shares by model calls"))
                 Spacer()
-                HStack(spacing:4) { Text(L("本地扫描", "Local scan")); ScanStamp(clock:state.clock) }
+                ScanStamp(clock:state.clock)
             }.font(.system(size:11)).foregroundStyle(.secondary)
             if stats.durationPartial || stats.unknownSpeed > 0 || stats.unknownEffort > 0 {
                 StatusNote(text:[stats.durationPartial ? L("时长仅含已记录区间", "Durations include recorded intervals only") : "",stats.unknownSpeed > 0 ? L("速度未知", "Unknown speed")+" \(stats.unknownSpeed)/\(stats.calls)" : "",stats.unknownEffort > 0 ? L("推理强度未知", "Unknown reasoning")+" \(stats.unknownEffort)/\(stats.calls)" : ""].filter {!$0.isEmpty}.joined(separator:" · "))

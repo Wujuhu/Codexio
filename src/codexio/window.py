@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from codexio.app_icon import load_app_icon
+from codexio.app_icon import load_app_icon, render_app_pixmap
 from codexio.money import usd
 from codexio.dock import (
     DOCK_BOTTOM,
@@ -398,7 +398,7 @@ class QuotaWindow(QWidget):
         header_layout.setSpacing(4)
         header_layout.addWidget(_DragGrip(self._header))
         brand_icon = QLabel(self._header)
-        brand_icon.setPixmap(load_app_icon().pixmap(18, 18))
+        brand_icon.setPixmap(render_app_pixmap(18, "dark"))
         brand_icon.setFixedSize(18, 18)
         brand_icon.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         header_layout.addWidget(brand_icon)
