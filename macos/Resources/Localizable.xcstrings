@@ -8161,6 +8161,22 @@
         }
       }
     },
+    "显示更多": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show more"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示更多"
+          }
+        }
+      }
+    },
     "显示模式": {
       "localizations": {
         "en": {

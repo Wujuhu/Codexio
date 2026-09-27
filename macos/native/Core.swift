@@ -88,6 +88,8 @@ private final class DateFormatters {
     let dateTime = DateFormatter()
     let time = DateFormatter()
     let lastUpdate = DateFormatter()
+    let reportDay = DateFormatter()
+    let reportTime = DateFormatter()
     let duration = DateComponentsFormatter()
     var dates: [String:Date] = [:]
     init() {
@@ -97,6 +99,8 @@ private final class DateFormatters {
         dateTime.dateStyle = .medium; dateTime.timeStyle = .short
         time.dateStyle = .none; time.timeStyle = .short
         lastUpdate.locale = Locale(identifier:"en_US_POSIX"); lastUpdate.timeZone = .autoupdatingCurrent; lastUpdate.dateFormat = "M.d HH:mm"
+        reportDay.locale = Locale(identifier:"en_US_POSIX"); reportDay.timeZone = TimeZone(secondsFromGMT:0); reportDay.dateFormat = "M/d"
+        reportTime.locale = Locale(identifier:"en_US_POSIX"); reportTime.timeZone = TimeZone(secondsFromGMT:0); reportTime.dateFormat = "yyyy-MM-dd HH:mm 'UTC'"
         duration.unitsStyle = .abbreviated
     }
     static var current: DateFormatters {
@@ -120,6 +124,10 @@ func parsedDate(_ value: Any?) -> Date? {
 }
 func iso(_ date: Date = Date()) -> String {
     DateFormatters.current.fractional.string(from:date)
+}
+func reportDateText(_ date: Date?,dayOnly: Bool = false) -> String {
+    guard let date else { return "—" }
+    return (dayOnly ? DateFormatters.current.reportDay : DateFormatters.current.reportTime).string(from:date)
 }
 func lastUpdateText(_ date: Date?) -> String {
     L("上次更新：", "Last updated: ")+(date.map {DateFormatters.current.lastUpdate.string(from:$0)} ?? "—")

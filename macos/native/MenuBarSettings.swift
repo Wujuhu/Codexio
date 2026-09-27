@@ -106,6 +106,13 @@ private struct TaskStatusImage: NSViewRepresentable {
     static func dismantleNSView(_ view: TaskStatusImageView,coordinator: ()) { view.stopAnimation() }
 }
 
+private enum MenuVisualCenter: AlignmentID {
+    static func defaultValue(in dimensions: ViewDimensions) -> CGFloat { dimensions[VerticalAlignment.center] }
+}
+private extension VerticalAlignment {
+    static let menuVisualCenter = VerticalAlignment(MenuVisualCenter.self)
+}
+
 struct MenuBarReadout: View {
     let fields: [String]
     let values: [String:String]
@@ -115,12 +122,17 @@ struct MenuBarReadout: View {
         values = Dictionary(uniqueKeysWithValues:fields.map {($0,MenuBarField.value($0,state:state))})
     }
     var body: some View {
-        HStack(spacing:7) {
+        HStack(alignment:.menuVisualCenter,spacing:7) {
             Image(nsImage:Branding.menuIcon()).resizable().frame(width:18,height:18)
+                .alignmentGuide(.menuVisualCenter) { $0[VerticalAlignment.center]-0.65 }
             ForEach(fields,id:\.self) { field in
                 if field == "task", let running {
                     TaskStatusImage(running:running).frame(width:21,height:21)
-                } else { Text(values[field] ?? "—").font(.system(size:field == "week" ? 14 : 12,weight:.medium)) }
+                } else {
+                    let size: CGFloat = field == "week" ? 14 : 12
+                    Text(values[field] ?? "—").font(.system(size:size,weight:.medium))
+                        .alignmentGuide(.menuVisualCenter) { $0[.firstTextBaseline]-NSFont.systemFont(ofSize:size,weight:.medium).capHeight/2 }
+                }
             }
         }.font(.system(size:12,weight:.medium)).monospacedDigit().fixedSize()
     }

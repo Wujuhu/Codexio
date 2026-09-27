@@ -80,10 +80,10 @@ struct SubscriptionView: View {
                         let id = period.string("id"), open = expandedPeriods.contains(id) || (expandedPeriods.isEmpty && periods.first?.string("id") == id)
                         VStack(alignment:.leading,spacing:12) {
                             Button { if open { expandedPeriods = ["closed"] } else { expandedPeriods = [id] } } label: {
-                                HStack { Text(periodRange(period)); Image(systemName:open ? "chevron.down" : "chevron.right").font(.caption); Spacer(); Text((state.planHistory.flag("approximate",true) ? L("约 ", "Approx. ") : "")+percent(period.number("used_basis_points").map {$0/100},digits:1)).monospacedDigit() }.font(.system(size:14))
+                                HStack { Text(periodRange(period)).help(reportDateText(parsedDate(period["starts_at"]))+" – "+reportDateText(parsedDate(period["ends_at"]))); Image(systemName:open ? "chevron.down" : "chevron.right").font(.caption); Spacer(); Text((state.planHistory.flag("approximate",true) ? L("约 ", "Approx. ") : "")+percent(period.number("used_basis_points").map {$0/100},digits:1)).monospacedDigit() }.font(.system(size:14))
                             }.buttonStyle(.plain)
                             if open {
-                                StatusNote(text:L("统计截至", "Usage as of")+" "+dateText(parsedDate(state.planHistory["data_as_of"])))
+                                StatusNote(text:L("统计截至", "Usage as of")+" "+reportDateText(parsedDate(state.planHistory["data_as_of"])))
                                 let model = period.objects("breakdowns").first {$0.string("dimension") == "model"}
                                 ForEach(model?.objects("rows") ?? [],id:\.modelIdentity) { row in
                                     HStack { Text(row.string("key")).foregroundStyle(.secondary); Spacer(); Text(percent(row.number("basis_points").map {$0/100},digits:1)).monospacedDigit() }.font(.system(size:13))
@@ -105,7 +105,7 @@ struct SubscriptionView: View {
     }
     private func periodRange(_ period: Object) -> String {
         let start = parsedDate(period["starts_at"]), end = parsedDate(period["ends_at"])
-        return (start?.formatted(.dateTime.month().day()) ?? "—")+" – "+(end?.formatted(.dateTime.month().day()) ?? "—")
+        return reportDateText(start,dayOnly:true)+" – "+reportDateText(end,dayOnly:true)
     }
 }
 

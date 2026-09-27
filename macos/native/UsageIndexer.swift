@@ -70,16 +70,27 @@ final class UsageIndexer {
         let signatures = Dictionary(uniqueKeysWithValues:inputs.map {($0,FileStamp($0))})
         if titleInputs[root] == signatures { return }
         var values: [String:String] = [:], complete = true
+        func displayTitle(_ value: String) -> String {
+            let text = value.trimmingCharacters(in:.whitespacesAndNewlines)
+            guard !text.hasPrefix("# Files mentioned by the user:"), !text.hasPrefix("# AGENTS.md") else { return "" }
+            return String(text.prefix(400))
+        }
         if signatures[index]?.exists == true && (signatures[index]?.size ?? 0) < 32_000_000 {
             guard let data = try? Data(contentsOf:index), let text = String(data:data,encoding:.utf8) else { return }
             for line in text.split(separator:"\n") {
                 let row = jsonObject(Data(line.utf8)), id = row.string("id",row.string("thread_id")), title = row.string("thread_name",row.string("title"))
-                if !id.isEmpty && !title.hasPrefix("# AGENTS.md") { values[id] = String(title.prefix(400)) }
+                if !id.isEmpty, !displayTitle(title).isEmpty { values[id] = displayTitle(title) }
             }
         }
         for file in states.sorted(by:{$0.lastPathComponent < $1.lastPathComponent}) {
-            if let db = try? Database(file,readOnly:true), let rows = try? db.query("SELECT id,title FROM threads") {
-                for row in rows where !row.string("id").isEmpty { values[row.string("id")] = String(row.string("title").prefix(400)) }
+            if let db = try? Database(file,readOnly:true), let columns = try? db.query("PRAGMA table_info(threads)") {
+                let hasName = columns.contains {$0.string("name") == "name"}
+                guard let rows = try? db.query(hasName ? "SELECT id,name,title FROM threads" : "SELECT id,title FROM threads") else { complete = false; continue }
+                for row in rows where !row.string("id").isEmpty {
+                    let id = row.string("id"), name = displayTitle(row.string("name")), title = displayTitle(row.string("title"))
+                    if !name.isEmpty { values[id] = name }
+                    else if values[id] == nil && !title.isEmpty { values[id] = title }
+                }
             } else { complete = false }
         }
         try database.updateTitles(values)

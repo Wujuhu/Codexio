@@ -162,6 +162,7 @@ struct ChatRankingView: View {
     @State private var localMode = false
     @State private var sortMetric = "weekly_limit_percent"
     @State private var page = 0
+    @State private var visibleLimit = 5
     @State private var tableWidth: CGFloat = 700
     @State private var savedWidths: [String:CGFloat] = [:]
     @State private var resizeOrigin: [String:CGFloat]?
@@ -176,12 +177,12 @@ struct ChatRankingView: View {
         if localMode { return state.usage.localChatRows }
         return state.chatUsage.objects("threads").sorted { ($0.decimal(sortMetric) ?? -1) > ($1.decimal(sortMetric) ?? -1) }
     }
-    private var visible: [Object] { Array(rows.dropFirst(page*25).prefix(25)) }
+    private var visible: [Object] { Array(rows.dropFirst(page*25).prefix(visibleLimit)) }
     var body: some View {
         VStack(alignment:.leading,spacing:20) {
             HStack {
                 SectionHeading(title:localMode ? L("本机 Token 排行", "Local token ranking") : L("聊天用量排行", "Chat usage ranking"))
-                Button { localMode.toggle(); expanded.removeAll(); page = 0 } label: { Text(localMode ? L("查看额度排行", "View allowance ranking") : L("本机 Token", "Local tokens")) }.buttonStyle(.plain).foregroundStyle(.secondary)
+                Button { localMode.toggle(); expanded.removeAll(); page = 0; visibleLimit = 5 } label: { Text(localMode ? L("查看额度排行", "View allowance ranking") : L("本机 Token", "Local tokens")) }.buttonStyle(.plain).foregroundStyle(.secondary)
             }
             if state.reportsLoading && !localMode { ProgressView().controlSize(.small) }
             if let error = state.reportError, !localMode, !rows.isEmpty { StatusNote(text:error) }
@@ -194,12 +195,15 @@ struct ChatRankingView: View {
                 }.frame(minWidth:0,maxWidth:.infinity)
                     .onGeometryChange(for:CGFloat.self) { $0.size.width } action: { if abs(tableWidth-$0) > 0.5 { tableWidth = $0 } }
                     .clipShape(RoundedRectangle(cornerRadius:18)).overlay(RoundedRectangle(cornerRadius:18).stroke(.secondary.opacity(0.22)))
+                if min(25,rows.count-page*25) > visibleLimit {
+                    Button(L("显示更多", "Show more")) { visibleLimit = min(25,visibleLimit+5) }.buttonStyle(.bordered).clipShape(Capsule())
+                }
                 HStack {
-                    if !localMode { Text(L("统计截至", "Usage as of")+" "+dateText(parsedDate(state.chatUsage["data_as_of"]))) }
+                    if !localMode { Text(L("统计截至", "Usage as of")+" "+reportDateText(parsedDate(state.chatUsage["data_as_of"]))) }
                     Spacer()
-                    Button { page = max(0,page-1) } label: { Image(systemName:"chevron.left") }.disabled(page == 0)
+                    Button { page = max(0,page-1); visibleLimit = 5 } label: { Image(systemName:"chevron.left") }.disabled(page == 0)
                     Text("\(page+1) / \(max(1,(rows.count+24)/25))")
-                    Button { page += 1 } label: { Image(systemName:"chevron.right") }.disabled((page+1)*25 >= rows.count)
+                    Button { page += 1; visibleLimit = 5 } label: { Image(systemName:"chevron.right") }.disabled((page+1)*25 >= rows.count)
                 }.font(.system(size:11)).foregroundStyle(.secondary)
             }
         }.onAppear {
@@ -210,11 +214,11 @@ struct ChatRankingView: View {
     private var rankingHeader: some View {
         let sizes = widths
         return HStack(spacing:0) {
-            Text(L("聊天", "Chat")).frame(width:sizes["chat"],height:54)
+            Text(L("聊天", "Chat")).padding(.leading,30).frame(width:sizes["chat"],height:54,alignment:.leading)
             if !localMode {
                 Button { sortMetric = "weekly_limit_percent" } label: { Text(L("占每周限额的 %", "% of weekly limit")).frame(width:sizes["weekly"],height:54).contentShape(Rectangle()) }.buttonStyle(.plain)
             }
-            Button { sortMetric = "balance_usage_credits" } label: { Text(localMode ? "Token" : L("已用 Credits", "Credits used")).frame(width:sizes["credits"],height:54).contentShape(Rectangle()) }.buttonStyle(.plain)
+            Button { sortMetric = "balance_usage_credits" } label: { Text(localMode ? "Token" : L("已用额度", "Credits used")).frame(width:sizes["credits"],height:54).contentShape(Rectangle()) }.buttonStyle(.plain)
         }.font(.system(size:12)).foregroundStyle(.secondary)
             .overlay(alignment:.leading) { divider("chat").offset(x:(sizes["chat"] ?? 0)-4) }
             .overlay(alignment:.leading) { if !localMode { divider("weekly").offset(x:(sizes["chat"] ?? 0)+(sizes["weekly"] ?? 0)-4) } }
@@ -244,10 +248,10 @@ struct ChatRankingView: View {
             Divider()
             Button { if !expanded.insert(id).inserted { expanded.remove(id) } } label: {
                 HStack(spacing:0) {
-                    VStack(spacing:4) {
+                    VStack(alignment:.leading,spacing:4) {
                         Text(state.usage.chatTitles[id] ?? id).lineLimit(1)
                         if row.string("data_status") == "partial" { Text(L("部分数据", "Partial data")).font(.caption).foregroundStyle(.secondary) }
-                    }.padding(.horizontal,30).frame(width:widths["chat"])
+                    }.frame(maxWidth:.infinity,alignment:.leading).padding(.horizontal,30).frame(width:widths["chat"],alignment:.leading)
                         .overlay(alignment:.leading) { Image(systemName:isExpanded ? "chevron.down" : "chevron.right").font(.system(size:12)).foregroundStyle(.secondary).frame(width:24) }
                     if !localMode { Text(precisePercent(row.number("weekly_limit_percent"))).monospacedDigit().frame(width:widths["weekly"]) }
                     Text(localMode ? compact(row.number("local_tokens")) : creditsText(row.decimal("balance_usage_credits"))).monospacedDigit().frame(width:widths["credits"])

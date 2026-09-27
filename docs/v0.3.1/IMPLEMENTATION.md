@@ -113,3 +113,12 @@ build/dev/macos/latest.json
 - 历史上游仍由 UsageSnapshotCache 按 response_id 读取本地 observations，未引入检测开关的显示过滤；UpstreamCoordinator 关闭时只恢复路由，不删除 observations。
 
 本轮验证：Mac 开发打包、固定三项隔离冒烟与版本／签名／ZIP／清单校验通过；Python 改动通过语法检查，未做 Windows 实机验证。未新增测试项、截图矩阵或运行真实安装版。日志 `build/logs/upstream-layout-build.log`，开发产物仍为 `build/dev/macos`，版本 0.3.1，Widget 18／1.17 不变。
+
+## 2026-09-27 排行标题、周期时区和菜单对齐
+
+- 标题来源修复参照 Python `usage_collector.py` 的索引名称优先、数据库初始标题回退机制，并兼容新版 threads.name。只读核对本机四条聊天：name／session_index 分别为 v0.3.1、v0.2.10、v0.2.9、v0.2.8；旧 Swift 随后用 threads.title 的首条提示覆盖了有效名称。现改为 name → 索引显示名 → 非包装的 title；保留文件／WAL 变化检测，无变化不重读。
+- 排行聊天标题和表头左对齐，首屏 5 条、“显示更多”分批增至单页最多 25 条，保持后续分页。已用 Credits 标题与参考统一为“已用额度”，计量数据不变。
+- 套餐周期原先使用设备时区。参考图官方 2026-09-26 17:08 UTC 等于上海 9/27 01:08；原本显示的是同一时刻但日期口径不同。周期日期、完整时间悬停与统计截至统一 UTC，复用线程本地日期格式器；日志及本机活动日期保留本地时区。
+- 菜单栏保留 18／21 点图标和 14 点周额度字体。共用视觉中心对齐引导：图标参考已有猫形 SVG 的视觉偏移（18 点下约 -0.65 点），各文字字段按原生字体 capHeight 与基线对齐，其他费用／Token 字段也使用同一机制；不改变 SVG 或增加定时刷新。
+
+本轮验证：Mac 最终开发构建的三项隔离冒烟、版本／签名／ZIP／清单核验通过；只查看一张菜单栏设置模拟预览 `build/checks/ranking-time-alignment/settings-menubar-zh.png`。聊天名称问题通过只读本机索引／SQLite 字段确认，未修改真实 Codex 数据或启动用户安装版；时区显示按用户官方 UTC 参考修正。构建日志 `build/logs/ranking-time-alignment-build.log`，版本保持 0.3.1，Widget 18／1.17 不变。
