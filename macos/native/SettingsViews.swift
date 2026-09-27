@@ -1,0 +1,147 @@
+import SwiftUI
+import AppKit
+
+struct PricingView: View {
+    @ObservedObject var state: AppState
+    @State private var search = ""
+    @State private var selected: String?
+    @State private var editing = false
+    private var selectedModel: String? { state.prices.first {$0.id == selected}?.model }
+    private var filtered: [PriceRow] { state.prices.filter {search.isEmpty || $0.model.localizedCaseInsensitiveContains(search)} }
+    var body: some View {
+        VStack(alignment:.leading,spacing:20) {
+            HStack { PageHeading(title:Pages.title("pricing")); Button(L("立即同步", "Sync now")) { state.syncPrices() } }
+            StatusNote(text:L("美元 / 1M Token", "USD / 1M tokens"))
+            HStack {
+                TextField(L("搜索模型", "Search models"),text:$search).textFieldStyle(.roundedBorder)
+                Button(L("编辑基础价", "Edit base price")) { editing = true }.disabled(selectedModel == nil)
+                Button(L("恢复自动基础价", "Restore automatic price")) { if let model = selectedModel { state.overridePrice(model:model,rates:nil) } }.disabled(selectedModel == nil)
+            }
+            Table(filtered,selection:$selected) {
+                TableColumn(L("模型", "Model")) { row in Text(row.model).font(.system(size:13)) }.width(min:150,ideal:220)
+                TableColumn(L("条件", "Condition")) { row in Text((row.raw.string("service_tier") == "priority" ? "Fast" : "Standard")+((row.raw.integer("threshold") ?? 0) > 0 ? " >272K" : "")).font(.system(size:12)).foregroundStyle(.secondary) }.width(min:95,ideal:125)
+                TableColumn(L("输入", "Input")) { priceCell($0.raw.number("input")) }
+                TableColumn(L("缓存读取", "Cached input")) { priceCell($0.raw.number("cache_read")) }
+                TableColumn(L("缓存写入", "Cache write")) { priceCell($0.raw.number("cache_write")) }
+                TableColumn(L("输出", "Output")) { priceCell($0.raw.number("output")) }
+            }.tableStyle(.inset(alternatesRowBackgrounds:false))
+        }.padding(32).sheet(isPresented:$editing) { if let model = selectedModel { PriceEditor(state:state,model:model) } }
+    }
+    private func priceCell(_ value: Double?) -> some View { Text(money(value)).font(.system(size:13)).monospacedDigit().frame(maxWidth:.infinity,alignment:.trailing) }
+}
+
+struct PriceEditor: View {
+    @ObservedObject var state: AppState
+    let model: String
+    @Environment(\.dismiss) private var dismiss
+    @State private var values = ["input":"","cache_read":"","cache_write":"","output":""]
+    @State private var error = ""
+    var body: some View {
+        VStack(alignment:.leading,spacing:20) {
+            Text(model).font(.title2)
+            StatusNote(text:L("编辑 Standard 基础价 · 美元 / 1M Token", "Edit Standard base prices · USD / 1M tokens"))
+            Form {
+                field("input",L("输入", "Input")); field("cache_read",L("缓存读取", "Cached input")); field("cache_write",L("缓存写入", "Cache write")); field("output",L("输出", "Output"))
+            }
+            if !error.isEmpty { Text(error).font(.caption).foregroundStyle(.red) }
+            HStack { Spacer(); Button(L("取消", "Cancel")) { dismiss() }; Button(L("保存", "Save")) { save() }.keyboardShortcut(.defaultAction) }
+        }.padding(26).frame(width:460).onAppear {
+            if let row = state.prices.first(where:{$0.model == model && $0.raw.string("service_tier") == "default" && $0.raw.integer("threshold") == 0}) { for key in Array(values.keys) { values[key] = row.raw.number(key).map {String($0)} ?? "" } }
+        }
+    }
+    private func field(_ key: String,_ title: String) -> some View { TextField(title,text:Binding(get:{values[key] ?? ""},set:{values[key] = $0})) }
+    private func save() {
+        var result: Object = [:]
+        for key in ["input","cache_read","cache_write","output"] {
+            let text = values[key] ?? ""
+            if text.isEmpty && key.hasPrefix("cache_") { result[key] = NSNull(); continue }
+            guard let amount = Double(text), amount.isFinite, amount >= 0 else { error = L("请输入有限的非负单价", "Enter finite, nonnegative prices"); return }
+            result[key] = amount
+        }
+        state.overridePrice(model:model,rates:result); dismiss()
+    }
+}
+
+struct SettingsView: View {
+    @ObservedObject var state: AppState
+    @State private var codexPath = ""
+    @State private var logRoot = ""
+    @State private var upstreamConfirmation = false
+    @State private var desiredUpstream = false
+    private func sectionTitle(_ section: String) -> String { section == "appearance" ? L("外观", "Appearance") : section == "data" ? L("数据源", "Data") : L("应用", "App") }
+    var body: some View {
+        ScrollView {
+            VStack(alignment:.leading,spacing:20) {
+                PageHeading(title:Pages.title("settings"))
+                HStack(alignment:.top,spacing:28) {
+                    VStack(spacing:5) {
+                        ForEach(["appearance","data","app"],id:\.self) { section in
+                            Button { state.settingsSection = section } label: { Text(sectionTitle(section)).frame(maxWidth:.infinity,alignment:.leading).padding(10).background(state.settingsSection == section ? Color.primary.opacity(0.07) : .clear,in:RoundedRectangle(cornerRadius:7)) }.buttonStyle(.plain)
+                        }
+                    }.frame(width:145)
+                    Divider()
+                    VStack(alignment:.leading,spacing:0) {
+                        SectionHeading(title:sectionTitle(state.settingsSection)).padding(.bottom,20)
+                        switch state.settingsSection {
+                        case "appearance": appearance
+                        case "data": data
+                        default: app
+                        }
+                    }.frame(maxWidth:.infinity,alignment:.leading)
+                }
+            }.padding(32)
+        }.onAppear { codexPath = state.preferences.general.string("codex_path"); logRoot = state.preferences.roots.first?.path ?? "" }
+        .alert(desiredUpstream ? L("开启上游检测？", "Enable upstream detection?") : L("关闭上游检测？", "Disable upstream detection?"),isPresented:$upstreamConfirmation) {
+            Button(L("取消", "Cancel"),role:.cancel) {}
+            Button(desiredUpstream ? L("开启", "Enable") : L("关闭", "Disable")) { state.onUpstreamChange?(desiredUpstream) }
+        } message: {
+            Text(L("Codex 将通过本机转发请求，仅记录响应中的模型名称。更改路由后需要重新打开 Codex 才能让现有会话使用新配置。", "Codex requests will pass through a local relay that records only response model names. Reopen Codex after the route changes to apply the configuration to existing sessions."))
+        }
+    }
+    private var appearance: some View {
+        VStack(spacing:0) {
+            row(L("主题", "Theme")) { Picker("",selection:Binding(get:{state.theme},set:{state.setPreference("theme",$0)})) { Text(L("跟随系统", "Follow system")).tag("system"); Text(L("浅色", "Light")).tag("light"); Text(L("深色", "Dark")).tag("dark") }.labelsHidden().frame(width:155) }
+            row(L("侧边栏", "Sidebar")) { Toggle("",isOn:Binding(get:{state.sidebarVisible},set:{ value in state.sidebarVisible = value; state.setPreference("sidebar_collapsed",!value) })).labelsHidden().toggleStyle(.switch) }
+        }
+    }
+    private var data: some View {
+        VStack(alignment:.leading,spacing:16) {
+            Text(L("Codex 组件路径", "Codex executable")).font(.system(size:13,weight:.medium))
+            HStack { TextField(L("自动发现 Codex / ChatGPT.app", "Detect Codex / ChatGPT.app automatically"),text:$codexPath).textFieldStyle(.roundedBorder).onSubmit { state.setPreference("codex_path",codexPath,general:true); state.refreshQuota() }; Button(L("选择", "Choose")) { choose(directory:false) } }
+            Button(L("应用路径", "Apply path")) { state.setPreference("codex_path",codexPath,general:true); state.client.close(); state.refreshQuota() }.controlSize(.small)
+            Divider().padding(.vertical,6)
+            Text(L("本机日志目录", "Local log directory")).font(.system(size:13,weight:.medium))
+            HStack { TextField("~/.codex",text:$logRoot).textFieldStyle(.roundedBorder); Button(L("选择", "Choose")) { choose(directory:true) } }
+            Button(L("应用目录", "Apply directory")) { state.setPreference("codex_roots",[logRoot]); state.rescan() }.controlSize(.small)
+            Divider().padding(.vertical,6)
+            row(L("本地索引", "Local index")) { Text("\(state.usage.calls.count)").foregroundStyle(.secondary).monospacedDigit() }
+            row(L("重新扫描本地记录", "Rescan local records")) { Button(L("开始扫描", "Rescan now")) { state.rescan() }.disabled(state.loading || state.paths.mock) }
+            row(L("数据目录", "Data folder")) { Button(L("在 Finder 中打开", "Show in Finder")) { NSWorkspace.shared.open(state.paths.data) } }
+        }
+    }
+    private var app: some View {
+        VStack(spacing:0) {
+            row(L("菜单栏", "Menu bar")) { Toggle("",isOn:Binding(get:{state.menuVisible},set:{state.setPreference("menu_bar_visible",$0)})).labelsHidden().toggleStyle(.switch) }
+            row(L("菜单栏内容", "Menu bar content")) {
+                Picker("",selection:Binding(get:{state.menuContent},set:{state.setPreference("menu_bar_content",$0)})) { Text(L("图标 + 周额度剩余", "Icon + weekly remaining")).tag("week"); Text(L("图标 + 5 小时剩余", "Icon + 5-hour remaining")).tag("five"); Text(L("仅图标", "Icon only")).tag("icon") }.labelsHidden().frame(width:230)
+            }
+            row(L("自动下载更新", "Download updates automatically")) { Toggle("",isOn:Binding(get:{state.preferences.analytics.flag("macos_auto_update",true)},set:{state.setPreference("macos_auto_update",$0)})).labelsHidden().toggleStyle(.switch) }
+            row(L("上游检测", "Upstream detection")) { Toggle("",isOn:Binding(get:{state.preferences.analytics.flag("upstream_detection_enabled")},set:{desiredUpstream = $0; upstreamConfirmation = true})).labelsHidden().toggleStyle(.switch).disabled(state.paths.mock) }
+            if !state.upstreamStatus.isEmpty { StatusNote(text:state.upstreamStatus).padding(.vertical,8) }
+            row(L("自动同步价格", "Sync prices automatically")) { Toggle("",isOn:Binding(get:{state.preferences.analytics.flag("auto_sync_prices",true)},set:{state.setPreference("auto_sync_prices",$0)})).labelsHidden().toggleStyle(.switch) }
+            row(L("额度刷新", "Limit refresh")) { Picker("",selection:Binding(get:{state.preferences.general.integer("refresh_interval_seconds") ?? 60},set:{state.setPreference("refresh_interval_seconds",$0,general:true)})) { ForEach([30,60,300],id:\.self) { Text("\($0) s").tag($0) } }.labelsHidden().frame(width:110) }
+            row(L("日志刷新", "Log refresh")) { Picker("",selection:Binding(get:{state.preferences.analytics.integer("usage_refresh_interval_seconds") ?? 10},set:{state.setPreference("usage_refresh_interval_seconds",$0)})) { ForEach([5,10,30,60],id:\.self) { Text("\($0) s").tag($0) } }.labelsHidden().frame(width:110) }
+            row(L("额度估算间隔", "Estimate interval")) { Picker("",selection:Binding(get:{state.preferences.analytics.integer("week_estimate_interval_minutes") ?? 30},set:{state.setPreference("week_estimate_interval_minutes",$0)})) { ForEach([10,30,60],id:\.self) { Text("\($0) min").tag($0) } }.labelsHidden().frame(width:110) }
+            row("Codexio "+BuildInfo.version) {
+                if state.updateAvailable { Button(L("退出并更新", "Quit and update")) { state.onInstallUpdate?() } }
+                else { Button(L("检查并更新", "Check for updates")) { state.onCheckUpdate?() }.disabled(state.paths.mock) }
+            }
+            if !state.updateStatus.isEmpty { StatusNote(text:state.updateStatus).padding(.vertical,10) }
+        }
+    }
+    private func row<V:View>(_ title: String,@ViewBuilder content: ()->V) -> some View { VStack(spacing:0) { HStack(spacing:20) { Text(title).font(.system(size:13)); Spacer(minLength:16); content() }.padding(.vertical,16); Divider() } }
+    private func choose(directory: Bool) {
+        let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = !directory; panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let url = panel.url { if directory { logRoot = url.path } else { codexPath = url.path } }
+    }
+}

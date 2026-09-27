@@ -1,8 +1,9 @@
 """Two-decimal dollar display, independent of stored pricing precision."""
+from codexio.i18n import tr
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
 
 
-def usd(value, *, compact=False, symbol=True, missing="未定价"):
+def usd(value, *, compact=False, symbol=True, missing=tr("未定价")):
     if value is None or isinstance(value, bool):
         return missing
     try:

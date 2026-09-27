@@ -1,6 +1,8 @@
 """Blocking lifecycle operations, called by the GUI's background coordinator."""
 from __future__ import annotations
 
+from codexio.i18n import tr
+
 import hashlib
 import json
 import os
@@ -27,7 +29,7 @@ def verify_official_login(config_path=None, *, required=True):
     from codexio.codex_discovery import find_codex
     executable = find_codex()
     if executable is None:
-        raise UpstreamError("未找到 Codex 客户端，未修改路由")
+        raise UpstreamError(tr("未找到 Codex 客户端，未修改路由"))
     if not required:
         return "provider"
     try:
@@ -37,11 +39,11 @@ def verify_official_login(config_path=None, *, required=True):
             env["CODEX_HOME"] = str(Path(config_path).parent)
         result = subprocess.run([str(executable), "login", "status"], capture_output=True, timeout=15, env=env, **options)
     except (OSError, subprocess.TimeoutExpired):
-        raise UpstreamError("无法确认 Codex 认证状态，未修改路由") from None
+        raise UpstreamError(tr("无法确认 Codex 认证状态，未修改路由")) from None
     # Status output is examined in memory only; never persist credentials/output.
     status = (result.stdout + result.stderr).lower()
     if result.returncode or b"logged in" not in status:
-        raise UpstreamError("请先完成 Codex 登录或配置供应商认证，再开启上游检测")
+        raise UpstreamError(tr("请先完成 Codex 登录或配置供应商认证，再开启上游检测"))
     if b"api key" in status or b"apikey" in status:
         return "apikey"
     if b"chatgpt" in status:
@@ -158,7 +160,7 @@ class UpstreamService:
     def control(self, action, **data):
         state = self.state or read_json(self.directory / "session.json")
         if not state.get("url", "").startswith("http://127.0.0.1:"):
-            raise UpstreamError("本地转发服务尚未就绪")
+            raise UpstreamError(tr("本地转发服务尚未就绪"))
         request = Request(state["url"] + "/_codexio/" + action, json.dumps(data).encode(),
                           headers={"Authorization": "Bearer " + state["control_token"], "Content-Type": "application/json"})
         try:
@@ -169,9 +171,9 @@ class UpstreamService:
                 message = json.load(exc).get("error")
             except (ValueError, AttributeError):
                 message = None
-            raise UpstreamError(message or "本地转发服务拒绝操作，当前配置已保留") from None
+            raise UpstreamError(message or tr("本地转发服务拒绝操作，当前配置已保留")) from None
         except (OSError, URLError, ValueError):
-            raise UpstreamError("本地转发服务连接失败，正在保留恢复记录") from None
+            raise UpstreamError(tr("本地转发服务连接失败，正在保留恢复记录")) from None
         if result.get("error"):
             raise UpstreamError(result["error"])
         return result
@@ -187,7 +189,7 @@ class UpstreamService:
         if previous.get("process") and alive(previous["process"]) and previous.get("protocol_version", 1) < 3:
             owner = previous.get("owner")
             if owner and owner != self.owner and alive(owner):
-                raise UpstreamError("另一个 Codexio 正在使用上游检测")
+                raise UpstreamError(tr("另一个 Codexio 正在使用上游检测"))
             self.control("deactivate")
             self._stop_helper()
             reuse = previous
@@ -209,7 +211,7 @@ class UpstreamService:
             seed = reuse or previous
             if recovering and not seed.get("route_token"):
                 self.route.restore()
-                raise UpstreamError("已恢复遗留配置；请重新开启上游检测以重启客户端")
+                raise UpstreamError(tr("已恢复遗留配置；请重新开启上游检测以重启客户端"))
             effective = plan or {}
             self.state = dict(config=str(self.route.config), owner=self.owner,
                               route_token=(seed.get("route_token") or secrets.token_urlsafe(32))
@@ -244,11 +246,11 @@ class UpstreamService:
                     break
                 if self.process.poll() is not None:
                     self.route.restore()
-                    raise UpstreamError("无法启动本地转发，已恢复原路由")
+                    raise UpstreamError(tr("无法启动本地转发，已恢复原路由"))
                 time.sleep(.1)
             else:
                 self.route.restore()
-                raise UpstreamError("本地转发启动超时，已恢复原路由")
+                raise UpstreamError(tr("本地转发启动超时，已恢复原路由"))
         result = self.control("claim", owner=self.owner, update=update)
         self.active = bool(result["capture"])
         return self.active
@@ -261,7 +263,7 @@ class UpstreamService:
             self.state = previous
             owner = previous.get("owner")
             if owner and owner != self.owner and alive(owner):
-                raise UpstreamError("另一个 Codexio 正在使用上游检测")
+                raise UpstreamError(tr("另一个 Codexio 正在使用上游检测"))
             if alive(previous.get("process")):
                 self.control("deactivate")
                 self._stop_helper()
@@ -279,7 +281,7 @@ class UpstreamService:
         target = Path(context["config"]).resolve()
         if target != self.route.config:
             if self.needs_restore or alive(read_json(self.directory / "session.json").get("process")):
-                raise UpstreamError("客户端的 config.toml 路径已改变，请先关闭上游检测再重新开启")
+                raise UpstreamError(tr("客户端的 config.toml 路径已改变，请先关闭上游检测再重新开启"))
             self.route = ManagedRoute(target, self.directory)
         self.restart_assessment()
         try:
@@ -322,7 +324,7 @@ class UpstreamService:
                 try:
                     target.wait(3)
                 except psutil.TimeoutExpired:
-                    raise UpstreamError("本地代理尚未退出，请稍后重试") from None
+                    raise UpstreamError(tr("本地代理尚未退出，请稍后重试")) from None
 
     def prepare_update(self):
         if self.active:

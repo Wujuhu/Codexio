@@ -394,6 +394,14 @@ class UsageQueries:
             enrich_rows(db, rows, UpstreamStore(self.path.parent / "upstream.sqlite"), grouped=grouped)
             return dict(rows=rows, total=total, page=index, pages=pages, counts=counts)
 
+    def local_activity_inputs(self):
+        with self._connect() as db:
+            rows = [json.loads(row[0]) for row in db.execute(
+                "SELECT c.data FROM usage_priced_calls c WHERE EXISTS(SELECT 1 FROM usage_query_sources s "
+                "WHERE s.record_id=c.id AND (s.source_id='local' OR s.source_id LIKE 'local:%')) ORDER BY c.timestamp")]
+            turns = [json.loads(row[0]) for row in db.execute("SELECT data FROM usage_turns")]
+        return rows, turns
+
     def request_members(self, request_id, page=0, page_size=100):
         with self._connect() as db:
             total = db.execute("SELECT COUNT(*) FROM usage_request_members WHERE request_id=?", (request_id,)).fetchone()[0]

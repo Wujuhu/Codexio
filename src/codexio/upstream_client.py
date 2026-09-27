@@ -13,6 +13,7 @@ import psutil
 
 from codexio.upstream_config import UpstreamError
 from codexio.process_env import external_environment
+from codexio.codex_discovery import _bundle_candidates
 
 
 def identity(process):
@@ -39,7 +40,7 @@ def desktop_target(exe, args=(), platform=None):
                 info = plistlib.load(stream)
             if info.get("CFBundleIdentifier") not in ("com.openai.codex", "com.openai.chat"):
                 return None
-            if info.get("CFBundleIdentifier") == "com.openai.chat" and not (bundle / "Contents/Resources/codex").is_file():
+            if info.get("CFBundleIdentifier") == "com.openai.chat" and not any(candidate.is_file() for candidate in _bundle_candidates(bundle)):
                 return None
         except (OSError, ValueError):
             return None

@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QApplication
 
 class SmokeRun(QObject):
     def __init__(self, controller, output):
-        super().__init__(controller)
+        super().__init__(controller.app)
         self.controller = controller
         self.output = output.resolve()
         self.output.mkdir(parents=True, exist_ok=True)
@@ -63,7 +63,7 @@ class SmokeRun(QObject):
                 self.window.close()
             elif self.step == 3:
                 assert host.dashboard is None, "主窗口未正常关闭"
-                self.controller.app.applicationStateChanged.emit(Qt.ApplicationState.ApplicationActive)
+                self.controller.open_main()
             else:
                 assert host.dashboard is not None and host.dashboard.isVisible(), "主窗口未能重新打开"
                 self.checks.append("主窗口关闭与重开")

@@ -1,6 +1,8 @@
 """Small native building blocks for the C desktop interface."""
 from __future__ import annotations
 
+from codexio.i18n import tr
+
 import math
 import time
 from functools import lru_cache
@@ -24,8 +26,8 @@ from codexio.usage_collector import _user_preview
 from codexio.user_requests import normalized_tier
 from codexio.usage_metrics import cache_hit_rate, cache_percentage
 
-PAGE_TITLES = dict(overview="概览", subscription="订阅额度", trends="用量趋势", logs="请求日志", pricing="模型定价", settings="设置")
-NAVIGATION_LABELS = dict(overview="概览", logs="日志", trends="用量", subscription="订阅", pricing="定价", settings="设置")
+PAGE_TITLES = dict(overview=tr("概览"), subscription=tr("订阅额度"), trends=tr("用量趋势"), logs=tr("请求日志"), pricing=tr("模型定价"), settings=tr("设置"))
+NAVIGATION_LABELS = dict(overview=tr("概览"), logs=tr("日志"), trends=tr("用量"), subscription=tr("订阅"), pricing=tr("定价"), settings=tr("设置"))
 ICON_PATHS = {
     "overview": '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
     "subscription": '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18M7 15h4m5 0h1"/>',
@@ -248,8 +250,8 @@ class NavigationList(QListWidget):
             return
         name, index = item.data(Qt.ItemDataRole.UserRole), self.row(item)
         menu = QMenu(self)
-        up = menu.addAction("上移")
-        down = menu.addAction("下移")
+        up = menu.addAction(tr("上移"))
+        down = menu.addAction(tr("下移"))
         up.setEnabled(name != "overview" and index > 1)
         down.setEnabled(name != "overview" and index < self.count() - 1)
         up.triggered.connect(lambda: self.move_page(name, index - 1))
@@ -309,8 +311,8 @@ class QuotaMeter(QWidget):
         super().__init__(parent)
         self.title, self.gauge = title, gauge
         self.remaining = None
-        self.reset_text = "重置时间 —"
-        self.note = "等待额度数据"
+        self.reset_text = tr("重置时间 —")
+        self.note = tr("等待额度数据")
         self.theme = "system"
         self.setMinimumWidth(150 if not gauge else 175)
         self.setMinimumHeight(90 if not gauge else 238)
@@ -320,7 +322,7 @@ class QuotaMeter(QWidget):
     def set_value(self, remaining, reset_text, note=""):
         self.remaining = None if remaining is None else max(0, min(100, float(remaining)))
         self.reset_text, self.note = reset_text, note
-        self.setAccessibleDescription("剩余 %s；%s；%s" % ("—" if remaining is None else "%g%%" % self.remaining, reset_text, note))
+        self.setAccessibleDescription(tr("剩余 %s；%s；%s") % ("—" if remaining is None else "%g%%" % self.remaining, reset_text, note))
         self.setToolTip(self.accessibleDescription())
         self.update()
 
@@ -369,14 +371,14 @@ class QuotaMeter(QWidget):
             font.setWeight(QFont.Weight.Normal)
             p.setFont(font)
             p.setPen(QColor(c["muted"]))
-            p.drawText(QRectF(12, bounds.top() + diameter / 2 + 6, self.width() - 24, 20), Qt.AlignmentFlag.AlignCenter, "剩余")
+            p.drawText(QRectF(12, bounds.top() + diameter / 2 + 6, self.width() - 24, 20), Qt.AlignmentFlag.AlignCenter, tr("剩余"))
             y = self.height() - 55
         else:
             font.setPixelSize(14)
             font.setWeight(QFont.Weight.DemiBold)
             p.setFont(font)
             p.setPen(QColor(c["text"]))
-            p.drawText(QRectF(80, 12, self.width() - 96, 20), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, value + " 剩余")
+            p.drawText(QRectF(80, 12, self.width() - 96, 20), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, value + tr(" 剩余"))
             track = QRectF(16, 42, self.width() - 32, 11)
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor(c["raised"]))
@@ -405,17 +407,17 @@ class TokenComposition(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.theme = "system"
-        self.parts = [("缓存读取", 0, "token_cache_read"), ("普通输入", 0, "token_input"), ("输出", 0, "token_output")]
+        self.parts = [(tr("缓存读取"), 0, "token_cache_read"), (tr("普通输入"), 0, "token_input"), (tr("输出"), 0, "token_output")]
         self.setMinimumWidth(150)
         self.setMinimumHeight(90)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        self.setAccessibleName("Token 构成")
+        self.setAccessibleName(tr("Token 构成"))
 
     def set_buckets(self, buckets):
         values = {key: sum(max(0, int(row.get(key) or 0)) for row in buckets) for key in ("cache_read", "cache_write", "input", "output")}
-        self.parts = [("缓存读取", values["cache_read"], "token_cache_read"), ("普通输入", values["input"], "token_input"), ("输出", values["output"], "token_output")]
+        self.parts = [(tr("缓存读取"), values["cache_read"], "token_cache_read"), (tr("普通输入"), values["input"], "token_input"), (tr("输出"), values["output"], "token_output")]
         if values["cache_write"]:
-            self.parts.insert(1, ("缓存写入", values["cache_write"], "token_cache_write"))
+            self.parts.insert(1, (tr("缓存写入"), values["cache_write"], "token_cache_write"))
         self.setToolTip("\n".join("%s：%s Token" % (label, format(value, ",")) for label, value, _ in self.parts))
         self.setAccessibleDescription(self.toolTip())
         self._fit_height()
@@ -477,7 +479,7 @@ class TokenComposition(QWidget):
         font.setPixelSize(12)
         p.setFont(font)
         p.setPen(QColor(c["muted"]))
-        p.drawText(QRectF(16, 12, self.width() - 32, 20), Qt.AlignmentFlag.AlignVCenter, "Token 构成")
+        p.drawText(QRectF(16, 12, self.width() - 32, 20), Qt.AlignmentFlag.AlignVCenter, tr("Token 构成"))
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QColor(c["raised"]))
         segments = self.segment_geometry()
@@ -543,25 +545,25 @@ class PeriodChange(QWidget):
                 self.marker.setPixmap(ui_icon(direction, color).pixmap(16, 16))
                 self.marker.show()
         else:
-            self.value.setText("前期为 0" if change["status"] == "zero_baseline" else "暂无对比")
+            self.value.setText(tr("前期为 0") if change["status"] == "zero_baseline" else tr("暂无对比"))
         self.value.setStyleSheet("color: %s; font-size: 12px; font-weight: 600;" % color)
         self.caption.setStyleSheet("color: %s; font-size: 12px;" % c["muted"])
         self.caption.setText(data["label"])
         def amount(value):
-            return ("暂无有效数据" if value is None else usd(value) if metric == "usd" else
+            return (tr("暂无有效数据") if value is None else usd(value) if metric == "usd" else
                     cache_percentage(value) if metric == "cache_hit_rate" else format(int(value), ","))
         def when(value):
             stamp = parse_timestamp(value)
             return stamp.strftime("%Y/%m/%d %H:%M") if stamp else "—"
-        tooltip = "本期 %s — %s：%s\n前期 %s — %s：%s" % (
+        tooltip = tr("本期 %s — %s：%s\n前期 %s — %s：%s") % (
             when(data["start"]), when(data["end"]), amount(data["current"][metric]),
             when(data["previous_start"]), when(data["previous_end"]), amount(data["previous"][metric]))
         if any(data[period].get("skipped", {}).get(metric) for period in ("current", "previous")):
-            tooltip += "\n按已确认数据计算"
+            tooltip += tr("\n按已确认数据计算")
         if metric == "cache_hit_rate":
-            tooltip += "\n对比为缓存命中率的相对变化。"
+            tooltip += tr("\n对比为缓存命中率的相对变化。")
         self.setToolTip(tooltip)
-        direction_text = "增加 " if percent is not None and percent > 0 else "减少 " if percent is not None and percent < 0 else ""
+        direction_text = tr("增加 ") if percent is not None and percent > 0 else tr("减少 ") if percent is not None and percent < 0 else ""
         self.setAccessibleName(direction_text + self.value.text() + " · " + self.caption.text())
 
 
@@ -574,7 +576,7 @@ class WidgetStylePreview(QWidget):
         self._settings = None
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(16, 16, 16, 16)
-        self.setAccessibleName("悬浮窗样式预览")
+        self.setAccessibleName(tr("悬浮窗样式预览"))
 
     def configure(self, settings, state):
         from codexio.rate_limits import QuotaState, should_show_five_hour
@@ -627,22 +629,22 @@ def preview_title(record):
         return text
     title = str(record.get("session_title") or "").strip()
     if title:
-        return "会话：" + title
+        return tr("会话：") + title
     session = str(record.get("session_id") or "")
     if session:
         return "Session " + (session[:8] + "…" + session[-6:] if len(session) > 18 else session)
-    return "调用 " + str(record.get("id") or "未记录")[-12:]
+    return tr("调用 ") + str(record.get("id") or tr("未记录"))[-12:]
 
 
 def tier_label(record):
     value = str(record.get("service_tier") or "").strip().lower()
     if value == "mixed":
         return "Mixed"
-    return {"priority": "Fast", "default": "Standard"}.get(normalized_tier(value), "未记录")
+    return {"priority": "Fast", "default": "Standard"}.get(normalized_tier(value), tr("未记录"))
 
 
 def model_label(record):
-    return str(record.get("model") or "未知模型")
+    return str(record.get("model") or tr("未知模型"))
 
 
 def ledger_duration_text(record, now=None):
@@ -650,7 +652,7 @@ def ledger_duration_text(record, now=None):
     if value is None:
         return "—"
     if value < 1000:
-        return "%.2f 秒" % (value / 1000)
+        return tr("%.2f 秒") % (value / 1000)
     seconds = int(value / 1000)
     minutes, seconds = divmod(seconds, 60)
     hours, minutes = divmod(minutes, 60)
@@ -766,11 +768,11 @@ class LedgerTable(QTableWidget):
     def set_mode(self, grouped):
         self.grouped = grouped
         if self.compact:
-            headers = ["用户请求 / 发起时间", "模型", "费用", "状态"]
+            headers = [tr("用户请求 / 发起时间"), tr("模型"), tr("费用"), tr("状态")]
             self.weights = [46, 24, 20, 10]
         else:
-            headers = ["用户请求 / 发起时间" if grouped else "关联输入 / 计量时间", "模型", "输入", "输出", "缓存命中率", "费用", "耗时"]
-            headers += ["来源", "详情"] if grouped else ["来源"]
+            headers = [tr("用户请求 / 发起时间") if grouped else tr("关联输入 / 计量时间"), tr("模型"), tr("输入"), tr("输出"), tr("缓存命中率"), tr("费用"), tr("耗时")]
+            headers += [tr("来源"), tr("详情")] if grouped else [tr("来源")]
             self.weights = [26, 14, 7, 7, 10, 12, 8, 8, 6] if grouped else [28, 15, 7, 7, 11, 13, 9, 8]
         changed = self.set_headers(headers)
         self._apply_source_visibility()
@@ -782,7 +784,7 @@ class LedgerTable(QTableWidget):
 
     def _apply_source_visibility(self):
         for column in range(self.columnCount()):
-            self.setColumnHidden(column, not self._show_source and self._headers[column] == "来源")
+            self.setColumnHidden(column, not self._show_source and self._headers[column] == tr("来源"))
         self.fit_columns()
 
     def set_headers(self, headers):
@@ -854,7 +856,7 @@ class LedgerTable(QTableWidget):
             date = "%d.%d %s" % (stamp.month, stamp.day, stamp.strftime("%H:%M")) if stamp else "—"
             subtitle = [date]
             if self.grouped:
-                subtitle.append("%s 次调用" % row.get("call_count", 0))
+                subtitle.append(tr("%s 次调用") % row.get("call_count", 0))
             tier = tier_label(row)
             if tier != "Standard":
                 subtitle.append(tier)
@@ -871,11 +873,11 @@ class LedgerTable(QTableWidget):
             if not self.compact:
                 values.append(ledger_duration_text(row))
             if self.grouped and self.compact:
-                values.append({"running": "回复中", "completed": "完成", "aborted": "已中断"}.get(row.get("request_status"), "未知"))
+                values.append({"running": tr("回复中"), "completed": tr("完成"), "aborted": tr("已中断")}.get(row.get("request_status"), tr("未知")))
             if not self.compact:
                 values.append(row.get("source_name") or row.get("source_id") or "—")
                 if self.grouped:
-                    values.append("详情")
+                    values.append(tr("详情"))
             for column, text in enumerate(values):
                 item = QTableWidgetItem(str(text))
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -890,12 +892,12 @@ class LedgerTable(QTableWidget):
             upstreams = row.get("upstream_models") or []
             if upstreams and not self.compact:
                 item = self.item(index, 1)
-                title = upstreams[0] if len(upstreams) == 1 else f"多上游（{len(upstreams)}）"
+                title = upstreams[0] if len(upstreams) == 1 else tr("多上游（%d）") % len(upstreams)
                 item.setData(UPSTREAM_ROLE, title)
                 item.setData(UPSTREAM_MISMATCH_ROLE, bool(row.get("upstream_mismatched_calls")))
                 counts = row.get("upstream_model_counts") or {}
-                detail = "\n".join(f"{value} · {counts.get(value, 1)} 次" for value in upstreams)
-                item.setData(Qt.ItemDataRole.AccessibleDescriptionRole, "响应返回的上游模型\n" + detail + "\n已检测 %s / %s 次调用\n请求模型：%s" % (
+                detail = "\n".join(tr("%s · %d 次") % (value, counts.get(value, 1)) for value in upstreams)
+                item.setData(Qt.ItemDataRole.AccessibleDescriptionRole, tr("响应返回的上游模型\n") + detail + tr("\n已检测 %s / %s 次调用\n请求模型：%s") % (
                     row.get("upstream_detected_calls", 1), row.get("upstream_total_calls", 1), " / ".join(models or [model])))
             if self.grouped and self.compact and row.get("request_status") == "running":
                 status = self.item(index, 3)
@@ -974,7 +976,7 @@ class PanelResizeHandle(QFrame):
         self.setCursor(Qt.CursorShape.SplitHCursor)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAccessibleName(label)
-        self.setToolTip(label + "；也可用左右方向键调整")
+        self.setToolTip(label + tr("；也可用左右方向键调整"))
         self._origin = None
 
     def mousePressEvent(self, event):
@@ -1021,7 +1023,7 @@ class DrawerHost(QWidget):
         primary.setParent(self)
         inspector.setParent(self)
         self.preview_width = preview_width
-        self.handle = PanelResizeHandle("拖动调整请求预览宽度", self)
+        self.handle = PanelResizeHandle(tr("拖动调整请求预览宽度"), self)
         self.handle.drag_started.connect(self._begin_resize)
         self.handle.drag_delta.connect(lambda delta: self.set_preview_width(self._drag_width - delta))
         self.handle.drag_finished.connect(lambda: self.width_changed.emit(self.preview_width))

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from codexio.i18n import tr
+
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -119,9 +121,10 @@ class QuotaState:
     reset_credit_details: Optional[Tuple[ResetCredit, ...]] = None
     applicable: bool = True
     auth_mode: Optional[str] = None
+    account_key: Optional[str] = None
 
     @classmethod
-    def empty(cls, status: QuotaStatus = QuotaStatus.READING, message: str = "正在读取", *,
+    def empty(cls, status: QuotaStatus = QuotaStatus.READING, message: str = tr("正在读取"), *,
               applicable: bool = True, auth_mode: Optional[str] = None) -> "QuotaState":
         return cls(
             five_hour=WindowView.unavailable(),
@@ -288,6 +291,7 @@ def quota_state_from_snapshot(
         reset_credit_details=snapshot.reset_credit_details,
         applicable=applicable,
         auth_mode=auth_mode,
+        account_key=snapshot.account_key,
     )
 
 
@@ -333,7 +337,7 @@ def snapshot_from_cache(payload: dict) -> Tuple[Optional[RateLimitSnapshot], Opt
     return parse_rate_limits_result(payload), fetched_at
 
 
-WEEKDAY_NAMES = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+WEEKDAY_NAMES = (tr("周一"), tr("周二"), tr("周三"), tr("周四"), tr("周五"), tr("周六"), tr("周日"))
 
 
 def format_reset_date(value: datetime, *, split_time: bool = False) -> str:
@@ -349,26 +353,26 @@ def format_reset_time(value: Optional[datetime], now: Optional[datetime] = None)
     local = value.astimezone()
     today = current.date()
     if local.date() == today:
-        date = "今天"
+        date = tr("今天")
     elif local.date() == today + timedelta(days=1):
-        date = "明天"
+        date = tr("明天")
     else:
-        date = "%d月%d日" % (local.month, local.day)
+        date = tr("%d月%d日") % (local.month, local.day)
     return "%s %s %s" % (date, WEEKDAY_NAMES[local.weekday()], local.strftime("%H:%M"))
 
 
 def format_updated_time(value: Optional[datetime], now: Optional[datetime] = None) -> str:
     if value is None:
-        return "尚未更新"
+        return tr("尚未更新")
     current = now or datetime.now().astimezone()
     local = value.astimezone()
     delta = (current - local).total_seconds()
     if delta < 45:
-        return "刚刚"
+        return tr("刚刚")
     if delta < 3600:
-        return "%d 分钟前" % max(1, int(delta // 60))
+        return tr("%d 分钟前") % max(1, int(delta // 60))
     if local.date() == current.date():
-        return "今天 %s" % local.strftime("%H:%M")
+        return tr("今天 %s") % local.strftime("%H:%M")
     return local.strftime("%m-%d %H:%M")
 
 

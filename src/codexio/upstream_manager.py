@@ -1,6 +1,8 @@
 """Shared lifecycle: apply routing first, then offer restart now or later."""
 from __future__ import annotations
 
+from codexio.i18n import tr
+
 import os
 import threading
 
@@ -50,20 +52,20 @@ class UpstreamManager(QObject):
             self._finish_action(operation, after)
             return
         self.busy = True
-        self._status("已应用设置 · 等待选择重启方式" if self.active else "已恢复配置 · 等待选择重启方式")
+        self._status(tr("已应用设置 · 等待选择重启方式") if self.active else tr("已恢复配置 · 等待选择重启方式"))
         box = QMessageBox(self.parent_window())
-        box.setWindowTitle("上游检测")
+        box.setWindowTitle(tr("上游检测"))
         if assessment["status"] == "unknown":
-            box.setText("无法确认配置是否已生效")
-            box.setInformativeText("尚无当前 Codex 后台进程加载配置的可靠记录。可重启以确认生效，也可稍后自行重启。现在重启会中断正在进行的请求。")
+            box.setText(tr("无法确认配置是否已生效"))
+            box.setInformativeText(tr("尚无当前 Codex 后台进程加载配置的可靠记录。可重启以确认生效，也可稍后自行重启。现在重启会中断正在进行的请求。"))
         elif self.active:
-            box.setText("Codexio 已应用上游检测设置")
-            box.setInformativeText("重启 Codex 客户端后应用改动。现在重启会中断正在进行的请求。")
+            box.setText(tr("Codexio 已应用上游检测设置"))
+            box.setInformativeText(tr("重启 Codex 客户端后应用改动。现在重启会中断正在进行的请求。"))
         else:
-            box.setText("Codexio 已恢复模型服务配置" + ("，即将退出" if operation == "quit" else ""))
-            box.setInformativeText("如果不重启 Codex 客户端，旧路由可能仍在内存中。现在重启会中断正在进行的请求。")
-        later = box.addButton("稍后自行重启", QMessageBox.ButtonRole.RejectRole)
-        now = box.addButton("现在重启", QMessageBox.ButtonRole.AcceptRole)
+            box.setText(tr("Codexio 已恢复模型服务配置") + (tr("，即将退出") if operation == "quit" else ""))
+            box.setInformativeText(tr("如果不重启 Codex 客户端，旧路由可能仍在内存中。现在重启会中断正在进行的请求。"))
+        later = box.addButton(tr("稍后自行重启"), QMessageBox.ButtonRole.RejectRole)
+        now = box.addButton(tr("现在重启"), QMessageBox.ButtonRole.AcceptRole)
         box.setDefaultButton(later)
         box.setEscapeButton(later)
         box.exec()
@@ -78,22 +80,22 @@ class UpstreamManager(QObject):
         if self.busy or self.closing:
             return
         self.busy = True
-        self._status({"enable": "正在应用上游检测设置…", "disable": "正在恢复模型服务配置…",
-                      "quit": "正在恢复模型服务配置并停止代理…", "startup": "正在应用启动设置…",
-                      "recover": "正在恢复当前路由…", "restart": "正在重启 Codex 客户端…"}[operation])
+        self._status({"enable": tr("正在应用上游检测设置…"), "disable": tr("正在恢复模型服务配置…"),
+                      "quit": tr("正在恢复模型服务配置并停止代理…"), "startup": tr("正在应用启动设置…"),
+                      "recover": tr("正在恢复当前路由…"), "restart": tr("正在重启 Codex 客户端…")}[operation])
         def run():
             try:
                 value = dict(result=work(), restart=self.service.restart_assessment())
                 error = None
             except Exception as exc:
-                value, error = None, str(exc) if isinstance(exc, UpstreamError) else "操作未完成，请重试"
+                value, error = None, str(exc) if isinstance(exc, UpstreamError) else tr("操作未完成，请重试")
             self._done.emit((operation, value, error, after))
         threading.Thread(target=run, name="Codexio-upstream", daemon=True).start()
 
     def start(self):
         self._timer.start()
         if self.mock:
-            self._status("预览模式不启用上游检测")
+            self._status(tr("预览模式不启用上游检测"))
             self.startup_ready.emit(False)
             return
         update = bool(os.environ.get("CODEXIO_UPDATE_JOB"))
@@ -113,7 +115,7 @@ class UpstreamManager(QObject):
         if self.busy or self.closing:
             return
         if self.mock:
-            self._status("预览模式不修改 Codex 配置")
+            self._status(tr("预览模式不修改 Codex 配置"))
             return
         if enabled:
             if not self.active:
@@ -123,7 +125,7 @@ class UpstreamManager(QObject):
             if self.active or self.service.needs_restore:
                 self._run("disable", self.service.disable)
             else:
-                self._status("已关闭 · 当前路由直连")
+                self._status(tr("已关闭 · 当前路由直连"))
 
     def _finished(self, result):
         operation, value, error, after = result
@@ -144,10 +146,10 @@ class UpstreamManager(QObject):
         if error:
             self._status(error)
             if operation == "restart" and after[0] == "quit":
-                get_logger("upstream").warning("退出时自动重启失败：%s", error)
+                get_logger("upstream").warning(tr("退出时自动重启失败：%s"), error)
                 self._exit(after[1])
                 return
-            QMessageBox.warning(self.parent_window(), "上游检测", error)
+            QMessageBox.warning(self.parent_window(), tr("上游检测"), error)
             if operation == "startup":
                 self.startup_ready.emit(True)
             if operation == "restart" and after[0] == "startup":
@@ -166,14 +168,14 @@ class UpstreamManager(QObject):
         elif operation == "restart":
             self._finish_action(*after, restarted=bool(value))
         elif operation == "recover":
-            self._status("代理已停止并恢复配置，请重新开启上游检测")
+            self._status(tr("代理已停止并恢复配置，请重新开启上游检测"))
 
     def _show_ready_status(self, *, restarted=False):
         state = self._restart_status["status"]
-        suffix = (" · 请自行重启 Codex 客户端" if state == "changed" else
-                  " · 配置生效状态待确认" if state == "unknown" else
-                  " · 已重启 Codex 客户端" if restarted else "")
-        self._status(("已开启" if self.active else "已关闭 · 当前路由直连") + suffix)
+        suffix = (tr(" · 请自行重启 Codex 客户端") if state == "changed" else
+                  tr(" · 配置生效状态待确认") if state == "unknown" else
+                  tr(" · 已重启 Codex 客户端") if restarted else "")
+        self._status((tr("已开启") if self.active else tr("已关闭 · 当前路由直连")) + suffix)
 
     def _finish_action(self, operation, after=None, *, restarted=False):
         self._show_ready_status(restarted=restarted)
@@ -203,7 +205,7 @@ class UpstreamManager(QObject):
 
     def quit_for_update(self, callback):
         if self.busy:
-            raise UpstreamError("上游检测正在切换，稍后再更新")
+            raise UpstreamError(tr("上游检测正在切换，稍后再更新"))
         self.service.prepare_update()
         self._exit(callback)
 
@@ -230,10 +232,10 @@ class UpstreamManager(QObject):
             assessment = None
             try:
                 if self.active and not self.service.healthy():
-                    error = "检测已暂停"
+                    error = tr("检测已暂停")
                 assessment = self.service.restart_assessment()
             except (UpstreamError, OSError):
-                error = "转发服务中断"
+                error = tr("转发服务中断")
             self._done.emit(("health", assessment, error, None))
         threading.Thread(target=check, name="Codexio-upstream-health", daemon=True).start()
 

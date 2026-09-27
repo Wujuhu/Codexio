@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from codexio.i18n import tr
+
 from typing import Optional, Tuple
 
 from PySide6.QtCore import QRect, Qt
@@ -236,7 +238,7 @@ class DockStrip(QWidget):
         self.setObjectName("dockStrip")
         self.setMouseTracking(True)
         self.setCursor(Qt.CursorShape.OpenHandCursor)
-        self.setToolTip("拖动可沿边缘移动或拖出停靠")
+        self.setToolTip(tr("拖动可沿边缘移动或拖出停靠"))
         self._edge = DOCK_TOP
         self._week_only = False
         self._grip = _DockGrip(self)
@@ -245,7 +247,7 @@ class DockStrip(QWidget):
         self._refresh = QToolButton()
         self._refresh.setObjectName("refreshButton")
         self._refresh.setFont(display_font(13))
-        self._refresh.setText("刷新")
+        self._refresh.setText(tr("刷新"))
         self._refresh.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self._refresh.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self._refresh.clicked.connect(on_refresh)
@@ -269,7 +271,7 @@ class DockStrip(QWidget):
         self._grip.set_vertical(vertical)
         self._five.set_vertical(vertical)
         self._week.set_vertical(vertical)
-        self._refresh.setText("刷" if vertical else "刷新")
+        self._refresh.setText(tr("刷") if vertical else tr("刷新"))
         self._rebuild_layout(vertical)
         self._apply_metrics()
 

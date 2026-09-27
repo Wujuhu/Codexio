@@ -18,6 +18,8 @@ class DashboardHost(QObject):
         self._progress = None
         self._update = None
         self._upstream = None
+        self._reports = None
+        self._reset_result = None
         self._generation = 0
         self._view_state = {}
 
@@ -53,6 +55,10 @@ class DashboardHost(QObject):
                 window.set_update_status(*self._update)
             if self._upstream is not None:
                 window.set_upstream_status(*self._upstream)
+            if self._reports is not None:
+                window.apply_reports(self._reports)
+            if self._reset_result is not None:
+                window.set_reset_result(self._reset_result)
         self.dashboard.open_page(page, period)
         return self.dashboard
 
@@ -108,3 +114,16 @@ class DashboardHost(QObject):
     def refresh_upstream(self):
         if self.dashboard is not None:
             self.dashboard.refresh_upstream()
+
+    def apply_reports(self, reports):
+        account_key = self._quota.get("account_key") if isinstance(self._quota, dict) else getattr(self._quota, "account_key", None)
+        if reports.get("account_key") and reports["account_key"] != account_key:
+            return
+        self._reports = reports
+        if self.dashboard is not None:
+            self.dashboard.apply_reports(reports)
+
+    def set_reset_result(self, result):
+        self._reset_result = result
+        if self.dashboard is not None:
+            self.dashboard.set_reset_result(result)

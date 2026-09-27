@@ -1,6 +1,5 @@
 """Incremental Codex JSONL accounting using only Python's standard library.
 
-This module also runs over SSH without installing anything on the remote host.
 Only metadata, bounded previews of visible user/assistant messages and token
 counters leave the reader. Agent routing identities can link child requests;
 tool bodies, reasoning and credentials are never indexed.
@@ -1359,7 +1358,7 @@ def iter_scan(root, get_cursor, source_id="local", source_name="本机", account
 
 
 def scan_directory(root, cursors=None, source_id="local", source_name="本机", account_since=None, stop=None):
-    """Serializable stdlib-only transport interface used by the SSH collector."""
+    """Serializable local-directory scan interface."""
     cursors = dict(cursors or {})
     result = {"records": [], "observations": [], "turns": [], "agent_links": [], "cursors": cursors, "titles": {}, "files": 0,
               "bytes_read": 0, "errors": [], "deferred_files": 0, "partial_files": 0, "diagnostics": {}, "reconciliations": []}

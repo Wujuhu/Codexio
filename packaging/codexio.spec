@@ -20,16 +20,12 @@ VERSION_INFO = VSVersionInfo(
 
 ICON = SRC / "codexio" / "icons" / "app.ico"
 datas = [
-    (
-        str(SRC / "codexio" / "fonts" / "AnthropicSansWebText-Regular.ttf"),
-        "codexio/fonts",
-    ),
     (str(ICON), "codexio/icons"),
     (str(SRC / "codexio" / "icons" / "app.png"), "codexio/icons"),
     (str(SRC / "codexio" / "icons" / "app.svg"), "codexio/icons"),
     (str(SRC / "codexio" / "icons" / "checkbox-check.svg"), "codexio/icons"),
     (str(SRC / "codexio" / "pricing_seed.json"), "codexio"),
-    (str(SRC / "codexio" / "usage_collector.py"), "codexio"),
+    (str(SRC / "codexio" / "translations.json"), "codexio"),
 ]
 datas.extend((str(path), "codexio/icons") for path in (SRC / "codexio" / "icons").glob("chevron-*.svg"))
 hiddenimports = [

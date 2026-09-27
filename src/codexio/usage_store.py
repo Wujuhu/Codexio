@@ -441,6 +441,10 @@ class UsageStore:
                     changed += 1
         return changed
 
+    def reset_local_cursors(self) -> None:
+        with self._connect() as db:
+            db.execute("DELETE FROM usage_cursors WHERE key LIKE 'usage:local:%'")
+
     def clear_index(self) -> None:
         with self._connect() as db:
             for table in ("usage_records", "usage_record_sources", "usage_observations", "usage_turns", "usage_agent_links", "usage_cursors", "usage_session_titles", "usage_origins"):

@@ -1,6 +1,8 @@
 """Native, interactive token/cost chart and local-time aggregation helpers."""
 from __future__ import annotations
 
+from codexio.i18n import tr
+
 import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -149,9 +151,9 @@ class ChartTooltip(QFrame):
                 item.widget().deleteLater()
         self.rows = []
         entries = text.split("\n")
-        known = {"Total Token": "chart_tokens", "价格": "chart_cost", "普通输入": "chart_input",
-                 "缓存创建": "chart_cache_write", "缓存利用": "chart_cache_read", "输出": "chart_output",
-                 "请求数": "muted", "暂无记录": "muted"}
+        known = {"Total Token": "chart_tokens", tr("价格"): "chart_cost", tr("普通输入"): "chart_input",
+                 tr("缓存创建"): "chart_cache_write", tr("缓存利用"): "chart_cache_read", tr("输出"): "chart_output",
+                 tr("请求数"): "muted", tr("暂无记录"): "muted"}
         heading = entries.pop(0) if entries and entries[0].partition("  ")[0] not in known else ""
         self.title_label.setText(heading)
         self.title_label.setStyleSheet("color: %s; font-weight: 600;" % colors["text"])
@@ -253,10 +255,10 @@ def series_paths(buckets, key, plot, maximum):
 
 class UsageChart(QWidget):
     bucket_clicked = Signal(dict)
-    SERIES = (("usd", "价格", "#F1788F"), ("tokens", "Total Token", "#9B81F5"),
-              ("cache_write", "缓存创建", "#F3AF61"),
-              ("cache_read", "缓存利用", "#BBA8FA"), ("input", "普通输入", "#6699F5"),
-              ("output", "输出", "#54C6A1"))
+    SERIES = (("usd", tr("价格"), "#F1788F"), ("tokens", "Total Token", "#9B81F5"),
+              ("cache_write", tr("缓存创建"), "#F3AF61"),
+              ("cache_read", tr("缓存利用"), "#BBA8FA"), ("input", tr("普通输入"), "#6699F5"),
+              ("output", tr("输出"), "#54C6A1"))
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -264,7 +266,7 @@ class UsageChart(QWidget):
         self.setMinimumWidth(440)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMouseTracking(True)
-        self.setAccessibleName("Total Token 与价格使用趋势，可点击底部图例切换曲线")
+        self.setAccessibleName(tr("Total Token 与价格使用趋势，可点击底部图例切换曲线"))
         self.buckets: list[dict] = []
         self._theme = "system"
         self._enabled = {"usd", "tokens"}
@@ -400,7 +402,7 @@ class UsageChart(QWidget):
                 steps -= 1
         return _ChartGeometry(
             plot, QRectF(0, 0, text_width("Total Token"), text_height),
-            QRectF(self.width() - text_width("价格"), 0, text_width("价格"), text_height),
+            QRectF(self.width() - text_width(tr("价格")), 0, text_width(tr("价格")), text_height),
             token_ticks, cost_ticks, time_ticks, legend)
 
     def paintEvent(self, event) -> None:
@@ -415,7 +417,7 @@ class UsageChart(QWidget):
         painter.setPen(QColor(c["chart_tokens_ink"]))
         painter.drawText(geometry.token_title, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "Total Token")
         painter.setPen(QColor(c["chart_cost_ink"]))
-        painter.drawText(geometry.cost_title, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, "价格")
+        painter.drawText(geometry.cost_title, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, tr("价格"))
         for (token_rect, token_label), (cost_rect, cost_label) in zip(geometry.token_ticks, geometry.cost_ticks):
             y = token_rect.center().y()
             grid = QColor(c["grid"])
@@ -428,7 +430,7 @@ class UsageChart(QWidget):
         if not self.buckets:
             painter.setPen(text_pen)
             painter.drawText(plot, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap,
-                             "当前时间范围\n暂无请求记录")
+                             tr("当前时间范围\n暂无请求记录"))
         else:
             count = len(self.buckets)
 
@@ -514,14 +516,14 @@ class UsageChart(QWidget):
 
     def _tooltip_text(self, bucket: dict) -> str:
         lines = [bucket["timestamp"].strftime("%Y-%m-%d %H:%M"),
-                 "价格  " + usd(bucket["usd"]),
-                 "Total Token  暂无有效数据" if bucket["tokens"] is None else "Total Token  {:,}".format(bucket["tokens"]),
-                 "请求数  {:,}".format(bucket["requests"])]
+                 tr("价格  ") + usd(bucket["usd"]),
+                 tr("Total Token  暂无有效数据") if bucket["tokens"] is None else "Total Token  {:,}".format(bucket["tokens"]),
+                 tr("请求数  {:,}").format(bucket["requests"])]
         for key, label, _color in self.SERIES:
             if key in self._enabled and key not in {"tokens", "usd"}:
                 lines.append("{}  {:,}".format(label, bucket[key]))
         if bucket["unpriced"]:
-            lines.append("{} 次请求未定价".format(bucket["unpriced"]))
+            lines.append(tr("{} 次请求未定价").format(bucket["unpriced"]))
         return "\n".join(lines)
 
     def leaveEvent(self, event) -> None:

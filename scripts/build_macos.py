@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
 STAGING = BUILD / "staging/macos"
 DESTINATION = BUILD / "dev/macos"
-WIDGET_VERSION = 13  # Increase for widget UI, registration, or host-lifecycle changes.
+WIDGET_VERSION = 14  # Increase for widget UI, registration, or host-lifecycle changes.
 
 
 def run(*args, **kwargs):
@@ -37,78 +37,126 @@ def refuse_running(bundle):
         raise RuntimeError(f"{bundle} 正在运行。原文件与暂存版本均已保留；请退出 Codexio 后重新构建。")
 
 
-def build_icon():
-    # Each ICNS representation is rendered directly from SVG, including the
-    # 1024-pixel Retina image. Never enlarge a pre-rendered PNG.
-    from codexio.app_icon import render_app_image
-    resources = BUILD / "cache/macos-resources"
-    iconset = resources / "Codexio.iconset"
-    iconset.mkdir(parents=True, exist_ok=True)
-    for size in (16, 32, 128, 256, 512):
-        for scale in (1, 2):
-            suffix = "@2x" if scale == 2 else ""
-            target = iconset / f"icon_{size}x{size}{suffix}.png"
-            if not render_app_image(size * scale).save(str(target), "PNG"):
-                raise RuntimeError(f"无法生成图标：{target}")
+def swift_environment():
+    environment = dict(os.environ)
+    xcode = Path("/Applications/Xcode.app/Contents/Developer")
+    if not environment.get("DEVELOPER_DIR") and xcode.is_dir():
+        environment["DEVELOPER_DIR"] = str(xcode)
+    return environment
+
+
+def localization_resources(destination):
+    translations = {}
+    shared = ROOT / "src/codexio/translations.json"
+    if shared.exists():
+        translations.update(json.loads(shared.read_text(encoding="utf-8")))
+    pattern = re.compile(r'(?:L|WL)\(("(?:\\.|[^"\\])*"),\s*("(?:\\.|[^"\\])*")\)')
+    for source in [*sorted((ROOT / "macos/native").glob("*.swift")), *sorted((ROOT / "macos/widget").glob("*.swift"))]:
+        for chinese, english in pattern.findall(source.read_text(encoding="utf-8")):
+            translations[json.loads(chinese)] = json.loads(english)
+    translations.update({
+        "Codexio 请求": "Codexio Request", "查看最近请求、费用与剩余额度": "View recent requests, cost and remaining allowance",
+        "打开 Codexio 查看最近请求": "Open Codexio to view recent requests", "耗时": "Duration",
+        "Codex 额度": "Codex Allowance", "额度样式": "Allowance style", "额度窗口": "Allowance window",
+        "单额度": "Single limit", "双额度": "Dual limits", "双额度刻度条": "Segmented dual limits",
+        "选择额度样式、窗口和外观": "Choose the style, window and appearance", "样式": "Style",
+        "单额度窗口": "Single-limit window", "外观": "Appearance", "跟随系统": "Follow system",
+        "浅色": "Light", "深色": "Dark", "周额度": "Weekly limit", "5 小时额度": "5-hour limit",
+        "仅显示额度，提供三种样式": "Allowance only, with three styles",
+    })
+    strings = {key: {"localizations": {"en": {"stringUnit": {"state": "translated", "value": value}},
+                                      "zh-Hans": {"stringUnit": {"state": "translated", "value": key}}}}
+               for key, value in sorted(translations.items())}
+    catalog = ROOT / "macos/Resources/Localizable.xcstrings"
+    catalog.parent.mkdir(parents=True, exist_ok=True)
+    catalog.write_text(json.dumps({"sourceLanguage": "en", "strings": strings, "version": "1.0"}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    for language in ("en", "zh-Hans"):
+        folder = destination / (language + ".lproj")
+        folder.mkdir(parents=True, exist_ok=True)
+        values = {key: value if language == "en" else key for key, value in translations.items()}
+        (folder / "Localizable.strings").write_bytes(plistlib.dumps(values, fmt=plistlib.FMT_BINARY))
+
+
+def build_native(bundle, version):
+    if bundle.exists():
+        shutil.rmtree(bundle)
+    executable = bundle / "Contents/MacOS/Codexio"
+    resources = bundle / "Contents/Resources"
+    executable.parent.mkdir(parents=True)
+    resources.mkdir(parents=True)
+    environment = swift_environment()
+    target = platform.machine() + "-apple-macos15.0"
+    sources = sorted((ROOT / "macos/native").glob("*.swift"))
+    cache = BUILD / "cache/swift"
+    cache.mkdir(parents=True, exist_ok=True)
+    run("xcrun", "swiftc", "-swift-version", "5", "-O", "-whole-module-optimization", "-target", target,
+        "-parse-as-library", "-module-name", "Codexio", "-module-cache-path", cache,
+        *sources, "-o", executable, env=environment)
+    info = {
+        "CFBundleIdentifier": "com.wujuhu.codexio", "CFBundleExecutable": "Codexio",
+        "CFBundleName": "Codexio", "CFBundleDisplayName": "Codexio", "CFBundlePackageType": "APPL",
+        "CFBundleShortVersionString": version, "CFBundleVersion": version,
+        "CodexioWidgetBuild": str(WIDGET_VERSION),
+        "CFBundleInfoDictionaryVersion": "6.0", "CFBundleDevelopmentRegion": "en",
+        "CFBundleLocalizations": ["en", "zh-Hans"], "CFBundleIconFile": "Codexio.icns",
+        "LSMinimumSystemVersion": "15.0", "NSHighResolutionCapable": True,
+        "NSPrincipalClass": "NSApplication", "NSSupportsAutomaticTermination": False,
+        "CFBundleSupportedPlatforms": ["MacOSX"],
+        "CFBundleURLTypes": [{"CFBundleURLName": "Codexio", "CFBundleURLSchemes": ["codexio"]}],
+        "NSAppTransportSecurity": {"NSAllowsArbitraryLoads": True, "NSAllowsLocalNetworking": True},
+    }
+    (bundle / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
+    iconset = BUILD / "cache/macos-resources/Codexio.iconset"
+    run(executable, "--render-icon", iconset)
     run("iconutil", "-c", "icns", iconset, "-o", resources / "Codexio.icns")
+    shutil.copy2(ROOT / "src/codexio/pricing_seed.json", resources / "pricing_seed.json")
+    localization_resources(resources)
 
 
 def embed_widget(bundle):
-    """Embed a stable native WidgetKit extension in the PyInstaller app."""
-    sources = ROOT / "macos/widget"
-    widget_source = sources / "CodexioWidget.swift"
-    bridge_source = sources / "WidgetBridge.swift"
-    entitlements = sources / "Widget.entitlements"
-    digest = hashlib.sha256()
-    for path in (widget_source, bridge_source, entitlements):
-        digest.update(path.read_bytes())
-    digest.update(("macos15-widget-%s-%s" % (WIDGET_VERSION, platform.machine())).encode("ascii"))
+    sources = sorted((ROOT / "macos/widget").glob("*.swift"))
+    entitlements = ROOT / "macos/widget/Widget.entitlements"
+    environment = swift_environment()
+    digest = hashlib.sha256(b"".join(path.read_bytes() for path in [*sources, entitlements]))
+    digest.update(("native-widget-%s-%s" % (WIDGET_VERSION, platform.machine())).encode("ascii"))
     cache = BUILD / "cache/macos-widget" / digest.hexdigest()[:20]
-    extension = cache / "CodexioWidget.appex"
-    bridge = cache / "libCodexioWidgetBridge.dylib"
-    if not (extension / "Contents/MacOS/CodexioWidget").is_file() or not bridge.is_file():
-        if cache.exists():
-            shutil.rmtree(cache)
-        (extension / "Contents/MacOS").mkdir(parents=True)
-        (extension / "Contents/Info.plist").write_bytes(plistlib.dumps({
-            "CFBundleIdentifier": "com.wujuhu.codexio.widget",
-            "CFBundleExecutable": "CodexioWidget",
-            "CFBundleName": "Codexio Widget",
-            "CFBundleDisplayName": "Codexio",
-            "CFBundlePackageType": "XPC!",
-            "CFBundleVersion": str(WIDGET_VERSION),
-            "CFBundleShortVersionString": "1.%d" % (WIDGET_VERSION - 1),
-            "CFBundleInfoDictionaryVersion": "6.0",
-            "CFBundleDevelopmentRegion": "zh_CN",
-            "CFBundleSupportedPlatforms": ["MacOSX"],
-            "DTPlatformName": "macosx",
-            "LSMinimumSystemVersion": "15.0",
-            "NSExtension": {"NSExtensionPointIdentifier": "com.apple.widgetkit-extension"},
-        }))
-        environment = dict(os.environ)
-        if not environment.get("DEVELOPER_DIR") and Path("/Applications/Xcode.app/Contents/Developer").is_dir():
-            environment["DEVELOPER_DIR"] = "/Applications/Xcode.app/Contents/Developer"
-        target = platform.machine() + "-apple-macos15.0"
-        # WidgetKit extensions enter through Foundation's NSExtensionMain. A
-        # regular Swift @main executable registers with PlugInKit but crashes
-        # before WidgetKit can enumerate its configurations.
-        run("xcrun", "swiftc", "-target", target, "-application-extension", "-parse-as-library",
-            "-Xlinker", "-e", "-Xlinker", "_NSExtensionMain", widget_source,
-            "-o", extension / "Contents/MacOS/CodexioWidget", env=environment)
-        run("codesign", "--force", "--sign", "-", "--timestamp=none", "--entitlements", entitlements, extension)
-        run("xcrun", "swiftc", "-target", target, "-emit-library", "-module-name", "CodexioWidgetBridge",
-            bridge_source, "-o", bridge, env=environment)
-        run("codesign", "--force", "--sign", "-", "--timestamp=none", bridge)
-    run("codesign", "--verify", "--strict", extension)
-    run("codesign", "--verify", "--strict", bridge)
-    destination = bundle / "Contents/PlugIns/CodexioWidget.appex"
-    if destination.exists():
-        shutil.rmtree(destination)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(extension, destination, symlinks=True)
-    shutil.copy2(bridge, bundle / "Contents/Frameworks/libCodexioWidgetBridge.dylib")
-    # Seal the new nested code without changing the extension's own signature.
+    extension = bundle / "Contents/PlugIns/CodexioWidget.appex"
+    executable = extension / "Contents/MacOS/CodexioWidget"
+    executable.parent.mkdir(parents=True, exist_ok=True)
+    cache.mkdir(parents=True, exist_ok=True)
+    target = platform.machine() + "-apple-macos15.0"
+    protocols = cache / "protocols.json"
+    protocols.write_text(json.dumps(["AppIntent", "AppEntity", "AppEnum", "WidgetConfigurationIntent"]), encoding="utf-8")
+    constants = cache / "CodexioWidget.swiftconstvalues"
+    run("xcrun", "swiftc", "-swift-version", "5", "-O", "-whole-module-optimization", "-target", target,
+        "-application-extension", "-parse-as-library", "-module-name", "CodexioWidget",
+        "-emit-const-values-path", constants, "-const-gather-protocols-list", protocols,
+        "-Xlinker", "-e", "-Xlinker", "_NSExtensionMain", *sources, "-o", executable, env=environment)
+    source_list, const_list = cache / "sources.txt", cache / "constants.txt"
+    source_list.write_text("\n".join(map(str, sources)) + "\n", encoding="utf-8")
+    const_list.write_text(str(constants) + "\n", encoding="utf-8")
+    sdk = subprocess.check_output(["xcrun", "--show-sdk-path"], env=environment, text=True, encoding="utf-8").strip()
+    compiler = subprocess.check_output(["xcrun", "--find", "swiftc"], env=environment, text=True, encoding="utf-8").strip()
+    xcode_version = subprocess.check_output(["xcodebuild", "-version"], env=environment, text=True, encoding="utf-8").strip().splitlines()[-1].split()[-1]
+    resources = extension / "Contents/Resources"
+    resources.mkdir(parents=True, exist_ok=True)
+    run("xcrun", "appintentsmetadataprocessor", "--output", resources, "--toolchain-dir", Path(compiler).parents[2],
+        "--module-name", "CodexioWidget", "--sdk-root", sdk, "--xcode-version", xcode_version,
+        "--platform-family", "macOS", "--deployment-target", "15.0", "--target-triple", target,
+        "--source-file-list", source_list, "--swift-const-vals-list", const_list, env=environment)
+    localization_resources(resources)
+    (extension / "Contents/Info.plist").write_bytes(plistlib.dumps({
+        "CFBundleIdentifier": "com.wujuhu.codexio.widget", "CFBundleExecutable": "CodexioWidget",
+        "CFBundleName": "Codexio Widget", "CFBundleDisplayName": "Codexio", "CFBundlePackageType": "XPC!",
+        "CFBundleVersion": str(WIDGET_VERSION), "CFBundleShortVersionString": "1.%d" % (WIDGET_VERSION - 1),
+        "CFBundleInfoDictionaryVersion": "6.0", "CFBundleDevelopmentRegion": "en", "CFBundleLocalizations": ["en", "zh-Hans"],
+        "CFBundleSupportedPlatforms": ["MacOSX"], "DTPlatformName": "macosx", "LSMinimumSystemVersion": "15.0",
+        "NSExtension": {"NSExtensionPointIdentifier": "com.apple.widgetkit-extension"},
+    }))
+    run("codesign", "--force", "--sign", "-", "--timestamp=none", "--entitlements", entitlements, extension)
     run("codesign", "--force", "--sign", "-", "--timestamp=none", bundle)
+    run("codesign", "--verify", "--strict", extension)
+    assert (resources / "Metadata.appintents").is_dir(), "缺少小组件 App Intent 元数据"
 
 
 def main():
@@ -124,14 +172,18 @@ def main():
     bundle = staging / "Codexio.app"
     target = DESTINATION / "Codexio.app"
     refuse_running(bundle)
-    build_icon()
-    run(sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--distpath", staging,
-        "--workpath", BUILD / "cache/pyinstaller/macos", ROOT / "packaging/codexio-macos.spec")
+    version = re.search(r'__version__ = "([^"]+)"', (ROOT / "src/codexio/__init__.py").read_text(encoding="utf-8")).group(1)
+    build_native(bundle, version)
     embed_widget(bundle)
     with (bundle / "Contents/Info.plist").open("rb") as stream:
         info = plistlib.load(stream)
     version = re.search(r'__version__ = "([^"]+)"', (ROOT / "src/codexio/__init__.py").read_text(encoding="utf-8")).group(1)
     assert info["CFBundleShortVersionString"] == info["CFBundleVersion"] == version
+    widget_info = plistlib.loads((bundle / "Contents/PlugIns/CodexioWidget.appex/Contents/Info.plist").read_bytes())
+    assert widget_info["CFBundleVersion"] == str(WIDGET_VERSION)
+    assert widget_info["CFBundleShortVersionString"] == "1.%d" % (WIDGET_VERSION - 1)
+    assert not any(path.name.startswith(("Python", "Qt", "PySide")) for path in bundle.rglob("*")), "Mac 包不能包含 Python 或 Qt 运行时"
+    run("lipo", "-verify_arch", platform.machine(), bundle / "Contents/MacOS/Codexio")
     run("codesign", "--verify", "--deep", "--strict", bundle)
     smoke = BUILD / "checks/macos-smoke"
     (smoke / "result.json").unlink(missing_ok=True)

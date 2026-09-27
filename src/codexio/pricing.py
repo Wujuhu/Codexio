@@ -7,6 +7,8 @@ All rates in the persisted/UI representation are USD per million tokens.
 """
 from __future__ import annotations
 
+from codexio.i18n import tr
+
 import hashlib
 import copy
 import json
@@ -26,7 +28,7 @@ _FIELDS = {"input": "input_cost_per_token", "cache_read": "cache_read_input_toke
            "cache_write": "cache_creation_input_token_cost", "output": "output_cost_per_token"}
 PRICING_RULE_VERSION = "codex-api-base-2026-09-25-v4-third-party-reference"
 PRICING_BASIS = "standard_api_x_codex"
-PRICING_BASIS_LABEL = "标准 API 单价 × Codex 倍率"
+PRICING_BASIS_LABEL = tr("标准 API 单价 × Codex 倍率")
 LONG_CONTEXT_THRESHOLD = 272000
 RULE_SOURCES = (
     "https://learn.chatgpt.com/docs/agent-configuration/speed",
@@ -214,7 +216,7 @@ class PricingCatalog:
             try:
                 self._archive_version()
             except OSError as exc:
-                self.status["warning"] = "无法保存价格版本: " + str(exc)[:160]
+                self.status["warning"] = tr("无法保存价格版本: ") + str(exc)[:160]
             return self
 
     def _rebuild(self):
@@ -266,7 +268,7 @@ class PricingCatalog:
     def set_override(self, model: str, rates: dict | None):
         model = model.strip()
         if not model:
-            raise ValueError("模型名称不能为空")
+            raise ValueError(tr("模型名称不能为空"))
         with self._lock:
             if rates is None:
                 self._overrides.pop(model, None)
@@ -275,9 +277,9 @@ class PricingCatalog:
                 raw["service_tier"] = rates.get("service_tier", rates.get("tier", "default"))
                 row = _validate_row(raw)
                 if not row or any(rates.get(key) is not None and _number(rates[key]) is None for key in RATE_KEYS):
-                    raise ValueError("输入与输出基础价必须填写，已填写单价必须为有限非负数")
+                    raise ValueError(tr("输入与输出基础价必须填写，已填写单价必须为有限非负数"))
                 if not _is_standard_base(row):
-                    raise ValueError("只编辑 Standard 基础价；Fast 与长上下文单价由 Codex 规则生成")
+                    raise ValueError(tr("只编辑 Standard 基础价；Fast 与长上下文单价由 Codex 规则生成"))
                 row["service_tier"] = "default"
                 old = self._overrides.get(model, [])
                 self._overrides[model] = [r for r in old if not isinstance(r, dict) or not _is_standard_base(r)] + [row]
@@ -294,29 +296,29 @@ class PricingCatalog:
         result = {"usd": None, "pricing_status": "unpriced", "price_version": self.price_version,
                   "reason": "", "rates": {}, "pricing_basis": PRICING_BASIS}
         if "input_tokens" not in record or "output_tokens" not in record:
-            return dict(result, pricing_status="invalid", reason="缺少输入或输出 Token 分项")
+            return dict(result, pricing_status="invalid", reason=tr("缺少输入或输出 Token 分项"))
         counts = {}
         for key in ("input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens"):
             value = _number(record.get(key, 0))
             if value is None or value != int(value):
-                return dict(result, pricing_status="invalid", reason="Token 分项不是非负整数")
+                return dict(result, pricing_status="invalid", reason=tr("Token 分项不是非负整数"))
             counts[key] = int(value)
         total = counts["input_tokens"] + counts["output_tokens"]
         if ((counts["cached_input_tokens"] + counts["cache_write_input_tokens"] > counts["input_tokens"])
                 or counts["reasoning_output_tokens"] > counts["output_tokens"]
                 or ("total_tokens" in record and _number(record["total_tokens"]) != total)
                 or str(record.get("quality", "")).lower().startswith("invalid")):
-            return dict(result, pricing_status="invalid", reason="Token 分项不一致，未计算金额")
+            return dict(result, pricing_status="invalid", reason=tr("Token 分项不一致，未计算金额"))
         provider = str(record.get("provider", "unknown")).strip().lower()
         if provider in ("", "unknown"):
-            return dict(result, reason="模型供应商未记录")
+            return dict(result, reason=tr("模型供应商未记录"))
         official = provider in ("openai", "codexio-upstream")
         model = str(record.get("model", ""))
         if official:
             model = model.removeprefix("openai/")
         model_rows = [r for r in self._rows if r["model"] == model]
         if not model_rows:
-            return dict(result, reason="该模型尚无可精确匹配的 OpenAI 参考价格" if not official else "该模型尚无价格")
+            return dict(result, reason=tr("该模型尚无可精确匹配的 OpenAI 参考价格") if not official else tr("该模型尚无价格"))
         raw_tier = str(record.get("service_tier") or "").strip().lower()
         missing_tier = not raw_tier or raw_tier == "auto"
         aggregate = str(record.get("quality", "")).split(":", 1)[0] in (
@@ -328,27 +330,27 @@ class PricingCatalog:
         threshold = max((r["threshold"] for r in model_rows if counts["input_tokens"] > r["threshold"]), default=0)
         rates = next((r for r in model_rows if r["service_tier"] == tier and r["threshold"] == threshold), None)
         if rates is None:
-            return dict(result, reason="缺少该模型与服务档位的 Codex 换算规则")
+            return dict(result, reason=tr("缺少该模型与服务档位的 Codex 换算规则"))
         # All components are disjoint; their selected rate owns the write policy.
         parts = {"input": counts["input_tokens"] - counts["cached_input_tokens"] - counts["cache_write_input_tokens"],
                  "cache_read": counts["cached_input_tokens"], "cache_write": counts["cache_write_input_tokens"],
                  "output": counts["output_tokens"]}
         if any(count and rates[key] is None for key, count in parts.items()):
-            return dict(result, reason="缺少已使用 Token 类别的明确价格", rates=dict(rates))
+            return dict(result, reason=tr("缺少已使用 Token 类别的明确价格"), rates=dict(rates))
         usd = math.fsum(count * (rates[key] or 0.0) / 1_000_000 for key, count in parts.items())
         multipliers = rates["multipliers"]
         if rates["cache_write_basis"] == "api":
-            basis = "手工 Standard 基础价" if rates.get("locked") else "OpenAI API Standard 标准价"
-            reasons = [basis + "；缓存创建使用单列价格，缺失时保留未定价"]
+            basis = tr("手工 Standard 基础价") if rates.get("locked") else tr("OpenAI API Standard 标准价")
+            reasons = [basis + tr("；缓存创建使用单列价格，缺失时保留未定价")]
         else:
-            reasons = [PRICING_BASIS_LABEL + "；输入/缓存读取 ×%g，输出 ×%g；缓存创建按普通输入价，无写入附加费" %
+            reasons = [PRICING_BASIS_LABEL + tr("；输入/缓存读取 ×%g，输出 ×%g；缓存创建按普通输入价，无写入附加费") %
                        (multipliers["input"], multipliers["output"])]
         if missing_tier:
-            reasons.append("原始记录未提供明确服务档位，按默认 Standard 标准价估计")
+            reasons.append(tr("原始记录未提供明确服务档位，按默认 Standard 标准价估计"))
         if aggregate:
-            reasons.append("累计观测不能证明单次请求上下文与模型归属，仅供消费参考")
+            reasons.append(tr("累计观测不能证明单次请求上下文与模型归属，仅供消费参考"))
         if not official:
-            reasons.append("第三方供应商 %s 按同名 OpenAI 模型价格估算，可能与第三方账单不同" % (provider or "unknown"))
+            reasons.append(tr("第三方供应商 %s 按同名 OpenAI 模型价格估算，可能与第三方账单不同") % (provider or "unknown"))
         return dict(result, usd=usd, pricing_status="estimated" if estimated else "priced", rates=dict(rates),
                     reason="；".join(reasons))
 
@@ -361,7 +363,7 @@ class PricingCatalog:
                 # Bound an unexpected upstream response; feeds currently fit comfortably.
                 payload = response.read(25_000_001)
                 if len(payload) > 25_000_000:
-                    raise ValueError("价格目录超过大小限制")
+                    raise ValueError(tr("价格目录超过大小限制"))
                 return json.loads(payload.decode("utf-8")), response.headers.get("ETag"), False
         except HTTPError as exc:
             if exc.code == 304:
@@ -398,7 +400,7 @@ class PricingCatalog:
                     else:
                         rows = parser(data, now.isoformat())
                         if not rows:
-                            raise ValueError("价格目录中没有有效的 OpenAI 模型价格")
+                            raise ValueError(tr("价格目录中没有有效的 OpenAI 模型价格"))
                     if etag:
                         etags[url] = etag
                     verification_rows = []
@@ -415,7 +417,7 @@ class PricingCatalog:
                             if not verification_unchanged:
                                 verification_rows = _models_dev_rows(verification, now.isoformat())
                             if not verification_rows:
-                                raise ValueError("备源没有可核对的标准价格")
+                                raise ValueError(tr("备源没有可核对的标准价格"))
                             if verification_etag:
                                 etags[MODELS_DEV_URL] = verification_etag
                             verification_status = "checked"
@@ -431,13 +433,13 @@ class PricingCatalog:
                                 # response. Fetch a full primary body on the next check.
                                 etags.pop(LITELLM_URL, None)
                         except (OSError, ValueError, TypeError, KeyError) as exc:
-                            warning = "备源核对暂不可用: " + str(exc)[:180]
+                            warning = tr("备源核对暂不可用: ") + str(exc)[:180]
                     self._cache = {"rows": rows, "updated_at": now.isoformat(), "checked_at": now.isoformat(),
                                    "etags": etags, "active_source": url,
                                    "verification_rows": verification_rows, "verification_status": verification_status,
                                    "conflicting_models": sorted(conflicts), "warning": warning,
                                    "status": "conflict" if conflicts else ("synced" if url == LITELLM_URL else "fallback"),
-                                   "error": "两源单价冲突，保留已有价格: " + ", ".join(sorted(conflicts)) if conflicts else None}
+                                   "error": tr("两源单价冲突，保留已有价格: ") + ", ".join(sorted(conflicts)) if conflicts else None}
                     self._rebuild()
                     self.status = {"status": self._cache["status"], "updated_at": now.isoformat(), "error": self._cache["error"],
                                    "last_sync_at": now.isoformat(),

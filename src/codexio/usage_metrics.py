@@ -1,6 +1,8 @@
 """Cache ratios and elapsed-time output rates, with explicit missing data."""
 from __future__ import annotations
 
+from codexio.i18n import tr
+
 import math
 
 from codexio.confirmed_usage import ConfirmedUsage, confirmed_count
@@ -47,7 +49,7 @@ def cache_percentage(value):
 
 
 def cache_tooltip(record):
-    note = "缓存命中率 = 缓存读取 Token ÷ 输入 Token（含缓存）；不把缓存创建计为命中。"
+    note = tr("缓存命中率 = 缓存读取 Token ÷ 输入 Token（含缓存）；不把缓存创建计为命中。")
     if record.get("cache_skipped_records"):
         note += "\n按缓存计量完整的调用加权计算，缺失分项未按零处理。"
     return note
@@ -75,8 +77,8 @@ def output_speed_text(record, now=None):
 
 
 def output_speed_tooltip(record):
-    detail = ("整轮耗时包含工具等待和其他停顿，表示整轮平均输出速度。" if record.get("record_kind") == "user_request"
-              else "使用日志明确记录的本次调用耗时，不用相邻调用间隔推算。")
+    detail = (tr("整轮耗时包含工具等待和其他停顿，表示整轮平均输出速度。") if record.get("record_kind") == "user_request"
+              else tr("使用日志明确记录的本次调用耗时，不用相邻调用间隔推算。"))
     return "平均输出速度 = 输出 Token ÷ 本行耗时。\n" + detail + "\n缺少有效 Token 或可靠计时则显示 —。"
 
 
@@ -108,6 +110,6 @@ def dashboard_comparison(current, previous, period, bounds):
         changes[key] = dict(status=status, percent=percent)
     start, end, previous_start, previous_end = bounds
     return dict(period=period, current=current, previous=previous, changes=changes,
-                label={"today": "较昨天", "week": "较前 7 天", "month": "较前 30 天"}[period],
+                label={"today": tr("较昨天"), "week": tr("较前 7 天"), "month": tr("较前 30 天")}[period],
                 start=start.isoformat(), end=end.isoformat(), previous_start=previous_start.isoformat(),
                 previous_end=previous_end.isoformat())

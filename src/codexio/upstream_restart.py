@@ -6,6 +6,8 @@ older processes without a saved baseline stay unknown until they restart.
 """
 from __future__ import annotations
 
+from codexio.i18n import tr
+
 import hashlib
 import json
 from pathlib import Path
@@ -90,15 +92,15 @@ def client_contexts():
 def desktop_route_context(fallback):
     contexts = client_contexts()
     if any(not item["config"] for item in contexts):
-        raise UpstreamError("无法确认当前桌面客户端的配置路径，请等待客户端启动完成后再开启上游检测")
+        raise UpstreamError(tr("无法确认当前桌面客户端的配置路径，请等待客户端启动完成后再开启上游检测"))
     if any(item.get("environment") or ROUTE_KEYS.intersection(item.get("overrides", {})) for item in contexts):
-        raise UpstreamError("客户端启动参数或环境变量覆盖了模型路由，未进行接管")
+        raise UpstreamError(tr("客户端启动参数或环境变量覆盖了模型路由，未进行接管"))
     paths = {item["config"] for item in contexts}
     if len(paths) > 1:
-        raise UpstreamError("多个桌面客户端使用不同的 config.toml，请保留一个配置后再开启上游检测")
+        raise UpstreamError(tr("多个桌面客户端使用不同的 config.toml，请保留一个配置后再开启上游检测"))
     profiles = {str(item.get("profile") or "") for item in contexts}
     if len(profiles) > 1:
-        raise UpstreamError("多个桌面客户端使用不同的配置方案，请保留一个配置后再开启上游检测")
+        raise UpstreamError(tr("多个桌面客户端使用不同的配置方案，请保留一个配置后再开启上游检测"))
     return {"config": Path(next(iter(paths))) if paths else Path(fallback),
             "profile": (next(iter(profiles)) or None) if profiles else None}
 
@@ -155,7 +157,7 @@ class RestartTracker:
             try:
                 private_json(self.path, value)
             except OSError:
-                get_logger("upstream").warning("无法保存客户端配置基线，本次会话继续使用内存记录")
+                get_logger("upstream").warning(tr("无法保存客户端配置基线，本次会话继续使用内存记录"))
             self._saved = signature
 
     def assess(self):

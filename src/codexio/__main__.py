@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+from codexio.i18n import tr
+
 import argparse
 import atexit
 import copy
 import sys
+
+if __name__ == "__main__" and sys.platform == "darwin":
+    from codexio.native_launcher import launch
+    launch(sys.argv[1:])
 
 # This copied helper must stay alive after the Qt application exits or updates.
 if __name__ == "__main__" and len(sys.argv) == 3 and sys.argv[1] == "--upstream-proxy":
@@ -15,14 +21,6 @@ if __name__ == "__main__" and sys.platform == "win32" and len(sys.argv) == 3 and
     from codexio.update_installer import run_update_job
     sys.exit(run_update_job(sys.argv[2]))
 
-if __name__ == "__main__" and sys.platform == "darwin" and len(sys.argv) == 3 and sys.argv[1] == "--apply-mac-update":
-    from codexio.macos_updater import run_update_job
-    sys.exit(run_update_job(sys.argv[2]))
-
-if __name__ == "__main__" and sys.platform == "darwin" and sys.argv[1:] == ["--widget-refresh"]:
-    from codexio.macos_widget_service import run_widget_monitor
-    sys.exit(run_widget_monitor())
-
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QApplication, QMenu
 
@@ -33,6 +31,7 @@ from codexio.app_icon import load_app_icon
 from codexio.worker import QuotaWorker
 from codexio.analytics_config import load_analytics_config, save_analytics_config
 from codexio.usage_worker import UsageWorker
+from codexio.analytics_client import AccountReportsWorker
 from codexio.dashboard_host import DashboardHost
 from codexio.settings import data_dir
 from codexio.upstream_manager import UpstreamManager
@@ -40,13 +39,25 @@ from codexio.upstream_manager import UpstreamManager
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    if args.smoke_test:
+        from pathlib import Path
+        Path(args.smoke_test).mkdir(parents=True, exist_ok=True)
     if sys.platform == "darwin":
-        from codexio.macos_app import run_macos
-        return run_macos(args)
+        from codexio.native_launcher import launch
+        launch(list(sys.argv[1:] if argv is None else argv))
     from codexio.tray import TrayController
     from codexio.window import QuotaWindow
     from codexio.update_manager import UpdateManager
     from codexio.update_installer import acknowledge_update
+    if args.mock:
+        import os
+        import tempfile
+        from pathlib import Path
+        mock_root = Path(tempfile.mkdtemp(prefix="codexio-mock-", dir=str(Path(args.smoke_test).resolve()) if args.smoke_test else None))
+        os.environ["CODEXIO_DATA_DIR"] = str(mock_root / "data")
+        os.environ["CODEX_HOME"] = str(mock_root / "codex")
+        for key in ("CODEXIO_UPDATE_JOB", "CODEXIO_UPSTREAM_JOB"):
+            os.environ.pop(key, None)
     setup_logging()
     logger = get_logger("main")
     settings = load_settings()
@@ -55,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
         analytics_config["widget_visible"] = False
         settings.display_mode = "top"
     save_analytics_config(analytics_config)
-    logger.info("启动 Codexio")
+    logger.info(tr("启动 Codexio"))
 
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
@@ -64,14 +75,12 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationName("Codexio")
     app.setApplicationDisplayName("Codexio")
     app.setQuitOnLastWindowClosed(False)
-    family = register_bundled_fonts()
-    if not family:
-        logger.warning("内嵌字体不可用，界面改用系统字体")
     app.setFont(display_font(13))
     app.setWindowIcon(load_app_icon())
 
     worker = QuotaWorker(settings, mock=args.mock)
     usage = UsageWorker(analytics_config, mock=args.mock)
+    reports = AccountReportsWorker(mock=args.mock)
     closing = False
     updater = None
     upstream = None
@@ -88,6 +97,7 @@ def main(argv: list[str] | None = None) -> int:
         dashboard_host.save_geometry()
         window.persist_settings()
         worker.stop()
+        reports.stop()
         usage.stop()
 
     def quit_app() -> None:
@@ -97,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
             finish_quit()
 
     def finish_quit() -> None:
-        logger.info("退出 Codexio")
+        logger.info(tr("退出 Codexio"))
         cleanup()
         # An explicit exit must bypass the main window's close-to-tray veto.
         app.exit(0)
@@ -107,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
         usage.request_refresh()
 
     def open_main(page: str = "overview", period: str | None = None) -> None:
-        dashboard_host.open(page, period)
+        return dashboard_host.open(page, period)
 
     def apply_config(config: dict) -> None:
         nonlocal analytics_config
@@ -133,11 +143,6 @@ def main(argv: list[str] | None = None) -> int:
         if not analytics_config.get("widget_visible"):
             window.hide()
 
-    def assign_history(assignment: dict) -> None:
-        config = copy.deepcopy(analytics_config)
-        config.setdefault("history_assignments", []).append(assignment)
-        apply_config(config)
-
     def save_main_geometry(geometry: str) -> None:
         analytics_config["main_geometry"] = geometry
         save_analytics_config(analytics_config)
@@ -157,7 +162,9 @@ def main(argv: list[str] | None = None) -> int:
         "refresh": refresh, "settings": apply_settings, "config": apply_config,
         "sync_prices": usage.request_sync, "price_override": usage.set_price_override,
         "toggle_widget": toggle_widget, "quit": quit_app, "rescan": usage.rescan,
-        "assign_history": assign_history, "estimates_visible": usage.set_estimates_visible,
+        "estimates_visible": usage.set_estimates_visible,
+        "consume_reset": worker.request_reset,
+        "account_reports": lambda force=False: reports.request_reports((dashboard_host._data or {}).get("local_threads", []), force) if worker._applicable else None,
         "main_hidden": save_main_geometry,
         "check_update": lambda: updater.check() if updater is not None else None,
         "upstream_toggle": lambda value: upstream.toggle(value),
@@ -168,17 +175,17 @@ def main(argv: list[str] | None = None) -> int:
     upstream.status_changed.connect(dashboard_host.set_upstream_status)
     upstream.observations_changed.connect(dashboard_host.refresh_upstream)
     menu = QMenu()
-    menu.addAction("打开主界面").triggered.connect(lambda: open_main())
-    widget_action = menu.addAction("显示悬浮窗")
+    menu.addAction(tr("打开主界面")).triggered.connect(lambda: open_main())
+    widget_action = menu.addAction(tr("显示悬浮窗"))
     widget_action.setCheckable(True)
     widget_action.setChecked(bool(analytics_config.get("widget_visible", True)))
     widget_action.triggered.connect(toggle_widget)
-    close_widget_action = menu.addAction("关闭悬浮窗")
+    close_widget_action = menu.addAction(tr("关闭悬浮窗"))
     close_widget_action.triggered.connect(lambda: toggle_widget(False))
     menu.addSeparator()
-    update_action = menu.addAction("检查并更新")
+    update_action = menu.addAction(tr("检查并更新"))
     update_action.triggered.connect(lambda: updater.check() if updater is not None else None)
-    menu.addAction("退出程序").triggered.connect(quit_app)
+    menu.addAction(tr("退出程序")).triggered.connect(quit_app)
     tray = TrayController(
         app,
         menu,
@@ -213,6 +220,10 @@ def main(argv: list[str] | None = None) -> int:
         window.apply_theme("dark")
         dashboard_host.config_updated(analytics_config)
 
+    worker.reset_result.connect(dashboard_host.set_reset_result)
+    worker.identity_changed.connect(lambda: dashboard_host.set_reset_result({"clear": True}))
+    worker.identity_changed.connect(reports.invalidate)
+    reports.reports_changed.connect(dashboard_host.apply_reports)
     worker.state_changed.connect(on_state)
     worker.snapshot_changed.connect(usage.add_snapshot)
     worker.identity_changed.connect(usage.invalidate_estimate_window)
@@ -227,22 +238,30 @@ def main(argv: list[str] | None = None) -> int:
     window.setVisible(bool(analytics_config.get("widget_visible", True)))
     upstream.startup_ready.connect(lambda *_: dashboard_host.open("overview", "today"))
     usage.start()
+    reports.start()
     worker.start()
     updater.start(bool(analytics_config.get("auto_update", True)))
     QTimer.singleShot(0, upstream.start)
-    QTimer.singleShot(1500, acknowledge_restart)
+    if not args.mock:
+        QTimer.singleShot(1500, acknowledge_restart)
+    if args.smoke_test:
+        from pathlib import Path
+        from types import SimpleNamespace
+        from codexio.basic_smoke import schedule_smoke_test
+        smoke_controller = SimpleNamespace(app=app, dashboard_host=dashboard_host, open_main=open_main, stop=cleanup)
+        schedule_smoke_test(smoke_controller, Path(args.smoke_test))
     atexit.register(cleanup)
     app.aboutToQuit.connect(cleanup)
     return app.exec()
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Codexio：本机 Codex 额度与用量统计")
-    parser.add_argument("--mock", action="store_true", help="使用模拟额度数据，不启动 app-server")
+    parser = argparse.ArgumentParser(description=tr("Codexio：本机 Codex 额度与用量统计"))
+    parser.add_argument("--mock", action="store_true", help=tr("使用模拟额度数据，不启动 app-server"))
     parser.add_argument("--smoke-test", metavar="OUTPUT_DIR", help=argparse.SUPPRESS)
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
-    if args.smoke_test and (not args.mock or sys.platform != "darwin"):
-        parser.error("--smoke-test 仅用于 macOS 的 --mock 验证")
+    if args.smoke_test and not args.mock:
+        parser.error("--smoke-test requires --mock")
     return args
 
 

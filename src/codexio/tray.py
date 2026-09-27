@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from codexio.i18n import tr
+
 from typing import Callable, Optional
 
 from PySide6.QtCore import QObject
@@ -30,9 +32,9 @@ class TrayController:
         week = _tray_percent(state.week.remaining_percent)
         if show_five:
             five = _tray_percent(state.five_hour.remaining_percent)
-            self._tray.setToolTip("Codexio · Codex 额度  5 hours %s  ·  1 week %s" % (five, week))
+            self._tray.setToolTip(tr("Codexio · Codex 额度  5 hours %s  ·  1 week %s") % (five, week))
             return
-        self._tray.setToolTip("Codexio · Codex 额度  1 week %s" % week)
+        self._tray.setToolTip(tr("Codexio · Codex 额度  1 week %s") % week)
 
     def _on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason in (

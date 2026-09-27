@@ -1,6 +1,8 @@
 """Source-grounded elapsed times; concurrent work is never summed twice."""
 from __future__ import annotations
 
+from codexio.i18n import tr
+
 import math
 from datetime import datetime, timezone
 
@@ -62,30 +64,30 @@ def duration_text(record, now=None):
     if value is None:
         return "—"
     if value < 1000:
-        return "%.2f 秒" % (value / 1000)
+        return tr("%.2f 秒") % (value / 1000)
     seconds = int(value / 1000)
     if seconds < 60:
-        return "%.1f 秒" % (value / 1000)
+        return tr("%.1f 秒") % (value / 1000)
     minutes, seconds = divmod(seconds, 60)
     if minutes < 60:
-        return "%d分%02d秒" % (minutes, seconds)
+        return tr("%d分%02d秒") % (minutes, seconds)
     hours, minutes = divmod(minutes, 60)
     if hours < 24:
-        return "%d时%02d分%02d秒" % (hours, minutes, seconds)
+        return tr("%d时%02d分%02d秒") % (hours, minutes, seconds)
     days, hours = divmod(hours, 24)
-    return "%d天%02d时%02d分" % (days, hours, minutes)
+    return tr("%d天%02d时%02d分") % (days, hours, minutes)
 
 
 def duration_tooltip(record):
     if record.get("duration_segments", 0) > 1:
-        return "按各轮实际处理时间合计，不包含等待用户答复的间隔；并行子代理不重复相加。"
+        return tr("按各轮实际处理时间合计，不包含等待用户答复的间隔；并行子代理不重复相加。")
     if record.get("duration_running"):
-        return "进行中：从主请求发起时间累计，包含工具等待；并行子代理不重复相加。"
+        return tr("进行中：从主请求发起时间累计，包含工具等待；并行子代理不重复相加。")
     value = elapsed_milliseconds(record)
     if value is None:
-        return ("缺少完整的请求起止时间，无法确认总耗时。" if record.get("record_kind") == "user_request" else
-                "日志未记录这次模型调用的独立耗时。")
-    detail = "总耗时 %.3f 秒。" % (value / 1000)
+        return (tr("缺少完整的请求起止时间，无法确认总耗时。") if record.get("record_kind") == "user_request" else
+                tr("日志未记录这次模型调用的独立耗时。"))
+    detail = tr("总耗时 %.3f 秒。") % (value / 1000)
     if record.get("record_kind") == "user_request":
-        return detail + "从主请求发起到整轮结束，包含工具等待；并行子代理不重复相加。"
-    return detail + "使用日志明确记录的调用计时，不以相邻调用间隔代替。"
+        return detail + tr("从主请求发起到整轮结束，包含工具等待；并行子代理不重复相加。")
+    return detail + tr("使用日志明确记录的调用计时，不以相邻调用间隔代替。")

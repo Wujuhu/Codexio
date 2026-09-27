@@ -53,7 +53,7 @@ def data_dir() -> Path:
         root = Path.home() / "AppData" / "Local"
     path = root / APP_DIR_NAME
     # Existing installations keep their live database and settings in place.
-    if not path.exists():
+    if not any((path / filename).exists() for filename in ("settings.json", "analytics_settings.json", "usage.sqlite")):
         for name in LEGACY_APP_DIR_NAMES:
             legacy = root / name
             if any((legacy / filename).exists() for filename in ("settings.json", "analytics_settings.json", "usage.sqlite")):

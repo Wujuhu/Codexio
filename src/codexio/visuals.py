@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from codexio.i18n import tr
+
 import math
 import sys
 from pathlib import Path
@@ -43,25 +45,20 @@ from codexio.rate_limits import QuotaState, WindowView, format_reset_time
 
 QUOTA_FIVE_LABEL = "5 hours"
 QUOTA_WEEK_LABEL = "1 week"
-BUNDLED_SANS_FONT = "AnthropicSansWebText-Regular.ttf"
-_FALLBACK_FAMILIES = ("Microsoft YaHei UI", "Segoe UI")
-_resolved_family: Optional[str] = None
-_resolved_style: Optional[str] = None
-_fonts_registered = False
 
 
 def display_font_css() -> str:
-    names = [display_font_family(), *_FALLBACK_FAMILIES]
+    names = [display_font_family()]
     return ", ".join('"%s"' % name for name in names) + ", sans-serif"
 
 
 STYLE_LABELS = {
-    "classic": "条形",
-    "rings": "圆环",
-    "tiles": "磁贴",
-    "compact": "紧凑",
-    "minimal": "极简",
-    "orb": "水球",
+    "classic": tr("条形"),
+    "rings": tr("圆环"),
+    "tiles": tr("磁贴"),
+    "compact": tr("紧凑"),
+    "minimal": tr("极简"),
+    "orb": tr("水球"),
 }
 STYLE_WINDOW_SIZES = {
     "classic": (320, 200),
@@ -79,87 +76,18 @@ ORB_WATER_MID = QColor("#3DDC97")
 ORB_WATER_DEEP = QColor("#1FA97A")
 
 
-def bundled_font_path() -> Path:
-    names = [BUNDLED_SANS_FONT]
-    roots = [Path(__file__).resolve().parent / "fonts"]
-    meipass = getattr(sys, "_MEIPASS", None)
-    if meipass:
-        roots.append(Path(meipass) / "codexio" / "fonts")
-        roots.append(Path(meipass) / "fonts")
-    if getattr(sys, "frozen", False):
-        roots.append(Path(sys.executable).resolve().parent / "codexio" / "fonts")
-        roots.append(Path(sys.executable).resolve().parent / "fonts")
-    for root in roots:
-        for name in names:
-            candidate = root / name
-            if candidate.is_file():
-                return candidate
-    return roots[0] / BUNDLED_SANS_FONT
-
-
 def register_bundled_fonts() -> Optional[str]:
-    global _fonts_registered, _resolved_family, _resolved_style
-    if _fonts_registered and _resolved_family:
-        return _resolved_family
-    logger = get_logger("visuals")
-    path = bundled_font_path()
-    _fonts_registered = True
-    if not path.is_file():
-        logger.warning("未找到内嵌字体，回退系统字体: %s", path)
-        return None
-    try:
-        font_id = QFontDatabase.addApplicationFont(str(path))
-    except Exception:
-        logger.exception("加载内嵌字体失败，回退系统字体: %s", path)
-        return None
-    if font_id < 0:
-        logger.warning("Qt 拒绝内嵌字体，回退系统字体: %s", path)
-        return None
-    families = QFontDatabase.applicationFontFamilies(font_id)
-    if not families:
-        logger.warning("内嵌字体没有可用族名，回退系统字体: %s", path)
-        return None
-    _resolved_family = families[0]
-    styles = QFontDatabase.styles(_resolved_family)
-    _resolved_style = "Text Regular" if "Text Regular" in styles else (styles[0] if styles else "")
-    logger.info("已加载字体 %s / %s", _resolved_family, _resolved_style or "Regular")
-    return _resolved_family
+    return display_font_family()
 
 
 def display_font_family() -> str:
-    global _resolved_family
-    if _resolved_family:
-        return _resolved_family
-    if not _fonts_registered:
-        register_bundled_fonts()
-        if _resolved_family:
-            return _resolved_family
-    available = set(QFontDatabase.families())
-    for name in ("Anthropic Sans Web", *_FALLBACK_FAMILIES):
-        if name in available:
-            _resolved_family = name
-            return name
-    _resolved_family = "Segoe UI"
-    return _resolved_family
+    return QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont).family()
 
 
 def display_font(pixel_size: int, bold: bool = False) -> QFont:
-    family = display_font_family()
-    style = _resolved_style or ""
-    try:
-        font = QFontDatabase.font(family, style, -1) if style else QFont(family)
-    except Exception:
-        font = QFont(family)
-    if not font.family():
-        font = QFont(family)
+    font = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
     font.setPixelSize(pixel_size)
-    font.setBold(False)
-    font.setWeight(QFont.Weight.Normal)
-    font.setStyleHint(QFont.StyleHint.SansSerif)
-    font.setStyleStrategy(
-        QFont.StyleStrategy.PreferMatch | QFont.StyleStrategy.PreferQuality
-    )
-    font.setFamilies([family, *_FALLBACK_FAMILIES])
+    font.setWeight(QFont.Weight.DemiBold if bold else QFont.Weight.Normal)
     return font
 
 
@@ -172,7 +100,7 @@ def format_percent_label(value: Optional[float]) -> str:
 def quota_hover_text(title: str, view: WindowView) -> str:
     if view.remaining_percent is None:
         return "%s  N/A" % title
-    return "%s  %s\n重置 %s" % (
+    return tr("%s  %s\n重置 %s") % (
         title,
         format_percent_label(view.remaining_percent),
         format_reset_time(view.resets_at),
@@ -709,7 +637,7 @@ class _BarRow(QWidget):
         self._title.setObjectName("rowTitle")
         self._percent = _ShadowLabel("N/A")
         self._percent.setObjectName("rowPercent")
-        self._reset = _ShadowLabel("重置 N/A")
+        self._reset = _ShadowLabel(tr("重置 N/A"))
         self._reset.setObjectName("rowReset")
         self._bar = _QuotaBar()
         self._animator = PercentAnimator(self)
@@ -731,12 +659,12 @@ class _BarRow(QWidget):
         if view.remaining_percent is None:
             self._color_percent = None
             self._percent.setStyleSheet("color: #D0D5DD;")
-            self._reset.setText("重置 N/A")
+            self._reset.setText(tr("重置 N/A"))
             self._animator.set_percent(None)
             return
         self._color_percent = view.remaining_percent
         self._percent.setStyleSheet("color: %s;" % percent_color(view.remaining_percent))
-        self._reset.setText("重置 %s" % format_reset_time(view.resets_at))
+        self._reset.setText(tr("重置 %s") % format_reset_time(view.resets_at))
         self._animator.set_percent(view.remaining_percent)
 
     def _on_animated(self, value: Optional[float]) -> None:
@@ -929,7 +857,7 @@ class _CompactItem(QWidget):
         if view.remaining_percent is None:
             self._color_percent = None
             self._percent.setStyleSheet("color: #D0D5DD;")
-            self._reset.setText("重置 N/A")
+            self._reset.setText(tr("重置 N/A"))
             self._animator.set_percent(None)
             return
         self._color_percent = view.remaining_percent

@@ -8,6 +8,8 @@ availability. No usage history, price catalog, credentials or network is read.
 """
 from __future__ import annotations
 
+from codexio.i18n import tr
+
 import json
 import os
 import re
@@ -132,14 +134,14 @@ def load_available_models(roots: list[str]) -> dict:
                 if previous is not None:
                     snapshots.append(previous)
     if not snapshots:
-        return {"models": [], "status": "unavailable", "reason": "未读取到本机 Codex 可用模型列表"}
+        return {"models": [], "status": "unavailable", "reason": tr("未读取到本机 Codex 可用模型列表")}
     result = {
         "models": list(dict.fromkeys(model for snapshot in snapshots for model in snapshot.models)),
         "status": "stale" if failures else "ok",
         "updated_at": min(snapshot.updated_at for snapshot in snapshots),
     }
     if failures:
-        result["reason"] = "部分本机模型列表暂不可读取；保留最近有效列表"
+        result["reason"] = tr("部分本机模型列表暂不可读取；保留最近有效列表")
     elif not result["models"]:
-        result["reason"] = "本机 Codex 模型列表暂无可显示模型"
+        result["reason"] = tr("本机 Codex 模型列表暂无可显示模型")
     return result

@@ -1,9 +1,10 @@
 """Presentation rules for locally observed weekly quota estimates."""
+from codexio.i18n import tr
 from datetime import datetime, timezone
 
 from codexio.money import usd
 
-ESTIMATE_HEADERS = ["套餐", "采样时间段", "额度", "Token", "费用", "周估值"]
+ESTIMATE_HEADERS = [tr("套餐"), tr("采样时间段"), tr("额度"), "Token", tr("费用"), tr("周估值")]
 
 
 def _time(value):
@@ -17,7 +18,7 @@ def _time(value):
 
 
 def method_label(row):
-    return "本地观测估值"
+    return tr("本地观测估值")
 
 
 def estimate_amount(row):
@@ -26,7 +27,7 @@ def estimate_amount(row):
 
 
 def estimate_detail(row):
-    return "按同一账号、套餐与额度周期内本机调用费用和额度变化估算；总 Token 仅用于展示。"
+    return tr("按同一账号、套餐与额度周期内本机调用费用和额度变化估算；总 Token 仅用于展示。")
 
 
 def estimate_history(data):
@@ -45,4 +46,4 @@ def select_estimates(data, now=None):
     local.sort(key=lambda r: r.get("end", ""), reverse=True)
     primary = local[0] if local else None
     return dict(primary=primary or {}, reference=None, cached=False,
-                message="按本机已计价调用与同期周额度变化估算。" if primary else "等待同一账号与套餐下足够的额度变化和已计价调用。")
+                message=tr("按本机已计价调用与同期周额度变化估算。") if primary else tr("等待同一账号与套餐下足够的额度变化和已计价调用。"))

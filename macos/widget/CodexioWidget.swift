@@ -6,7 +6,7 @@ import WidgetKit
 
 private let widgetKind = "com.wujuhu.codexio.request"
 
-private struct RequestSnapshot: Decodable {
+struct RequestSnapshot: Decodable {
     let prompt: String
     let model: String
     let reasoning_effort: String?
@@ -22,7 +22,7 @@ private struct RequestSnapshot: Decodable {
     let cache_hit_rate: Double?
 }
 
-private struct QuotaSnapshot: Decodable {
+struct QuotaSnapshot: Decodable {
     let applicable: Bool?
     let five_hour: Double?
     let week: Double?
@@ -30,16 +30,17 @@ private struct QuotaSnapshot: Decodable {
     let has_week: Bool?
     let five_hour_reset_at: Double?
     let week_reset_at: Double?
+    var reset_count: Int? = nil
 }
 
-private struct TodaySnapshot: Decodable {
+struct TodaySnapshot: Decodable {
     let cost_usd: Double?
     let tokens: Int?
     let requests: Int?
     let cache_hit_rate: Double?
 }
 
-private struct Snapshot: Decodable {
+struct Snapshot: Decodable {
     let schema: Int
     let updated_at: Double
     let request: RequestSnapshot?
@@ -100,7 +101,7 @@ private func compactContext(_ count: Int?) -> String? {
 }
 
 private func modelDetail(_ request: RequestSnapshot, family: WidgetFamily) -> String {
-    var parts = [request.model.isEmpty ? "等待模型调用" : request.model]
+    var parts = [request.model.isEmpty ? WL("等待模型调用", "Waiting for a model call") : request.model]
     if let effort = request.reasoning_effort, !effort.isEmpty { parts.append(effort) }
     if family != .systemSmall {
         let tier = (request.service_tier ?? "").lowercased()
@@ -112,6 +113,10 @@ private func modelDetail(_ request: RequestSnapshot, family: WidgetFamily) -> St
 
 private func staticDuration(_ milliseconds: Double?) -> String {
     guard let milliseconds, milliseconds.isFinite, milliseconds >= 0 else { return "—" }
+    if Bundle.main.preferredLocalizations.first?.hasPrefix("zh") != true {
+        let formatter = DateComponentsFormatter(); formatter.allowedUnits = milliseconds >= 3_600_000 ? [.hour, .minute] : [.minute, .second]; formatter.unitsStyle = .abbreviated
+        return formatter.string(from: milliseconds / 1000) ?? "—"
+    }
     let seconds = Int(milliseconds / 1_000)
     if seconds < 60 { return "\(seconds)秒" }
     let minutes = seconds / 60
@@ -204,7 +209,7 @@ private struct CodexioWidgetView: View {
     @ViewBuilder
     private func requestBody(_ request: RequestSnapshot, quota: QuotaSnapshot, today: TodaySnapshot?) -> some View {
         Spacer(minLength: 0)
-        Text(request.prompt.isEmpty ? "等待请求内容" : request.prompt)
+        Text(request.prompt.isEmpty ? WL("等待请求内容", "Waiting for a request") : request.prompt)
             .font(.system(size: family == .systemSmall ? 13 : 15, weight: .semibold))
             .lineLimit(family == .systemLarge ? 3 : 2)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -216,21 +221,21 @@ private struct CodexioWidgetView: View {
         Divider().padding(.vertical, family == .systemLarge ? 9 : 7)
         if family == .systemMedium {
             HStack(alignment: .top, spacing: 0) {
-                Metric(title: "费用", value: request.cost_usd.map { String(format: "$%.2f", $0) } ?? "—")
+                Metric(title: WL("费用", "Cost"), value: request.cost_usd.map { String(format: "$%.2f", $0) } ?? "—")
                     .frame(maxWidth: .infinity, alignment: .leading)
                 durationMetric(request)
-                Metric(title: "总 Token", value: compactNumber(request.input_tokens + request.output_tokens))
+                Metric(title: WL("总 Token", "Total tokens"), value: compactNumber(request.input_tokens + request.output_tokens))
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Metric(title: "命中率", value: request.cache_hit_rate.map { String(format: "%.1f%%", $0 * 100) } ?? "—")
+                Metric(title: WL("命中率", "Cache hit"), value: request.cache_hit_rate.map { String(format: "%.1f%%", $0 * 100) } ?? "—")
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else {
             HStack(alignment: .top, spacing: family == .systemLarge ? 12 : 8) {
-                Metric(title: "费用", value: request.cost_usd.map { String(format: "$%.2f", $0) } ?? "—")
+                Metric(title: WL("费用", "Cost"), value: request.cost_usd.map { String(format: "$%.2f", $0) } ?? "—")
                     .frame(maxWidth: .infinity, alignment: .leading)
                 durationMetric(request)
                 if family == .systemLarge {
-                    Metric(title: "命中率", value: request.cache_hit_rate.map { String(format: "%.1f%%", $0 * 100) } ?? "—")
+                    Metric(title: WL("命中率", "Cache hit"), value: request.cache_hit_rate.map { String(format: "%.1f%%", $0 * 100) } ?? "—")
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
@@ -238,22 +243,22 @@ private struct CodexioWidgetView: View {
         if family == .systemLarge {
             Divider().padding(.vertical, 9)
             HStack(alignment: .top, spacing: 12) {
-                Metric(title: "输入 Token", value: compactNumber(request.input_tokens))
+                Metric(title: WL("输入 Token", "Input tokens"), value: compactNumber(request.input_tokens))
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Metric(title: "输出 Token", value: compactNumber(request.output_tokens))
+                Metric(title: WL("输出 Token", "Output tokens"), value: compactNumber(request.output_tokens))
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Metric(title: "缓存读取", value: compactNumber(request.cached_input_tokens))
+                Metric(title: WL("缓存读取", "Cached input"), value: compactNumber(request.cached_input_tokens))
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             Divider().padding(.vertical, 9)
             HStack(alignment: .top, spacing: 8) {
-                Metric(title: "今日费用", value: today?.cost_usd.map { String(format: "$%.2f", $0) } ?? "—")
+                Metric(title: WL("今日费用", "Today’s cost"), value: today?.cost_usd.map { String(format: "$%.2f", $0) } ?? "—")
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Metric(title: "今日 Token", value: today?.tokens.map(compactNumber) ?? "—")
+                Metric(title: WL("今日 Token", "Today’s tokens"), value: today?.tokens.map(compactNumber) ?? "—")
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Metric(title: "今日请求数", value: today?.requests.map(compactNumber) ?? "—")
+                Metric(title: WL("今日请求数", "Today’s requests"), value: today?.requests.map(compactNumber) ?? "—")
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Metric(title: "今日命中率", value: today?.cache_hit_rate.map { String(format: "%.1f%%", $0 * 100) } ?? "—")
+                Metric(title: WL("今日命中率", "Today’s cache hit"), value: today?.cache_hit_rate.map { String(format: "%.1f%%", $0 * 100) } ?? "—")
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -263,28 +268,28 @@ private struct CodexioWidgetView: View {
         let showWeek = quotaUnavailable || (quota.has_week ?? (quota.week != nil))
         if family == .systemSmall {
             if showFiveHour {
-                QuotaLine(title: "5 小时", remaining: quota.five_hour,
+                QuotaLine(title: WL("5 小时", "5 hour"), remaining: quota.five_hour,
                           resetAt: quota.five_hour_reset_at, timeOnly: true)
             } else {
-                QuotaLine(title: "周", remaining: quota.week, resetAt: quota.week_reset_at)
+                QuotaLine(title: WL("周", "Weekly"), remaining: quota.week, resetAt: quota.week_reset_at)
             }
         } else if showFiveHour && showWeek {
             GeometryReader { geometry in
                 HStack(spacing: 0) {
-                    QuotaLine(title: "5 小时", remaining: quota.five_hour,
+                    QuotaLine(title: WL("5 小时", "5 hour"), remaining: quota.five_hour,
                               resetAt: quota.five_hour_reset_at, timeOnly: true)
                         .frame(width: geometry.size.width / 2 - 12)
                     Color.clear.frame(width: 12)
-                    QuotaLine(title: "周", remaining: quota.week, resetAt: quota.week_reset_at)
+                    QuotaLine(title: WL("周", "Weekly"), remaining: quota.week, resetAt: quota.week_reset_at)
                         .frame(width: geometry.size.width / 2)
                 }
             }
             .frame(height: 24)
         } else if showFiveHour {
-            QuotaLine(title: "5 小时", remaining: quota.five_hour,
+            QuotaLine(title: WL("5 小时", "5 hour"), remaining: quota.five_hour,
                       resetAt: quota.five_hour_reset_at, timeOnly: true)
         } else {
-            QuotaLine(title: "周", remaining: quota.week, resetAt: quota.week_reset_at)
+            QuotaLine(title: WL("周", "Weekly"), remaining: quota.week, resetAt: quota.week_reset_at)
         }
         Spacer(minLength: 0)
     }
@@ -329,5 +334,6 @@ private struct CodexioRequestWidget: Widget {
 struct CodexioWidgetBundle: WidgetBundle {
     var body: some Widget {
         CodexioRequestWidget()
+        CodexioQuotaWidget()
     }
 }

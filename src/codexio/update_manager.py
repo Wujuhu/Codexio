@@ -1,6 +1,8 @@
 """Coordinate background updates with the application's normal shutdown."""
 from __future__ import annotations
 
+from codexio.i18n import tr
+
 import os
 import sys
 import threading
@@ -47,11 +49,11 @@ class UpdateManager(QObject):
     def start(self, enabled: bool = True) -> None:
         self._enabled = enabled
         if not self._available:
-            self.status_changed.emit("源码和预览模式不安装更新", True)
+            self.status_changed.emit(tr("源码和预览模式不安装更新"), True)
             return
         self._timer.start()
         self._cleanup_timer.start()
-        self.status_changed.emit("启动后自动检查新版" if enabled else "自动更新已关闭", False)
+        self.status_changed.emit(tr("启动后自动检查新版") if enabled else tr("自动更新已关闭"), False)
         if os.environ.pop("CODEXIO_SKIP_UPDATE_ONCE", "") != "1":
             QTimer.singleShot(5000, self._automatic_check)
 
@@ -67,7 +69,7 @@ class UpdateManager(QObject):
         elif changed and enabled and not self._busy:
             QTimer.singleShot(500, self._automatic_check)
         if not self._busy and self._available:
-            self.status_changed.emit("自动更新已开启" if enabled else "自动更新已关闭", False)
+            self.status_changed.emit(tr("自动更新已开启") if enabled else tr("自动更新已关闭"), False)
 
     def _automatic_check(self) -> None:
         if self._enabled and not self._closing:
@@ -81,7 +83,7 @@ class UpdateManager(QObject):
         self._job = None
         self._committed = False
         self._cancel = threading.Event()
-        self.status_changed.emit("正在检查新版…", True)
+        self.status_changed.emit(tr("正在检查新版…"), True)
         threading.Thread(target=self._run, name="Codexio-update", daemon=True).start()
 
     def _emit(self, event) -> None:
@@ -93,24 +95,24 @@ class UpdateManager(QObject):
         try:
             release = fetch_release(__version__)
             if self._cancel.is_set():
-                raise UpdateCancelled("已取消更新")
+                raise UpdateCancelled(tr("已取消更新"))
             if release is None:
-                self._emit(("finished", "已是最新版本。"))
+                self._emit(("finished", tr("已是最新版本。")))
                 return
             directory = new_job_dir()
-            self._emit(("progress", "发现新版 %s，正在下载…" % release.version))
+            self._emit(("progress", tr("发现新版 %s，正在下载…") % release.version))
             download_release(release, directory / "package.bin", self._cancel,
-                             lambda value: self._emit(("progress", "正在下载 %s · %d%%" % (release.version, value))))
-            self._emit(("progress", "校验通过，正在准备安装…"))
+                             lambda value: self._emit(("progress", tr("正在下载 %s · %d%%") % (release.version, value))))
+            self._emit(("progress", tr("校验通过，正在准备安装…")))
             job = launch_installer(directory, release, self._cancel)
             self._emit(("ready", job))
         except UpdateCancelled as exc:
             if directory:
                 _state(directory, "cancelled", str(exc))
-            self._emit(("finished", "已取消自动更新"))
+            self._emit(("finished", tr("已取消自动更新")))
         except Exception as exc:
-            message = str(exc) if isinstance(exc, UpdateError) else "更新失败，请稍后重试"
-            self._logger.warning("更新未完成：%s", exc)
+            message = str(exc) if isinstance(exc, UpdateError) else tr("更新失败，请稍后重试")
+            self._logger.warning(tr("更新未完成：%s"), exc)
             if directory:
                 _state(directory, "failed", message)
             self._emit(("finished", message))
@@ -127,9 +129,9 @@ class UpdateManager(QObject):
             if self._cancel.is_set() or (not self._manual and not self._enabled):
                 cancel_job(value)
                 self._busy = False
-                self.status_changed.emit("已取消自动更新", False)
+                self.status_changed.emit(tr("已取消自动更新"), False)
                 return
-            self.status_changed.emit("新版已就绪，即将自动重启…", True)
+            self.status_changed.emit(tr("新版已就绪，即将自动重启…"), True)
             QTimer.singleShot(1200, self._commit_install)
         elif kind == "progress":
             self.status_changed.emit(value, True)
@@ -148,7 +150,7 @@ class UpdateManager(QObject):
             cancel_job(self._job)
             self._committed = False
             self._busy = False
-            self.status_changed.emit("未能开始安装：" + str(exc), False)
+            self.status_changed.emit(tr("未能开始安装：") + str(exc), False)
 
     def _cleanup(self) -> None:
         try:

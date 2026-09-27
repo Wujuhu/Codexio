@@ -30,8 +30,8 @@
 
 # 当前开发流程
 
-- 当前开发版本为 `0.2.10`，Mac 与 Windows 共享功能代码；Mac 保留本地开发打包，Windows 正式 EXE 在确认发布后的 CI 阶段构建，Windows 不包含 macOS WidgetKit 小组件。
-- 本轮开发已获确认；推送和发布仍必须等待用户开发验收后的第二次明确确认。0.2.10 正式附件固定为同版本的 Windows EXE、Mac APP ZIP 与合并清单；Windows 构建或任一跨平台校验失败时保持草稿，不发布残缺版本。
+- 当前开发版本为 `0.3.1`，Mac 全量迁移 Swift，Windows 保留 Python/PySide6；两端共享产品行为与数据口径；Mac 保留本地开发打包，Windows 正式 EXE 在确认发布后的 CI 阶段构建，Windows 不包含 macOS WidgetKit 小组件。
+- 本轮开发已获确认；推送和发布仍必须等待用户开发验收后的第二次明确确认。0.3.1 正式附件固定为同版本的 Windows EXE、Mac APP ZIP 与合并清单；Windows 构建或任一跨平台校验失败时保持草稿，不发布残缺版本。
 - 每次修改完成并通过验证、开发打包后，提交到本地 Git；开发打包不等于确认正式发布。
 - 未经用户新的明确授权，不执行 `git push`、GitHub 发布或其他远程变更。
 
@@ -49,6 +49,6 @@
 - 仅在用户明确授权发布后执行。Tag 和 Release 标题统一为 `v<版本号>`，例如 `v0.2.4`；正文留空，不添加更新说明或附件描述。
 - 附件只使用已验证的 `Codexio.exe`、`Codexio.app.zip` 和 `latest.json`，共三个文件。Windows 工作流在草稿中直接加入 EXE 并替换最终合并清单；发布后 Mac 协调脚本下载同一组附件到 `release/<版本号>/` 再次核验。分别核对各平台程序与对应清单中的版本、文件大小及 SHA-256，不生成 Windows 独占清单。
 - 先验证 Mac 开发包并提交，再在用户明确发布后由协调脚本推送 `main`，确认远程精确包含本次提交。新 Tag 基于远程 `main` 创建；已有 Tag 或正式 Release 不自动覆盖。
-- 发布协调命令（替换版本号）为 `.venv/bin/python scripts/publish_release_from_macos.py --version 0.2.10 --confirm-publish`。需要继续同一提交的失败草稿时必须显式加 `--resume-draft`；远程已成功而本地归档缺失时只可用 `--sync-only` 补齐。
+- 发布协调命令（替换版本号）为 `.venv/bin/python scripts/publish_release_from_macos.py --version 0.3.1 --confirm-publish`。需要继续同一提交的失败草稿时必须显式加 `--resume-draft`；远程已成功而本地归档缺失时只可用 `--sync-only` 补齐。
 - 协调脚本先用 UTF-8 零字节正文创建草稿并上传 Mac ZIP 与开发清单，再触发 Windows 工作流。工作流只有在 Windows 版本、PE 头、Mac ZIP、两端大小、SHA-256、Tag、标题、空正文和三个附件全部正确时才发布并标记 latest。
 - 发布后协调脚本核验远程 Tag、标题、空正文与附件，下载三个附件到临时目录，通过相同校验后创建本地正式目录，并执行 `git fetch origin tag v<版本号>`。

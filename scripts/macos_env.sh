@@ -27,14 +27,11 @@ if [[ ! -x .venv/bin/python ]]; then
 fi
 CODEXIO_VENV_PYTHON="$CODEXIO_ROOT/.venv/bin/python"
 "$CODEXIO_VENV_PYTHON" -c 'import sys; assert (3,12) <= sys.version_info[:2] < (3,14), "macOS 开发环境需要 Python 3.12 或 3.13"'
-CODEXIO_DEPS_HASH="$("$CODEXIO_VENV_PYTHON" -c 'import hashlib; from pathlib import Path; print(hashlib.sha256(b"".join(Path(p).read_bytes() for p in ("requirements.txt", "requirements-macos.txt"))).hexdigest())')"
-CODEXIO_DEPS_MARKER=".venv/.codexio-macos-dependencies"
-CODEXIO_SAVED_HASH=""
-if [[ -f "$CODEXIO_DEPS_MARKER" ]]; then
-    CODEXIO_SAVED_HASH="$("$CODEXIO_VENV_PYTHON" -c 'from pathlib import Path; print(Path(".venv/.codexio-macos-dependencies").read_text(encoding="utf-8").strip())')"
-fi
-if [[ "$CODEXIO_DEPS_HASH" != "$CODEXIO_SAVED_HASH" ]]; then
-    "$CODEXIO_VENV_PYTHON" -m pip install -r requirements-macos.txt
-    printf '%s\n' "$CODEXIO_DEPS_HASH" > "$CODEXIO_DEPS_MARKER"
-fi
 export PYTHONPATH="$CODEXIO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
+if [[ -z "${DEVELOPER_DIR:-}" && -d /Applications/Xcode.app/Contents/Developer ]]; then
+    export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+fi
+if ! xcrun --find swiftc >/dev/null 2>&1; then
+    echo "请安装完整 Xcode（含 Swift 与 macOS SDK）。" >&2
+    exit 1
+fi

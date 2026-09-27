@@ -1,3 +1,2 @@
--r requirements.txt
-PySide6-Essentials==6.9.3
-pyinstaller==6.22.3
+# Mac 构建脚本只使用 Python 标准库。App 与 Widget 由 Xcode Swift 工具链构建。
+# Windows 开发依赖保留在 requirements.txt；Mac App 不嵌入 Python 或 Qt。

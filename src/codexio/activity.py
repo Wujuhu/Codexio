@@ -1,11 +1,13 @@
 """A bounded, local-calendar view of recorded daily Token usage."""
 from __future__ import annotations
 
+from codexio.i18n import tr
+
 import bisect
 import math
 from datetime import date, datetime, time, timedelta
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QDate, QLocale, QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
@@ -26,12 +28,14 @@ class UsageActivity(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._theme = "system"
+        self._mode = "day"
+        self._buckets = []
         self._tooltip = ChartTooltip(self)
         self._hover = None
         self._focused = date.today()
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.setAccessibleName("每日 Token 活动；方向键选择日期，回车查看日志")
+        self.setAccessibleName(tr("每日 Token 活动；方向键选择日期，回车查看日志"))
         self.setMinimumWidth(570)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.set_buckets([])
@@ -41,7 +45,12 @@ class UsageActivity(QWidget):
         self._tooltip.hide()
         self.update()
 
+    def set_mode(self, mode):
+        self._mode = mode
+        self.set_buckets(self._buckets)
+
     def set_buckets(self, buckets, now=None):
+        self._buckets = list(buckets)
         start, end = activity_bounds(now)
         self.start, self.end = start.date(), end.date()
         self._grid_start = self.start - timedelta(days=self.start.weekday())
@@ -51,7 +60,22 @@ class UsageActivity(QWidget):
             stamp = stamp.astimezone() if isinstance(stamp, datetime) else parse_timestamp(stamp)
             if stamp is not None and self.start <= stamp.date() <= self.end:
                 self.days[stamp.date()] = dict(bucket, timestamp=stamp)
-        positive = sorted(int(row.get("tokens") or 0) for row in self.days.values() if (row.get("tokens") or 0) > 0)
+        self._display_days = dict(self.days)
+        if self._mode == "cumulative":
+            tokens = calls = 0
+            for offset in range((self.end - self.start).days + 1):
+                day = self.start + timedelta(days=offset)
+                tokens += self.days.get(day, {}).get("tokens") or 0
+                calls += self.days.get(day, {}).get("requests") or 0
+                self._display_days[day] = dict(tokens=tokens, requests=calls)
+        elif self._mode == "week":
+            self._display_days = {}
+            for day, row in self.days.items():
+                key = max(self.start, day - timedelta(days=day.weekday()))
+                current = self._display_days.setdefault(key, dict(tokens=0, requests=0))
+                current["tokens"] += row.get("tokens") or 0
+                current["requests"] += row.get("requests") or 0
+        positive = sorted(int(row.get("tokens") or 0) for row in self._display_days.values() if (row.get("tokens") or 0) > 0)
         self._thresholds = []
         for quarter in (1, 2, 3):
             if positive:
@@ -70,13 +94,13 @@ class UsageActivity(QWidget):
     def summary_text(self):
         occupied = [row for row in self.days.values() if row.get("requests", 0) or row.get("tokens", 0)]
         if not occupied:
-            return "近一年暂无活动记录"
+            return tr("近一年暂无活动记录")
         known = [row["tokens"] for row in occupied if row.get("tokens") is not None]
-        amount = compact_number(sum(known)) + " Token" if known else "Token 暂无有效数据"
-        return "%s 天有记录 · %s" % (len(occupied), amount)
+        amount = compact_number(sum(known)) + " Token" if known else tr("Token 暂无有效数据")
+        return tr("%s 天有记录 · %s") % (len(occupied), amount)
 
     def level(self, day):
-        amount = int(self.days.get(day, {}).get("tokens") or 0)
+        amount = int(self._display_days.get(day, {}).get("tokens") or 0)
         return min(4, 1 + bisect.bisect_right(self._thresholds, amount * 4)) if amount > 0 else 0
 
     def cell_geometry(self):
@@ -84,6 +108,9 @@ class UsageActivity(QWidget):
         gap = 4 if self.width() >= 900 else 3 if self.width() >= 730 else 2
         size = min(16.0, (self.width() - 34) / weeks - gap)
         step = size + gap
+        if self._mode == "week":
+            return [(max(self.start, self._grid_start + timedelta(days=index * 7)),
+                     QRectF(28 + index * step, 26, size, 44)) for index in range(weeks)]
         return [(self._grid_start + timedelta(days=index),
                  QRectF(28 + (index // 7) * step, 26 + (index % 7) * step, size, size))
                 for index in range((self.end - self._grid_start).days + 1)
@@ -113,9 +140,9 @@ class UsageActivity(QWidget):
         months = set()
         for day, rect in geometry:
             month = (day.year, day.month)
-            if month not in months and (day == self.start or day.day == 1):
+            if month not in months and (self._mode == "week" or day == self.start or day.day == 1):
                 painter.setPen(QColor(colors["muted"]))
-                painter.drawText(QRectF(rect.left(), 0, 36, 19), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "%d月" % day.month)
+                painter.drawText(QRectF(rect.left(), 0, 36, 19), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, QLocale.system().toString(QDate(day.year, day.month, day.day), "MMM"))
                 months.add(month)
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(colors["activity_%d" % self.level(day)] if self.level(day) else colors["activity_empty"]))
@@ -125,35 +152,33 @@ class UsageActivity(QWidget):
                 painter.setPen(QPen(QColor(colors["text"]), 1.4))
                 painter.drawRoundedRect(rect.adjusted(-1, -1, 1, 1), 2, 2)
         painter.setPen(QColor(colors["muted"]))
-        for weekday, label in ((0, "一"), (2, "三"), (4, "五")):
+        for weekday, label in (() if self._mode == "week" else ((0, tr("一")), (2, tr("三")), (4, tr("五")))):
             rect = next((rect for day, rect in geometry if day.weekday() == weekday), None)
             if rect is not None:
                 painter.drawText(QRectF(0, rect.top() - 2, 20, rect.height() + 4), Qt.AlignmentFlag.AlignVCenter, label)
         baseline = self.height() - 22
-        painter.drawText(QRectF(0, baseline, self.width() - 160, 20), Qt.AlignmentFlag.AlignVCenter, "点击方格查看当天日志")
         left = self.width() - 144
-        painter.drawText(QRectF(left, baseline, 20, 20), Qt.AlignmentFlag.AlignVCenter, "少")
+        painter.drawText(QRectF(left, baseline, 20, 20), Qt.AlignmentFlag.AlignVCenter, tr("少"))
         for level in range(5):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(colors["activity_%d" % level] if level else colors["activity_empty"]))
             painter.drawRoundedRect(QRectF(left + 24 + level * 17, baseline + 4, 12, 12), 2, 2)
         painter.setPen(QColor(colors["muted"]))
-        painter.drawText(QRectF(left + 113, baseline, 24, 20), Qt.AlignmentFlag.AlignVCenter, "多")
+        painter.drawText(QRectF(left + 113, baseline, 24, 20), Qt.AlignmentFlag.AlignVCenter, tr("多"))
         painter.end()
 
     def _day_at(self, position):
         return next((day for day, rect in self.cell_geometry() if rect.contains(position)), None)
 
     def tooltip_text(self, day):
-        lines = [day.strftime("%Y/%m/%d") + " · 周" + "一二三四五六日"[day.weekday()]]
-        row = self.days.get(day, {})
+        lines = [QLocale.system().toString(QDate(day.year, day.month, day.day), "yyyy/MM/dd ddd")]
+        row = self._display_days.get(day, {})
         if not row.get("requests") and not row.get("tokens"):
-            return "\n".join(lines + ["暂无记录"])
-        lines.extend(["Total Token  暂无有效数据" if row.get("tokens") is None else "Total Token  {:,}".format(row["tokens"]),
-                      "请求数  {:,}".format(row.get("requests", 0)),
-                      "价格  " + usd(row.get("usd"))])
+            return "\n".join(lines + [tr("暂无记录")])
+        lines.extend([tr("Total Token  暂无有效数据") if row.get("tokens") is None else "Total Token  {:,}".format(row["tokens"]),
+                      tr("模型调用  {:,}").format(row.get("requests", 0))])
         if row.get("unpriced"):
-            lines.append("%d 次请求未定价" % row["unpriced"])
+            lines.append(tr("%d 次请求未定价") % row["unpriced"])
         return "\n".join(lines)
 
     def mouseMoveEvent(self, event):
@@ -167,8 +192,10 @@ class UsageActivity(QWidget):
 
     def _activate(self, day):
         self._tooltip.hide()
-        stamp = datetime.combine(day, time.min).astimezone()
-        self.day_clicked.emit(dict(self.days.get(day, {}), timestamp=stamp))
+        first = self.start if self._mode == "cumulative" else day
+        last = min(self.end, day + timedelta(days=6 - day.weekday())) if self._mode == "week" else day
+        stamp = datetime.combine(first, time.min).astimezone()
+        self.day_clicked.emit(dict(self._display_days.get(day, {}), timestamp=stamp, through=last))
 
     def mousePressEvent(self, event):
         day = self._day_at(event.position())

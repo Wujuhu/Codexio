@@ -1,6 +1,8 @@
 """Background metering coordinator; the GUI never scans conversation files."""
 from __future__ import annotations
 
+from codexio.i18n import tr
+
 import copy
 import hashlib
 import json
@@ -52,9 +54,6 @@ def _cost(record):
         return None
 
 
-def _remote_source_id(kind, source):
-    value = str(source.get("id") or source.get("host"))
-    return value if value.startswith(kind + ":") else kind + ":" + value
 
 
 def summarize(records: list[dict], now: datetime | None = None) -> dict:
@@ -102,7 +101,7 @@ class UsageWorker(QThread):
         self._config_changed = threading.Event()
         self._store = None
         self._catalog = None
-        self._scan_status = "正在建立用量索引"
+        self._scan_status = tr("正在建立用量索引")
         self._initial_loading = True
         self._loading_stage = None
         self._estimates_visible = False
@@ -184,8 +183,6 @@ class UsageWorker(QThread):
         if self._mock:
             return {"local"}
         active = {source_id for source_id, _root in self._local_sources()}
-        for kind in ("ssh",):
-            active.update(_remote_source_id(kind, s) for s in self._config.get(kind + "_sources", []) if s.get("enabled", True))
         return active
 
     def _report_initial_loading(self, stage: str) -> None:
@@ -202,7 +199,7 @@ class UsageWorker(QThread):
     def run(self) -> None:
         # Emit from the running thread, before reading SQLite or price files, so
         # the GUI can show an indeterminate progress indicator immediately.
-        self._report_initial_loading("正在准备本地用量数据")
+        self._report_initial_loading(tr("正在准备本地用量数据"))
         try:
             from codexio.usage_store import UsageStore
             from codexio.usage_collector import Collector
@@ -217,20 +214,20 @@ class UsageWorker(QThread):
             collector = Collector(self._store)
             self._run_loop(collector)
         except Exception as exc:
-            logger.exception("用量统计服务异常")
-            self.progress_changed.emit("用量服务启动失败，请检查运行日志")
-            self._finish_initial_loading("用量数据加载失败", "用量服务启动失败（%s），请检查运行日志" % type(exc).__name__)
+            logger.exception(tr("用量统计服务异常"))
+            self.progress_changed.emit(tr("用量服务启动失败，请检查运行日志"))
+            self._finish_initial_loading(tr("用量数据加载失败"), tr("用量服务启动失败（%s），请检查运行日志") % type(exc).__name__)
         finally:
             # Stopping before the first publication cancels loading; it must
             # not leave a busy indicator running or claim data was loaded.
-            self._finish_initial_loading("已停止加载")
+            self._finish_initial_loading(tr("已停止加载"))
 
     def _run_loop(self, collector) -> None:
-        dirty, next_remote, next_publish, next_sync = True, 0.0, 0.0, 0.0
+        dirty, next_publish, next_sync = True, 0.0, 0.0
         startup_price_sync = True
         startup_sync_inflight = False
         if self._mock:
-            self._report_initial_loading("正在准备模拟用量数据")
+            self._report_initial_loading(tr("正在准备模拟用量数据"))
             self._seed_mock()
         elif self._config.get("auto_sync_prices"):
             # Start the network check at process startup while the normal scan
@@ -238,13 +235,13 @@ class UsageWorker(QThread):
             startup_price_sync = False
             startup_sync_inflight = True
             next_sync = time.monotonic() + 86400
-            self.progress_changed.emit("正在同步模型价格")
+            self.progress_changed.emit(tr("正在同步模型价格"))
 
             def sync_on_launch():
                 try:
                     result = self._catalog.sync(force=False)
                 except Exception:
-                    logger.exception("启动时模型价格同步失败，沿用已缓存价格")
+                    logger.exception(tr("启动时模型价格同步失败，沿用已缓存价格"))
                     result = {"status": "offline"}
                 self._commands.put(("startup_price_sync_done", result))
                 self._wake.set()
@@ -272,7 +269,7 @@ class UsageWorker(QThread):
                         if self._rolling is not None:
                             self._rolling.configure(value.get("week_estimate_interval_minutes", DEFAULT_WEEK_ESTIMATE_INTERVAL))
                         self._config_changed.clear()
-                        next_remote = 0
+                        dirty = True
                         if self._config.get("auto_sync_prices") and not was_auto_sync:
                             next_sync = 0
                     elif command == "weekly_sample":
@@ -300,7 +297,7 @@ class UsageWorker(QThread):
                         if self._rolling is not None:
                             self._rolling.invalidate()
                     elif command == "rescan":
-                        self._store.clear_index()
+                        self._store.reset_local_cursors()
                         collector.invalidate()
                         if self._mock:
                             self._seed_mock()
@@ -313,38 +310,31 @@ class UsageWorker(QThread):
                         next_sync = time.monotonic() + value.get("next_check_seconds",
                             3600 if value.get("status") == "offline" else 86400)
                     elif command == "refresh":
-                        next_remote = 0
+                        dirty = True
                     elif command == "estimates_visible":
                         self._estimates_visible = value
                     dirty = publish_for_command or dirty
                 except Exception:
-                    logger.exception("用量操作失败: %s", command)
-                    self.progress_changed.emit("操作失败，已保留现有数据")
+                    logger.exception(tr("用量操作失败: %s"), command)
+                    self.progress_changed.emit(tr("操作失败，已保留现有数据"))
             if not self._mock:
-                self._report_initial_loading("正在扫描本机日志")
+                self._report_initial_loading(tr("正在扫描本机日志"))
                 for index, (source_id, root) in enumerate(self._local_sources()):
                     if self._cancel_requested():
                         break
                     try:
-                        result = collector.scan(root, source_id=source_id, source_name="本机" if index == 0 else root.name,
+                        result = collector.scan(root, source_id=source_id, source_name=tr("本机") if index == 0 else root.name,
                                                 account_since=self._config.get("account_since"), stop=self._cancel_requested)
                         dirty = bool(result.get("changed")) or dirty
-                        self._scan_status = result.get("error") or "已索引 %s 个日志文件" % result.get("indexed_files", result.get("files", 0))
+                        self._scan_status = result.get("error") or tr("已索引 %s 个日志文件") % result.get("indexed_files", result.get("files", 0))
                         if self._scan_status != self._last_progress:
                             self._last_progress = self._scan_status
                             self.progress_changed.emit(self._scan_status)
                     except Exception:
-                        logger.exception("本地计量扫描失败")
-                        self._store.set_source_status(source_id, status="error", name="本机", error="日志扫描失败", last_scan_at=utc_now())
-                        self._scan_status = "部分来源读取失败"
+                        logger.exception(tr("本地计量扫描失败"))
+                        self._store.set_source_status(source_id, status="error", name=tr("本机"), error=tr("日志扫描失败"), last_scan_at=utc_now())
+                        self._scan_status = tr("部分来源读取失败")
                         dirty = True
-                if time.monotonic() >= next_remote:
-                    if any(s.get("enabled", True) for kind in ("ssh",)
-                           for s in self._config.get(kind + "_sources", [])):
-                        self._report_initial_loading("正在同步远程用量")
-                    if self._config.get("ssh_sources"):
-                        dirty = self._collect_remote() or dirty
-                    next_remote = time.monotonic() + 60
             if self._stop_event.is_set():
                 break
             if self._quota_applicable and self._rolling is not None and self._rolling.ready(time.time()):
@@ -355,11 +345,11 @@ class UsageWorker(QThread):
                 next_publish = time.monotonic() + self._next_publish_delay()
             if not self._mock and not startup_sync_inflight and not self._cancel_requested() and (force_sync or (
                     self._config.get("auto_sync_prices") and (startup_price_sync or time.monotonic() >= next_sync))):
-                self.progress_changed.emit("正在同步模型价格")
+                self.progress_changed.emit(tr("正在同步模型价格"))
                 try:
                     result = self._catalog.sync(force=force_sync or startup_price_sync)
                 except Exception:
-                    logger.exception("模型价格同步失败，沿用已缓存价格")
+                    logger.exception(tr("模型价格同步失败，沿用已缓存价格"))
                     result = {"status": "offline"}
                 # Each launch checks online once; while running, successful checks
                 # recur after 24 hours and failed checks retry after one hour.
@@ -378,43 +368,20 @@ class UsageWorker(QThread):
         seconds = [(deadline - now).total_seconds() for deadline in deadlines if deadline is not None and deadline > now]
         return max(1.0, min([3600.0, *seconds]))
 
-    def _collect_remote(self) -> bool:
-        from codexio.remote_collector import collect_ssh
-        changed = False
-        for source in self._config.get("ssh_sources", []):
-            if not source.get("enabled", True) or self._stop_event.is_set():
-                continue
-            if self._config_changed.is_set():
-                return changed
-            source_id = _remote_source_id("ssh", source)
-            try:
-                cursors = self._store.get_meta("cursor:" + source_id) or {}
-                result = collect_ssh(dict(source, id=source_id, account_since=self._config.get("account_since")), cursors, timeout=30)
-                if self._cancel_requested():
-                    raise InterruptedError("collection cancelled")
-                changed = bool(self._store.import_frames(result, source_id, meta_key="cursor:" + source_id)) or changed
-                changed = bool(self._store.update_session_titles(result.get("titles") or {})) or changed
-                diagnostics = result.get("diagnostics") or {}
-                if (result.get("errors") or result.get("partial_files") or result.get("deferred_files")
-                        or any(diagnostics.get(key) for key in ("ambiguous_cumulative", "missing_baseline", "malformed_lines"))):
-                    raise RuntimeError("remote history incomplete")
-                changed = self._store.set_source_status(source_id, name=source.get("name") or source.get("host"),
-                                                        status="ok", last_scan_at=utc_now(), error=None) or changed
-            except InterruptedError:
-                return self._store.set_source_status(source_id, status="cancelled", error="采集已暂停，等待后续同步", last_scan_at=utc_now()) or changed
-            except Exception as exc:
-                logger.warning("SSH 用量同步失败: %s", type(exc).__name__)
-                changed = self._store.set_source_status(source_id, name=source.get("name") or source.get("host"),
-                                                        status="error", error="连接或采集失败，请检查主机、认证和 Python 配置", last_scan_at=utc_now()) or changed
-        return changed
 
     def _publish(self) -> None:
-        self._report_initial_loading("正在汇总用量数据")
+        self._report_initial_loading(tr("正在汇总用量数据"))
         from codexio.available_models import load_available_models
         from codexio.usage_queries import UsageQueries
         sources = [source for source in self._store.sources() if not str(source.get("id", source.get("source_id", ""))).startswith("lan:")]
         queries = UsageQueries(self._store.path)
         generation = queries.rebuild(self._catalog, sources)
+        if getattr(self, "_activity_generation", None) != (generation, datetime.now().astimezone().date()):
+            from codexio.local_activity import local_activity, local_threads
+            local_rows, local_turns = queries.local_activity_inputs()
+            self._local_activity = local_activity(local_rows, local_turns)
+            self._local_threads = local_threads(local_rows, local_turns)
+            self._activity_generation = generation, datetime.now().astimezone().date()
         if self._quota_applicable and self._rolling is not None:
             self._rolling.refresh_prices(self._catalog.price_version, queries)
             self._rolling.process_due(time.time(), queries)
@@ -426,7 +393,7 @@ class UsageWorker(QThread):
             if signature != self._last_widget_signature:
                 self._last_widget_signature = signature
                 self.data_changed.emit(widget_data)
-            self._finish_initial_loading("小组件数据已加载")
+            self._finish_initial_loading(tr("小组件数据已加载"))
             return
         active = self._active_sources()
         by_source = {s.get("id", s.get("source_id")): s for s in sources}
@@ -463,6 +430,7 @@ class UsageWorker(QThread):
             elif model_catalog.get("status") == "ok" or model_catalog.get("models"):
                 self._store.set_meta(key, model_catalog)
         data = {
+            "local_activity": self._local_activity, "local_threads": self._local_threads,
             "query_path": str(self._store.path), "query_generation": generation,
             "summaries": self._summaries, "latest_request": queries.latest_request(),
             "widget_request": queries.widget_request(), "filters": queries.filters(),
@@ -492,14 +460,14 @@ class UsageWorker(QThread):
         if not self._cancel_requested():
             # An empty history is also a completed first load. Config changes
             # interrupt scans, so wait for the new configuration's first pass.
-            self._finish_initial_loading("用量数据已加载")
+            self._finish_initial_loading(tr("用量数据已加载"))
 
     def _seed_mock(self) -> None:
         import random
         rng = random.Random(72)
         now = datetime.now(timezone.utc)
         self._config["account_since"] = (now - timedelta(days=35)).isoformat()
-        self._store.clear_index()
+        self._store.reset_local_cursors()
         records = []
         for i in range(420):
             date = now - timedelta(minutes=i * 93 + 2)
@@ -515,10 +483,10 @@ class UsageWorker(QThread):
                 "service_tier": "default" if i % 3 else "priority", "provider": "openai", "limit_id": "codex",
                 "input_tokens": inp, "cached_input_tokens": cached, "cache_write_input_tokens": written,
                 "output_tokens": out, "reasoning_output_tokens": out // 2, "total_tokens": inp + out,
-                "quality": "response", "source_id": "local", "source_name": "本机（模拟）",
-                "session_title": "Codex 用量统计与桌面交互优化",
-                "prompt_preview": "请增加每次请求的 Token 和等价美元详情，在 Session ID 旁边加上感叹号。鼠标悬停时显示会话标题和用户输入的两行预览，长内容在第二行末尾省略。",
-                "output_preview": "已更新请求日志，加入每次请求的 Token、价格与 Fast 状态。会话预览分别显示用户消息和模型输出，保留必要上下文，长文本在第三行末尾省略。",
+                "quality": "response", "source_id": "local", "source_name": tr("本机（模拟）"),
+                "session_title": tr("Codex 用量统计与桌面交互优化"),
+                "prompt_preview": tr("请增加每次请求的 Token 和等价美元详情，在 Session ID 旁边加上感叹号。鼠标悬停时显示会话标题和用户输入的两行预览，长内容在第二行末尾省略。"),
+                "output_preview": tr("已更新请求日志，加入每次请求的 Token、价格与 Fast 状态。会话预览分别显示用户消息和模型输出，保留必要上下文，长文本在第三行末尾省略。"),
             })
         self._store.upsert_records(records, "local")
         turns = {}
@@ -534,5 +502,5 @@ class UsageWorker(QThread):
             latest = max(turns.values(), key=lambda row: row["started_at"])
             latest.update(status="running", ended_at="", latest_output_preview=latest["output_preview"], output_preview="")
         self._store.upsert_turns(turns.values(), "local")
-        self._store.set_source_status("local", name="本机（模拟）", status="ok", last_scan_at=utc_now())
-        self._scan_status = "模拟预览 · 未连接真实 Codex"
+        self._store.set_source_status("local", name=tr("本机（模拟）"), status="ok", last_scan_at=utc_now())
+        self._scan_status = tr("模拟预览 · 未连接真实 Codex")

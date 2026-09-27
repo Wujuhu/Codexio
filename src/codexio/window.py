@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from codexio.i18n import tr
+
 import sys
 from typing import Callable, Optional, Tuple
 
@@ -83,25 +85,25 @@ from codexio.visuals import (
 )
 
 INTERVAL_LABELS = {
-    30: "30 秒",
-    60: "1 分钟",
-    300: "5 分钟",
+    30: tr("30 秒"),
+    60: tr("1 分钟"),
+    300: tr("5 分钟"),
 }
 MODE_LABELS = {
-    "bottom": "底层模式",
-    "top": "顶层模式",
-    "tray": "托盘模式",
+    "bottom": tr("底层模式"),
+    "top": tr("顶层模式"),
+    "tray": tr("托盘模式"),
 }
 SCOPE_LABELS = {
-    "auto": "自动（按订阅）",
+    "auto": tr("自动（按订阅）"),
     "both": "5 hours + 1 week",
-    "week": "仅周额度",
+    "week": tr("仅周额度"),
 }
 STATUS_LABELS = {
-    QuotaStatus.READING: "正在读取",
-    QuotaStatus.OK: "正常",
-    QuotaStatus.ERROR: "读取失败",
-    QuotaStatus.STALE: "数据过期",
+    QuotaStatus.READING: tr("正在读取"),
+    QuotaStatus.OK: tr("正常"),
+    QuotaStatus.ERROR: tr("读取失败"),
+    QuotaStatus.STALE: tr("数据过期"),
     QuotaStatus.NOT_APPLICABLE: "",
 }
 STATUS_COLORS = {
@@ -198,7 +200,7 @@ class QuotaWindow(QWidget):
         self._summary_dirty = True
         tokens = _short_tokens(summary.get("tokens", 0))
         amount = summary.get("usd", 0)
-        self._usage_text = "今日 %s Token %s" % (tokens, usd(amount, missing="费用未定价"))
+        self._usage_text = tr("今日 %s Token %s") % (tokens, usd(amount, missing=tr("费用未定价")))
         if self.isVisible():
             self._render_pending()
 
@@ -386,7 +388,7 @@ class QuotaWindow(QWidget):
         apply_text_shadow(title)
         self._refresh_button = QToolButton()
         self._refresh_button.setObjectName("refreshButton")
-        self._refresh_button.setText("刷新")
+        self._refresh_button.setText(tr("刷新"))
         self._refresh_button.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self._refresh_button.clicked.connect(self._on_refresh)
 
@@ -409,7 +411,7 @@ class QuotaWindow(QWidget):
         self._stack.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self._styles = {}
 
-        self._status = QLabel("正在读取")
+        self._status = QLabel(tr("正在读取"))
         self._status.setObjectName("status")
         self._status.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         apply_text_shadow(self._status)
@@ -446,18 +448,18 @@ class QuotaWindow(QWidget):
         self._style_actions = {}
         self._scope_actions = {}
         self._interval_actions = {}
-        open_action = menu.addAction("打开主界面")
+        open_action = menu.addAction(tr("打开主界面"))
         open_action.triggered.connect(lambda: self._on_open and self._on_open("overview", "today"))
-        details = menu.addMenu("Token 使用详情")
-        for period, label in (("today", "今日"), ("week", "近 7 天"), ("month", "近 30 天"), ("all", "全部历史")):
+        details = menu.addMenu(tr("Token 使用详情"))
+        for period, label in (("today", tr("今日")), ("week", tr("近 7 天")), ("month", tr("近 30 天")), ("all", tr("全部历史"))):
             action = details.addAction(label)
             action.triggered.connect(lambda checked=False, value=period: self._on_open and self._on_open("usage", value))
-        menu.addAction("立即刷新").triggered.connect(self._on_refresh)
+        menu.addAction(tr("立即刷新")).triggered.connect(self._on_refresh)
         menu.addSeparator()
-        self._undock_action = menu.addAction("取消停靠")
+        self._undock_action = menu.addAction(tr("取消停靠"))
         self._undock_action.triggered.connect(lambda: self._apply_dock(DOCK_NONE))
         self._undock_action.setVisible(False)
-        menu.addAction("关闭悬浮窗").triggered.connect(self._on_hide)
+        menu.addAction(tr("关闭悬浮窗")).triggered.connect(self._on_hide)
         return menu
 
     def _current_style(self):
@@ -584,7 +586,7 @@ class QuotaWindow(QWidget):
             self._dock_strip.setToolTip("%s · %s" % (label, detail))
         self._status.setToolTip("%s · %s" % (label, detail))
         if self._usage_summary and self._usage_summary.get("unpriced_tokens", 0):
-            self._status.setToolTip(self._status.toolTip() + "\n金额仅含已定价部分，%s Token 尚未定价" % self._usage_summary["unpriced_tokens"])
+            self._status.setToolTip(self._status.toolTip() + tr("\n金额仅含已定价部分，%s Token 尚未定价") % self._usage_summary["unpriced_tokens"])
         if self._theme_text is not None:
             self._tint_percent_labels()
         self._sync_hover_tip()
@@ -1173,7 +1175,7 @@ class _ChromeBar(_DragSurface):
         super().__init__(host)
         self.setObjectName("chromeHeader")
         self.setCursor(Qt.CursorShape.OpenHandCursor)
-        self.setToolTip("任意位置拖动可移动窗口，边缘拖动可调节大小，右键打开菜单")
+        self.setToolTip(tr("任意位置拖动可移动窗口，边缘拖动可调节大小，右键打开菜单"))
 
 
 class _DragGrip(QWidget):

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import plistlib
 import re
 import shutil
 import subprocess
@@ -65,13 +66,30 @@ def _npm_root() -> Path:
     return Path(os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming"))) / "npm"
 
 
+def _bundle_candidates(app: Path) -> Iterator[Path]:
+    if app.name == "CodexCLI.app":
+        yield app / "Contents/MacOS/codex"
+        return
+    resources = app / "Contents/Resources"
+    package = resources / "codex-cli"
+    try:
+        metadata = json.loads((package / "codex-package.json").read_text(encoding="utf-8"))
+        entry = metadata.get("entrypoint", "")
+        if metadata.get("layoutVersion") == 1 and isinstance(entry, str) and entry and not Path(entry).is_absolute() and ".." not in Path(entry).parts:
+            yield package / entry
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    yield package / "bin/codex"
+    yield package / "CodexCLI.app/Contents/MacOS/codex"
+    yield resources / "codex"
+
+
 def _hint_candidates(hint: str) -> Iterator[Path]:
     try:
         path = _path(hint)
         if path.is_dir():
             if path.suffix.lower() == ".app":
-                # Only probe the bundled CLI, never Contents/MacOS (the UI).
-                yield path / "Contents" / "Resources" / "codex"
+                yield from _bundle_candidates(path)
                 return
             for name in ("codex.exe", "codex.cmd", "codex"):
                 yield path / name
@@ -83,6 +101,10 @@ def _hint_candidates(hint: str) -> Iterator[Path]:
                 # Search these bounded package roots without interpreting shell code.
                 for root in dict.fromkeys((path.parent, _npm_root())):
                     yield from _scan(root / "node_modules" / "@openai" / "codex")
+            for parent in list(path.parents)[:9]:
+                if parent.suffix.lower() == ".app" and parent.name != "CodexCLI.app":
+                    yield from _bundle_candidates(parent)
+                    break
             yield path
             # A manually saved App version path may have disappeared after an update.
             for parent in list(path.parents)[:4]:
@@ -98,19 +120,23 @@ def _standard_app_roots() -> Iterator[Path]:
     yield local / "OpenAI" / "Codex"
     yield local / "Programs" / "OpenAI" / "Codex"
     yield local / "Programs" / "Codex"
+    yield local / "OpenAI" / "ChatGPT"
+    yield local / "Programs" / "ChatGPT"
     for variable in ("ProgramFiles", "ProgramFiles(x86)"):
         value = os.environ.get(variable)
         if value:
             yield Path(value) / "OpenAI" / "Codex"
             yield Path(value) / "Codex"
+            yield Path(value) / "OpenAI" / "ChatGPT"
+            yield Path(value) / "ChatGPT"
 
 
 def _macos_candidates() -> Iterator[Path]:
     # Finder does not inherit the interactive shell's PATH. Both standalone
     # Codex and the ChatGPT app can provide the same native app-server binary.
     for root in (Path("/Applications"), Path.home() / "Applications"):
-        for name in ("Codex.app", "ChatGPT.app"):
-            yield root / name / "Contents" / "Resources" / "codex"
+        for name in ("ChatGPT.app", "Codex.app"):
+            yield from _bundle_candidates(root / name)
     for root in (Path("/opt/homebrew/bin"), Path("/usr/local/bin"), Path.home() / ".local" / "bin",
                  Path.home() / ".volta" / "bin", Path.home() / ".npm-global" / "bin"):
         yield root / "codex"
@@ -131,7 +157,7 @@ def _registry_app_roots() -> Iterator[Path]:
                         try:
                             with winreg.OpenKey(entries, winreg.EnumKey(entries, index)) as item:
                                 name = str(winreg.QueryValueEx(item, "DisplayName")[0]).lower()
-                                if "codex" not in name:
+                                if "codex" not in name and "chatgpt" not in name:
                                     continue
                                 for field in ("InstallLocation", "DisplayIcon"):
                                     try:
@@ -164,7 +190,7 @@ def _windows_app_locations() -> tuple[list[Path], list[Path]]:
     script = r'''
 $ErrorActionPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
-$roots = @(Get-AppxPackage -Name '*Codex*' | Sort-Object Version -Descending | Select-Object -ExpandProperty InstallLocation)
+$roots = @(Get-AppxPackage | Where-Object { $_.Name -match 'Codex|ChatGPT' } | Sort-Object Version -Descending | Select-Object -ExpandProperty InstallLocation)
 $running = @(Get-CimInstance Win32_Process -Filter "Name='codex.exe'" | Select-Object -ExpandProperty ExecutablePath -Unique)
 @{ roots = $roots; running = $running } | ConvertTo-Json -Compress
 '''
@@ -210,8 +236,16 @@ def is_usable(path: Path) -> bool:
         info = path.stat()
         if not path.is_file() or info.st_size == 0:
             return False
-        if IS_MACOS and (path.parent.name == "MacOS" or not os.access(path, os.X_OK)):
-            return False
+        if IS_MACOS:
+            if not os.access(path, os.X_OK):
+                return False
+            if path.parent.name == "MacOS":
+                try:
+                    info_plist = plistlib.loads((path.parent.parent / "Info.plist").read_bytes())
+                except (OSError, ValueError):
+                    return False
+                if info_plist.get("CFBundleIdentifier") != "com.openai.codex.cli" or info_plist.get("CFBundleExecutable") != path.name:
+                    return False
         # Never launch the Electron desktop UI while probing for its backend.
         if (path.parent / "resources" / "app.asar").exists() or (path.parent / "chrome_100_percent.pak").exists():
             return False

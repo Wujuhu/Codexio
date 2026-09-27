@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from codexio.i18n import tr
+
 import threading
 import base64
 import hashlib
 import json
 import os
+import queue
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -34,26 +37,18 @@ from codexio.rate_limits import (
     snapshot_to_cache,
     stale_after_seconds,
 )
-from codexio.settings import AppSettings, load_quota_cache, save_quota_cache, save_settings
+from codexio.settings import AppSettings, load_quota_cache, save_quota_cache, save_settings, data_dir
+from codexio.reset_credits import ResetAttempts
 from codexio.provider_config import ProviderConfigError, resolve_provider_config
 
 logger = get_logger("worker")
 
 
 def _auth_identity():
-    """Read identity only; never retain or log the local OAuth token."""
-    path = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "auth.json"
     try:
-        tokens = json.loads(path.read_text(encoding="utf-8")).get("tokens") or {}
-        account = tokens.get("account_id")
-        token = tokens.get("access_token")
-        if not isinstance(account, str) or not account or not isinstance(token, str):
-            return None
-        encoded = token.split(".")[1]
-        claims = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
-        subject = claims.get("sub")
-        return (account, subject) if isinstance(subject, str) and subject else None
-    except (OSError, ValueError, TypeError, IndexError, AttributeError, UnicodeError):
+        from codexio.analytics_client import credentials
+        return credentials()[1]
+    except Exception:
         return None
 
 
@@ -76,6 +71,7 @@ class QuotaWorker(QThread):
     snapshot_changed = Signal(object, str)
     identity_changed = Signal()
     applicability_changed = Signal(bool, str)
+    reset_result = Signal(object)
 
     def __init__(self, settings: AppSettings, mock: bool = False) -> None:
         super().__init__()
@@ -95,10 +91,12 @@ class QuotaWorker(QThread):
         self._local_success_at: Optional[datetime] = None
         self._failures = 0
         self._status = QuotaStatus.READING
-        self._message = "正在读取"
+        self._message = tr("正在读取")
         self._applicable: Optional[bool] = True if mock else None
         self._auth_mode: Optional[str] = "mock" if mock else None
         self._cache_loaded = False
+        self._reset_commands = queue.Queue(maxsize=1)
+        self._reset_attempts = ResetAttempts(data_dir())
 
     def run(self) -> None:
         self._emit_state()
@@ -110,8 +108,9 @@ class QuotaWorker(QThread):
                 else:
                     self._run_live_cycle()
             except Exception as exc:
-                logger.exception("额度读取循环异常")
-                self._on_failure("读取失败: %s" % _user_error(exc))
+                logger.exception(tr("额度读取循环异常"))
+                self._on_failure(tr("读取失败: %s") % _user_error(exc))
+                self._abort_reset_requests(tr("额度读取失败，未继续使用重置"))
             self._wait_for_next()
 
     def stop(self, timeout_ms: int = 8000) -> None:
@@ -126,6 +125,17 @@ class QuotaWorker(QThread):
     def request_refresh(self) -> None:
         self._refresh_requested.set()
         self._wake.set()
+
+    def request_reset(self, credit_id, account_key):
+        if self._mock:
+            self.reset_result.emit(dict(busy=False, credit_id=credit_id, message=tr("模拟模式不使用真实重置")))
+            return
+        try:
+            self._reset_commands.put_nowait((credit_id, account_key))
+        except queue.Full:
+            return
+        self.reset_result.emit(dict(busy=True, credit_id=credit_id))
+        self.request_refresh()
 
     def set_interval(self, seconds: int) -> None:
         self._settings.refresh_interval_seconds = seconds
@@ -154,6 +164,7 @@ class QuotaWorker(QThread):
         if self._applicable is None or changed_account or self._refresh_requested.is_set():
             self._refresh_account_mode(force_identity=changed_account)
         if not self._applicable:
+            self._abort_reset_requests(tr("此账户不提供 ChatGPT 额度"))
             if self._status != QuotaStatus.NOT_APPLICABLE:
                 self._status = QuotaStatus.NOT_APPLICABLE
                 self._message = ""
@@ -165,6 +176,49 @@ class QuotaWorker(QThread):
             if self._snapshot is not None:
                 self._emit_state()
         self._fetch_local()
+        if not self._reset_commands.empty():
+            self._consume_selected_reset(*self._reset_commands.get_nowait())
+
+    def _abort_reset_requests(self, message):
+        while not self._reset_commands.empty():
+            credit_id, account_key = self._reset_commands.get_nowait()
+            pending = self._reset_attempts.pending(account_key) if account_key else None
+            self.reset_result.emit(dict(busy=False, credit_id=credit_id, message=message,
+                pending=bool(pending), credit=self._reset_attempts.credit(pending) if pending else None))
+
+    def _consume_selected_reset(self, credit_id, expected_account):
+        account_key, credit, pending = None, None, None
+        try:
+            before = _auth_identity()
+            payload = self._require_client().read_rate_limits()
+            account_key = _account_key(payload, before, _auth_identity())
+            if not account_key or account_key != expected_account or not self._applicable:
+                raise RuntimeError(tr("账户已变更，请重新选择重置"))
+            pending = self._reset_attempts.pending(account_key)
+            snapshot = parse_rate_limits_result(payload)
+            credit = next((row for row in snapshot.reset_credit_details or () if row.id == credit_id), None)
+            if pending and pending.get("creditId") == credit_id:
+                credit = self._reset_attempts.credit(pending) or credit
+            if credit is None or (not pending and (credit.status != "available" or credit.reset_type != "codexRateLimits" or credit.expires_at and credit.expires_at <= datetime.now().astimezone())):
+                raise RuntimeError(tr("这次重置已不可用"))
+            operation = self._reset_attempts.begin(account_key, credit)
+            pending = operation
+            if _auth_identity() != before:
+                raise RuntimeError(tr("账户已变更，请重新选择重置"))
+            result = self._require_client().request("account/rateLimitResetCredit/consume", {
+                "creditId": credit_id, "idempotencyKey": operation["idempotencyKey"]})
+            outcome = result.get("outcome")
+            if outcome not in ("reset", "alreadyRedeemed", "nothingToReset", "noCredit"):
+                raise RuntimeError(tr("重置结果尚未确认，可重试本次操作"))
+            self._reset_attempts.finish(account_key)
+            message = {"reset": tr("重置已提交，正在同步额度"), "alreadyRedeemed": tr("重置已提交，正在同步额度"),
+                       "nothingToReset": tr("当前没有可重置的额度窗口"), "noCredit": tr("这次重置已不可用")}[outcome]
+            self.reset_result.emit(dict(busy=False, credit_id=credit_id, outcome=outcome, pending=False, message=message))
+            self._refresh_requested.set()
+            self._fetch_local()
+        except Exception as error:
+            self.reset_result.emit(dict(busy=False, credit_id=credit_id, credit=credit,
+                                        pending=bool(account_key and pending), message=str(error)))
 
     def _fetch_local(self) -> None:
         notification = self._take_notification()
@@ -172,13 +226,18 @@ class QuotaWorker(QThread):
             if self._apply_notification(notification):
                 return
         if self._snapshot is None:
-            self._set_status(QuotaStatus.READING, "正在读取")
+            self._set_status(QuotaStatus.READING, tr("正在读取"))
         before = _auth_identity()
         result = self._require_client().read_rate_limits()
         after = _auth_identity()
         snapshot = replace(parse_rate_limits_result(result), account_key=_account_key(result, before, after))
+        if snapshot.account_key:
+            operation = self._reset_attempts.pending(snapshot.account_key)
+            if operation:
+                self.reset_result.emit(dict(busy=False, pending=True, credit_id=operation.get("creditId"),
+                                            credit=self._reset_attempts.credit(operation), message=tr("上一次重置结果待确认，请重试本次")))
         self._store_local(snapshot)
-        self._on_success(snapshot, "已更新", persist=False)
+        self._on_success(snapshot, tr("已更新"), persist=False)
 
     @staticmethod
     def _account_mode(result: dict, provider) -> tuple[bool, str]:
@@ -221,7 +280,7 @@ class QuotaWorker(QThread):
         self.identity_changed.emit()
         self.applicability_changed.emit(applicable, mode)
         if applicable:
-            self._status, self._message = QuotaStatus.READING, "正在读取"
+            self._status, self._message = QuotaStatus.READING, tr("正在读取")
         else:
             self._status, self._message = QuotaStatus.NOT_APPLICABLE, ""
         self._emit_state()
@@ -245,7 +304,7 @@ class QuotaWorker(QThread):
             }
         )
         self._store_local(snapshot)
-        self._on_success(snapshot, "模拟数据", persist=False)
+        self._on_success(snapshot, tr("模拟数据"), persist=False)
 
     def _store_local(self, snapshot: RateLimitSnapshot) -> None:
         if self._applicable is False:
@@ -257,14 +316,14 @@ class QuotaWorker(QThread):
             if not self._mock:
                 save_quota_cache(snapshot_to_cache(snapshot, self._local_success_at))
         except OSError:
-            logger.warning("写入额度缓存失败")
+            logger.warning(tr("写入额度缓存失败"))
 
     def _ensure_client(self) -> None:
         client = self._client
         if client is not None and client.running:
             return
         self._close_client()
-        self._set_status(QuotaStatus.READING, "正在连接 Codex")
+        self._set_status(QuotaStatus.READING, tr("正在连接 Codex"))
         excluded = set()
         last_error = None
         for _attempt in range(4):
@@ -272,7 +331,7 @@ class QuotaWorker(QThread):
                 executable = discover_codex_executable(self._settings.codex_path, excluded=excluded)
             except CodexNotFoundError:
                 if last_error is not None:
-                    raise AppServerError("Codex 组件无法启动：%s" % last_error) from last_error
+                    raise AppServerError(tr("Codex 组件无法启动：%s") % last_error) from last_error
                 raise
             client = AppServerClient(executable=executable, on_notification=self._on_notification)
             try:
@@ -281,16 +340,16 @@ class QuotaWorker(QThread):
                 last_error = exc
                 excluded.add(executable)
                 client.close()
-                logger.warning("Codex 组件启动失败，将尝试其他安装位置：%s (%s)", executable, exc)
+                logger.warning(tr("Codex 组件启动失败，将尝试其他安装位置：%s (%s)"), executable, exc)
                 continue
             self._client = client
             return
-        raise AppServerError("Codex 组件无法启动：%s" % last_error)
+        raise AppServerError(tr("Codex 组件无法启动：%s") % last_error)
 
     def _require_client(self) -> AppServerClient:
         client = self._client
         if client is None:
-            raise AppServerError("Codex app-server 未启动")
+            raise AppServerError(tr("Codex app-server 未启动"))
         return client
 
     def _on_notification(self, message: JsonRpcMessage) -> None:
@@ -323,14 +382,14 @@ class QuotaWorker(QThread):
                 RateLimitSnapshot.from_payload(params.get("rateLimits") or params.get("rate_limits") or params)
             )
         except ValueError:
-            logger.warning("忽略无法解析的额度通知")
+            logger.warning(tr("忽略无法解析的额度通知"))
             return False
         before = after = _auth_identity()
         incoming = replace(incoming, account_key=_account_key(params, before, after))
         base = self._snapshot
         merged = merge_rate_limit_snapshots(base, incoming)
         self._store_local(merged)
-        self._on_success(merged, "已收到额度更新", persist=False)
+        self._on_success(merged, tr("已收到额度更新"), persist=False)
         return base is not None
 
     def _on_success(self, snapshot: RateLimitSnapshot, message: str, persist: bool = True) -> None:
@@ -343,7 +402,7 @@ class QuotaWorker(QThread):
             try:
                 save_quota_cache(snapshot_to_cache(snapshot, self._last_success_at))
             except OSError:
-                logger.warning("写入额度缓存失败")
+                logger.warning(tr("写入额度缓存失败"))
         self._emit_state()
 
     def _on_failure(self, message: str) -> None:
@@ -362,7 +421,7 @@ class QuotaWorker(QThread):
         self._snapshot = snapshot
         self._last_success_at = fetched_at
         self._status = QuotaStatus.STALE
-        self._message = "已加载上次缓存"
+        self._message = tr("已加载上次缓存")
 
     def _wait_for_next(self) -> None:
         if self._stop.is_set():
@@ -389,7 +448,7 @@ class QuotaWorker(QThread):
             > stale_after_seconds(self._settings.refresh_interval_seconds)
         ):
             status = QuotaStatus.STALE
-            message = "数据过期"
+            message = tr("数据过期")
         if self._applicable is None:
             state = QuotaState.empty(status=status, message=message,
                                      applicable=False, auth_mode=self._auth_mode)
@@ -432,27 +491,27 @@ class QuotaWorker(QThread):
             try:
                 client.close()
             except Exception:
-                logger.warning("关闭 app-server 失败")
+                logger.warning(tr("关闭 app-server 失败"))
 
 
 def _user_error(exc: Exception) -> str:
     text = str(exc)
     lowered = text.lower()
     if isinstance(exc, CodexNotFoundError):
-        return "未找到 Codex，请确认已安装并登录"
+        return tr("未找到 Codex，请确认已安装并登录")
     if "authentication" in lowered or "login" in lowered or "unauthorized" in lowered:
-        return "未登录 ChatGPT / Codex"
+        return tr("未登录 ChatGPT / Codex")
     if "error sending request" in lowered or "wham/usage" in lowered or "connection" in lowered:
-        return "无法连接 ChatGPT（网络或代理异常）"
-    if "timeout" in lowered or "超时" in text:
-        return "读取超时"
+        return tr("无法连接 ChatGPT（网络或代理异常）")
+    if "timeout" in lowered or tr("超时") in text:
+        return tr("读取超时")
     if (
         "error sending request" in lowered
         or "failed to fetch" in lowered
         or "network" in lowered
         or "connection" in lowered
     ):
-        return "网络异常，无法读取额度"
+        return tr("网络异常，无法读取额度")
     if isinstance(exc, AppServerError):
         return text
     return exc.__class__.__name__

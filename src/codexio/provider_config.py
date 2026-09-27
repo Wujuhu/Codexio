@@ -1,6 +1,8 @@
 """Resolve the effective global Codex model provider without reading credentials."""
 from __future__ import annotations
 
+from codexio.i18n import tr
+
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -43,9 +45,9 @@ def _read(path: Path):
         text = path.read_text(encoding="utf-8") if path.exists() else ""
         return text, tomlkit.parse(text)
     except OSError as exc:
-        raise ProviderConfigError("无法读取 Codex 配置") from exc
+        raise ProviderConfigError(tr("无法读取 Codex 配置")) from exc
     except Exception as exc:
-        raise ProviderConfigError("Codex 配置不是有效 TOML") from exc
+        raise ProviderConfigError(tr("Codex 配置不是有效 TOML")) from exc
 
 
 def _plain(value: Any):
@@ -92,7 +94,7 @@ def resolve_provider_config(config_path: Path | str | None = None, *, profile: s
         else:
             profiles = _table(root_doc.get("profiles", {}))
             if selected not in profiles:
-                raise ProviderConfigError("当前配置方案不存在或无法读取")
+                raise ProviderConfigError(tr("当前配置方案不存在或无法读取"))
             overlay = _table(profiles.get(selected, {}))
             overlay_prefix = ("profiles", selected)
     effective = _merge(root, overlay)
@@ -123,7 +125,7 @@ def resolve_provider_config(config_path: Path | str | None = None, *, profile: s
     profile_provider = _table(overlay_providers.get(provider_id, {}))
     provider = _merge(base_provider, profile_provider)
     if not provider:
-        raise ProviderConfigError("当前模型供应商未在 model_providers 中定义")
+        raise ProviderConfigError(tr("当前模型供应商未在 model_providers 中定义"))
     if "base_url" in profile_provider:
         patch_path = overlay_path
         locator = overlay_prefix + ("model_providers", provider_id, "base_url")
@@ -131,14 +133,14 @@ def resolve_provider_config(config_path: Path | str | None = None, *, profile: s
         patch_path = root_path
         locator = ("model_providers", provider_id, "base_url")
     else:
-        raise ProviderConfigError("当前模型供应商没有可接管的 base_url")
+        raise ProviderConfigError(tr("当前模型供应商没有可接管的 base_url"))
     base_url = provider.get("base_url")
     if not isinstance(base_url, str) or not base_url.strip():
-        raise ProviderConfigError("当前模型供应商的 base_url 无效")
+        raise ProviderConfigError(tr("当前模型供应商的 base_url 无效"))
     wire_api = str(provider.get("wire_api") or "responses").strip().lower()
     requires = provider.get("requires_openai_auth", False)
     if not isinstance(requires, bool):
-        raise ProviderConfigError("当前模型供应商的 requires_openai_auth 无效")
+        raise ProviderConfigError(tr("当前模型供应商的 requires_openai_auth 无效"))
     return ProviderConfig(root_path, patch_path, locator, provider_id, selected, base_url.strip(),
                           forced, requires, wire_api)
 
@@ -155,14 +157,14 @@ def get_nested(document, locator: tuple[str, ...]):
 
 def set_nested(document, locator: tuple[str, ...], value) -> None:
     if not locator:
-        raise ProviderConfigError("配置字段路径为空")
+        raise ProviderConfigError(tr("配置字段路径为空"))
     current = document
     for key in locator[:-1]:
         if key not in current:
             current[key] = tomlkit.table()
         current = current[key]
         if not hasattr(current, "__setitem__"):
-            raise ProviderConfigError("模型供应商配置路径无效")
+            raise ProviderConfigError(tr("模型供应商配置路径无效"))
     current[locator[-1]] = value
 
 
