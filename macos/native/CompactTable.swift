@@ -8,7 +8,7 @@ struct GridColumn {
     var maximum: CGFloat? = nil
     var alignment: NSTextAlignment = .left
 }
-struct GridText { var main: String; var secondary = "" }
+struct GridText { var main: String; var secondary = ""; var upstream = ""; var upstreamMismatch = false }
 struct GridRow {
     let id: String
     let text: (String) -> GridText
@@ -35,6 +35,8 @@ enum TableColumnWidths {
 
 private final class GridTextCell: NSView {
     let main = NSTextField(labelWithString:""), secondary = NSTextField(labelWithString:"")
+    private var showsUpstream = false
+    private var upstreamColor = NSColor.secondaryLabelColor
     override init(frame: NSRect) {
         super.init(frame:frame)
         main.font = .systemFont(ofSize:12); main.lineBreakMode = .byTruncatingTail
@@ -45,20 +47,44 @@ private final class GridTextCell: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
     func apply(_ value: GridText,alignment: NSTextAlignment) {
-        main.stringValue = value.main; secondary.stringValue = value.secondary
+        showsUpstream = !value.upstream.isEmpty
+        upstreamColor = value.upstreamMismatch ? .systemGreen : .secondaryLabelColor
+        main.stringValue = value.main; secondary.stringValue = showsUpstream ? value.upstream : value.secondary
+        secondary.textColor = showsUpstream ? upstreamColor : .secondaryLabelColor
+        secondary.toolTip = secondary.stringValue
         main.alignment = alignment; secondary.alignment = alignment
         main.toolTip = value.main
-        secondary.isHidden = value.secondary.isEmpty; needsLayout = true
+        secondary.isHidden = secondary.stringValue.isEmpty; needsLayout = true; needsDisplay = true
     }
     override func layout() {
         super.layout()
         let width = max(0,bounds.width-16)
-        if secondary.isHidden { main.frame = NSRect(x:8,y:max(0,(bounds.height-18)/2),width:width,height:18) }
+        if showsUpstream {
+            let bottom = max(0,(bounds.height-34)/2), textWidth = max(0,width-14)
+            main.frame = NSRect(x:8,y:bottom,width:textWidth,height:18)
+            secondary.frame = NSRect(x:8,y:bottom+20,width:textWidth,height:14)
+        } else if secondary.isHidden { main.frame = NSRect(x:8,y:max(0,(bounds.height-18)/2),width:width,height:18) }
         else {
             let bottom = max(0,(bounds.height-34)/2)
             main.frame = NSRect(x:8,y:bottom+16,width:width,height:18)
             secondary.frame = NSRect(x:8,y:bottom,width:width,height:14)
         }
+    }
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard showsUpstream else { return }
+        func textRight(_ label: NSTextField) -> CGFloat {
+            let measured = (label.stringValue as NSString).size(withAttributes:[.font:label.font!]).width
+            return label.frame.midX+min(label.frame.width,measured)/2
+        }
+        let lower = textRight(main), upper = textRight(secondary)
+        let x = min(bounds.maxX-5,max(lower,upper)+8), tip = min(x,upper+3)
+        let path = NSBezierPath(); path.lineWidth = 1.1; path.lineCapStyle = .round; path.lineJoinStyle = .round
+        path.move(to:NSPoint(x:lower+2,y:main.frame.midY))
+        path.line(to:NSPoint(x:x,y:main.frame.midY)); path.line(to:NSPoint(x:x,y:secondary.frame.midY))
+        path.line(to:NSPoint(x:tip,y:secondary.frame.midY))
+        path.move(to:NSPoint(x:tip+2.5,y:secondary.frame.midY-2)); path.line(to:NSPoint(x:tip,y:secondary.frame.midY)); path.line(to:NSPoint(x:tip+2.5,y:secondary.frame.midY+2))
+        upstreamColor.setStroke(); path.stroke()
     }
 }
 private final class GridDetailCell: NSView {
@@ -269,11 +295,14 @@ enum LogFields {
         GridRow(id:row.id,text: { key in
             let raw = row.raw
             switch key {
-            case "content": return GridText(main:raw.string("prompt_preview").isEmpty ? row.title : raw.string("prompt_preview"),secondary:dateText(row.date,timeOnly:timeOnly)+(raw.flag("is_subagent") ? " · "+L("子代理", "Subagent") : raw.string("record_kind") == "unassigned" ? " · "+L("未归属调用", "Unassigned call") : ""))
+            case "content":
+                let tier = normalizedTier(raw.string("service_tier"))
+                let metadata = [dateText(row.date,timeOnly:timeOnly),raw.string("reasoning_effort").isEmpty ? "" : logEffortName(raw.string("reasoning_effort")),tier == "priority" ? "Fast" : tier == "default" ? "Standard" : "",raw.number("model_context_window").map {compact($0)} ?? "",raw.flag("is_subagent") ? L("子代理", "Subagent") : raw.string("record_kind") == "unassigned" ? L("未归属调用", "Unassigned call") : ""].filter {!$0.isEmpty}.joined(separator:" · ")
+                return GridText(main:raw.string("prompt_preview").isEmpty ? row.title : raw.string("prompt_preview"),secondary:metadata)
             case "time": return GridText(main:dateText(row.date,timeOnly:timeOnly))
             case "model":
-                let detail = [raw.string("reasoning_effort").isEmpty ? "" : effortName(raw.string("reasoning_effort")),normalizedTier(raw.string("service_tier")) == "priority" ? "Fast" : "",raw.number("model_context_window").map {compact($0)} ?? ""].filter {!$0.isEmpty}.joined(separator:" · ")
-                return GridText(main:row.modelLabel,secondary:detail)
+                let upstream = raw.string("upstream_model"), requested = raw.string("model")
+                return GridText(main:modelName(requested),upstream:modelName(upstream),upstreamMismatch:raw.flag("upstream_mismatched",!upstream.isEmpty && !requested.isEmpty && upstream != requested))
             case "input": return GridText(main:compact(raw.number("input_tokens")))
             case "output": return GridText(main:compact(raw.number("output_tokens")))
             case "total": return GridText(main:compact(row.tokens.map(Double.init)))
@@ -287,7 +316,7 @@ enum LogFields {
                 guard let seconds = row.duration, seconds >= 0, seconds < Double(Int.max) else { return GridText(main:"—") }
                 let value = Int(seconds)
                 return GridText(main:String(format:"%02d:%02d:%02d",value/3600,value%3600/60,value%60))
-            case "effort": return GridText(main:effortName(raw.string("reasoning_effort")))
+            case "effort": return GridText(main:logEffortName(raw.string("reasoning_effort")))
             case "speed": return GridText(main:normalizedTier(raw.string("service_tier")) == "priority" ? "Fast" : normalizedTier(raw.string("service_tier")) == "default" ? L("标准", "Standard") : L("未知", "Unknown"))
             case "context": return GridText(main:compact(raw.number("model_context_window")))
             case "status": return GridText(main:raw.string("status") == "running" ? L("进行中", "In progress") : raw.string("status") == "completed" ? L("已完成", "Completed") : L("未知", "Unknown"))

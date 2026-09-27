@@ -22,6 +22,7 @@ from codexio.charts import compact_number, parse_timestamp
 from codexio.durations import elapsed_milliseconds, duration_text, duration_tooltip
 from codexio.theme import theme_colors
 from codexio.money import usd
+from codexio.model_display import display_effort
 from codexio.usage_collector import _user_preview
 from codexio.user_requests import normalized_tier
 from codexio.usage_metrics import cache_hit_rate, cache_percentage
@@ -858,11 +859,14 @@ class LedgerTable(QTableWidget):
             stamp = parse_timestamp(row.get("timestamp"))
             date = "%d.%d %s" % (stamp.month, stamp.day, stamp.strftime("%H:%M")) if stamp else "—"
             subtitle = [date]
+            effort = display_effort(row.get("reasoning_effort"))
+            if effort:
+                subtitle.append(effort)
+            subtitle.append(tier_label(row))
+            if row.get("model_context_window"):
+                subtitle.append(compact_number(row["model_context_window"]))
             if self.grouped:
                 subtitle.append(tr("%s 次调用") % row.get("call_count", 0))
-            tier = tier_label(row)
-            if tier != "Standard":
-                subtitle.append(tier)
             model = model_label(row)
             models = row.get("models") or []
             if len(models) > 1:

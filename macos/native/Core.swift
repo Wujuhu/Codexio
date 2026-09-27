@@ -180,6 +180,20 @@ func effortName(_ value: String) -> String {
     default: return value
     }
 }
+func logEffortName(_ value: String) -> String {
+    switch value.lowercased() {
+    case "none": return "None"
+    case "minimal": return "Minimal"
+    case "low": return "Low"
+    case "medium": return "Medium"
+    case "high": return "High"
+    case "xhigh": return "Extra high"
+    case "max": return "Max"
+    case "ultra": return "Ultra"
+    case "": return "Unknown"
+    default: return value
+    }
+}
 func normalizedTier(_ value: String) -> String {
     if ["fast","priority"].contains(value.lowercased()) { return "priority" }
     if ["standard","default"].contains(value.lowercased()) { return "default" }

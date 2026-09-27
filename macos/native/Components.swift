@@ -204,7 +204,7 @@ struct LogDetail: View {
                 Divider()
                 field(L("模型", "Model"),modelName(row.raw.string("model")))
                 if !row.raw.string("upstream_model").isEmpty { field(L("响应返回模型", "Response model"),modelName(row.raw.string("upstream_model"))) }
-                field(L("推理强度", "Reasoning"),effortName(row.raw.string("reasoning_effort")))
+                field(L("推理强度", "Reasoning"),logEffortName(row.raw.string("reasoning_effort")))
                 field(L("速度", "Speed"),normalizedTier(row.raw.string("service_tier")) == "priority" ? L("快速模式", "Fast mode") : normalizedTier(row.raw.string("service_tier")) == "default" ? L("标准", "Standard") : L("未知", "Unknown"))
                 field(L("费用", "Cost"),money(row.cost))
                 field(L("耗时", "Duration"),durationText(row.duration))
@@ -225,7 +225,7 @@ struct LogDetail: View {
                             VStack(alignment:.leading,spacing:7) {
                                 Text(member.modelLabel).fontWeight(.medium)
                                 if member.raw.string("session_id") != row.raw.string("session_id") { Text(L("子代理", "Subagent")).foregroundStyle(.secondary) }
-                                Text(effortName(member.raw.string("reasoning_effort"))+" · "+(normalizedTier(member.raw.string("service_tier")) == "priority" ? "Fast" : normalizedTier(member.raw.string("service_tier")) == "default" ? L("标准", "Standard") : L("未知", "Unknown")))
+                                Text(logEffortName(member.raw.string("reasoning_effort"))+" · "+(normalizedTier(member.raw.string("service_tier")) == "priority" ? "Fast" : normalizedTier(member.raw.string("service_tier")) == "default" ? L("标准", "Standard") : L("未知", "Unknown")))
                                 Text(compact(member.tokens.map(Double.init))+" Token · "+money(member.cost))
                                 if !member.raw.string("output_preview").isEmpty { Text(member.raw.string("output_preview")).foregroundStyle(.secondary) }
                                 Divider()

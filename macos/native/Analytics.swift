@@ -221,6 +221,7 @@ enum Analytics {
             row["model_context_window"] = calls.compactMap {$0.raw.integer("model_context_window")}.max() ?? own.integer("model_context_window")
             let upstreams = Set(calls.map {$0.raw.string("upstream_model")}.filter {!$0.isEmpty})
             if !upstreams.isEmpty { row["upstream_model"] = upstreams.sorted().joined(separator:" + ") }
+            row["upstream_mismatched"] = calls.contains { !$0.raw.string("upstream_model").isEmpty && !$0.raw.string("model").isEmpty && $0.raw.string("upstream_model") != $0.raw.string("model") }
             row["session_title"] = calls.first?.raw["session_title"]
             row["output_preview"] = members.sorted {$0.string("observed_at") > $1.string("observed_at")}.first(where:{!$0.string("output_preview").isEmpty})? ["output_preview"]
             let intervals = members.compactMap(interval)

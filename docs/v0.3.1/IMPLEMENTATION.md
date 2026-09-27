@@ -104,3 +104,12 @@ build/dev/macos/latest.json
 - 最近请求最多 3 条，原生表格使用实际行数高度、无纵向滚动条，纵向滚轮交外层页面。猫形菜单 Logo 仍为 18 点，任务状态框 23 点（勾圈可见高度约 18 点），周额度字体 16 点；预览与实际菜单栏共用组件。
 
 本轮验证：只读提取用户截图对应的 20:18:56～20:25:28 历史调用，用实际 Swift 汇总实现隔离核对，24 条调用 → 1 个组，组内 24 个唯一成员，未归属数 0，Token 总量一致；未修改用户数据库。Mac 最终开发包完成固定三项模拟冒烟、版本／签名／ZIP／清单校验；仅查看 `build/checks/request-grouping/settings-menubar-zh.png` 一张相关预览。构建日志 `build/logs/request-grouping-build.log`。保持 0.3.1，Widget 18／1.17 不变，未启动安装版或执行远程发布。
+
+## 2026-09-27 日志上游样式与菜单栏微调
+
+- 猫形菜单 Logo 保持 18 点；状态图标从 23 调至 21 点，周额度字从 16 调至 14 点，实际菜单栏和设置预览共用。
+- 日志请求副行改为“时间 · High/Max 等英文强度 · Fast/Standard · 上下文”，强度可选列与详情也固定英文。Windows 日志复用既有英文 `display_effort`，同步副行字段顺序。
+- Swift 模型单元格直接参考 `src/codexio/desktop_widgets.py:LedgerDelegate.paint`：上游小字在上、请求模型在下，右侧折线向上连接。差异色按每个调用实际的请求／返回模型比较后汇总，不把多模型字符串的顺序差异误标绿。
+- 历史上游仍由 UsageSnapshotCache 按 response_id 读取本地 observations，未引入检测开关的显示过滤；UpstreamCoordinator 关闭时只恢复路由，不删除 observations。
+
+本轮验证：Mac 开发打包、固定三项隔离冒烟与版本／签名／ZIP／清单校验通过；Python 改动通过语法检查，未做 Windows 实机验证。未新增测试项、截图矩阵或运行真实安装版。日志 `build/logs/upstream-layout-build.log`，开发产物仍为 `build/dev/macos`，版本 0.3.1，Widget 18／1.17 不变。
