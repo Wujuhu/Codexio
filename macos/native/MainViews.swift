@@ -162,7 +162,7 @@ struct OverviewView: View {
                         var column = column; column.maximum = column.width+300; return column
                     },
                         rows:projection.value.recent.map { row in LogFields.row(row,timeOnly:true) { state.usage.members(of:row) } },
-                        revision:key,preferences:state.preferences,storageKey:"overview-recent")
+                        revision:key,preferences:state.preferences,storageKey:"overview-recent",verticalScrolling:false)
                         .frame(height:CGFloat(projection.value.recent.count)*45+42)
                         .clipShape(RoundedRectangle(cornerRadius:14))
                         .overlay(RoundedRectangle(cornerRadius:14).stroke(.secondary.opacity(0.16)))
@@ -234,7 +234,7 @@ struct LogsView: View {
             CompactTable(columns:LogFields.columns(fields),rows:projection.value.rows.map { row in LogFields.row(row,timeOnly:period == "today") {state.usage.members(of:row)} },revision:projection.value.revision.uuidString+period,preferences:state.preferences,storageKey:"logs")
                 .overlay(RoundedRectangle(cornerRadius:10).stroke(.secondary.opacity(0.16)))
             HStack {
-                Text("\(projection.value.count) "+(mode == "requests" ? L("条请求", "requests") : L("次调用", "calls"))).foregroundStyle(.secondary)
+                Text(mode == "requests" ? "\(projection.value.count-projection.value.unassigned) "+L("条请求", "requests")+(projection.value.unassigned > 0 ? " · \(projection.value.unassigned) "+L("次未归属调用", "unassigned calls") : "") : "\(projection.value.count) "+L("次调用", "calls")).foregroundStyle(.secondary)
                 Spacer()
                 Button { page = max(0,projection.value.page-1) } label: { Image(systemName:"chevron.left") }.disabled(projection.value.page == 0)
                 Text("\(projection.value.page+1) / \(projection.value.pages)").monospacedDigit()

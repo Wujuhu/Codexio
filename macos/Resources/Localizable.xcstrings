@@ -2849,6 +2849,22 @@
         }
       }
     },
+    "任务记录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Task record"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "任务记录"
+          }
+        }
+      }
+    },
     "任意位置拖动可移动窗口，边缘拖动可调节大小，右键打开菜单": {
       "localizations": {
         "en": {
@@ -10413,6 +10429,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "次可用"
+          }
+        }
+      }
+    },
+    "次未归属调用": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "unassigned calls"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "次未归属调用"
           }
         }
       }

@@ -188,7 +188,7 @@ final class UsageIndexer {
         if row.isEmpty {
             row = ["id":id,"session_id":state.string("session_id"),"turn_id":turn,"started_at":stamp,"started_inferred":true,"status":"unknown","prompt_preview":"","output_preview":"","verified":true,"is_subagent":state.flag("is_subagent"),"parent_session_id":state.string("parent_session_id"),"parent_turn_id":state.string("parent_turn_id"),"agent_path":state.string("agent_path"),"source_ids":["local"]]
         }
-        for key in ["model","reasoning_effort","service_tier","model_context_window","provider"] {
+        for key in ["model","reasoning_effort","service_tier","model_context_window","provider","root_turn_id"] {
             if let value = state[key], !(value is NSNull) { row[key] = value }
         }
         mutate(&row); row["observed_at"] = stamp
@@ -196,8 +196,30 @@ final class UsageIndexer {
         if recent.count > 24 { for key in recent.keys.sorted() where key != turn { recent.removeValue(forKey:key); if recent.count <= 24 { break } } }
         state["turns"] = recent; try database.writeTurn(row)
     }
+    private func activateTurn(_ id: String,state: inout Object,owned: Bool) throws {
+        guard !id.isEmpty, id != state.string("turn_id") else { return }
+        let previous = state.string("turn_id")
+        var recent = state.object("turns"), old = recent.object(previous)
+        if owned, previous.hasPrefix("legacy-user:"), !old.isEmpty, !old.flag("has_usage"), old.string("ended_at").isEmpty {
+            let key = "turn:"+state.string("session_id")+":"+id
+            var promoted = old; promoted["id"] = key; promoted["turn_id"] = id; promoted["synthetic"] = false
+            old["alias_of"] = key; recent[previous] = old; recent[id] = promoted
+            state["turns"] = recent
+            var input = state.object("request_last_input")
+            if input.string("turn_id") == previous { input["turn_id"] = id; state["request_last_input"] = input }
+            try database.writeTurn(old); try database.writeTurn(promoted)
+        }
+        state["previous_turn_id"] = previous; state["turn_id"] = id
+        state["prompt_preview"] = recent.object(id).string("prompt_preview")
+        state["root_turn_id"] = nil
+        state["modern_candidate"] = nil; state["active_response_id"] = nil; state["preview_pending"] = [Object]()
+    }
     private func remember(_ record: Object,state: inout Object) {
         state["last_record"] = record
+        if record.flag("context_owner_verified"), record.string("session_id") == state.string("session_id") {
+            var recent = state.object("turns"), turn = recent.object(record.string("turn_id"))
+            if !turn.isEmpty { turn["has_usage"] = true; recent[record.string("turn_id")] = turn; state["turns"] = recent }
+        }
         let response = record.string("response_id"); guard !response.isEmpty else { return }
         var recent = state.object("preview_recent"); recent[response] = record
         if recent.count > 16 { for key in recent.keys.sorted() where key != response { recent.removeValue(forKey:key); if recent.count <= 16 { break } } }
@@ -244,25 +266,39 @@ final class UsageIndexer {
             if let tier = payload["service_tier"] { state["service_tier"] = tier }
             state["model_context_window"] = payload["model_context_window"] ?? payload.object("info")["model_context_window"]
             let id = payload.string("turn_id",payload.string("id"))
-            if !id.isEmpty && id != state.string("turn_id") { state["previous_turn_id"] = state["turn_id"]; state["prompt_preview"] = ""; state["modern_candidate"] = nil; state["active_response_id"] = nil; state["preview_pending"] = [Object]() }
-            if !id.isEmpty { state["turn_id"] = id }
+            try activateTurn(id,state:&state,owned:!inherited)
+            if let root = payload["root_turn_id"] { state["root_turn_id"] = root }
             if !inherited { try saveTurn(&state,stamp:stamp) { _ in } }
         }
         if kind == "event_msg" && ["task_started","turn_started"].contains(subtype) {
             let settings = payload.object("thread_settings").isEmpty ? payload.object("settings") : payload.object("thread_settings")
             for key in ["model","reasoning_effort","service_tier","model_context_window"] { if let value = settings[key] ?? payload[key] { state[key] = value } }
             let id = payload.string("turn_id",payload.string("id"))
-            if !id.isEmpty { state["previous_turn_id"] = state["turn_id"]; state["turn_id"] = id; state["modern_candidate"] = nil; state["active_response_id"] = nil; state["preview_pending"] = [Object]() }
-            state["prompt_preview"] = ""; state["output_preview"] = ""
+            try activateTurn(id,state:&state,owned:!inherited)
+            if let root = payload["root_turn_id"] { state["root_turn_id"] = root }
+            state["output_preview"] = ""
             if !inherited { try saveTurn(&state,stamp:stamp) { $0["started_at"] = payload["started_at"].flatMap(parsedDate).map(iso) ?? stamp; $0["started_inferred"] = false; $0["status"] = "running" } }
         }
         let item = payload.object("item")
         let userContent: Any? = kind == "event_msg" && subtype == "user_message" ? payload["message"] ?? payload["content"] : kind == "response_item" && payload.string("role") == "user" ? payload["content"] : kind == "event_msg" && ["user_message","userMessage","UserMessage"].contains(item.string("type")) ? item["content"] ?? item["message"] : nil
         if let content = userContent, !inherited {
-            if state.string("turn_id").isEmpty || ["completed","aborted"].contains(state.object("turns").object(state.string("turn_id")).string("status")) { state["previous_turn_id"] = state["turn_id"]; state["turn_id"] = "legacy-user:"+identity([stamp,content]) }
             let text = plain(content,user:true)
+            let reply = (content as? String)?.contains("<send_user_message_question_reply>") == true
+            guard !text.isEmpty || reply else { return }
+            let fullText = content as? String ?? (content as? [Object] ?? []).map { $0.string("text") }.joined(separator:"\n")
+            let fingerprint = identity(String(fullText.prefix(262144))), messageID = payload.string("id",item.string("id"))
+            let representation = kind == "response_item" ? "response" : "event"
+            let previousInput = state.object("request_last_input")
+            let current = state.object("turns").object(state.string("turn_id"))
+            let conflictingIDs = !messageID.isEmpty && !previousInput.string("message_id").isEmpty && messageID != previousInput.string("message_id")
+            let sameIdentity = !messageID.isEmpty && previousInput.string("message_id") == messageID && previousInput.string("turn_id") == state.string("turn_id")
+            let paired = sameIdentity || (!conflictingIDs && previousInput.string("fingerprint") == fingerprint && previousInput.string("representation") != representation && previousInput.string("turn_id") == state.string("turn_id") && !current.flag("has_usage") && current.string("ended_at").isEmpty)
+            if state.string("turn_id").isEmpty || (!paired && (["completed","aborted"].contains(current.string("status")) || state.string("turn_id").hasPrefix("legacy-user:"))) {
+                state["previous_turn_id"] = state["turn_id"]; state["turn_id"] = "legacy-user:"+identity([stamp,content]); state["root_turn_id"] = nil
+            }
             if !text.isEmpty { state["prompt_preview"] = text }
-            let previous = state.string("previous_turn_id"), reply = (content as? String)?.contains("<send_user_message_question_reply>") == true
+            let previous = state.string("previous_turn_id")
+            state["request_last_input"] = ["fingerprint":fingerprint,"message_id":messageID,"representation":representation,"turn_id":state.string("turn_id")]
             try saveTurn(&state,stamp:stamp) { row in
                 if !text.isEmpty { row["prompt_preview"] = text }
                 if reply && !previous.isEmpty { row["continuation_of"] = previous }

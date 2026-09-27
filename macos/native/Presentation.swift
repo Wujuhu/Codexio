@@ -48,7 +48,7 @@ struct TrendProjection {
         let rows = snapshot.calls.filter {$0.local && range.contains($0) && (model == "all" || $0.raw.string("model") == model)}
         let ids = model == "all" ? Set<String>() : Set(rows.map(\.id))
         let requests = snapshot.requests.filter {$0.local && !$0.raw.flag("is_subagent") && $0.raw.string("record_kind") == "user_request" && range.contains($0) && (model == "all" || !ids.isDisjoint(with:$0.raw["member_ids"] as? [String] ?? []))}
-        return TrendProjection(summary:UsageSummary(rows:rows,requests:requests.count),days:range.buckets(rows,requests:requests,granularity:granularity),recent:Array(requests.prefix(4)))
+        return TrendProjection(summary:UsageSummary(rows:rows,requests:requests.count),days:range.buckets(rows,requests:requests,granularity:granularity),recent:Array(requests.prefix(3)))
     }
 }
 
@@ -56,6 +56,7 @@ struct LogProjection {
     var revision = UUID()
     var rows: [UsageRow] = []
     var count = 0
+    var unassigned = 0
     var page = 0
     var pages: Int { max(1,(count+59)/60) }
     static func build(_ snapshot: UsageSnapshot,range: UsageRange,mode: String,model: String,tier: String,status: String,query: String,page: Int) -> LogProjection {
@@ -66,6 +67,6 @@ struct LogProjection {
             (query.isEmpty || [row.title,row.raw.string("prompt_preview"),row.raw.string("output_preview"),row.raw.string("session_id"),row.id].joined(separator:" ").localizedCaseInsensitiveContains(query))
         }
         let selected = min(page,max(0,(rows.count-1)/60))
-        return LogProjection(rows:Array(rows.dropFirst(selected*60).prefix(60)),count:rows.count,page:selected)
+        return LogProjection(rows:Array(rows.dropFirst(selected*60).prefix(60)),count:rows.count,unassigned:rows.filter { $0.raw.string("record_kind") == "unassigned" }.count,page:selected)
     }
 }

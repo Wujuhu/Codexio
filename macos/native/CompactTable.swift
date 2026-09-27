@@ -86,6 +86,13 @@ private final class GridDetailCell: NSView {
     deinit { coordinator?.popover.close() }
 }
 
+private final class CompactScrollView: NSScrollView {
+    override func scrollWheel(with event: NSEvent) {
+        if !hasVerticalScroller && abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX) { nextResponder?.scrollWheel(with:event) }
+        else { super.scrollWheel(with:event) }
+    }
+}
+
 struct CompactTable: NSViewRepresentable {
     var columns: [GridColumn]
     var rows: [GridRow]
@@ -94,12 +101,14 @@ struct CompactTable: NSViewRepresentable {
     var selection: Binding<String?>? = nil
     var preferences: Preferences? = nil
     var storageKey = ""
+    var verticalScrolling = true
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> NSScrollView {
-        let scroll = NSScrollView(), table = NSTableView()
-        scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = true
+        let scroll = CompactScrollView(), table = NSTableView()
+        scroll.hasVerticalScroller = verticalScrolling; scroll.hasHorizontalScroller = true
         scroll.autohidesScrollers = false; scroll.scrollerStyle = .legacy
         scroll.drawsBackground = true; scroll.backgroundColor = .textBackgroundColor
+        if !verticalScrolling { table.style = .plain; table.rowSizeStyle = .custom }
         table.headerView = NSTableHeaderView()
         table.columnAutoresizingStyle = .noColumnAutoresizing
         table.intercellSpacing = NSSize(width:0,height:1)

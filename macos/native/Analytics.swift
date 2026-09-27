@@ -28,7 +28,10 @@ struct UsageRow: Identifiable {
         confirmedCall = ["","response","legacy_last"].contains(quality) || (quality == "cumulative_delta" && id.hasPrefix("response:"))
         inputTokens = raw.integer("input_tokens"); cachedTokens = raw.integer("cached_input_tokens"); outputTokens = raw.integer("output_tokens")
     }
-    var title: String { raw.string("session_title").isEmpty ? raw.string("prompt_preview",raw.string("session_id")) : raw.string("session_title") }
+    var title: String {
+        if raw.string("record_kind") == "user_request", !raw.string("prompt_preview").isEmpty { return raw.string("prompt_preview") }
+        return raw.string("session_title").isEmpty ? raw.string("prompt_preview",raw.string("session_id")) : raw.string("session_title")
+    }
     var modelLabel: String {
         let requested = raw.string("model"), observed = raw.string("upstream_model")
         return modelName(requested)+(observed.isEmpty ? "" : " → "+modelName(observed))
@@ -131,7 +134,8 @@ enum Analytics {
     }
     static func build(records: [Object], turns inputTurns: [Object], links: [Object] = [], catalog: PricingCatalog, now: Date = Date(), preparedCalls: [UsageRow]? = nil) -> UsageSnapshot {
         var result = UsageSnapshot()
-        result.calls = (preparedCalls ?? records.map { UsageRow(raw:catalog.price($0)) }).sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+        var seenCalls = Set<String>()
+        result.calls = (preparedCalls ?? records.map { UsageRow(raw:catalog.price($0)) }).filter { seenCalls.insert($0.id).inserted }.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
         let bySession = Dictionary(grouping:inputTurns,by:{$0.string("session_id")}).mapValues {$0.sorted {$0.string("started_at") < $1.string("started_at")}}
         let turns = inputTurns.map { original -> Object in
             var row = original
@@ -150,7 +154,20 @@ enum Analytics {
             }
             return row
         }
-        let turnMap = Dictionary(turns.map { ($0.string("id"),$0) },uniquingKeysWith: { _,new in new })
+        var turnMap = Dictionary(turns.map { ($0.string("id"),$0) },uniquingKeysWith: { old,new in
+            old.merging(new.filter { !($0.value is NSNull) && !($0.value is String && ($0.value as? String) == "") },uniquingKeysWith: { _,new in new })
+        })
+        func reference(_ value: String,session: String) -> String { value.hasPrefix("turn:") ? value : "turn:"+session+":"+value }
+        func callTurn(_ row: UsageRow) -> String {
+            let requested = row.raw.string("request_turn_id")
+            return requested.isEmpty ? row.raw.string("turn_id") : requested
+        }
+        for call in result.calls {
+            let session = call.raw.string("session_id"), turn = callTurn(call)
+            guard !session.isEmpty, !turn.isEmpty else { continue }
+            let id = reference(turn,session:session)
+            if turnMap[id] == nil { turnMap[id] = ["id":id,"session_id":session,"turn_id":turn,"started_inferred":true,"verified":true] }
+        }
         var rootCache: [String:String] = [:]
         func root(_ id: String) -> String {
             if let known = rootCache[id] { return known }
@@ -158,8 +175,10 @@ enum Analytics {
             for _ in 0..<64 {
                 guard seen.insert(cursor).inserted, let row = turnMap[cursor] else { break }
                 var parent = ""
-                if !row.string("continuation_of").isEmpty { parent = "turn:"+row.string("session_id")+":"+row.string("continuation_of") }
-                else if row.flag("is_subagent"), !row.string("parent_session_id").isEmpty, !row.string("parent_turn_id").isEmpty { parent = "turn:"+row.string("parent_session_id")+":"+row.string("parent_turn_id") }
+                if !row.string("alias_of").isEmpty { parent = reference(row.string("alias_of"),session:row.string("session_id")) }
+                else if !row.string("continuation_of").isEmpty { parent = reference(row.string("continuation_of"),session:row.string("session_id")) }
+                else if !row.string("root_turn_id").isEmpty && row.string("root_turn_id") != row.string("turn_id") { parent = reference(row.string("root_turn_id"),session:row.string("session_id")) }
+                else if row.flag("is_subagent"), !row.string("parent_session_id").isEmpty, !row.string("parent_turn_id").isEmpty { parent = reference(row.string("parent_turn_id"),session:row.string("parent_session_id")) }
                 if parent.isEmpty || turnMap[parent] == nil { break }
                 cursor = parent
             }
@@ -167,19 +186,22 @@ enum Analytics {
             return cursor
         }
         var grouped: [String:[UsageRow]] = [:], groupTurns: [String:[Object]] = [:]
-        for row in turns where row.flag("verified",true) { groupTurns[root(row.string("id")),default:[]].append(row) }
+        for row in turns where row.flag("verified",true) && row.string("alias_of").isEmpty { groupTurns[root(row.string("id")),default:[]].append(row) }
         for row in result.calls {
-            let turn = row.raw.string("request_turn_id",row.raw.string("turn_id"))
-            guard !turn.isEmpty else { continue }
-            grouped[root("turn:"+row.raw.string("session_id")+":"+turn),default:[]].append(row)
+            let turn = callTurn(row), session = row.raw.string("session_id")
+            guard !session.isEmpty, !turn.isEmpty else {
+                var raw = row.raw; raw["record_kind"] = "unassigned"; result.requests.append(UsageRow(raw:raw)); continue
+            }
+            grouped[root(reference(turn,session:session)),default:[]].append(row)
         }
         for id in Set(grouped.keys).union(groupTurns.keys) {
             let calls = grouped[id] ?? [], members = groupTurns[id] ?? []
-            guard let own = turnMap[id], !own.string("prompt_preview").isEmpty else {
-                for call in calls { var row = call.raw; row["record_kind"] = "unassigned"; result.requests.append(UsageRow(raw:row)) }
-                continue
-            }
+            guard let own = turnMap[id] else { continue }
+            guard !calls.isEmpty || !own.string("prompt_preview").isEmpty || members.contains(where: { !$0.string("prompt_preview").isEmpty }) else { continue }
             var row = own
+            let prompt = ([own]+members).map { requestPreview($0.string("prompt_preview")) }.first { !$0.isEmpty }
+                ?? calls.map { $0.raw.string("prompt_preview") }.first { !$0.isEmpty }
+            row["prompt_preview"] = prompt ?? L("任务记录", "Task record")
             let summary = UsageSummary(rows:calls)
             row["id"] = id; row["record_kind"] = "user_request"
             row["timestamp"] = own["started_at"] ?? calls.last?.raw["timestamp"]
@@ -202,7 +224,7 @@ enum Analytics {
             row["session_title"] = calls.first?.raw["session_title"]
             row["output_preview"] = members.sorted {$0.string("observed_at") > $1.string("observed_at")}.first(where:{!$0.string("output_preview").isEmpty})? ["output_preview"]
             let intervals = members.compactMap(interval)
-            let completed = members.allSatisfy {["completed","aborted"].contains($0.string("status"))}
+            let completed = !members.isEmpty && members.allSatisfy {["completed","aborted"].contains($0.string("status"))}
             let running = members.filter {$0.string("status") == "running" && (parsedDate($0["observed_at"]).map {now.timeIntervalSince($0) < 900} ?? false)}
             if !running.isEmpty, let start = running.compactMap({parsedDate($0["started_at"])}).min() {
                 row["status"] = "running"; row["duration_running"] = true; row["duration_started_at"] = iso(start)
