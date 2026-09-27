@@ -122,3 +122,11 @@ build/dev/macos/latest.json
 - 菜单栏保留 18／21 点图标和 14 点周额度字体。共用视觉中心对齐引导：图标参考已有猫形 SVG 的视觉偏移（18 点下约 -0.65 点），各文字字段按原生字体 capHeight 与基线对齐，其他费用／Token 字段也使用同一机制；不改变 SVG 或增加定时刷新。
 
 本轮验证：Mac 最终开发构建的三项隔离冒烟、版本／签名／ZIP／清单核验通过；只查看一张菜单栏设置模拟预览 `build/checks/ranking-time-alignment/settings-menubar-zh.png`。聊天名称问题通过只读本机索引／SQLite 字段确认，未修改真实 Codex 数据或启动用户安装版；时区显示按用户官方 UTC 参考修正。构建日志 `build/logs/ranking-time-alignment-build.log`，版本保持 0.3.1，Widget 18／1.17 不变。
+
+## 发布后文案修正（用户明确确认替换 v0.3.1）
+
+- 请求小／中／大组件的思考强度统一英文，快照复用日志的英文格式化；Widget 同时兼容转换旧中文快照，布局保持原样。
+- 菜单栏今日／当前任务的费用、Token 均只显示数值；设置中的字段名称和无障碍说明仍保留含义，显示顺序及口径不变。
+- Widget UI 文案变化，构建号从 18 递增至 19，短版本 1.18；程序保持 0.3.1；用户已明确确认替换已发布 v0.3.1。发布前将原三个附件及发布信息保存在 build/backups，再由协调脚本和 Windows CI 完成重发。
+
+本轮 Mac 开发包固定三项隔离冒烟、签名、ZIP、版本和清单校验通过，Widget 构建 19／短版本 1.18；不启动用户安装版。构建日志 build/logs/widget-effort-menu-values-build.log。

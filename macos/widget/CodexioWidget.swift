@@ -107,7 +107,10 @@ private func compactContext(_ count: Int?) -> String? {
 
 private func modelDetail(_ request: RequestSnapshot, family: WidgetFamily) -> String {
     var parts = [request.model.isEmpty ? WL("等待模型调用", "Waiting for a model call") : request.model]
-    if let effort = request.reasoning_effort, !effort.isEmpty { parts.append(effort) }
+    if let effort = request.reasoning_effort, !effort.isEmpty {
+        let labels = ["无":"None","最轻":"Minimal","轻度":"Low","中等":"Medium","高度":"High","极高":"Extra high","最高":"Max","超高":"Ultra","未知":"Unknown","none":"None","minimal":"Minimal","low":"Low","medium":"Medium","high":"High","xhigh":"Extra high","max":"Max","ultra":"Ultra"]
+        parts.append(labels[effort.lowercased()] ?? effort)
+    }
     if family != .systemSmall {
         let tier = (request.service_tier ?? "").lowercased()
         if tier == "fast" || tier == "priority" { parts.append("Fast") }

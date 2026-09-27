@@ -377,7 +377,7 @@ final class AppState: ObservableObject {
         guard !paths.mock, !stopped else { return }
         var request: Any = NSNull()
         if let selected = usage.widgetRequest {
-            var value: Object = ["id":selected.id,"prompt":String(selected.raw.string("prompt_preview").prefix(240)),"model":modelName(selected.raw.string("model")),"reasoning_effort":effortName(selected.raw.string("reasoning_effort")),"duration_running":selected.raw.flag("duration_running")]
+            var value: Object = ["id":selected.id,"prompt":String(selected.raw.string("prompt_preview").prefix(240)),"model":modelName(selected.raw.string("model")),"reasoning_effort":logEffortName(selected.raw.string("reasoning_effort")),"duration_running":selected.raw.flag("duration_running")]
             for key in ["cost_usd","duration_ms","input_tokens","output_tokens","cached_input_tokens","cache_hit_rate","service_tier","model_context_window"] { value[key] = selected.raw[key] ?? NSNull() }
             if let start = parsedDate(selected.raw["duration_started_at"]) { value["duration_started_at"] = start.timeIntervalSince1970-(selected.raw.number("duration_base_ms") ?? 0)/1000 }
             for key in ["input_tokens","output_tokens","cached_input_tokens"] where value[key] is NSNull { value[key] = 0 }

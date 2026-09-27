@@ -2529,22 +2529,6 @@
         }
       }
     },
-    "今日 ": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Today "
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "今日 "
-          }
-        }
-      }
-    },
     "今日 %s Token %s": {
       "localizations": {
         "en": {
@@ -2829,22 +2813,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "价格目录超过大小限制"
-          }
-        }
-      }
-    },
-    "任务 ": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Task "
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "任务 "
           }
         }
       }

@@ -27,10 +27,10 @@ enum MenuBarField {
         switch field {
         case "week": return percent(state.quota.fresh ? state.quota.week?.remaining : nil)
         case "task": return state.taskRunning.map {$0 ? L("运行中", "Running") : L("已完成", "Completed")} ?? "—"
-        case "today_cost": return L("今日 ", "Today ")+money(todayCost)
-        case "today_tokens": return L("今日 ", "Today ")+compact(todayTokens.map(Double.init))
-        case "task_cost": return L("任务 ", "Task ")+money(current?.cost)
-        default: return L("任务 ", "Task ")+compact(current?.tokens.map(Double.init))
+        case "today_cost": return money(todayCost)
+        case "today_tokens": return compact(todayTokens.map(Double.init))
+        case "task_cost": return money(current?.cost)
+        default: return compact(current?.tokens.map(Double.init))
         }
     }
     static func text(_ state: AppState) -> String { state.menuFields.map {value($0,state:state)}.joined(separator:"  ") }
