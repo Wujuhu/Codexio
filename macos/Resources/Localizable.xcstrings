@@ -10849,6 +10849,22 @@
         }
       }
     },
+    "正在抓取数据": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fetching data"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在抓取数据"
+          }
+        }
+      }
+    },
     "正在检查新版…": {
       "localizations": {
         "en": {
@@ -13837,6 +13853,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "超高"
+          }
+        }
+      }
+    },
+    "趋势": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trend"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "趋势"
           }
         }
       }

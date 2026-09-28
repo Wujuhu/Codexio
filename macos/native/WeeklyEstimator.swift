@@ -49,14 +49,13 @@ final class WeeklyEstimator {
                 if !invalid && dollars > 0 {
                     let row: Object = ["start":iso(Date(timeIntervalSince1970:beginning)),"end":iso(Date(timeIntervalSince1970:end)),"account_key":sample.string("account_key"),"plan_type":sample.string("plan_type"),"limit_id":"codex","reset_at":sample["reset_at"]!,"sole_codex_pool":start.flag("sole_codex_pool"),"start_percent":start["used_percent"]!,"end_percent":sample["used_percent"]!,"delta_percent":delta,"consumed_tokens":tokens,"consumed_usd":dollars,"estimated_total_usd":100*dollars/delta,"price_version":priceVersion]
                     try database.run("INSERT INTO usage_week_intervals(end_at,data) VALUES(?,?)",[row.string("end"),jsonString(row)])
-                    try database.run("DELETE FROM usage_week_intervals WHERE id NOT IN (SELECT id FROM usage_week_intervals ORDER BY end_at DESC,id DESC LIMIT 100)")
                     cachedRows = nil
                 }
             }
         }
         let version = try database.query("PRAGMA data_version").first?.integer("data_version")
         if let cachedRows, cachedPrices == priceVersion, databaseVersion == version { return cachedRows }
-        let rows = try database.query("SELECT id,data FROM usage_week_intervals ORDER BY end_at DESC,id DESC LIMIT 100")
+        let rows = try database.query("SELECT id,data FROM usage_week_intervals ORDER BY end_at DESC,id DESC LIMIT 10")
         var result: [Object] = []
         for stored in rows {
             var row = jsonObject(Data(stored.string("data").utf8))
@@ -78,7 +77,7 @@ struct EstimateHistoryView: View {
     var body: some View {
         LazyVStack(alignment:.leading,spacing:10) {
             if state.weeklyEstimates.isEmpty { StatusNote(text:L("等待同一周期内足够的额度与本机消费记录", "Waiting for enough allowance and local usage records within one period")) }
-            ForEach(state.weeklyEstimates,id:\.estimateIdentity) { row in
+            ForEach(Array(state.weeklyEstimates.prefix(10)),id:\.estimateIdentity) { row in
                 HStack {
                     Text(dateText(parsedDate(row["start"]))+" – "+dateText(parsedDate(row["end"]))).foregroundStyle(.secondary)
                     Spacer()

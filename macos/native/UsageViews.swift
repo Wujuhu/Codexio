@@ -6,7 +6,7 @@ struct UsageView: View {
     var body: some View {
         VStack(alignment:.leading,spacing:0) {
             HStack(spacing:28) {
-                tab("activity",L("活动", "Activity")); tab("trend",L("用量趋势", "Usage trend")); tab("threads",L("聊天排行", "Top chats"))
+                tab("activity",L("活动", "Activity")); tab("trend",L("趋势", "Trend")); tab("threads",L("聊天排行", "Top chats"))
                 Spacer()
             }.padding(.horizontal,PageLayout.inset)
             Divider().padding(.horizontal,PageLayout.inset)
@@ -136,6 +136,7 @@ struct UsageTrendsView: View {
     @State private var period = "week"
     @State private var model = "all"
     @State private var granularity = "day"
+    @State private var datesOpen = false
     @State private var from = Calendar.current.date(byAdding:.day,value:-6,to:Date())!
     @State private var through = Date()
     init(state: AppState) { self.state = state; projection = state.trendProjection }
@@ -146,22 +147,18 @@ struct UsageTrendsView: View {
     }
     var body: some View {
         VStack(alignment:.leading,spacing:22) {
-            AdaptiveRow(spacing:8) {
+            ScrollView(.horizontal) { HStack(spacing:12) {
                 PeriodPicker(selection:$period,custom:true,condensed:true)
+                if period == "custom" { Button {datesOpen = true} label:{Image(systemName:"calendar")}.popover(isPresented:$datesOpen) {DateRangeControls(from:$from,through:$through).padding(18).frame(width:360)} }
                 Picker("",selection:$model) { Text(L("全部模型", "All models")).tag("all"); ForEach(state.usage.models.filter(MobileTrends.isSingleModel),id:\.self) { Text($0).tag($0) } }.labelsHidden().frame(width:112)
-                if !compact { Spacer() }
-            }
-            AdaptiveRow(spacing:8) {
-                if period == "custom" { DateRangeControls(from:$from,through:$through) }
                 Picker("",selection:$granularity) { Text(L("每小时", "Hourly")).tag("hour"); Text(L("每天", "Daily")).tag("day"); Text(L("每周", "Weekly")).tag("week") }.labelsHidden().pickerStyle(.segmented).fixedSize()
-                if !compact { Spacer() }
-            }
+            }}.scrollIndicators(.hidden).frame(height:30)
             SummaryMetrics(summary:projection.value.summary)
             TrendChart(days:projection.value.days).padding(18).overlay(RoundedRectangle(cornerRadius:14).stroke(.secondary.opacity(0.15)))
             ModelShareCard(projection:projection.value)
             if projection.value.summary.unknownCosts > 0 { StatusNote(text:L("未定价调用", "Unpriced calls")+" · \(projection.value.summary.unknownCosts)") }
         }.onAppear(perform:load).onChange(of:key) { _,_ in load() }
-        .onChange(of:period) { _,value in granularity = value == "today" ? "hour" : value == "all" ? "week" : "day" }
+        .onChange(of:period) { _,value in granularity = value == "today" ? "hour" : value == "all" ? "week" : "day"; if value == "custom" {datesOpen = true} }
     }
 }
 

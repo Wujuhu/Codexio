@@ -13,6 +13,28 @@ struct ScanStamp: View {
     }
 }
 
+// Observe fetch activity only in the toolbar, not through global AppState.
+final class FetchActivity: ObservableObject {
+    @Published private(set) var busy = false
+    private var operations = Set<UUID>()
+    func begin() -> UUID { let id = UUID(); operations.insert(id); if !busy {busy = true}; return id }
+    func end(_ id: UUID) { operations.remove(id); let next = !operations.isEmpty; if busy != next {busy = next} }
+    func clear() {operations.removeAll(); if busy {busy = false}}
+}
+
+struct FetchRefreshControls: View {
+    @ObservedObject var activity: FetchActivity
+    let clock: ScanClock
+    let refresh: () -> Void
+    var body: some View {
+        HStack(spacing:8) {
+            if activity.busy {ProgressView().controlSize(.mini).frame(width:12,height:12).accessibilityLabel(L("正在抓取数据", "Fetching data"))}
+            ScanStamp(clock:clock).font(.system(size:12)).foregroundStyle(.secondary)
+            Button(action:refresh) {Image(systemName:"arrow.clockwise").font(.system(size:11))}.buttonStyle(.plain).disabled(activity.busy).help(L("刷新", "Refresh")).accessibilityLabel(L("刷新", "Refresh"))
+        }
+    }
+}
+
 final class AsyncProjection<Value>: ObservableObject {
     @Published private(set) var value: Value
     private var requested = ""

@@ -55,6 +55,8 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
     private var active = false
     private var generation = UUID()
     private var ticket: MobilePairCode?
+    private var pairingUIRevision = UUID() // Main queue, used only by UI callbacks.
+    private var ticketUIRevision: UUID? // Service queue.
     private var candidate: MobileReader?
     private var exportRevision: UUID?
     private var exportPreview = false
@@ -162,6 +164,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
     }
     func stop(disable: Bool = false) {
         guard !paths.mock else { return }
+        invalidatePairing()
         if disable { UserDefaults.standard.set(false,forKey:"codexio.mobile.enabled") }
         queue.async {
             self.active = false; self.generation = UUID(); self.timer?.cancel(); self.timer = nil
@@ -175,23 +178,29 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
     func rename(_ value: String) { let name = String(value.trimmingCharacters(in:.whitespacesAndNewlines).prefix(30)); guard !name.isEmpty else { return }; deviceName = name; if !paths.mock { UserDefaults.standard.set(name,forKey:"codexio.mobile.name") } }
     func pair() {
         let name = deviceName
+        let revision = UUID(); pairingUIRevision = revision; qrImage = nil; pending = nil
         queue.async {
             guard self.active, let host = self.host else { return }
             do {
                 self.ticket = MobilePairCode(host:host.id,name:name,pin:host.pin,ticket:try MobileProtocol.secret(),expires:Date().timeIntervalSince1970+300,cloud:host.cloudEnabled ? MobileProtocol.cloudOrigin : nil)
+                self.ticketUIRevision = revision
                 self.candidate = nil
                 let filter = CIFilter.qrCodeGenerator(); filter.message = try MobileProtocol.encode(self.ticket!); filter.correctionLevel = "M"
                 guard let output = filter.outputImage?.transformed(by:.init(scaleX:6,y:6)), let cg = CIContext().createCGImage(output,from:output.extent) else { return }
                 let image = NSImage(cgImage:cg,size:NSSize(width:220,height:220))
-                DispatchQueue.main.async { self.qrImage = image; self.pending = nil }
+                DispatchQueue.main.async { guard self.pairingUIRevision == revision else {return}; self.qrImage = image; self.pending = nil }
                 let issued = self.ticket?.ticket
                 self.queue.asyncAfter(deadline:.now()+300) {
                     guard self.ticket?.ticket == issued else { return }
-                    self.ticket = nil; self.candidate = nil
-                    DispatchQueue.main.async { self.qrImage = nil; self.pending = nil }
+                    self.ticket = nil; self.candidate = nil; self.ticketUIRevision = nil
+                    DispatchQueue.main.async { guard self.pairingUIRevision == revision else {return}; self.qrImage = nil; self.pending = nil }
                 }
             } catch { self.report(error.localizedDescription) }
         }
+    }
+    func invalidatePairing() {
+        pairingUIRevision = UUID(); qrImage = nil; pending = nil
+        queue.async { self.ticket = nil; self.candidate = nil; self.ticketUIRevision = nil }
     }
     func approve(_ allowed: Bool) {
         queue.async {
@@ -306,7 +315,8 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                       let ticket = self.ticket, ticket.expires > Date().timeIntervalSince1970,
                       MobileProtocol.equal(message.ticket ?? "",ticket.ticket), self.candidate == nil || self.candidate?.id == reader.id {
                 self.candidate = reader
-                DispatchQueue.main.async { self.pending = reader }
+                let revision = self.ticketUIRevision
+                DispatchQueue.main.async { guard self.pairingUIRevision == revision else {return}; self.pending = reader }
                 MobileProtocol.send(MobileMessage(action:"pending"),over:connection)
             } else { MobileProtocol.send(MobileMessage(action:message.action == "sync" ? "revoked" : "error",error:message.action == "sync" ? "REVOKED" : "配对已过期或被拒绝"),over:connection) }
             self.receive(connection)
@@ -436,7 +446,7 @@ struct MobileSyncSettings: View {
                 } else {
                     HStack {Label("云同步",systemImage:"cloud"); Spacer(); Button("移除密钥",role:.destructive) {confirmRemoval = true}}
                 }
-                Button("添加 iPhone · 生成二维码") { sync.pair(); refresh() }.disabled(sync.readers.count >= 3)
+                Button("生成二维码") { sync.pair(); refresh() }.disabled(sync.readers.count >= 3)
                 if let image = sync.qrImage { Image(nsImage:image).interpolation(.none).resizable().scaledToFit().frame(width:220,height:220) }
                 if let pending = sync.pending {
                     Text("允许 \(pending.name) 读取这台 Mac 的摘要？")
@@ -446,6 +456,7 @@ struct MobileSyncSettings: View {
                 if let error = sync.syncError {Text(error).foregroundStyle(.red)}
             }
         }
+        .onDisappear {sync.invalidatePairing()}
         .confirmationDialog("移除云端密钥？",isPresented:$confirmRemoval,titleVisibility:.visible) {Button("移除密钥",role:.destructive) {sync.removeCloudKey()}} message: {Text("云同步将停止，再次使用需添加新的邀请码。局域网配对保留。")}
         .alert("同步",isPresented:Binding(get:{sync.notice != nil},set:{if !$0 {sync.notice=nil}})) {Button("知道了") {sync.notice=nil}} message: {Text(sync.notice ?? "")}
     }

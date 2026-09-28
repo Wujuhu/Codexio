@@ -25,7 +25,7 @@ struct MainView: View {
                 HStack(spacing:18) {
                     Button { state.toggleSidebar() } label: { Image(systemName:"sidebar.left") }.buttonStyle(.plain).accessibilityLabel(L("切换侧边栏", "Toggle sidebar"))
                     Spacer()
-                    ScanStamp(clock:state.clock).font(.system(size:12)).foregroundStyle(.secondary)
+                    FetchRefreshControls(activity:state.fetchActivity,clock:state.clock) {state.refresh()}
                 }.padding(.horizontal,PageLayout.inset).frame(height:48)
                 Divider()
                 HStack(alignment:.firstTextBaseline) {
@@ -76,10 +76,10 @@ private struct SidebarView: View {
                         .accessibilityLabel("Codexio")
                     Spacer(minLength:4)
                     Button { state.selectedPage = "logs"; NotificationCenter.default.post(name:.init("CodexioSearch"),object:nil) } label: { Image(systemName:"magnifyingglass").foregroundStyle(.secondary) }.buttonStyle(.plain).accessibilityLabel(L("搜索日志", "Search logs"))
-                }.padding(.horizontal,16).padding(.top,30).padding(.bottom,18)
+                }.padding(.horizontal,16).padding(.top,22).padding(.bottom,26)
             } else {
                 SidebarBrand(state:state).frame(maxWidth:.infinity)
-                    .padding(.top,30).padding(.bottom,24)
+                    .padding(.top,22).padding(.bottom,32)
             }
             ForEach(navigation,id:\.self) { page in
                 SidebarNavigationRow(page:page,selected:state.selectedPage == page,expanded:state.sidebarVisible,draggedPage:$draggedPage) { if state.selectedPage != page { state.selectedPage = page } }
@@ -173,9 +173,9 @@ struct OverviewView: View {
                 }
                 if let error = state.quota.error { StatusNote(text:error) }
                 Divider()
-                HStack { SectionHeading(title:L("本机用量", "Local usage")); Spacer(); PeriodPicker(selection:$period).fixedSize() }
+                HStack { SectionHeading(title:L("用量", "Usage")); Spacer(); PeriodPicker(selection:$period).fixedSize() }
                 SummaryMetrics(summary:projection.value.summary)
-                VStack(alignment:.leading,spacing:16) { SectionHeading(title:L("用量趋势", "Usage trend")); TrendChart(days:projection.value.days) }.padding(18).overlay(RoundedRectangle(cornerRadius:13).stroke(.secondary.opacity(0.15)))
+                VStack(alignment:.leading,spacing:16) { SectionHeading(title:L("趋势", "Trend")); TrendChart(days:projection.value.days) }.padding(18).overlay(RoundedRectangle(cornerRadius:13).stroke(.secondary.opacity(0.15)))
                 ModelShareCard(projection:projection.value)
                 HStack { SectionHeading(title:L("最近请求", "Recent requests")); Button(L("查看全部", "View all")) { state.selectedPage = "logs" }.buttonStyle(.plain).foregroundStyle(.secondary) }
                 if !projection.value.recent.isEmpty {
@@ -278,8 +278,8 @@ struct LogsView: View {
             Picker("",selection:$model) {Text(L("全部模型", "All models")).tag("all"); ForEach(state.usage.models.filter(MobileTrends.isSingleModel),id:\.self) {Text($0).tag($0)}}.labelsHidden().frame(width:112)
             Picker("",selection:$tier) {Text(L("全部速度", "All speeds")).tag("all"); Text("Fast").tag("priority"); Text(L("标准", "Standard")).tag("default"); Text(L("未知", "Unknown")).tag("unknown")}.labelsHidden().frame(width:112)
             if mode == "requests" {Picker("",selection:$status) {Text(L("全部状态", "All statuses")).tag("all"); Text(L("已完成", "Completed")).tag("completed"); Text(L("进行中", "In progress")).tag("running"); Text(L("未知", "Unknown")).tag("unknown")}.labelsHidden().frame(width:112)}
-            TextField(L("搜索输入、聊天或 ID", "Search prompt, chat or ID"),text:$query).textFieldStyle(.roundedBorder).focused($searchFocused).frame(minWidth:100,idealWidth:200,maxWidth:220)
             if !compact {Spacer(minLength:0)}
+            TextField(L("搜索输入、聊天或 ID", "Search prompt, chat or ID"),text:$query).textFieldStyle(.roundedBorder).focused($searchFocused).frame(minWidth:100,idealWidth:200,maxWidth:220)
         }
     }
 }

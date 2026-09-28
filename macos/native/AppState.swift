@@ -12,6 +12,7 @@ final class AppState: ObservableObject {
     let estimator: WeeklyEstimator
     let client = CodexClient()
     let clock = ScanClock()
+    let fetchActivity = FetchActivity()
     let quotaClock = ScanClock()
     let menuQuotaClock = ScanClock()
     lazy var mobileSync = MobileSync(paths:paths)
@@ -112,8 +113,11 @@ final class AppState: ObservableObject {
         if UserDefaults.standard.bool(forKey:"codexio.mobile.enabled") { mobileSync.start() }
         refreshUsage(); refreshQuota()
         configureTimers()
+        let priceFetch = fetchActivity.begin()
         dataQueue.async { [weak self] in
-            guard let self, self.preferences.analytics.flag("auto_sync_prices",true) else { return }
+            guard let self else { return }
+            defer { DispatchQueue.main.async {self.fetchActivity.end(priceFetch)} }
+            guard self.preferences.analytics.flag("auto_sync_prices",true) else { return }
             do { try self.catalog.sync(); self.publishUsage() }
             catch { DispatchQueue.main.async { self.errorMessage = L("价格同步失败，保留已有价格", "Price sync failed; saved prices are retained") } }
         }
@@ -127,13 +131,15 @@ final class AppState: ObservableObject {
         quotaTimer?.tolerance = 5
         priceTimer = Timer.scheduledTimer(withTimeInterval:3600,repeats:true) { [weak self] _ in
             guard let self, self.preferences.analytics.flag("auto_sync_prices",true) else { return }
-            self.dataQueue.async { try? self.catalog.sync(); self.publishUsage() }
+            let operation = self.fetchActivity.begin()
+            self.dataQueue.async { defer {DispatchQueue.main.async {self.fetchActivity.end(operation)}}; try? self.catalog.sync(); self.publishUsage() }
         }
         priceTimer?.tolerance = 180
     }
     func stop() {
         if !paths.mock { mobileSync.stop() }
         stopped = true; scanTimer?.invalidate(); quotaTimer?.invalidate(); priceTimer?.invalidate(); indexer.cancel(); client.close()
+        fetchActivity.clear()
         reportGeneration = UUID()
     }
     func finishQuit(completion: @escaping (Error?) -> Void) {
@@ -164,9 +170,10 @@ final class AppState: ObservableObject {
     func refresh() { refreshUsage(); refreshQuota(); if selectedPage == "subscription" || usageSection == "threads" { refreshReports(force:true) } }
     func refreshUsage() {
         guard !scanning, !stopped, !paths.mock else { return }
-        scanning = true; let roots = preferences.roots; let initial = loading
+        scanning = true; let roots = preferences.roots; let initial = loading; let operation = fetchActivity.begin()
         dataQueue.async { [weak self] in
             guard let self else { return }
+            defer { DispatchQueue.main.async {self.fetchActivity.end(operation)} }
             if initial { self.publishUsage(finishLoading:false) }
             do {
                 try self.indexer.scan(roots) { current,total in
@@ -208,9 +215,11 @@ final class AppState: ObservableObject {
     func refreshQuota() {
         guard !refreshing, !stopped, !paths.mock else { return }
         refreshing = true
+        let operation = fetchActivity.begin()
         let hint = preferences.general.string("codex_path"), accountRoot = self.accountRoot
         accountQueue.async { [weak self] in
             guard let self else { return }
+            defer {DispatchQueue.main.async {self.fetchActivity.end(operation)}}
             let identityBefore = try? BackendCredentials.load(root:accountRoot).account
             let savedMenuQuota = self.menuQuotaCacheLoaded ? nil : readObject(self.paths.data.appendingPathComponent("menu_quota_cache.json"))
             self.menuQuotaCacheLoaded = true
@@ -349,12 +358,14 @@ final class AppState: ObservableObject {
         if !force, let date = reportLoadedAt, Date().timeIntervalSince(date) < 60 { return }
         guard quota.applicable else { return }
         reportInFlight = true
+        let fetch = fetchActivity.begin()
         if force || (planHistory.isEmpty && chatUsage.isEmpty) { reportsLoading = true }
         if force && reportError != nil { reportError = nil }
         let generation = UUID(); reportGeneration = generation
         let candidates = usage.chatCandidates, root = accountRoot, expectedAccount = quota.account.string("identityKey")
         reportQueue.async { [weak self] in
             guard let self else { return }
+            defer {DispatchQueue.main.async {self.fetchActivity.end(fetch)}}
             let backend = AccountAnalytics(root:root)
             var history: Object = [:], chats: Object = [:], errors: [String] = [], retryAt = Date.distantPast
             do {
@@ -429,9 +440,12 @@ final class AppState: ObservableObject {
     }
     func syncPrices() {
         guard !paths.mock, !stopped else { return }
+        let operation = fetchActivity.begin()
         dataQueue.async { [weak self] in
-            do { try self?.catalog.sync(force:true); self?.publishUsage() }
-            catch { DispatchQueue.main.async { self?.errorMessage = error.localizedDescription } }
+            guard let self else { return }
+            defer {DispatchQueue.main.async {self.fetchActivity.end(operation)}}
+            do { try self.catalog.sync(force:true); self.publishUsage() }
+            catch { DispatchQueue.main.async { self.errorMessage = error.localizedDescription } }
         }
     }
     func overridePrice(model: String, rates: Object?) {
