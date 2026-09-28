@@ -1,11 +1,11 @@
 # 打包与交付
 
 - 日常功能开发、验证和 Mac 打包全部留在 `build`，不因一次开发构建写入或覆盖 `release`。仅在用户第二次明确确认发布及版本号后，才允许推送，并由发布协调脚本完成正式发布；成功后核验远程附件并归档到 `release/<确认的版本号>/`。
-- **自 2026-09-28 用户确认 v0.3.2 起，默认只开发和发布 Mac；除非用户特别明确要求 Windows，不修改 Windows 源码／版本、不构建或上传 EXE、不触发 Windows CI。**
-- 默认正式版本目录只有 `Codexio.app.zip` 和一份 `latest.json`。ZIP 内保留完整的 `Codexio.app`，不生成 DMG。仅当用户明确要求同次 Windows 发布时才额外包含 `Codexio.exe`。已发布的历史版本及其附件保持原样。
+- **自 2026-09-28 起 Windows 默认冻结；除非用户特别明确要求，不修改 Windows 源码／版本、不构建或上传 EXE、不触发 Windows CI。Mac 与 iOS 按各自需求开发，发布时遵守下述 IPA 必传规则。**
+- **以后每次 Release 都必须上传 iOS IPA。** 默认正式版本目录为 `Codexio.app.zip`、`Codexio.ipa`、`latest.json` 三个文件；缺少或过期的 IPA 必须阻止发布，不能再只发布 Mac。ZIP 内保留完整的 `Codexio.app`，不生成 DMG。只有用户明确要求 Windows 并适配联合流程后才额外包含 EXE；历史版本及其附件不自动补传或覆盖。
 - `build/dev/macos` 保存最新开发 APP、APP ZIP 和清单；`build/dev/windows` 保存最新开发 EXE 和清单。中间文件使用 `build/staging`，构建缓存使用 `build/cache`，检查结果使用 `build/checks`，日志使用 `build/logs`，同版本临时备份使用 `build/backups`。
 - Mac 使用 `build_macos.sh` 生成本地开发包。Windows 故障排查脚本与手动 CI 保留但默认不使用；只有用户特别要求 Windows 时才允许调用。
-- 用户确认发布后执行 `.venv/bin/python scripts/publish_release_from_macos.py --version <确认的版本号> --confirm-publish`。默认核验 Mac 包、推送远程 `main`、创建空正文草稿、下载复核 ZIP 与清单再发布，随后复核并原子归档；不会触发 Windows 工作流。仅用户明确要求同次 Windows 发布时才追加 `--include-windows`。缺包、程序版本或哈希不匹配时不得发布；已有正式目录、正式 Tag 或正式 Release 不自动覆盖，历史版本不清理。
+- 用户确认发布后执行 `.venv/bin/python scripts/publish_release_from_macos.py --version <确认的版本号> --confirm-publish`。先核验 Mac 包及最新 iOS IPA，再推送远程 `main`、创建空正文草稿，下载复核三附件后发布并原子归档。默认不触发 Windows CI；旧 Windows 三附件工作流尚不支持含 IPA 的集合，脚本会在推送前拒绝该分支，只有用户特别要求时才能另行适配。缺包、源码指纹过期、版本或哈希不符时不得发布。
 - 目标被运行进程占用时保留原文件及暂存新版，不自动结束用户进程。整理 `build` 时也必须保留运行中应用的原路径；当前 `build/macos` 属于待应用退出后清理的旧路径。
 - 本机 Codexio APP 由用户自行启动；开发、打包和核验时不要代用户启动已安装的 APP，也不要启动后要求用户确认。既有隔离模拟数据的打包冒烟入口照常执行。
 - 读取文本文件显式指定 UTF-8。
@@ -37,8 +37,8 @@
 
 # 当前开发流程
 
-- 当前 Mac 版本为 `0.3.2`，使用 Swift／SwiftUI／AppKit；Windows 保留已有 Python/PySide6 实现与已发布版本，默认冻结。iOS 仍是独立开发 IPA，不擅自增加为正式发布附件。
-- 用户已明确授权本次推送并发布 v0.3.2，仅 Mac ZIP 与清单。后续发布仍须新的验收及明确版本确认；仅显式要求 Windows 的发布才启用跨平台三附件校验，任何校验失败都保持草稿。
+- 当前 Mac 版本为 `0.3.2`，使用 Swift／SwiftUI／AppKit；Windows 保留已有实现与已发布版本，默认冻结。iOS 版本由 `ios/VERSION` 独立管理，当前为 0.3.1；以后每次 Release 必须附带经过核验的最新 `Codexio.ipa`，不因附带 IPA 就擅自递增其版本号。
+- v0.3.2 已按当时授权完成 Mac ZIP 与清单双附件发布，保持原样。后续发布仍须新的验收及明确版本确认，默认必须包含 Mac ZIP、iOS IPA 与清单；任何校验失败都保持草稿。
 - 每次修改完成并通过验证、开发打包后，提交到本地 Git；开发打包不等于确认正式发布。
 - 未经用户新的明确授权，不执行 `git push`、GitHub 发布或其他远程变更。
 
@@ -80,10 +80,10 @@
 # GitHub Release 发布约定
 
 - 仅在用户明确授权发布后执行。Tag 和 Release 标题统一为 `v<版本号>`，例如 `v0.2.4`；正文留空，不添加更新说明或附件描述。
-- 默认附件只使用已验证的 `Codexio.app.zip` 和 `latest.json`；清单顶层 Windows 字段保留最近正式 Windows 版本的版本号、历史下载 URL、大小及 SHA-256，不能伪装为新版本或指向本次不存在的 EXE。发布后下载同一组附件到 `release/<版本号>/` 再次核验。只有用户明确要求 Windows，才加入同版本 EXE 并由 Windows CI 完成三附件发布。
+- 默认附件为已验证的 `Codexio.app.zip`、`Codexio.ipa`、`latest.json`。清单顶层 Windows 字段保留历史正式版本信息；`macos` 记录 Mac 包，`ios` 记录 IPA 实际版本、当前 Release 下载 URL、大小、SHA-256、最低系统和未签名状态。iOS 包必须校验 Bundle／设备架构／ZIP 完整性与本机源码指纹；未签名 IPA 仍需用户自行重签。发布后下载同一组三附件到 `release/<版本号>/` 再次核验。
 - 先验证 Mac 开发包并提交，再在用户明确发布后由协调脚本推送 `main`，确认远程精确包含本次提交。新 Tag 基于远程 `main` 创建；已有 Tag 或正式 Release 不自动覆盖。
 - 发布协调命令（替换版本号）为 `.venv/bin/python scripts/publish_release_from_macos.py --version 0.3.2 --confirm-publish`。需要继续同一提交的失败草稿时必须显式加 `--resume-draft`；远程已成功而本地归档缺失时只可用 `--sync-only` 补齐。
-- 协调脚本用 UTF-8 零字节正文创建草稿并上传 Mac ZIP 与清单，下载并核验版本、大小、SHA-256、Tag、标题、空正文和附件集合后才发布并标记 latest。默认不运行 Windows CI。
+- 协调脚本用 UTF-8 零字节正文创建草稿并上传 Mac ZIP、iOS IPA 与清单，下载并核验版本、大小、SHA-256、Tag、标题、空正文和附件集合后才发布并标记 latest。默认不运行 Windows CI。v0.3.2 等历史版本保持原附件集合，除非用户明确要求补传。
 - 发布后协调脚本核验远程 Tag、标题、空正文与附件，下载本次平台附件到临时目录，通过相同校验后创建本地正式目录，并执行 `git fetch origin tag v<版本号>`。
 
 ## 界面与数据展示补充

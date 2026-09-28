@@ -1,4 +1,4 @@
-"""Publish a confirmed Mac release. Windows CI requires --include-windows.
+"""Publish a confirmed Apple release containing the Mac ZIP, iOS IPA and manifest.
 
 This command is intentionally inert unless --confirm-publish is supplied. It
 never creates or overwrites an existing local formal release directory.
@@ -23,9 +23,11 @@ from codexio import __version__
 from codexio.app_archive import APP_ARCHIVE_NAME
 from codexio.updates import UpdateError, file_sha256, version_tuple
 from verify_release import verify_release
+from ios_release import IPA_NAME, source_digest, validate_ipa
 
 REPOSITORY = "Wujuhu/Codexio"
 WORKFLOW = "release-windows.yml"
+APPLE_ASSETS = (APP_ARCHIVE_NAME, IPA_NAME, "latest.json")
 
 
 def run(*args, capture=False, check=True):
@@ -82,6 +84,28 @@ def validate_mac(version, staging):
     return mac_stage
 
 
+def prepare_ios(version, directory):
+    ios = ROOT / "build/dev/ios"
+    package = ios / IPA_NAME
+    info = json.loads((ios / "build-info.json").read_text(encoding="utf-8"))
+    ios_version = (ROOT / "ios/VERSION").read_text(encoding="utf-8").strip()
+    if (info.get("version") != ios_version or info.get("source_sha256") != source_digest(ROOT)
+            or info.get("size") != package.stat().st_size or info.get("sha256") != file_sha256(package)
+            or info.get("signed") is not False):
+        raise UpdateError("iOS 开发包缺失、过期或校验不符，请先运行 scripts/build_ios.py")
+    bundle = validate_ipa(package, ios_version)
+    shutil.copy2(package, directory / IPA_NAME)
+    manifest_path = directory / "latest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["ios"] = {
+        "version": ios_version, "url": f"https://github.com/{REPOSITORY}/releases/download/v{version}/{IPA_NAME}",
+        "sha256": info["sha256"], "size": info["size"], "architecture": "arm64", "signed": False,
+        "minimum_ios": bundle.get("MinimumOSVersion"),
+    }
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    verify_release(directory, version, platform="macos", include_ios=True)
+
+
 def validate_repository(version, include_windows=False):
     mac_version = (ROOT / "macos/VERSION").read_text(encoding="utf-8").strip()
     if mac_version != version:
@@ -113,17 +137,17 @@ def validate_draft(release, tag, commit, staging, mac_stage, include_windows=Fal
     if str(release.get("body") or "").strip():
         raise UpdateError("草稿 Release 正文不是空白")
     names = sorted(str(item.get("name") or "") for item in release.get("assets") or [])
-    allowed = (APP_ARCHIVE_NAME, "Codexio.exe", "latest.json") if include_windows else (APP_ARCHIVE_NAME, "latest.json")
+    allowed = APPLE_ASSETS + (("Codexio.exe",) if include_windows else ())
     if any(name not in allowed for name in names):
         raise UpdateError("草稿 Release 的附件集合不符合当前发布约定")
     downloaded = staging / "draft-macos"
     downloaded.mkdir()
     run("gh", "release", "upload", tag, "--repo", REPOSITORY, "--clobber",
-        mac_stage / APP_ARCHIVE_NAME, mac_stage / "latest.json")
+        *(mac_stage / name for name in APPLE_ASSETS))
     run("gh", "release", "download", tag, "--repo", REPOSITORY, "--dir", downloaded,
-        "--pattern", APP_ARCHIVE_NAME, "--pattern", "latest.json", "--clobber")
-    verify_release(downloaded, tag.removeprefix("v"), platform="macos")
-    for name in (APP_ARCHIVE_NAME, "latest.json"):
+        "--pattern", APP_ARCHIVE_NAME, "--pattern", IPA_NAME, "--pattern", "latest.json", "--clobber")
+    verify_release(downloaded, tag.removeprefix("v"), platform="macos", include_ios=True)
+    for name in APPLE_ASSETS:
         if file_sha256(downloaded / name) != file_sha256(mac_stage / name):
             raise UpdateError("草稿中的 Mac 附件与本机已验证开发包不一致：" + name)
 
@@ -138,7 +162,7 @@ def create_draft(tag, commit, mac_stage, staging):
     empty.write_bytes(b"")
     run("gh", "release", "create", tag, "--repo", REPOSITORY, "--target", commit,
         "--title", tag, "--draft", "--notes-file", empty,
-        mac_stage / APP_ARCHIVE_NAME, mac_stage / "latest.json")
+        *(mac_stage / name for name in APPLE_ASSETS))
     release = gh_release(tag)
     if not release or release.get("isDraft") is not True or release.get("targetCommitish") != commit:
         raise UpdateError("未能确认 GitHub 草稿 Release")
@@ -170,14 +194,14 @@ def dispatch_and_wait(version, commit):
     run("gh", "run", "watch", str(selected["databaseId"]), "--repo", REPOSITORY, "--exit-status")
 
 
-def verify_published(tag, commit=None, include_windows=False):
+def verify_published(tag, commit=None, include_windows=False, include_ios=True):
     release = gh_release(tag)
     if not release or release.get("isDraft") is not False or release.get("tagName") != tag or release.get("name") != tag:
         raise UpdateError("未得到有效的正式 Release")
     if str(release.get("body") or "").strip():
         raise UpdateError("正式 Release 正文不是空白")
     names = sorted(str(item.get("name") or "") for item in release.get("assets") or [])
-    expected = ("Codexio.exe", APP_ARCHIVE_NAME, "latest.json") if include_windows else (APP_ARCHIVE_NAME, "latest.json")
+    expected = (APP_ARCHIVE_NAME, "latest.json") + ((IPA_NAME,) if include_ios else ()) + (("Codexio.exe",) if include_windows else ())
     if names != sorted(expected):
         raise UpdateError("正式 Release 附件与本次确认的平台不一致")
     if commit is not None and remote_ref("refs/tags/" + tag) != commit:
@@ -191,13 +215,13 @@ def finalize_mac_draft(tag, commit, staging, mac_stage):
             or release.get("name") != tag or release.get("targetCommitish") != commit
             or str(release.get("body") or "").strip()):
         raise UpdateError("Mac 草稿状态不符合发布条件")
-    if sorted(item.get("name") for item in release.get("assets") or []) != sorted((APP_ARCHIVE_NAME, "latest.json")):
-        raise UpdateError("Mac 草稿必须且只能有 ZIP 与 latest.json")
+    if sorted(item.get("name") for item in release.get("assets") or []) != sorted(APPLE_ASSETS):
+        raise UpdateError("草稿必须且只能有 Mac ZIP、iOS IPA 与 latest.json")
     downloaded = staging / "verified-mac-draft"
     downloaded.mkdir()
     run("gh", "release", "download", tag, "--repo", REPOSITORY, "--dir", downloaded)
-    verify_release(downloaded, tag.removeprefix("v"), platform="macos")
-    for name in (APP_ARCHIVE_NAME, "latest.json"):
+    verify_release(downloaded, tag.removeprefix("v"), platform="macos", include_ios=True)
+    for name in APPLE_ASSETS:
         if file_sha256(downloaded / name) != file_sha256(mac_stage / name):
             raise UpdateError("草稿附件与已验证本地文件不一致：" + name)
     tag_commit = remote_ref("refs/tags/" + tag)
@@ -206,14 +230,14 @@ def finalize_mac_draft(tag, commit, staging, mac_stage):
     run("gh", "release", "edit", tag, "--repo", REPOSITORY, "--draft=false", "--latest")
 
 
-def sync_local_release(version, tag, staging, include_windows=False):
+def sync_local_release(version, tag, staging, include_windows=False, include_ios=True):
     destination = ROOT / "release" / version
     if destination.exists():
         raise UpdateError("正式版本目录已存在，不自动覆盖：" + str(destination))
     final = staging / "final"
     final.mkdir()
     run("gh", "release", "download", tag, "--repo", REPOSITORY, "--dir", final)
-    verify_release(final, version, platform="both" if include_windows else "macos")
+    verify_release(final, version, platform="both" if include_windows else "macos", include_ios=include_ios)
     destination.parent.mkdir(parents=True, exist_ok=True)
     final.rename(destination)
     run("git", "fetch", "origin", "tag", tag)
@@ -221,6 +245,8 @@ def sync_local_release(version, tag, staging, include_windows=False):
 
 
 def publish(version, *, resume_draft=False, sync_only=False, include_windows=False):
+    if include_windows and not sync_only:
+        raise UpdateError("Windows 默认冻结；旧 Windows CI 不支持当前含 IPA 的附件集合，需单独确认并适配后才能启用。未推送或触发 CI。")
     version = ".".join(map(str, version_tuple(version)))
     tag = "v" + version
     if (ROOT / "release" / version).exists():
@@ -230,9 +256,12 @@ def publish(version, *, resume_draft=False, sync_only=False, include_windows=Fal
     try:
         commit = validate_repository(version, include_windows)
         if sync_only:
-            verify_published(tag, commit, include_windows)
-            return sync_local_release(version, tag, staging, include_windows)
+            previous = gh_release(tag)
+            has_ios = any(asset.get("name") == IPA_NAME for asset in (previous or {}).get("assets") or [])
+            verify_published(tag, commit, include_windows, include_ios=has_ios)
+            return sync_local_release(version, tag, staging, include_windows, include_ios=has_ios)
         mac_stage = validate_mac(version, staging)
+        prepare_ios(version, mac_stage)
         existing = gh_release(tag)
         if existing is not None:
             if not resume_draft:

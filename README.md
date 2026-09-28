@@ -4,7 +4,7 @@
 
 开发包、本地提交与正式发布分开管理。正式推送及发布需要用户开发验收后的第二次明确确认。
 
-Mac 版本独立保存在 `macos/VERSION`；默认发布附件为 `Codexio.app.zip` 与 `latest.json`。清单的 Windows 字段继续指向历史 Windows 安装包，不生成新的 EXE。iOS 仍使用独立开发 IPA，见 [手机端开发交付](docs/ios/DEVELOPMENT_HANDOFF.md)。
+Mac 版本保存在 `macos/VERSION`，iOS 版本保存在 `ios/VERSION`。**以后每次 Release 默认必须附带 `Codexio.app.zip`、`Codexio.ipa` 和 `latest.json`**，缺失或过期 IPA 会阻止发布。清单保留历史 Windows 字段，并在 `ios` 中记录 IPA 的实际版本和下载信息，不生成新的 EXE。IPA 目前为未签名包，需通过 SideStore 等工具重签，见 [手机端开发交付](docs/ios/DEVELOPMENT_HANDOFF.md)。
 
 ## v0.3.1
 
@@ -119,4 +119,4 @@ Mac 默认使用 `~/Library/Application Support/Codexio`，Windows 使用 `%LOCA
 .venv/bin/python scripts/publish_release_from_macos.py --version 0.3.2 --confirm-publish
 ```
 
-协调脚本默认核验 Mac 包、推送 main、创建空正文草稿，下载核验 Mac ZIP 与清单后发布，并下载复核归档到 `release/0.3.2/`：`Codexio.app.zip`、`latest.json`。不会触发 Windows CI。只有用户特别要求同时发布 Windows 时才使用 `--include-windows`；历史发布保持原样，正式目录不自动覆盖。
+发布前分别运行 `./build_macos.sh` 与 `.venv/bin/python scripts/build_ios.py`，再把上例版本替换为用户新确认的版本。协调脚本核验 Mac／IPA、推送 main、创建空正文草稿，下载核验三个附件后发布并归档。默认不会触发 Windows CI；若用户以后特别要求 Windows，需先适配包含 IPA 的联合发布流程，旧分支会安全拒绝。历史发布保持原样，v0.3.2 的两附件不会因此自动补传或覆盖。

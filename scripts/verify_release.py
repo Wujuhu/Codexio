@@ -11,15 +11,18 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from codexio.app_archive import APP_ARCHIVE_NAME, validate_app_archive
 from codexio.updates import UpdateError, file_sha256, release_from_manifest, version_tuple
+from ios_release import IPA_NAME, validate_ipa
 
 
-def verify_release(directory: Path, version: str, *, platform="both") -> None:
+def verify_release(directory: Path, version: str, *, platform="both", include_ios=False) -> None:
     version = ".".join(map(str, version_tuple(version)))
     manifest = json.loads((directory / "latest.json").read_text(encoding="utf-8-sig"))
     if not isinstance(manifest, dict):
         raise UpdateError("更新清单格式无效")
     assets = (("Codexio.exe", None), (APP_ARCHIVE_NAME, "macos")) if platform == "both" else ((APP_ARCHIVE_NAME, "macos"),)
     expected = {name for name, _ in assets} | {"latest.json"}
+    if include_ios:
+        expected.add(IPA_NAME)
     if {path.name for path in directory.iterdir()} != expected:
         raise UpdateError("正式版本目录附件与本次发布的平台不一致")
     if platform == "macos" and "version" in manifest:
@@ -34,6 +37,14 @@ def verify_release(directory: Path, version: str, *, platform="both") -> None:
         if asset.stat().st_size != release.size or file_sha256(asset) != release.sha256:
             raise UpdateError(f"{name} 与 latest.json 的大小或 SHA-256 不一致")
     validate_app_archive(directory / APP_ARCHIVE_NAME, version)
+    if include_ios:
+        ios = manifest.get("ios")
+        if not isinstance(ios, dict) or ios.get("url") != f"https://github.com/Wujuhu/Codexio/releases/download/v{version}/{IPA_NAME}":
+            raise UpdateError("缺少有效的 iOS 发布清单")
+        package = directory / IPA_NAME
+        if package.stat().st_size != ios.get("size") or file_sha256(package) != ios.get("sha256"):
+            raise UpdateError("IPA 大小或 SHA-256 不匹配")
+        validate_ipa(package, str(ios.get("version") or ""))
     if platform == "both":
         with (directory / "Codexio.exe").open("rb") as stream:
             if stream.read(2) != b"MZ":
@@ -45,10 +56,11 @@ def main():
     parser.add_argument("--version", required=True)
     parser.add_argument("--directory", type=Path)
     parser.add_argument("--platform", choices=("both", "macos"), default="both")
+    parser.add_argument("--include-ios", action="store_true")
     args = parser.parse_args()
     version = ".".join(map(str, version_tuple(args.version)))
     directory = args.directory or ROOT / "release" / version
-    verify_release(directory, version, platform=args.platform)
+    verify_release(directory, version, platform=args.platform, include_ios=args.include_ios)
     print(f"Verified {directory}: " + ", ".join(sorted(path.name for path in directory.iterdir())))
 
 

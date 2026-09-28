@@ -7,6 +7,7 @@ import plistlib
 import shutil
 import subprocess
 import zipfile
+from ios_release import source_digest, validate_ipa
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
@@ -18,7 +19,7 @@ def run(*args):
     subprocess.run([str(arg) for arg in args], env=ENV, check=True)
 
 def main():
-    version = "0.3.1"
+    version = (ROOT / "ios/VERSION").read_text(encoding="utf-8").strip()
     if APP.exists():
         shutil.rmtree(APP)
     APP.mkdir(parents=True)
@@ -58,10 +59,11 @@ def main():
         assert archive.testzip() is None
         assert plistlib.loads(archive.read("Payload/Codexio.app/Info.plist"))["CFBundleShortVersionString"] == version
     run("lipo", "-verify_arch", "arm64", APP / "Codexio")
+    validate_ipa(ipa, version)
     output = BUILD / "dev/ios"
     output.mkdir(parents=True,exist_ok=True)
     shutil.copy2(ipa,output / ipa.name)
-    (output / "build-info.json").write_text(json.dumps({"version":version,"signed":False,"minimum_ios":"26.0","sha256":hashlib.sha256(ipa.read_bytes()).hexdigest(),"size":ipa.stat().st_size,"device_tested":False},indent=2)+"\n",encoding="utf-8")
+    (output / "build-info.json").write_text(json.dumps({"version":version,"signed":False,"minimum_ios":"26.0","sha256":hashlib.sha256(ipa.read_bytes()).hexdigest(),"size":ipa.stat().st_size,"source_sha256":source_digest(ROOT),"device_tested":False},indent=2)+"\n",encoding="utf-8")
     print("未签名开发 IPA：",output / ipa.name)
 
 if __name__ == "__main__": main()
