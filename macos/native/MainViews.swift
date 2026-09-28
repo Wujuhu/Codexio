@@ -20,6 +20,7 @@ struct MainView: View {
     var body: some View {
         HStack(spacing:0) {
             SidebarView(state:state)
+            GeometryReader { geometry in
             VStack(spacing:0) {
                 HStack(spacing:18) {
                     Button { state.toggleSidebar() } label: { Image(systemName:"sidebar.left") }.buttonStyle(.plain).accessibilityLabel(L("切换侧边栏", "Toggle sidebar"))
@@ -38,8 +39,9 @@ struct MainView: View {
                     HStack { Text(error).font(.caption).foregroundStyle(.secondary).textSelection(.enabled); Spacer(); Button { state.errorMessage = nil } label: { Image(systemName:"xmark") }.buttonStyle(.plain) }.padding(12).background(.thinMaterial)
                 }
             }.background(Color(nsColor:.textBackgroundColor))
+                .environment(\.compactPage,geometry.size.width < 560)
+            }
         }
-        .frame(minWidth:min(1000,(NSScreen.main?.visibleFrame.width ?? 1440)-24),minHeight:min(700,(NSScreen.main?.visibleFrame.height ?? 900)-24))
         .background(Color(nsColor:.windowBackgroundColor))
         .preferredColorScheme(state.theme == "dark" ? .dark : state.theme == "light" ? .light : nil)
         .onChange(of:state.selectedPage) { _,page in if page == "subscription" || (page == "trends" && state.usageSection == "threads") { state.refreshReports() } }
@@ -166,7 +168,7 @@ struct OverviewView: View {
     var body: some View {
         ScrollView {
             VStack(alignment:.leading,spacing:22) {
-                HStack(spacing:12) {
+                AdaptiveRow(spacing:12) {
                     QuotaCard(window:state.quota.five,title:L("5 小时额度", "5-hour limit"),fresh:state.quota.fresh)
                     QuotaCard(window:state.quota.week,title:L("周额度", "Weekly limit"),fresh:state.quota.fresh)
                 }
@@ -193,14 +195,20 @@ struct OverviewView: View {
 }
 
 struct PeriodPicker: View {
+    @Environment(\.compactPage) private var compact
     @Binding var selection: String
     var custom = false
+    private var picker: some View {
+        Picker("",selection:$selection) { Text(L("今日", "Today")).tag("today"); Text(L("近 7 天", "Last 7 days")).tag("week"); Text(L("近 30 天", "Last 30 days")).tag("month"); Text(L("历史", "All time")).tag("all"); if custom { Text(L("自选日期", "Custom")).tag("custom") } }.labelsHidden()
+    }
     var body: some View {
-        Picker("",selection:$selection) { Text(L("今日", "Today")).tag("today"); Text(L("近 7 天", "Last 7 days")).tag("week"); Text(L("近 30 天", "Last 30 days")).tag("month"); Text(L("历史", "All time")).tag("all"); if custom { Text(L("自选日期", "Custom")).tag("custom") } }.pickerStyle(.segmented).labelsHidden().fixedSize()
+        if compact { picker.pickerStyle(.menu).fixedSize() }
+        else { picker.pickerStyle(.segmented).fixedSize() }
     }
 }
 
 struct LogsView: View {
+    @Environment(\.compactPage) private var compact
     @ObservedObject var state: AppState
     @ObservedObject private var projection: AsyncProjection<LogProjection>
     @State private var mode = "requests"
@@ -229,12 +237,16 @@ struct LogsView: View {
         var values = Set(fields); if enabled { values.insert(key) } else { values.remove(key) }
         state.setPreference("native_log_columns",LogFields.all.filter {values.contains($0)})
     }
+    private var modePicker: some View {
+        Picker("",selection:$mode) { Text(L("用户请求", "User requests")).tag("requests"); Text(L("模型调用", "Model calls")).tag("calls") }.labelsHidden()
+    }
     var body: some View {
         VStack(alignment:.leading,spacing:14) {
             HStack { PeriodPicker(selection:$period,custom:true); Spacer() }
             if period == "custom" { DateRangeControls(from:$from,through:$through) }
             HStack(spacing:10) {
-                Picker("",selection:$mode) { Text(L("用户请求", "User requests")).tag("requests"); Text(L("模型调用", "Model calls")).tag("calls") }.labelsHidden().pickerStyle(.segmented).fixedSize()
+                if compact { modePicker.pickerStyle(.menu).fixedSize() }
+                else { modePicker.pickerStyle(.segmented).fixedSize() }
                 TextField(L("搜索输入、聊天或 ID", "Search prompt, chat or ID"),text:$query).textFieldStyle(.roundedBorder).focused($searchFocused)
                 Menu(L("显示字段", "Columns")) {
                     ForEach(LogFields.all.filter {$0 != "content" && $0 != "details"},id:\.self) { field in
@@ -244,10 +256,10 @@ struct LogsView: View {
                 }.fixedSize()
             }
             HStack(spacing:10) {
-                Picker("",selection:$model) { Text(L("全部模型", "All models")).tag("all"); ForEach(state.usage.models,id:\.self) { Text($0).tag($0) } }.labelsHidden().fixedSize()
-                Picker("",selection:$tier) { Text(L("全部速度", "All speeds")).tag("all"); Text("Fast").tag("priority"); Text(L("标准", "Standard")).tag("default"); Text(L("未知", "Unknown")).tag("unknown") }.labelsHidden().fixedSize()
-                if mode == "requests" { Picker("",selection:$status) { Text(L("全部状态", "All statuses")).tag("all"); Text(L("已完成", "Completed")).tag("completed"); Text(L("进行中", "In progress")).tag("running"); Text(L("未知", "Unknown")).tag("unknown") }.labelsHidden().fixedSize() }
-                Spacer()
+                Picker("",selection:$model) { Text(L("全部模型", "All models")).tag("all"); ForEach(state.usage.models,id:\.self) { Text($0).tag($0) } }.labelsHidden().fixedSize(horizontal:!compact,vertical:true)
+                Picker("",selection:$tier) { Text(L("全部速度", "All speeds")).tag("all"); Text("Fast").tag("priority"); Text(L("标准", "Standard")).tag("default"); Text(L("未知", "Unknown")).tag("unknown") }.labelsHidden().fixedSize(horizontal:!compact,vertical:true)
+                if mode == "requests" { Picker("",selection:$status) { Text(L("全部状态", "All statuses")).tag("all"); Text(L("已完成", "Completed")).tag("completed"); Text(L("进行中", "In progress")).tag("running"); Text(L("未知", "Unknown")).tag("unknown") }.labelsHidden().fixedSize(horizontal:!compact,vertical:true) }
+                if !compact { Spacer() }
             }
             CompactTable(columns:LogFields.columns(fields),rows:projection.value.rows.map { row in LogFields.row(row,timeOnly:period == "today") {state.usage.members(of:row)} },revision:projection.value.revision.uuidString+period,preferences:state.preferences,storageKey:"logs",scrollResetKey:projection.value.scrollResetKey)
                 .overlay(RoundedRectangle(cornerRadius:10).stroke(.secondary.opacity(0.16)))

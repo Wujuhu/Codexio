@@ -50,6 +50,12 @@ final class MockGallery {
                     })
                 } else { view = AnyView(MainView(state:state)) }
             }
+            if let requested = ProcessInfo.processInfo.environment["CODEXIO_GALLERY_SIZE"] {
+                let dimensions = requested.split(separator:"x").compactMap {Double($0)}
+                if dimensions.count == 2, dimensions.allSatisfy({$0.isFinite && $0 >= 320 && $0 <= 4000}) {
+                    size = NSSize(width:dimensions[0],height:dimensions[1])
+                }
+            }
             window.contentView = NSHostingView(rootView:view)
             window.setContentSize(size)
             window.center(); window.makeKeyAndOrderFront(nil)

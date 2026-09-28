@@ -20,6 +20,33 @@ struct NavigationGlyph: Shape {
 
 enum PageLayout {
     static let inset: CGFloat = 32
+    static var minimumWindowSize: NSSize {
+        let screen = NSScreen.main?.visibleFrame.size ?? NSSize(width:1440,height:900)
+        return NSSize(width:min(720,screen.width-24),height:min(480,screen.height-24))
+    }
+}
+
+private struct CompactPageKey: EnvironmentKey { static let defaultValue = false }
+extension EnvironmentValues {
+    var compactPage: Bool {
+        get { self[CompactPageKey.self] }
+        set { self[CompactPageKey.self] = newValue }
+    }
+}
+
+// Native layout switching preserves control state while a window is resized.
+struct AdaptiveRow<Content: View>: View {
+    @Environment(\.compactPage) private var compact
+    let spacing: CGFloat
+    let alignment: VerticalAlignment
+    let content: Content
+    init(spacing: CGFloat = 12, alignment: VerticalAlignment = .center, @ViewBuilder content: () -> Content) {
+        self.spacing = spacing; self.alignment = alignment; self.content = content()
+    }
+    var body: some View {
+        let layout = compact ? AnyLayout(VStackLayout(alignment:.leading,spacing:spacing)) : AnyLayout(HStackLayout(alignment:alignment,spacing:spacing))
+        layout { content }
+    }
 }
 
 struct PageHeading: View {
@@ -84,9 +111,10 @@ struct BubbleCard: ViewModifier {
 }
 
 struct SummaryMetrics: View {
+    @Environment(\.compactPage) private var isCompact
     let summary: UsageSummary
     var body: some View {
-        HStack(spacing:12) {
+        LazyVGrid(columns:Array(repeating:GridItem(.flexible(),spacing:12),count:isCompact ? 2 : 4),spacing:12) {
             metric(L("费用", "Cost"),money(summary.cost))
             metric(L("总 Token", "Total tokens"),compact(summary.tokens.map(Double.init)))
             metric(L("用户请求", "User requests"),String(summary.requests))
@@ -248,13 +276,14 @@ struct LogDetail: View {
 }
 
 struct DateRangeControls: View {
+    @Environment(\.compactPage) private var compact
     @Binding var from: Date
     @Binding var through: Date
     var body: some View {
-        HStack(spacing:14) {
+        AdaptiveRow(spacing:compact ? 8 : 14) {
             DatePicker(L("从", "From"),selection:$from,in:...Date(),displayedComponents:.date)
             DatePicker(L("至", "To"),selection:$through,in:...Date(),displayedComponents:.date)
-            Spacer()
+            if !compact { Spacer() }
         }.datePickerStyle(.field).font(.system(size:12)).fixedSize(horizontal:false,vertical:true)
     }
 }

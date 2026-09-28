@@ -32,10 +32,10 @@
 - APP：`build/dev/macos/Codexio.app`
 - ZIP：`build/dev/macos/Codexio.app.zip`
 - 合并开发清单：`build/dev/macos/latest.json`
-- 最新构建日志：`build/logs/brand-options-menu-build.log`（先前记录保留在 `build/logs/pre-ios-mac-build.log`、`sidebar-left-align-build.log`）
+- 最新构建日志：`build/logs/compact-window-build.log`（先前记录保留在 `build/logs/pre-ios-mac-build.log`、`sidebar-left-align-build.log`、`brand-options-menu-build.log`）
 - 三项冒烟结果：`build/checks/macos-smoke/result.json`
-- ZIP 大小：4,757,059 bytes
-- ZIP SHA-256：`98f30813d0ddb343b041c861e3606fcd721af41d2870c026da9d5dac9b25a0f2`
+- ZIP 大小：4,775,949 bytes
+- ZIP SHA-256：`0d13690a69f7397cfad4febca2fcaefa7aaa240df2160c136684d5ca82e5b070`
 
 开发清单顶层 Windows 字段保持原样，只有 `macos` 对象对应本次 0.3.1 开发包；它不是正式跨平台发布清单。未生成 Windows EXE、iOS IPA 或正式 Release 目录。
 
@@ -59,3 +59,13 @@
 - Widget 的固定品牌标记也换为主图，故构建号 19 → 20、短版本 1.18 → 1.19；四个 kind、布局和主宿主规则不变。
 
 验证：最终开发打包完成固定三项隔离冒烟、签名、版本、架构和 ZIP／清单校验。一次 stdin 隔离运行使用生产 `Core.swift`／`MenuQuota.swift` 核对首次未知、失败回退、观察时间保持、缓存恢复、部分窗口合并和账户隔离，无网络或真实配置访问；没有添加测试文件或扩展常规冒烟。仅查看 `build/checks/brand-options/settings-appearance-zh.png` 一张相关 UI 预览，13 款图标与下方确认按钮布局正常。没有启动或替换用户安装版。
+
+## 2026-09-28 缩小主窗口最小尺寸
+
+- 原生窗口下限由 1000×700 调整为 720×480 pt，小屏幕仍按可用屏幕范围限制；删除 SwiftUI 根视图重复的 1000×700 硬约束。默认打开尺寸和已保存的位置／大小恢复逻辑继续沿用。
+- 根据实际页面区域宽度切换布局，展开／收起或拖动侧栏均会自然适配；不自动收起用户侧栏，不持久化临时响应式状态。工具栏、页标题和导航图标保持原对齐规则。
+- 窄页面的日期范围、请求／调用模式使用原生下拉控件，模型／速度／状态选择器允许压缩；设置分类转为下拉，订阅信息和定价操作转为纵向。四项汇总卡片使用两列，活动指标重新排列；宽页面保留原横向排版。
+- 日志、定价复用 `CompactTable` 的原生横向滚动；聊天排行和热图在宽度不足时提供横向滚动，完整列和日期仍可访问，不压缩到不可读。
+- 响应式容器使用 Apple [AnyLayout](https://developer.apple.com/documentation/swiftui/anylayout) 切换原生 HStack／VStack 布局，保留子控件状态；尺寸变化只参与界面布局，不提高采集频率、增加网络请求或改动账本查询。
+
+验证：Mac 开发包完成既有三项隔离冒烟和版本／签名／ZIP／清单校验；仅通过原有模拟预览入口查看一张 720×480 pt 的英文日志页（`build/checks/compact-window/logs-en.png`），筛选、搜索、首行和分页均可见。预览工具新增尺寸参数只用于按本次目标尺寸导出这一张图，没有新增测试项、截图矩阵或启动用户安装版。程序保持 0.3.1，Widget 保持 20／1.19。

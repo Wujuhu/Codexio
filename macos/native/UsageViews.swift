@@ -29,6 +29,7 @@ struct UsageView: View {
 }
 
 struct LocalActivityView: View {
+    @Environment(\.compactPage) private var isCompact
     @ObservedObject var state: AppState
     @State private var aggregation = "day"
     private var stats: ActivityStats { state.usage.activity }
@@ -56,30 +57,37 @@ struct LocalActivityView: View {
     }
     var body: some View {
         VStack(alignment:.leading,spacing:30) {
-            HStack(spacing:0) {
-                metric(L("累计 Token 数", "Lifetime tokens"),compact(stats.total.map(Double.init)))
-                Divider().frame(height:47)
-                metric(L("单日峰值 Token", "Peak daily tokens"),compact(stats.peak.map(Double.init)))
-                Divider().frame(height:47)
-                metric(L("最长聊天时长", "Longest chat"),durationText(stats.longestChat))
-                Divider().frame(height:47)
-                metric(L("当前连续天数", "Current streak"),dayCount(stats.currentStreak))
-                Divider().frame(height:47)
-                metric(L("最长连续天数", "Longest streak"),dayCount(stats.longestStreak))
+            Group {
+                if isCompact {
+                    LazyVGrid(columns:[GridItem(.flexible()),GridItem(.flexible())],spacing:18) { activityMetrics(separators:false) }
+                } else { HStack(spacing:0) { activityMetrics(separators:true) } }
             }.padding(.vertical,22).overlay(RoundedRectangle(cornerRadius:20).stroke(.secondary.opacity(0.18)))
             HStack {
                 SectionHeading(title:L("Token 活动", "Token activity"))
                 Picker("",selection:$aggregation) { Text(L("每日", "Daily")).tag("day"); Text(L("每周", "Weekly")).tag("week"); Text(L("累计", "Cumulative")).tag("cumulative") }.labelsHidden().pickerStyle(.segmented).frame(width:210)
             }.padding(.top,10)
-            heatmap
+            GeometryReader { geometry in
+                ScrollView(.horizontal) { heatmap.frame(width:max(430,geometry.size.width)) }
+            }.frame(height:aggregation == "week" ? 70 : 164)
             SectionHeading(title:L("活动洞察", "Activity insights")).padding(.top,10)
-            HStack(spacing:55) {
+            AdaptiveRow(spacing:isCompact ? 16 : 55) {
                 HStack { Text(L("快速模式", "Fast mode")).foregroundStyle(.secondary); Spacer(); Text(percent(stats.fastPercent)).monospacedDigit() }
                 HStack { Text(L("最常用的推理强度", "Most used reasoning")).foregroundStyle(.secondary); Spacer(); Text(effortName(stats.effort)+" · "+percent(stats.effortPercent)).monospacedDigit() }
             }.font(.system(size:16))
             Divider()
             Button { state.usageSection = "threads" } label: { HStack { Text(L("聊天用量排行", "Chat usage ranking")); Spacer(); Image(systemName:"arrow.right") } }.buttonStyle(.plain)
         }
+    }
+    @ViewBuilder private func activityMetrics(separators: Bool) -> some View {
+        metric(L("累计 Token 数", "Lifetime tokens"),compact(stats.total.map(Double.init)))
+        if separators { Divider().frame(height:47) }
+        metric(L("单日峰值 Token", "Peak daily tokens"),compact(stats.peak.map(Double.init)))
+        if separators { Divider().frame(height:47) }
+        metric(L("最长聊天时长", "Longest chat"),durationText(stats.longestChat))
+        if separators { Divider().frame(height:47) }
+        metric(L("当前连续天数", "Current streak"),dayCount(stats.currentStreak))
+        if separators { Divider().frame(height:47) }
+        metric(L("最长连续天数", "Longest streak"),dayCount(stats.longestStreak))
     }
     private func metric(_ title: String,_ value: String) -> some View {
         VStack(spacing:9) { Text(value).font(.system(size:22,weight:.medium)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.75); Text(title).font(.system(size:12)).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.8) }.frame(maxWidth:.infinity).padding(.horizontal,8)
@@ -122,6 +130,7 @@ struct LocalActivityView: View {
 }
 
 struct UsageTrendsView: View {
+    @Environment(\.compactPage) private var compact
     @ObservedObject var state: AppState
     @ObservedObject private var projection: AsyncProjection<TrendProjection>
     @State private var period = "week"
@@ -137,15 +146,15 @@ struct UsageTrendsView: View {
     }
     var body: some View {
         VStack(alignment:.leading,spacing:22) {
-            HStack {
+            AdaptiveRow(spacing:8) {
                 PeriodPicker(selection:$period,custom:true)
-                Picker("",selection:$model) { Text(L("全部模型", "All models")).tag("all"); ForEach(state.usage.models,id:\.self) { Text($0).tag($0) } }.labelsHidden().fixedSize()
-                Spacer()
+                Picker("",selection:$model) { Text(L("全部模型", "All models")).tag("all"); ForEach(state.usage.models,id:\.self) { Text($0).tag($0) } }.labelsHidden().fixedSize(horizontal:!compact,vertical:true)
+                if !compact { Spacer() }
             }
-            HStack {
+            AdaptiveRow(spacing:8) {
                 if period == "custom" { DateRangeControls(from:$from,through:$through) }
                 Picker("",selection:$granularity) { Text(L("每小时", "Hourly")).tag("hour"); Text(L("每天", "Daily")).tag("day"); Text(L("每周", "Weekly")).tag("week") }.labelsHidden().pickerStyle(.segmented).fixedSize()
-                Spacer()
+                if !compact { Spacer() }
             }
             SummaryMetrics(summary:projection.value.summary)
             TrendChart(days:projection.value.days).padding(18).overlay(RoundedRectangle(cornerRadius:14).stroke(.secondary.opacity(0.15)))
@@ -179,7 +188,7 @@ struct ChatRankingView: View {
     private var visible: [Object] { Array(rows.dropFirst(page*25).prefix(visibleLimit)) }
     var body: some View {
         VStack(alignment:.leading,spacing:20) {
-            HStack {
+            AdaptiveRow(spacing:8) {
                 SectionHeading(title:localMode ? L("本机 Token 排行", "Local token ranking") : L("聊天用量排行", "Chat usage ranking"))
                 Button { localMode.toggle(); expanded.removeAll(); page = 0; visibleLimit = 5 } label: { Text(localMode ? L("查看额度排行", "View allowance ranking") : L("本机 Token", "Local tokens")) }.buttonStyle(.plain).foregroundStyle(.secondary)
             }
@@ -188,9 +197,11 @@ struct ChatRankingView: View {
             if rows.isEmpty {
                 EmptyState(title:state.reportsLoading && !localMode ? L("正在读取", "Loading") : L("暂不可用", "Unavailable"),detail:localMode ? L("暂无本机聊天记录", "No local chat records") : state.reportError ?? L("当前账户尚未提供这项明细", "This account has not provided these details"))
             } else {
-                VStack(spacing:0) {
-                    rankingHeader
-                    ForEach(visible,id:\.threadIdentity) { row in rowView(row) }
+                ScrollView(.horizontal) {
+                    VStack(spacing:0) {
+                        rankingHeader
+                        ForEach(visible,id:\.threadIdentity) { row in rowView(row) }
+                    }.frame(width:max(454,tableWidth))
                 }.frame(minWidth:0,maxWidth:.infinity)
                     .onGeometryChange(for:CGFloat.self) { $0.size.width } action: { if abs(tableWidth-$0) > 0.5 { tableWidth = $0 } }
                     .clipShape(RoundedRectangle(cornerRadius:18)).overlay(RoundedRectangle(cornerRadius:18).stroke(.secondary.opacity(0.22)))

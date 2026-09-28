@@ -12,7 +12,7 @@ struct PricingView: View {
         VStack(alignment:.leading,spacing:20) {
             HStack { StatusNote(text:L("美元 / 1M Token", "USD / 1M tokens")); Spacer(); Text(lastUpdateText(state.priceUpdated)).font(.caption).foregroundStyle(.secondary) }
             if let warning = state.priceWarning { StatusNote(text:warning) }
-            HStack {
+            AdaptiveRow(spacing:8) {
                 TextField(L("搜索模型", "Search models"),text:$search).textFieldStyle(.roundedBorder)
                 Button(L("编辑基础价", "Edit base price")) { editing = true }.disabled(selectedModel == nil)
                 Button(L("恢复自动基础价", "Restore automatic price")) { if let model = selectedModel { state.overridePrice(model:model,rates:nil) } }.disabled(selectedModel == nil)
@@ -67,6 +67,7 @@ struct PriceEditor: View {
 }
 
 struct SettingsView: View {
+    @Environment(\.compactPage) private var compact
     @ObservedObject var state: AppState
     @State private var codexPath = ""
     @State private var logRoot = ""
@@ -76,13 +77,19 @@ struct SettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment:.leading,spacing:20) {
-                HStack(alignment:.top,spacing:28) {
-                    VStack(spacing:5) {
-                        ForEach(["appearance","data","app","menubar"],id:\.self) { section in
-                            Button { state.settingsSection = section } label: { Text(sectionTitle(section)).frame(maxWidth:.infinity,alignment:.leading).padding(10).contentShape(Rectangle()).background(state.settingsSection == section ? Color.primary.opacity(0.07) : .clear,in:RoundedRectangle(cornerRadius:7)) }.buttonStyle(.plain)
-                        }
-                    }.frame(width:145)
-                    Divider()
+                AdaptiveRow(spacing:28,alignment:.top) {
+                    if compact {
+                        Picker("",selection:$state.settingsSection) {
+                            ForEach(["appearance","data","app","menubar"],id:\.self) { Text(sectionTitle($0)).tag($0) }
+                        }.labelsHidden().pickerStyle(.menu).fixedSize()
+                    } else {
+                        VStack(spacing:5) {
+                            ForEach(["appearance","data","app","menubar"],id:\.self) { section in
+                                Button { state.settingsSection = section } label: { Text(sectionTitle(section)).frame(maxWidth:.infinity,alignment:.leading).padding(10).contentShape(Rectangle()).background(state.settingsSection == section ? Color.primary.opacity(0.07) : .clear,in:RoundedRectangle(cornerRadius:7)) }.buttonStyle(.plain)
+                            }
+                        }.frame(width:145)
+                        Divider()
+                    }
                     VStack(alignment:.leading,spacing:0) {
                         SectionHeading(title:sectionTitle(state.settingsSection)).padding(.bottom,20)
                         switch state.settingsSection {

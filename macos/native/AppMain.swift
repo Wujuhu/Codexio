@@ -106,7 +106,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             let available = NSScreen.main?.visibleFrame ?? NSRect(x:0,y:0,width:1440,height:900)
             let geometry = state.preferences.analytics["native_geometry"] as? [Double]
             let width = min(geometry?[safe:2] ?? 1380,available.width-24), height = min(geometry?[safe:3] ?? 900,available.height-24)
-            let minimum = NSSize(width:min(1000,available.width-24),height:min(700,available.height-24))
+            let minimum = PageLayout.minimumWindowSize
             let window = NSWindow(contentRect:NSRect(x:0,y:0,width:max(minimum.width,width),height:max(minimum.height,height)),styleMask:[.titled,.closable,.miniaturizable,.resizable,.fullSizeContentView],backing:.buffered,defer:false)
             window.title = "Codexio"; window.titleVisibility = .hidden; window.titlebarAppearsTransparent = true
             window.contentView = NSHostingView(rootView:MainView(state:state)); window.minSize = minimum; window.isReleasedWhenClosed = false; window.delegate = self; window.center()
