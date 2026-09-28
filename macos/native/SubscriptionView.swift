@@ -1,7 +1,6 @@
 import SwiftUI
 
 struct SubscriptionView: View {
-    @Environment(\.compactPage) private var compact
     @ObservedObject var state: AppState
     @State private var selectedReset: ResetCredit?
     @State private var confirming = false
@@ -9,21 +8,18 @@ struct SubscriptionView: View {
     @State private var expandedPeriods: Set<String> = []
     @State private var showLocalHistory = true
     private var profile: Object { state.preferences.analytics.object("subscription_profile") }
+    private var accountLine: String {
+        let plan = profile.string("plan").isEmpty ? (state.quota.account.string("planType").isEmpty ? L("个人订阅资料", "Subscription profile") : "ChatGPT "+planName(state.quota.account.string("planType"))) : profile.string("plan")
+        return [plan,state.quota.account.string("email")].filter {!$0.isEmpty}.joined(separator:"  ")
+    }
     private var periods: [Object] { state.planHistory.objects("periods").filter {$0.integer("window_minutes") == 10080}.sorted {$0.string("starts_at") > $1.string("starts_at")} }
     var body: some View {
         ScrollView {
             VStack(alignment:.leading,spacing:23) {
-                AdaptiveRow(spacing:16,alignment:.top) {
-                    VStack(alignment:.leading,spacing:8) {
-                        Text(profile.string("plan").isEmpty ? (state.quota.account.string("planType").isEmpty ? L("个人订阅资料", "Subscription profile") : "ChatGPT "+planName(state.quota.account.string("planType"))) : profile.string("plan")).font(.system(size:14,weight:.semibold))
-                        if !state.quota.account.string("email").isEmpty { Text(state.quota.account.string("email")).font(.system(size:11)).lineLimit(1).help(state.quota.account.string("email")).textSelection(.enabled) }
-                        if let price = profile.number("price_usd") { Text(L("订阅价格", "Subscription price")+" · "+money(price)) }
-                        if !profile.string("renewal_date").isEmpty { Text(L("续费日期", "Renewal date")+" · "+profile.string("renewal_date")) }
-                    }.font(.system(size:12)).foregroundStyle(.secondary).frame(width:compact ? nil : 150,alignment:.leading)
-                    HStack(alignment:.top,spacing:12) {
-                        QuotaCard(window:state.quota.five,title:L("5 小时额度", "5-hour limit"),fresh:state.quota.fresh,size:31,stacked:true,compactReset:true)
-                        QuotaCard(window:state.quota.week,title:L("周额度", "Weekly limit"),fresh:state.quota.fresh,size:31,stacked:true,compactReset:true)
-                    }
+                Text(accountLine).font(.system(size:14,weight:.medium)).foregroundStyle(.secondary).lineLimit(1).help(accountLine).textSelection(.enabled)
+                AdaptiveRow(spacing:12) {
+                    QuotaCard(window:state.quota.five,title:L("5 小时额度", "5-hour limit"),fresh:state.quota.fresh)
+                    QuotaCard(window:state.quota.week,title:L("周额度", "Weekly limit"),fresh:state.quota.fresh)
                 }
                 if let error = state.quota.error { StatusNote(text:error) }
                 planHistory

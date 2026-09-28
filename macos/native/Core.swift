@@ -88,7 +88,6 @@ private final class DateFormatters {
     let dateTime = DateFormatter()
     let time = DateFormatter()
     let lastUpdate = DateFormatter()
-    let resetDay = DateFormatter()
     let reportDay = DateFormatter()
     let reportTime = DateFormatter()
     let duration = DateComponentsFormatter()
@@ -100,7 +99,6 @@ private final class DateFormatters {
         dateTime.dateStyle = .medium; dateTime.timeStyle = .short
         time.dateStyle = .none; time.timeStyle = .short
         lastUpdate.locale = Locale(identifier:"en_US_POSIX"); lastUpdate.timeZone = .autoupdatingCurrent; lastUpdate.dateFormat = "M.d HH:mm"
-        resetDay.locale = Locale(identifier:"en_US_POSIX"); resetDay.timeZone = .autoupdatingCurrent; resetDay.dateFormat = "MMM d"
         reportDay.locale = Locale(identifier:"en_US_POSIX"); reportDay.timeZone = TimeZone(secondsFromGMT:0); reportDay.dateFormat = "M/d"
         reportTime.locale = Locale(identifier:"en_US_POSIX"); reportTime.timeZone = TimeZone(secondsFromGMT:0); reportTime.dateFormat = "yyyy-MM-dd HH:mm 'UTC'"
         duration.unitsStyle = .abbreviated
@@ -138,7 +136,6 @@ func dateText(_ date: Date?, timeOnly: Bool = false) -> String {
     guard let date else { return "—" }
     return (timeOnly ? DateFormatters.current.time : DateFormatters.current.dateTime).string(from:date)
 }
-func shortResetDate(_ date: Date?) -> String { date.map {DateFormatters.current.resetDay.string(from:$0)} ?? "—" }
 func compact(_ value: Double?) -> String {
     guard let value, value.isFinite else { return "—" }
     for (factor, suffix) in [(1e9,"B"),(1e6,"M"),(1e3,"K")] where abs(value) >= factor {
