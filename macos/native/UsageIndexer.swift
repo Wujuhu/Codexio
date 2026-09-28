@@ -8,6 +8,7 @@ final class UsageIndexer {
     private struct FileList { let files: [URL]; let directories: [URL:FileStamp]; let checked: TimeInterval }
     private var fileLists: [URL:FileList] = [:]
     private var titleInputs: [URL:[URL:FileStamp]] = [:]
+    private var resumeRepairSessions: Set<String>?
     private let rolloutPattern = try! NSRegularExpression(pattern:#"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"#)
     private let counters = ["input_tokens","cached_input_tokens","cache_write_input_tokens","output_tokens","reasoning_output_tokens","total_tokens"]
     init(_ database: Database) { self.database = database }
@@ -27,6 +28,9 @@ final class UsageIndexer {
     }
     func scan(_ roots: [URL], progress: (Int,Int)->Void = {_,_ in}) throws {
         cancelled = false
+        if resumeRepairSessions == nil {
+            resumeRepairSessions = Set(try database.query("SELECT DISTINCT json_extract(data,'$.session_id') AS session FROM usage_turns WHERE COALESCE(json_extract(data,'$.prompt_preview'),'')='' AND COALESCE(json_extract(data,'$.is_subagent'),0)=0").map {$0.string("session")})
+        }
         for root in roots {
             if cancelled { return }
             try titles(root)
@@ -128,7 +132,7 @@ final class UsageIndexer {
             }
         }
         var offset = cursor.integer("offset") ?? 0
-        if offset == size && cursor.number("modified") == modified { scannedFiles[file.path] = signature; return }
+        if offset == size && cursor.number("modified") == modified && cursor.integer("resume_metadata_version") == 1 { scannedFiles[file.path] = signature; return }
         let handle = try FileHandle(forReadingFrom:file); defer { try? handle.close() }
         var valid = offset <= size && cursor.integer("parser") == 1
         if valid && offset > 0 {
@@ -138,6 +142,10 @@ final class UsageIndexer {
         }
         if !valid { offset = 0 }
         var state: Object = offset > 0 ? cursor.object("state") : ["rollout_id":rollout,"session_id":rollout,"model":"unknown","provider":"unknown","turn_id":"","prompt_preview":"","turns":Object(),"last_by_source":Object(),"last_totals":Object()]
+        if offset > 0, cursor.integer("resume_metadata_version") != 1,
+           resumeRepairSessions?.contains(state.string("session_id")) == true {
+            try repairResumeMetadata(file,through:offset,state:&state)
+        }
         try handle.seek(toOffset:UInt64(offset))
         var pending = Data(), oversized = false
         while !cancelled {
@@ -165,7 +173,55 @@ final class UsageIndexer {
         try handle.seek(toOffset:UInt64(offset-length))
         let hash = digest(try handle.read(upToCount:length) ?? Data())
         try handle.seek(toOffset:current)
-        try database.put("usage_cursors",key:key,value:["parser":1,"offset":offset,"modified":modified,"tail_hash":hash,"state":state])
+        try database.put("usage_cursors",key:key,value:["parser":1,"resume_metadata_version":1,"offset":offset,"modified":modified,"tail_hash":hash,"state":state])
+    }
+    private func applyResume(_ patch: Object,state: inout Object) throws {
+        let turn = patch.string("turn"), id = "turn:"+state.string("session_id")+":"+turn
+        var recent = state.object("turns")
+        var row = recent.object(turn)
+        if row.isEmpty, let stored = try database.query("SELECT data FROM usage_turns WHERE id=?",[id]).first {
+            row = jsonObject(Data(stored.string("data").utf8))
+        }
+        guard !row.isEmpty else { return }
+        if patch.flag("clear") {
+            guard row.string("resume_kind") == "model_switch" else { return }
+            if row.flag("model_switch_continuation") { row["continuation_of"] = NSNull() }
+            row["resume_kind"] = NSNull(); row["prompt_source_turn_id"] = NSNull(); row["model_switch_continuation"] = false
+        } else {
+            guard row.string("prompt_preview").isEmpty || row.string("resume_kind") == "model_switch" else { return }
+            row["prompt_preview"] = patch.string("preview"); row["prompt_source_turn_id"] = patch.string("source")
+            row["resume_kind"] = "model_switch"
+            if !patch.string("continuation").isEmpty, row.string("continuation_of").isEmpty {
+                row["continuation_of"] = patch.string("continuation"); row["model_switch_continuation"] = true
+            }
+        }
+        try database.writeTurn(row)
+        if recent[turn] != nil { recent[turn] = row; state["turns"] = recent }
+        if state.string("turn_id") == turn { state["prompt_preview"] = row["prompt_preview"] }
+    }
+    private func repairResumeMetadata(_ file: URL,through limit: Int,state: inout Object) throws {
+        // Only old sessions with missing previews are read once. Do not replay
+        // metering events or reindex the ledger to repair a continuation label.
+        let reader = try FileHandle(forReadingFrom:file); defer { try? reader.close() }
+        var context: Object = [:], patches: [String:Object] = [:], pending = Data(), read = 0, oversized = false
+        while read < limit && !cancelled {
+            let chunk = try reader.read(upToCount:min(1_048_576,limit-read)) ?? Data()
+            if chunk.isEmpty { break }; read += chunk.count; pending.append(chunk)
+            while let newline = pending.firstIndex(of:10) {
+                if !oversized {
+                    let entry = jsonObject(pending.subdata(in:0..<newline))
+                    if let patch = RequestResume.observe(entry,context:&context,preview:{self.plain($0,user:true)}) {
+                        if patch.flag("clear") { patches.removeValue(forKey:patch.string("turn")) }
+                        else { patches[patch.string("turn")] = patch }
+                    }
+                }
+                oversized = false; pending.removeSubrange(0...newline)
+            }
+            if pending.count > 16_000_000 { pending.removeAll(); oversized = true }
+        }
+        guard !cancelled, read == limit else { throw AppFailure("Request preview repair interrupted") }
+        try database.transaction { for patch in patches.values { try applyResume(patch,state:&state) } }
+        state["resume_tracking"] = context
     }
     private func usage(_ raw: Any?) -> [Int]? {
         guard let row = raw as? Object, counters.contains(where:{row[$0] != nil}) else { return nil }
@@ -260,6 +316,9 @@ final class UsageIndexer {
             state["parent_session_id"] = spawn.string("parent_thread_id")
             state["parent_turn_id"] = spawn.string("parent_turn_id",payload.string("parent_turn_id"))
             state["agent_path"] = spawn.string("agent_path")
+            var context: Object = [:]
+            _ = RequestResume.observe(entry,context:&context,preview:{self.plain($0,user:true)})
+            state["resume_tracking"] = context
             return
         }
         let inherited: Bool
@@ -314,6 +373,22 @@ final class UsageIndexer {
                 if !text.isEmpty { row["prompt_preview"] = text }
                 if reply && !previous.isEmpty { row["continuation_of"] = previous }
             }
+        }
+        if !inherited, !state.flag("is_subagent") {
+            var context = state.object("resume_tracking")
+            if context.isEmpty {
+                let input = state.object("request_last_input"), turns = state.object("turns")
+                let source = input.string("turn_id"), preview = turns.object(source).string("prompt_preview")
+                if !source.isEmpty, !preview.isEmpty {
+                    context["input"] = ["turn":source,"preview":preview]
+                    let previous = state.string("previous_turn_id")
+                    context["previous"] = ["id":previous,"source":previous == source ? source : turns.object(previous).string("prompt_source_turn_id")]
+                    context["current"] = ["id":state.string("turn_id"),"source":state.string("turn_id") == source ? source : "","has_user":state.string("turn_id") == source]
+                }
+            }
+            let patch = RequestResume.observe(entry,context:&context,activeTurn:state.string("turn_id"),preview:{self.plain($0,user:true)})
+            state["resume_tracking"] = context
+            if let patch { try applyResume(patch,state:&state) }
         }
         if !inherited && ((kind == "response_item" && payload.string("role") == "assistant") || (kind == "event_msg" && subtype == "agent_message")) {
             guard ["","commentary","final","final_answer"].contains(payload.string("phase")), ["","commentary","final"].contains(payload.string("channel")), ["","all","user"].contains(payload.string("recipient")), kind != "response_item" || payload.string("type","message") == "message" else { return }

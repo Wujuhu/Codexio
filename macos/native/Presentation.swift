@@ -54,12 +54,13 @@ struct TrendProjection {
 
 struct LogProjection {
     var revision = UUID()
+    var scrollResetKey = ""
     var rows: [UsageRow] = []
     var count = 0
     var unassigned = 0
     var page = 0
     var pages: Int { max(1,(count+59)/60) }
-    static func build(_ snapshot: UsageSnapshot,range: UsageRange,mode: String,model: String,tier: String,status: String,query: String,page: Int) -> LogProjection {
+    static func build(_ snapshot: UsageSnapshot,range: UsageRange,mode: String,model: String,tier: String,status: String,query: String,page: Int,filterKey: String = "") -> LogProjection {
         let rows = (mode == "requests" ? snapshot.requests : snapshot.calls).filter { row in
             range.contains(row) && (model == "all" || row.raw.string("model").contains(model)) &&
             (tier == "all" || normalizedTier(row.raw.string("service_tier")) == tier) &&
@@ -67,6 +68,6 @@ struct LogProjection {
             (query.isEmpty || [row.title,row.raw.string("prompt_preview"),row.raw.string("output_preview"),row.raw.string("session_id"),row.id].joined(separator:" ").localizedCaseInsensitiveContains(query))
         }
         let selected = min(page,max(0,(rows.count-1)/60))
-        return LogProjection(rows:Array(rows.dropFirst(selected*60).prefix(60)),count:rows.count,unassigned:rows.filter { $0.raw.string("record_kind") == "unassigned" }.count,page:selected)
+        return LogProjection(scrollResetKey:filterKey+":"+String(selected),rows:Array(rows.dropFirst(selected*60).prefix(60)),count:rows.count,unassigned:rows.filter { $0.raw.string("record_kind") == "unassigned" }.count,page:selected)
     }
 }

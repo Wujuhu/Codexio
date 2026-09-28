@@ -232,7 +232,9 @@ enum Analytics {
                 row["duration_base_ms"] = mergedSeconds(intervals.filter {$0.1 <= start}).map {$0*1000}
             } else if completed && intervals.count == members.count {
                 row["duration_running"] = false; row["duration_ms"] = mergedSeconds(intervals).map {$0*1000}
-                row["status"] = own.string("status")
+                let latestContinuation = members.filter {!$0.string("continuation_of").isEmpty && !$0.flag("is_subagent")}
+                    .max { $0.string("ended_at",$0.string("started_at")) < $1.string("ended_at",$1.string("started_at")) }
+                row["status"] = latestContinuation?.string("status") ?? own.string("status")
             } else { row["duration_running"] = false; row["duration_ms"] = nil; row["status"] = "unknown" }
             result.requests.append(UsageRow(raw:row))
         }

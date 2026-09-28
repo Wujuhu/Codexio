@@ -25,8 +25,14 @@ struct MainView: View {
                     Button { state.toggleSidebar() } label: { Image(systemName:"sidebar.left") }.buttonStyle(.plain).accessibilityLabel(L("切换侧边栏", "Toggle sidebar"))
                     Spacer()
                     ScanStamp(clock:state.clock).font(.system(size:12)).foregroundStyle(.secondary)
-                }.padding(.horizontal,32).frame(height:48)
+                }.padding(.horizontal,PageLayout.inset).frame(height:48)
                 Divider()
+                HStack(alignment:.firstTextBaseline) {
+                    PageHeading(title:Pages.title(state.selectedPage))
+                    if state.selectedPage == "pricing" {
+                        Button(L("立即同步", "Sync now")) { state.syncPrices() }
+                    }
+                }.padding(.horizontal,PageLayout.inset).padding(.top,PageLayout.inset).padding(.bottom,10)
                 page.frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading)
                 if let error = state.errorMessage {
                     HStack { Text(error).font(.caption).foregroundStyle(.secondary).textSelection(.enabled); Spacer(); Button { state.errorMessage = nil } label: { Image(systemName:"xmark") }.buttonStyle(.plain) }.padding(12).background(.thinMaterial)
@@ -119,8 +125,9 @@ private struct SidebarNavigationRow: View {
             .overlay {
                 HStack(spacing:12) {
                     NavigationGlyph(name:page).stroke(style:StrokeStyle(lineWidth:1.6,lineCap:.round,lineJoin:.round)).frame(width:20,height:20)
-                    if expanded { Text(Pages.title(page)).font(.system(size:14,weight:selected ? .medium : .regular)).lineLimit(1); Spacer(minLength:0) }
-                }.foregroundStyle(.primary).padding(.leading,expanded ? 11 : 0).padding(.trailing,expanded ? 26 : 0).allowsHitTesting(false)
+                    if expanded { Text(Pages.title(page)).font(.system(size:14,weight:selected ? .medium : .regular)).lineLimit(1) }
+                }.foregroundStyle(.primary).padding(.horizontal,expanded ? 26 : 0)
+                    .frame(maxWidth:.infinity,alignment:.center).allowsHitTesting(false)
             }
             .overlay(alignment:.trailing) {
                 if expanded && page != "overview" {
@@ -146,7 +153,6 @@ struct OverviewView: View {
     var body: some View {
         ScrollView {
             VStack(alignment:.leading,spacing:22) {
-                PageHeading(title:Pages.title("overview"))
                 HStack(spacing:12) {
                     QuotaCard(window:state.quota.five,title:L("5 小时额度", "5-hour limit"),fresh:state.quota.fresh)
                     QuotaCard(window:state.quota.week,title:L("周额度", "Weekly limit"),fresh:state.quota.fresh)
@@ -168,7 +174,7 @@ struct OverviewView: View {
                         .overlay(RoundedRectangle(cornerRadius:14).stroke(.secondary.opacity(0.16)))
                 }
                 if projection.value.recent.isEmpty { EmptyState(title:state.loading ? L("正在读取本机记录", "Loading local records") : L("暂无请求", "No requests yet")) }
-            }.padding(26)
+            }.padding(.horizontal,PageLayout.inset).padding(.bottom,PageLayout.inset)
         }.onAppear(perform:load).onChange(of:key) { _,_ in load() }
     }
 }
@@ -203,8 +209,8 @@ struct LogsView: View {
     private var key: String { state.usage.revision.uuidString+filterKey+String(page) }
     private func load() {
         let snapshot = state.usage, range = UsageRange(period:period,from:from,through:through)
-        let mode = mode, model = model, tier = tier, status = status, query = query, page = page
-        projection.load(key:key) { LogProjection.build(snapshot,range:range,mode:mode,model:model,tier:tier,status:status,query:query,page:page) }
+        let mode = mode, model = model, tier = tier, status = status, query = query, page = page, filterKey = filterKey
+        projection.load(key:key) { LogProjection.build(snapshot,range:range,mode:mode,model:model,tier:tier,status:status,query:query,page:page,filterKey:filterKey) }
     }
     private func toggle(_ key: String,_ enabled: Bool) {
         var values = Set(fields); if enabled { values.insert(key) } else { values.remove(key) }
@@ -212,7 +218,6 @@ struct LogsView: View {
     }
     var body: some View {
         VStack(alignment:.leading,spacing:14) {
-            PageHeading(title:Pages.title("logs"))
             HStack { PeriodPicker(selection:$period,custom:true); Spacer() }
             if period == "custom" { DateRangeControls(from:$from,through:$through) }
             HStack(spacing:10) {
@@ -231,7 +236,7 @@ struct LogsView: View {
                 if mode == "requests" { Picker("",selection:$status) { Text(L("全部状态", "All statuses")).tag("all"); Text(L("已完成", "Completed")).tag("completed"); Text(L("进行中", "In progress")).tag("running"); Text(L("未知", "Unknown")).tag("unknown") }.labelsHidden().fixedSize() }
                 Spacer()
             }
-            CompactTable(columns:LogFields.columns(fields),rows:projection.value.rows.map { row in LogFields.row(row,timeOnly:period == "today") {state.usage.members(of:row)} },revision:projection.value.revision.uuidString+period,preferences:state.preferences,storageKey:"logs")
+            CompactTable(columns:LogFields.columns(fields),rows:projection.value.rows.map { row in LogFields.row(row,timeOnly:period == "today") {state.usage.members(of:row)} },revision:projection.value.revision.uuidString+period,preferences:state.preferences,storageKey:"logs",scrollResetKey:projection.value.scrollResetKey)
                 .overlay(RoundedRectangle(cornerRadius:10).stroke(.secondary.opacity(0.16)))
             HStack {
                 Text(mode == "requests" ? "\(projection.value.count-projection.value.unassigned) "+L("条请求", "requests")+(projection.value.unassigned > 0 ? " · \(projection.value.unassigned) "+L("次未归属调用", "unassigned calls") : "") : "\(projection.value.count) "+L("次调用", "calls")).foregroundStyle(.secondary)
@@ -240,7 +245,7 @@ struct LogsView: View {
                 Text("\(projection.value.page+1) / \(projection.value.pages)").monospacedDigit()
                 Button { page = projection.value.page+1 } label: { Image(systemName:"chevron.right") }.disabled(projection.value.page+1 >= projection.value.pages)
             }.font(.system(size:12))
-        }.padding(26)
+        }.padding(.horizontal,PageLayout.inset).padding(.bottom,PageLayout.inset)
         .onAppear(perform:load).onChange(of:key) { _,_ in load() }
         .onChange(of:filterKey) { _,_ in page = 0 }
         .onReceive(NotificationCenter.default.publisher(for:.init("CodexioSearch"))) { _ in searchFocused = true }

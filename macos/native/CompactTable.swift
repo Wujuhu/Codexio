@@ -113,6 +113,16 @@ private final class GridDetailCell: NSView {
 }
 
 private final class CompactScrollView: NSScrollView {
+    var needsScrollToTop = true
+    override func layout() {
+        super.layout()
+        guard needsScrollToTop, window != nil, contentSize.height > 0,
+              let table = documentView as? NSTableView, table.numberOfRows > 0 else { return }
+        needsScrollToTop = false
+        let insets = contentView.contentInsets
+        contentView.scroll(to:NSPoint(x:contentView.bounds.minX,y:-insets.top))
+        reflectScrolledClipView(contentView)
+    }
     override func scrollWheel(with event: NSEvent) {
         if !hasVerticalScroller && abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX) { nextResponder?.scrollWheel(with:event) }
         else { super.scrollWheel(with:event) }
@@ -128,6 +138,7 @@ struct CompactTable: NSViewRepresentable {
     var preferences: Preferences? = nil
     var storageKey = ""
     var verticalScrolling = true
+    var scrollResetKey = ""
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = CompactScrollView(), table = NSTableView()
@@ -154,6 +165,11 @@ struct CompactTable: NSViewRepresentable {
         let coordinator = context.coordinator
         coordinator.parent = self
         guard let table = coordinator.table else { return }
+        if coordinator.scrollResetKey != scrollResetKey {
+            coordinator.scrollResetKey = scrollResetKey
+            (scroll as? CompactScrollView)?.needsScrollToTop = true
+            scroll.needsLayout = true
+        }
         let columnKey = columns.map {$0.id+":"+$0.title}.joined(separator:"|")
         if coordinator.columnsKey != columnKey {
             coordinator.fitting = true
@@ -167,14 +183,18 @@ struct CompactTable: NSViewRepresentable {
                 table.addTableColumn(column)
             }
             coordinator.columnsKey = columnKey; coordinator.lastWidth = -1
-            scroll.contentView.scroll(to:.zero)
             coordinator.fitting = false
         }
         let key = revision+"|"+columnKey
         if coordinator.dataKey != key {
+            let origin = scroll.contentView.bounds.origin
             coordinator.dataKey = key; coordinator.lastWidth = -1; table.rowHeight = rowHeight; table.reloadData()
             if let selected = selection?.wrappedValue, let row = rows.firstIndex(where:{$0.id == selected}) { table.selectRowIndexes(IndexSet(integer:row),byExtendingSelection:false) } else if selection != nil { table.deselectAll(nil) }
             coordinator.configureTimer()
+            coordinator.fit()
+            if (scroll as? CompactScrollView)?.needsScrollToTop == false {
+                scroll.contentView.scroll(to:origin); scroll.reflectScrolledClipView(scroll.contentView)
+            } else { scroll.needsLayout = true }
         }
         coordinator.fit()
     }
@@ -188,6 +208,7 @@ struct CompactTable: NSViewRepresentable {
         weak var table: NSTableView?
         weak var scroll: NSScrollView?
         var columnsKey = "", dataKey = ""
+        var scrollResetKey: String?
         var lastWidth: CGFloat = -1
         var observer: NSObjectProtocol?
         var timer: Timer?

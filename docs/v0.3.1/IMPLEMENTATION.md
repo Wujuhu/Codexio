@@ -4,6 +4,8 @@
 
 本次二次复查记录见 [REVIEW.md](REVIEW.md)；用户实际数据反馈后的性能、能耗和交互修复以 [PERFORMANCE.md](PERFORMANCE.md) 为准。
 
+2026-09-28：iOS 开发前 A～G 七项 Mac 问题已完成本地中间构建，程序仍为 0.3.1，等待用户测试确认；实现、定向核对和开发包信息见 [PRE_IOS_FIXES.md](PRE_IOS_FIXES.md)。iOS 尚未开始，未推送或发布。
+
 ## 完成清单
 
 - [x] Mac 运行端全量 Swift：原生设置、SQLite 兼容、只读增量扫描、请求归组、定价、本机统计和周期估值。

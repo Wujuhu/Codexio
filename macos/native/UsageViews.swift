@@ -5,12 +5,11 @@ struct UsageView: View {
     @ObservedObject var state: AppState
     var body: some View {
         VStack(alignment:.leading,spacing:0) {
-            PageHeading(title:Pages.title("trends")).padding(.horizontal,32).padding(.top,32)
             HStack(spacing:28) {
                 tab("activity",L("活动", "Activity")); tab("trend",L("用量趋势", "Usage trend")); tab("threads",L("聊天排行", "Top chats"))
                 Spacer()
-            }.padding(.horizontal,32).padding(.top,15)
-            Divider().padding(.horizontal,32)
+            }.padding(.horizontal,PageLayout.inset)
+            Divider().padding(.horizontal,PageLayout.inset)
             ScrollView {
                 VStack(alignment:.leading,spacing:28) {
                     switch state.usageSection {
@@ -18,7 +17,7 @@ struct UsageView: View {
                     case "trend": UsageTrendsView(state:state)
                     default: LocalActivityView(state:state)
                     }
-                }.padding(32)
+                }.padding(PageLayout.inset)
             }
         }.onChange(of:state.usageSection) { _,section in if section == "threads" { state.refreshReports() } }
     }

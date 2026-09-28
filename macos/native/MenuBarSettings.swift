@@ -36,21 +36,27 @@ enum MenuBarField {
     static func text(_ state: AppState) -> String { state.menuFields.map {value($0,state:state)}.joined(separator:"  ") }
 }
 
+enum MenuBarMetrics {
+    static let numberSize: CGFloat = 14
+    static let taskSize: CGFloat = 20
+    static let verticalOffset: CGFloat = 1
+}
+
 final class TaskStatusImageView: NSView {
     private let glyph = CALayer()
     private static let ring: NSImage = {
         let image = Bundle.main.url(forResource:"c-dot-ring-static",withExtension:"png").flatMap {NSImage(contentsOf:$0)} ?? Branding.menuIcon()
-        image.size = NSSize(width:21,height:21); image.isTemplate = true; return image
+        image.size = NSSize(width:MenuBarMetrics.taskSize,height:MenuBarMetrics.taskSize); image.isTemplate = true; return image
     }()
     private static let completed: NSImage = {
         let image = Bundle.main.url(forResource:"completed",withExtension:"png").flatMap {NSImage(contentsOf:$0)} ?? Branding.menuIcon()
-        image.size = NSSize(width:21,height:21); image.isTemplate = true; return image
+        image.size = NSSize(width:MenuBarMetrics.taskSize,height:MenuBarMetrics.taskSize); image.isTemplate = true; return image
     }()
     private var running = false
     private var configured = false
     private var observer: NSObjectProtocol?
     override var isFlipped: Bool { false }
-    override var intrinsicContentSize: NSSize { NSSize(width:21,height:21) }
+    override var intrinsicContentSize: NSSize { NSSize(width:MenuBarMetrics.taskSize,height:MenuBarMetrics.taskSize) }
     override init(frame: NSRect) {
         super.init(frame:frame); wantsLayer = true
         glyph.anchorPoint = CGPoint(x:0.5,y:0.5); layer?.addSublayer(glyph)
@@ -76,7 +82,7 @@ final class TaskStatusImageView: NSView {
     override func layout() {
         super.layout()
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        glyph.bounds = CGRect(x:0,y:0,width:21,height:21)
+        glyph.bounds = CGRect(x:0,y:0,width:MenuBarMetrics.taskSize,height:MenuBarMetrics.taskSize)
         glyph.position = CGPoint(x:bounds.midX,y:bounds.midY)
         CATransaction.commit()
     }
@@ -84,7 +90,7 @@ final class TaskStatusImageView: NSView {
     private func updateGlyph() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             let source = running ? Self.ring : Self.completed
-            let tinted = NSImage(size:NSSize(width:21,height:21),flipped:false) { rect in
+            let tinted = NSImage(size:self.intrinsicContentSize,flipped:false) { rect in
                 source.draw(in:rect)
                 NSColor.labelColor.setFill(); rect.fill(using:.sourceIn)
                 return true
@@ -127,14 +133,15 @@ struct MenuBarReadout: View {
                 .alignmentGuide(.menuVisualCenter) { $0[VerticalAlignment.center]-0.65 }
             ForEach(fields,id:\.self) { field in
                 if field == "task", let running {
-                    TaskStatusImage(running:running).frame(width:21,height:21)
+                    TaskStatusImage(running:running).frame(width:MenuBarMetrics.taskSize,height:MenuBarMetrics.taskSize)
                 } else {
-                    let size: CGFloat = field == "week" ? 14 : 12
+                    let size = MenuBarMetrics.numberSize
                     Text(values[field] ?? "—").font(.system(size:size,weight:.medium))
                         .alignmentGuide(.menuVisualCenter) { $0[.firstTextBaseline]-NSFont.systemFont(ofSize:size,weight:.medium).capHeight/2 }
                 }
             }
-        }.font(.system(size:12,weight:.medium)).monospacedDigit().fixedSize()
+        }.font(.system(size:MenuBarMetrics.numberSize,weight:.medium)).monospacedDigit().fixedSize()
+            .offset(y:MenuBarMetrics.verticalOffset)
     }
 }
 

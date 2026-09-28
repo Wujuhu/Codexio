@@ -18,6 +18,10 @@ struct NavigationGlyph: Shape {
     }
 }
 
+enum PageLayout {
+    static let inset: CGFloat = 32
+}
+
 struct PageHeading: View {
     let title: String
     var body: some View { Text(title).font(.system(size:28,weight:.semibold)).frame(maxWidth:.infinity,alignment:.leading).padding(.bottom,12) }
@@ -100,12 +104,15 @@ struct TrendChart: View {
     var body: some View {
         let maxToken = max(1,Double(days.compactMap(\.tokens).max() ?? 0))
         let maxCost = max(0.01,days.compactMap(\.cost).max() ?? 0)
+        let lineWidth: CGFloat = compactStyle ? 1.8 : 2.2
+        let plotInset = lineWidth/2+2
         VStack(spacing:10) {
             HStack { Text(compact(maxToken)+" Token").foregroundStyle(.blue); Spacer(); Text(money(maxCost)).foregroundStyle(.green) }.font(.system(size:11))
             Canvas { context,size in
+                let plot = CGRect(origin:.zero,size:size).insetBy(dx:plotInset,dy:plotInset)
                 for i in 0...3 {
-                    let y = Double(i)/3*size.height
-                    var line = Path(); line.move(to:CGPoint(x:0,y:y)); line.addLine(to:CGPoint(x:size.width,y:y))
+                    let y = plot.minY+Double(i)/3*plot.height
+                    var line = Path(); line.move(to:CGPoint(x:plot.minX,y:y)); line.addLine(to:CGPoint(x:plot.maxX,y:y))
                     context.stroke(line,with:.color(.secondary.opacity(0.13)),lineWidth:0.5)
                 }
                 for series in 0..<2 {
@@ -113,12 +120,12 @@ struct TrendChart: View {
                     for (index,day) in days.enumerated() {
                         let amount = series == 0 ? day.tokens.map(Double.init) : day.cost
                         guard let amount else { connected = false; continue }
-                        let point = CGPoint(x:Double(index)/Double(max(1,days.count-1))*size.width,y:size.height-max(0,amount/(series == 0 ? maxToken : maxCost))*size.height)
+                        let point = CGPoint(x:plot.minX+Double(index)/Double(max(1,days.count-1))*plot.width,y:plot.maxY-max(0,amount/(series == 0 ? maxToken : maxCost))*plot.height)
                         if connected { path.addLine(to:point) } else { path.move(to:point); connected = true }
                     }
-                    context.stroke(path,with:.color(series == 0 ? .blue : .green),style:StrokeStyle(lineWidth:compactStyle ? 1.8 : 2.2,lineCap:.round,lineJoin:.round))
+                    context.stroke(path,with:.color(series == 0 ? .blue : .green),style:StrokeStyle(lineWidth:lineWidth,lineCap:.round,lineJoin:.round))
                 }
-            }.frame(height:compactStyle ? 85 : 170).overlay { UsageHoverSurface(days:days) }
+            }.frame(height:compactStyle ? 85 : 170).overlay { UsageHoverSurface(days:days,plotInset:plotInset) }
             HStack { Text(axisLabel(days.first?.date)); Spacer(); Text(axisLabel(days.last?.date)) }.font(.system(size:11)).foregroundStyle(.secondary)
         }.accessibilityElement(children:.combine).accessibilityLabel(L("Token 和费用趋势", "Token and cost trends"))
     }
@@ -257,9 +264,10 @@ struct UsageHoverSurface: NSViewRepresentable {
     var rows = 0
     var offset = 0
     var cellSize: CGFloat = 16
+    var plotInset: CGFloat = 0
     func makeNSView(context: Context) -> UsageHoverView { UsageHoverView(frame:.zero) }
     func updateNSView(_ view: UsageHoverView,context: Context) {
-        view.update(days:days,rows:rows,offset:offset,cellSize:cellSize)
+        view.update(days:days,rows:rows,offset:offset,cellSize:cellSize,plotInset:plotInset)
     }
     static func dismantleNSView(_ view: UsageHoverView,coordinator: ()) { view.close() }
 }
@@ -268,6 +276,8 @@ final class UsageHoverView: NSView {
     private var days: [DayUsage] = []
     private var rows = 0, offset = 0
     private var cellSize: CGFloat = 16
+    private var plotInset: CGFloat = 0
+    private var plot: NSRect { bounds.insetBy(dx:plotInset,dy:plotInset) }
     private var tracking: NSTrackingArea?
     private var selected: Int?
     private var current: DayUsage?
@@ -277,8 +287,8 @@ final class UsageHoverView: NSView {
         super.init(frame:frame); popover.behavior = .transient; popover.animates = false
     }
     required init?(coder: NSCoder) { fatalError() }
-    func update(days: [DayUsage],rows: Int,offset: Int,cellSize: CGFloat) {
-        self.days = days; self.rows = rows; self.offset = offset; self.cellSize = cellSize
+    func update(days: [DayUsage],rows: Int,offset: Int,cellSize: CGFloat,plotInset: CGFloat) {
+        self.days = days; self.rows = rows; self.offset = offset; self.cellSize = cellSize; self.plotInset = plotInset
         if let selected, !days.indices.contains(selected) || days[selected] != current { close() }
     }
     override func updateTrackingAreas() {
@@ -301,8 +311,9 @@ final class UsageHoverView: NSView {
                   point.y.truncatingRemainder(dividingBy:rowHeight+4) <= rowHeight else { close(); return }
             anchor = NSRect(x:CGFloat(column)*(cellSize+4),y:CGFloat(row)*(rowHeight+4),width:cellSize,height:rowHeight)
         } else {
-            index = min(days.count-1,max(0,Int((point.x/bounds.width*CGFloat(max(1,days.count-1))).rounded())))
-            anchor = NSRect(x:CGFloat(index)/CGFloat(max(1,days.count-1))*bounds.width,y:0,width:1,height:bounds.height)
+            guard plot.width > 0 else { return }
+            index = min(days.count-1,max(0,Int(((point.x-plot.minX)/plot.width*CGFloat(max(1,days.count-1))).rounded())))
+            anchor = NSRect(x:plot.minX+CGFloat(index)/CGFloat(max(1,days.count-1))*plot.width,y:plot.minY,width:1,height:plot.height)
         }
         guard days.indices.contains(index) else { close(); return }
         guard selected != index || !popover.isShown else { return }
@@ -315,8 +326,8 @@ final class UsageHoverView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard rows == 0, let selected else { return }
         NSColor.secondaryLabelColor.withAlphaComponent(0.3).setStroke()
-        let x = CGFloat(selected)/CGFloat(max(1,days.count-1))*bounds.width
-        let path = NSBezierPath(); path.move(to:NSPoint(x:x,y:0)); path.line(to:NSPoint(x:x,y:bounds.height)); path.lineWidth = 1; path.stroke()
+        let x = plot.minX+CGFloat(selected)/CGFloat(max(1,days.count-1))*plot.width
+        let path = NSBezierPath(); path.move(to:NSPoint(x:x,y:plot.minY)); path.line(to:NSPoint(x:x,y:plot.maxY)); path.lineWidth = 1; path.stroke()
     }
     func close() { popover.close(); selected = nil; current = nil; needsDisplay = true }
 }

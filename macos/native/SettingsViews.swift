@@ -10,7 +10,6 @@ struct PricingView: View {
     private var filtered: [PriceRow] { state.prices.filter {(state.modelIDs.isEmpty || state.modelIDs.contains($0.model)) && (search.isEmpty || $0.model.localizedCaseInsensitiveContains(search))} }
     var body: some View {
         VStack(alignment:.leading,spacing:20) {
-            HStack { PageHeading(title:Pages.title("pricing")); Button(L("立即同步", "Sync now")) { state.syncPrices() } }
             HStack { StatusNote(text:L("美元 / 1M Token", "USD / 1M tokens")); Spacer(); Text(lastUpdateText(state.priceUpdated)).font(.caption).foregroundStyle(.secondary) }
             if let warning = state.priceWarning { StatusNote(text:warning) }
             HStack {
@@ -31,7 +30,7 @@ struct PricingView: View {
                 return GridText(main:money(row.raw.number(column)))
             }) },revision:state.pricesRevision+search+state.modelIDs.sorted().joined(separator:","),rowHeight:30,selection:$selected,preferences:state.preferences,storageKey:"pricing")
                 .overlay(RoundedRectangle(cornerRadius:10).stroke(.secondary.opacity(0.16)))
-        }.padding(26).sheet(isPresented:$editing) { if let model = selectedModel { PriceEditor(state:state,model:model) } }
+        }.padding(.horizontal,PageLayout.inset).padding(.bottom,PageLayout.inset).sheet(isPresented:$editing) { if let model = selectedModel { PriceEditor(state:state,model:model) } }
     }
 }
 
@@ -77,7 +76,6 @@ struct SettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment:.leading,spacing:20) {
-                PageHeading(title:Pages.title("settings"))
                 HStack(alignment:.top,spacing:28) {
                     VStack(spacing:5) {
                         ForEach(["appearance","data","app","menubar"],id:\.self) { section in
@@ -95,7 +93,7 @@ struct SettingsView: View {
                         }
                     }.frame(maxWidth:.infinity,alignment:.leading)
                 }
-            }.padding(32)
+            }.padding(.horizontal,PageLayout.inset).padding(.bottom,PageLayout.inset)
         }.onAppear { codexPath = state.preferences.general.string("codex_path"); logRoot = state.preferences.roots.first?.path ?? "" }
         .alert(desiredUpstream ? L("开启上游检测？", "Enable upstream detection?") : L("关闭上游检测？", "Disable upstream detection?"),isPresented:$upstreamConfirmation) {
             Button(L("取消", "Cancel"),role:.cancel) {}

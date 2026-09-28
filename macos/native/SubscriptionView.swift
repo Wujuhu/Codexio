@@ -13,7 +13,6 @@ struct SubscriptionView: View {
     var body: some View {
         ScrollView {
             VStack(alignment:.leading,spacing:23) {
-                PageHeading(title:Pages.title("subscription"))
                 HStack(alignment:.top,spacing:28) {
                     VStack(alignment:.leading,spacing:12) {
                         Text(profile.string("plan").isEmpty ? (state.quota.account.string("planType").isEmpty ? L("个人订阅资料", "Subscription profile") : "ChatGPT "+planName(state.quota.account.string("planType"))) : profile.string("plan")).font(.system(size:16,weight:.semibold))
@@ -54,7 +53,7 @@ struct SubscriptionView: View {
                 if state.quota.detailsKnown && state.quota.availableCount == 0 { StatusNote(text:L("没有可用重置次数", "No resets available")) }
                 if let message = state.actionMessage { StatusNote(text:message) }
                 localEstimates
-            }.padding(32)
+            }.padding(.horizontal,PageLayout.inset).padding(.bottom,PageLayout.inset)
         }
         .sheet(isPresented:$editingProfile) { SubscriptionEditor(state:state) }
         .alert(L("使用这次额度重置？", "Use this reset?"),isPresented:$confirming,presenting:selectedReset) { credit in
