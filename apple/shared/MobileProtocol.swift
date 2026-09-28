@@ -141,6 +141,20 @@ struct MobilePeriod: Codable, Equatable {
 struct MobileTrends: Codable, Equatable {
     var daily: [MobileDay]
     var periods: [MobilePeriod]
+    static func isSingleModel(_ value: String) -> Bool {
+        let name = value.trimmingCharacters(in:.whitespacesAndNewlines)
+        return !["", "unknown", "mixed", "multiple", "—", "未知", "多模型", "多个模型"].contains(name.lowercased())
+            && !["+", "→", ",", "，", "\n"].contains(where:name.contains)
+    }
+    func singleModelsOnly() -> Self {
+        var copy = self
+        copy.periods = periods.map { period in
+            var result = period
+            result.models.removeAll {!Self.isSingleModel($0.id) || !Self.isSingleModel($0.name)}
+            return result
+        }
+        return copy
+    }
 }
 struct MobileEnvelope: Codable, Equatable {
     var dataset: String

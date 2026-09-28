@@ -4,6 +4,7 @@ import SwiftUI
 import Network
 import Security
 import CoreImage.CIFilterBuiltins
+import SystemConfiguration
 
 private struct MobileHostIdentity: Codable {
     var id: String
@@ -26,7 +27,6 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
     @Published private(set) var qrImage: NSImage?
     @Published private(set) var pending: MobileReader?
     @Published private(set) var readers: [MobileReader] = []
-    @Published private(set) var previewEnabled = false
     @Published private(set) var deviceName = "我的 Mac"
     private let queue = DispatchQueue(label:"com.wujuhu.codexio.mobile",qos:.utility)
     private let paths: AppPaths
@@ -53,7 +53,14 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
     private var failures = 0
     private var urgentPending = false
     private var transport = MobileHTTP()
-    init(paths: AppPaths) { self.paths = paths; if !paths.mock { previewEnabled = UserDefaults.standard.bool(forKey:"codexio.mobile.preview"); deviceName = UserDefaults.standard.string(forKey:"codexio.mobile.name") ?? "我的 Mac" } }
+    init(paths: AppPaths) {
+        self.paths = paths
+        if !paths.mock {
+            let saved = UserDefaults.standard.string(forKey:"codexio.mobile.name")?.trimmingCharacters(in:.whitespacesAndNewlines) ?? ""
+            let system = SCDynamicStoreCopyComputerName(nil,nil) as String? ?? "Mac"
+            deviceName = saved.isEmpty || saved == "我的 Mac" ? String(system.prefix(40)) : saved
+        }
+    }
     private var stateURL: URL { paths.data.appendingPathComponent("mobile-projection.json") }
     private func report(_ text: String) { DispatchQueue.main.async { if self.status != text { self.status = text } } }
     private func saveHost() throws {
@@ -96,17 +103,12 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
     }
     func start() {
         guard !paths.mock else { return }
-        let allowPreview = previewEnabled
         queue.async {
             guard !self.active else { return }
             do {
                 let identity = try self.identity()
                 if let data = try? Data(contentsOf:self.stateURL) { self.datasets = try JSONDecoder().decode([String:MobileEnvelope].self,from:data) }
-                if !allowPreview {
-                    if let value = self.datasets["recent"], let rows = try? value.decode([MobileRequest].self) { try self.put("recent",rows.map { row in var copy = row; copy.preview = nil; return copy }) }
-                    if let value = self.datasets["live"], var live = try? value.decode(MobileLive.self) { live.task?.preview = nil; try self.put("live",live) }
-                    try self.persist()
-                }
+                if let value = self.datasets["trends"], let trends = try? value.decode(MobileTrends.self) { try self.put("trends",trends.singleModelsOnly()); try self.persist() }
                 self.active = true; self.generation = UUID(); self.transport = MobileHTTP()
                 UserDefaults.standard.set(true,forKey:"codexio.mobile.enabled")
                 let listener = try NWListener(using:MobileProtocol.parameters(identity:identity,queue:self.queue))
@@ -136,7 +138,6 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
             self.report("同步已停止；云端保留最后已上传的数据")
         }
     }
-    func setPreview(_ value: Bool) { previewEnabled = value; if !paths.mock { UserDefaults.standard.set(value,forKey:"codexio.mobile.preview") }; queue.async { self.exportRevision = nil } }
     func rename(_ value: String) { let name = String(value.trimmingCharacters(in:.whitespacesAndNewlines).prefix(30)); guard !name.isEmpty else { return }; deviceName = name; if !paths.mock { UserDefaults.standard.set(name,forKey:"codexio.mobile.name") } }
     func pair() {
         let name = deviceName
@@ -180,10 +181,11 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
         }
     }
     func enroll(_ invite: String) {
+        let name = deviceName
         queue.async {
             guard self.active, let host = self.host, !self.sending else { return }
             self.sending = true; let generation = self.generation, transport = self.transport
-            let body = try? JSONSerialization.data(withJSONObject:["host":host.id,"writer":host.writer,"name":"我的 Mac"])
+            let body = try? JSONSerialization.data(withJSONObject:["host":host.id,"writer":host.writer,"name":name])
             Task {
                 do {
                     _ = try await transport.request("/v1/enroll",method:"POST",token:invite.trimmingCharacters(in:.whitespacesAndNewlines),body:body)
@@ -218,6 +220,12 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                   let message = try? JSONDecoder().decode(MobileMessage.self,from:data) else { connection?.cancel(); return }
             let key = ObjectIdentifier(connection)
             if let reader = message.reader, self.host?.readers.contains(where:{$0.id == reader.id && MobileProtocol.equal($0.localSecret,reader.localSecret)}) == true {
+                let name = reader.name.trimmingCharacters(in:.whitespacesAndNewlines)
+                if !name.isEmpty, name.count <= 40, let index = self.host?.readers.firstIndex(where:{$0.id == reader.id}), self.host?.readers[index].name != name {
+                    self.host?.readers[index].name = name
+                    do { try self.saveHost(); let readers = self.host?.readers ?? []; DispatchQueue.main.async { self.readers = readers } }
+                    catch { self.report(error.localizedDescription) }
+                }
                 self.authenticated[key] = reader.id
                 let known = message.known ?? [:]
                 MobileProtocol.send(MobileMessage(action:"sync",known:self.datasets.mapValues(\.revision),datasets:self.datasets.values.filter {$0.revision > known[$0.dataset,default:0]},seen:Date().timeIntervalSince1970,cloud:self.cloudReaders.contains(reader.id) ? MobileProtocol.cloudOrigin : nil),over:connection)
@@ -243,7 +251,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
     }
     func update(_ snapshot: UsageSnapshot,quota: MenuQuota,observed: Date? = nil) {
         guard !paths.mock, enabled else { return }
-        let previews = previewEnabled, name = deviceName
+        let previews = true, name = deviceName
         queue.async {
             guard self.active else { return }
             do {
@@ -274,7 +282,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                         let requests = main.filter {($0.date ?? .distantPast) >= start}
                         let grouped = Dictionary(grouping:calls,by:{$0.raw.string("model","unknown")})
                         let requestModels = Dictionary(grouping:requests,by:{$0.raw.string("model","unknown")})
-                        let keys = Set(grouped.keys).union(requestModels.keys).sorted()
+                        let keys = Set(grouped.keys).union(requestModels.keys).filter {MobileTrends.isSingleModel($0) && MobileTrends.isSingleModel(modelName($0))}.sorted()
                         let models = keys.map {key in MobileModel(id:key,name:modelName(key),metric:metric(UsageSummary(rows:grouped[key] ?? [],requests:requestModels[key]?.count ?? 0)))}
                         return MobilePeriod(days:count,total:metric(UsageSummary(rows:calls,requests:requests.count)),models:models)
                     }
@@ -343,8 +351,7 @@ struct MobileSyncSettings: View {
             Text(sync.status).font(.caption).foregroundStyle(.secondary)
             if sync.enabled {
                 TextField("设备名称",text:$name).onAppear { name = sync.deviceName }.onSubmit { sync.rename(name); refresh() }
-                Toggle("允许同步请求短预览",isOn:Binding(get:{sync.previewEnabled},set:{sync.setPreview($0);refresh()}))
-                Text("仅同步额度、汇总和最近请求简表。短预览可能包含敏感内容；关闭后不会上传正文。首次配对请让 iPhone 与 Mac 处于可互通的局域网。").font(.caption).foregroundStyle(.secondary)
+                Text("同步额度、汇总和最近请求短预览，不同步详细日志。首次配对请让 iPhone 与 Mac 处于可互通的局域网。").font(.caption).foregroundStyle(.secondary)
                 if !sync.cloudEnabled {
                     SecureField("云端邀请码（可选）",text:$invite)
                     Button("启用 Cloudflare 同步") { sync.enroll(invite); invite = "" }.disabled(invite.isEmpty)

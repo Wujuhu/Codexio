@@ -1,5 +1,10 @@
 import SwiftUI
 import Charts
+import UIKit
+
+private enum MobileBrand {
+    static let wordmark: UIImage? = UIImage(named:"CodexioWordmark") ?? Bundle.main.url(forResource:"wordmark",withExtension:"png").flatMap {UIImage(contentsOfFile:$0.path)}
+}
 
 @main struct CodexioIOSApp: App {
     @StateObject private var store = MobileStore()
@@ -41,7 +46,12 @@ struct MobileRoot: View {
         .alert("同步提示",isPresented:Binding(get:{store.error != nil},set:{if !$0 {store.error=nil}})) { Button("知道了") {store.error=nil} } message: {Text(store.error ?? "")}
     }
     @ToolbarContentBuilder private var header: some ToolbarContent {
-        ToolbarItem(placement:.topBarLeading) { Image("wordmark").renderingMode(.template).resizable().scaledToFit().frame(width:118,height:28).accessibilityLabel("Codexio") }
+        ToolbarItem(placement:.topBarLeading) {
+            Group {
+                if let image = MobileBrand.wordmark { Image(uiImage:image).renderingMode(.template).resizable().scaledToFit() }
+                else { Text("Codexio").font(.title2.bold()) }
+            }.foregroundStyle(.primary).frame(width:118,height:28).accessibilityLabel("Codexio")
+        }.sharedBackgroundVisibility(.hidden)
         ToolbarItem(placement:.topBarTrailing) {
             Menu {
                 ForEach(store.devices) { device in Button(device.code.name) {store.select(device.id)} }
@@ -56,13 +66,18 @@ struct OverviewPage: View {
     var body: some View {
         ScrollView {
             VStack(alignment:.leading,spacing:18) {
-                HStack(alignment:.top) {
-                    VStack(alignment:.leading,spacing:5) {Text("概览").font(.largeTitle.bold()); Text(store.status).font(.caption).foregroundStyle(.secondary)}
-                    Spacer()
-                    VStack(alignment:.trailing,spacing:6) {
+                VStack(spacing:8) {
+                    HStack(alignment:.center,spacing:10) {
+                        Text("概览").font(.largeTitle.bold())
+                        if store.refreshing { ProgressView().controlSize(.small).frame(width:16,height:16).accessibilityLabel("正在同步") }
+                        Spacer()
                         Button(action:{store.refresh()}) {Label("刷新",systemImage:"arrow.clockwise")}.buttonStyle(.glass).disabled(store.refreshing || store.device == nil)
-                        Text(store.updated.map {"上次更新："+MobileFormat.update.string(from:$0)} ?? "尚未同步").font(.caption2).foregroundStyle(.secondary)
                     }
+                    HStack(alignment:.firstTextBaseline) {
+                        Text(store.connectionLabel)
+                        Spacer()
+                        Text(store.updated.map {"上次更新："+MobileFormat.update.string(from:$0)} ?? "尚未同步").monospacedDigit()
+                    }.font(.caption).foregroundStyle(.secondary)
                 }
                 if store.devices.isEmpty && !store.pairing { Button(action:scan) {Label("连接我的 Mac",systemImage:"qrcode.viewfinder").frame(maxWidth:.infinity)}.buttonStyle(.glassProminent) }
                 if store.pairing { MobileCard {Label("正在配对",systemImage:"link").font(.headline); Text(store.status); Button("取消配对") {store.cancelPair()} } }
@@ -196,13 +211,15 @@ struct MobileSettings: View {
     @EnvironmentObject var store: MobileStore
     @AppStorage("theme") private var theme = "system"
     @State private var remove = false
+    @State private var phoneName = ""
     let scan: () -> Void
     var body: some View {
         Form {
             Section("我的 Mac") {ForEach(store.devices) {device in Button {store.select(device.id)} label:{HStack {Label(device.code.name,systemImage:"laptopcomputer");Spacer();if device.id==store.selected {Image(systemName:"checkmark")}}}}; Button(action:scan) {Label("添加 Mac",systemImage:"qrcode.viewfinder")}}
             Section("外观") {Picker("主题",selection:$theme) {Text("跟随系统").tag("system");Text("浅色").tag("light");Text("深色").tag("dark")}}
-            Section("连接") {LabeledContent("当前连接",value:store.status);Button("立即刷新") {store.refresh()}.disabled(store.device == nil)}
+            Section("此 iPhone") {TextField("设备名称",text:$phoneName).onSubmit {store.renamePhone(phoneName)}}
+            Section("连接") {LabeledContent("当前连接",value:store.connectionLabel);Button("立即刷新") {store.refresh()}.disabled(store.device == nil)}
             if store.device != nil {Section {Button("移除此 Mac",role:.destructive) {remove=true}}}
-        }.confirmationDialog("移除此 Mac 并清除手机缓存？",isPresented:$remove,titleVisibility:.visible) {Button("移除",role:.destructive) {store.remove()}}
+        }.onAppear {phoneName=store.phoneName}.onDisappear {store.renamePhone(phoneName)}.confirmationDialog("移除此 Mac 并清除手机缓存？",isPresented:$remove,titleVisibility:.visible) {Button("移除",role:.destructive) {store.remove()}}
     }
 }

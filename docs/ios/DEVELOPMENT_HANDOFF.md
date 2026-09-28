@@ -13,7 +13,7 @@
 1. 用户自行退出旧 Mac App，打开上述开发 App；稳定宿主接管仍按原有规则执行。
 2. 设置 → iPhone 同步 → 开启。可设置设备名称。同步默认关闭，不因升级自动上传。
 3. 需要云端时，输入私有文件内的邀请码，点击“启用 Cloudflare 同步”。不需要将 Cloudflare 管理权限交给朋友。
-4. 希望手机显示短请求正文时，明确勾选“允许同步请求短预览”；默认不上传。短预览不是自动脱敏保证。
+4. 按用户本轮确认，开启同步后默认包含请求短预览，不再提供“允许同步请求短预览”开关。仍限定 80 字／240 UTF-8 字节，不同步完整正文；短预览不是自动脱敏保证。
 5. Mac 点击“添加 iPhone · 生成二维码”；手机通过 SideStore 安装 IPA，点击“连接我的 Mac”，允许相机和本地网络权限，扫描二维码。
 6. **首次扫码须处于可互通的局域网**。在 Mac 上点击“确认配对”；二维码单次有效、5 分钟过期。配对后切换蜂窝网络可从 Cloudflare 读取已上传数据。
 7. 若先做局域网配对、之后才启用云端，手机下一次成功连接该 Mac 时会获知云端配置，无需把管理员凭据输入手机。
@@ -78,3 +78,15 @@ Codexio 配置每天最多 20,000 次进入业务处理的请求预算，持久�
 - 尚需用户在 iPhone 17／iOS 27／SideStore 上确认安装、扫码权限、Mac 点击批准、同网数据与切蜂窝回退。签名工具可能改变 Bundle ID／钥匙串组；实际续签保留凭据情况不能仅靠编译确认。
 
 构建日志：`build/logs/mobile-sync-macos-build.log`、`build/logs/ios-build.log`。正式发布仍需用户验收后的第二次明确授权，IPA 不擅自成为既有 GitHub 三附件发布的第四项。
+
+## 真机反馈后的界面修订 · 2026-09-28
+
+- 首页字标加入 `CodexioWordmark` asset catalog，缓存 UIKit 加载结果并提供原 PNG／文字回退；显式使用主题前景，取消字标外的独立玻璃底。仍使用用户最终字标，不重新绘制。
+- 概览与设置共用精简连接文案，正常状态为“局域网”／“云同步”；无有效连接时保留“未连接／未配对”，不伪造已连接。概览连接文案和更新时间放在同一基线行、统一 caption 字号。
+- 仅概览标题旁显示原生小型 ProgressView。自动云同步、局域网请求、推送数据处理和主动刷新均记录各自进行中的操作；完成、失败、超时或切换设备后按操作清理，避免并发同步提前隐藏或无限转圈。不为动画增加网络轮询或逐帧定时器。
+- 空名称、unknown 与 `A + B` 等组合模型不再进入模型统计卡片：Mac 导出和已保存投影启动迁移、iOS 新响应和既有缓存加载都执行相同的单模型过滤。用户请求简表和真实总费用／Token／请求总数不删除、不重新分摊；无法明确归属的请求不会强塞给某个模型。
+- Mac 默认名通过 SystemConfiguration 读取系统电脑名称，已手动设置的名称保留；旧“我的 Mac”占位迁移为系统名称。名称更新随 live 同步至手机设备列表。
+- iPhone 默认调用 `UIDevice.current.name`；iOS 16+ 没有 Apple 授予的 user-assigned-device-name entitlement 时通常只返回“iPhone”，不能保证免费 SideStore 重签读取到“某某的 iPhone”。手机设置提供可编辑设备名称回退，已配对 Mac 在下一次合法局域网请求时更新名称，无需重配。没有申请或伪造特殊 entitlement。[Apple 官方说明](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.device-information.user-assigned-device-name)
+- 请求短预览按用户新要求默认同步，旧关闭值不再生效；同步总开关仍默认关闭，且仍不传完整日志。
+
+本轮版本保持 0.3.1，Widget 21／1.20 不变。未修改 Worker、数据库 schema 或云端配额；旧云端模型卡数据在用户打开新版 Mac 后由新投影替换，手机覆盖安装即可先清理本地旧卡片。开发包日志改为 `build/logs/mobile-feedback-macos-build.log` 与 `build/logs/ios-feedback-build.log`；原有三项 Mac 隔离冒烟及交付校验照常执行，不启动用户真实 App、不新增维护性测试项。本轮未取得修改后真机截图，最终显示需用户覆盖安装确认。

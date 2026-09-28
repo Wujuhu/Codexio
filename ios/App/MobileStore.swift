@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import Network
+import UIKit
 
 struct PairedMac: Codable, Identifiable {
     var code: MobilePairCode
@@ -23,7 +24,8 @@ private struct MobileDiskCache: Codable {
     @Published var trends = MobileTrends(daily:[],periods:[])
     @Published var status = "尚未配对"
     @Published var updated: Date?
-    @Published var refreshing = false
+    @Published private(set) var refreshing = false
+    @Published private(set) var phoneName = UIDevice.current.name
     @Published var pairing = false
     @Published var error: String?
     private let queue = DispatchQueue(label:"com.wujuhu.codexio.ios.network",qos:.utility)
@@ -44,7 +46,11 @@ private struct MobileDiskCache: Codable {
     private var localWaiting: Date?
     private var cloudDenied = false
     private var task: Task<Void,Never>?
+    private var syncOperations = Set<UUID>()
+    private var localOperation: UUID?
     init() {
+        let savedName = UserDefaults.standard.string(forKey:"phone-name")?.trimmingCharacters(in:.whitespacesAndNewlines) ?? ""
+        if !savedName.isEmpty { phoneName = String(savedName.prefix(40)) }
         files.async {
             do {
                 let devices = try MobileKeychain.read("ios-devices-v1").map {try JSONDecoder().decode([PairedMac].self,from:$0)} ?? []
@@ -58,11 +64,35 @@ private struct MobileDiskCache: Codable {
         }
     }
     var device: PairedMac? { attempt ?? devices.first {$0.id == selected} }
+    var connectionLabel: String {
+        if localReady { return "局域网" }
+        if status == "云同步" || status == "Cloudflare 同步" { return "云同步" }
+        if device == nil { return "未配对" }
+        return "未连接"
+    }
+    private func beginSync() -> UUID {
+        let id = UUID(); syncOperations.insert(id)
+        if !refreshing { refreshing = true }
+        return id
+    }
+    private func endSync(_ id: UUID?) {
+        if let id { syncOperations.remove(id) }
+        let active = !syncOperations.isEmpty
+        if refreshing != active { refreshing = active }
+    }
+    private func finishLocalSync() { endSync(localOperation); localOperation = nil; localWaiting = nil }
+    func renamePhone(_ value: String) {
+        let name = String(value.trimmingCharacters(in:.whitespacesAndNewlines).prefix(40))
+        guard !name.isEmpty, name != phoneName else { return }
+        phoneName = name; UserDefaults.standard.set(name,forKey:"phone-name")
+        if localReady { sendLocal() }
+    }
     private var cacheDirectory: URL { FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask)[0].appendingPathComponent("Codexio",isDirectory:true) }
     func activate() { foreground = true; select(selected) }
     func deactivate() {
         foreground = false; generation = UUID(); timer?.invalidate(); timer = nil; browser?.cancel(); connection?.cancel()
-        browser = nil; connection = nil; localReady = false; localWaiting = nil; task?.cancel(); http.stop(); http = MobileHTTP(); cloudInFlight = false; refreshing = false
+        browser = nil; connection = nil; localReady = false; localWaiting = nil; task?.cancel(); http.stop(); http = MobileHTTP(); cloudInFlight = false
+        syncOperations.removeAll(); localOperation = nil; refreshing = false
     }
     func select(_ id: String) {
         let active = foreground; deactivate(); foreground = active; selected = id
@@ -75,7 +105,7 @@ private struct MobileDiskCache: Codable {
             let cache = data.flatMap {try? JSONDecoder().decode(MobileDiskCache.self,from:$0)}
             Task { @MainActor in
                 guard stamp == self.generation, self.envelopes.isEmpty, let cache else { return }
-                self.live = cache.live; self.recent = cache.recent.filter {$0.started >= Date().timeIntervalSince1970-7*86400}; self.trends = cache.trends
+                self.live = cache.live; self.recent = cache.recent.filter {$0.started >= Date().timeIntervalSince1970-7*86400}; self.trends = cache.trends.singleModelsOnly()
                 self.envelopes = cache.versions.mapValues {_ in MobileEnvelope(dataset:"",revision:0,digest:"",payload:"")}
                 for (key,revision) in cache.versions { self.envelopes[key] = MobileEnvelope(dataset:key,revision:revision,digest:cache.digests[key] ?? "",payload:"") }
                 self.status = "已显示缓存"; self.persistCache()
@@ -91,7 +121,7 @@ private struct MobileDiskCache: Codable {
             guard code.version == 1, UUID(uuidString:code.host) != nil, code.pin.count == 64, code.ticket.count == 43,
                   code.expires > Date().timeIntervalSince1970, code.expires < Date().timeIntervalSince1970+600,
                   code.cloud == nil || code.cloud == MobileProtocol.cloudOrigin else { throw MobileError.message("二维码无效或已经过期") }
-            let reader = MobileReader(id:UUID().uuidString,name:"我的 iPhone",localSecret:try MobileProtocol.secret(),cloudSecret:try MobileProtocol.secret())
+            let reader = MobileReader(id:UUID().uuidString,name:String(phoneName.prefix(40)),localSecret:try MobileProtocol.secret(),cloudSecret:try MobileProtocol.secret())
             deactivate(); foreground = true
             attempt = PairedMac(code:code,reader:reader); selected = code.host; envelopes = [:]
             live = nil; recent = []; trends = MobileTrends(daily:[],periods:[])
@@ -113,7 +143,7 @@ private struct MobileDiskCache: Codable {
             guard let self, self.foreground else { return }
             if self.recent.contains(where:{$0.started < Date().timeIntervalSince1970-7*86400}) { self.recent.removeAll {$0.started < Date().timeIntervalSince1970-7*86400}; self.persistCache() }
             if let waiting = self.localWaiting, Date().timeIntervalSince(waiting) > 8 {
-                self.connection?.cancel(); self.connection = nil; self.localReady = false; self.localWaiting = nil; self.refreshing = false
+                self.connection?.cancel(); self.connection = nil; self.localReady = false; self.finishLocalSync()
             }
             if let attempt = self.attempt, Date().timeIntervalSince1970 > attempt.code.expires { self.error = "配对超时，请在 Mac 重新生成二维码"; self.cancelPair(); return }
             if self.pairing { if self.connection == nil && Date().timeIntervalSince(self.lastProbe) >= 3 { self.connect() } else { self.sendLocal() } }
@@ -125,6 +155,8 @@ private struct MobileDiskCache: Codable {
     private func connect() {
         guard foreground, let device else { return }
         lastProbe = Date(); browser?.cancel(); connection?.cancel(); connection = nil; localReady = false
+        finishLocalSync()
+        let probe = beginSync()
         let stamp = generation
         let browser = NWBrowser(for:.bonjour(type:MobileProtocol.service,domain:nil),using:.tcp); self.browser = browser
         browser.browseResultsChangedHandler = { [weak self] results,_ in
@@ -132,7 +164,7 @@ private struct MobileDiskCache: Codable {
             Task { @MainActor in guard let self, stamp == self.generation, self.connection == nil else { return }; self.open(endpoint,device:device,stamp:stamp) }
         }
         browser.start(queue:queue)
-        Task { try? await Task.sleep(for:.milliseconds(1500)); if stamp == generation, !localReady { cloudRefresh() } }
+        Task { try? await Task.sleep(for:.milliseconds(1500)); endSync(probe); if stamp == generation, !localReady { cloudRefresh() } }
     }
     private func open(_ endpoint: NWEndpoint,device: PairedMac,stamp: UUID) {
         let value = NWConnection(to:endpoint,using:MobileProtocol.parameters(pin:device.code.pin,queue:queue)); connection = value
@@ -140,17 +172,19 @@ private struct MobileDiskCache: Codable {
             guard let self, let value, stamp == self.generation, self.connection === value else { return }
             switch state {
             case .ready: self.receive(value,stamp:stamp); self.sendLocal()
-            case .failed: self.localReady = false; self.connection = nil; value.cancel(); self.cloudRefresh()
+            case .failed: self.localReady = false; self.connection = nil; value.cancel(); self.finishLocalSync(); self.cloudRefresh()
             default: break
             }
         }}
         value.start(queue:queue)
     }
     private func sendLocal() {
-        guard let connection, let device else { return }
-        if localWaiting == nil { localWaiting = Date() }
-        MobileProtocol.send(MobileMessage(action:pairing ? "pair" : "sync",ticket:pairing ? device.code.ticket : nil,reader:device.reader,known:envelopes.mapValues(\.revision)),over:connection) { [weak self] error in
-            if error != nil { Task { @MainActor in self?.localReady = false } }
+        guard let connection, let device, localWaiting == nil else { return }
+        localWaiting = Date(); localOperation = beginSync()
+        var reader = device.reader; reader.name = String(phoneName.prefix(40))
+        let stamp = generation
+        MobileProtocol.send(MobileMessage(action:pairing ? "pair" : "sync",ticket:pairing ? device.code.ticket : nil,reader:reader,known:envelopes.mapValues(\.revision)),over:connection) { [weak self] error in
+            if error != nil { Task { @MainActor in guard let self, stamp == self.generation, self.connection === connection else { return }; self.localReady = false; self.finishLocalSync() } }
         }
     }
     private func receive(_ value: NWConnection,stamp: UUID) {
@@ -159,9 +193,11 @@ private struct MobileDiskCache: Codable {
             Task { @MainActor in
             guard let self, let value, stamp == self.generation, self.connection === value else { return }
             guard failure == nil, let message = parsed else {
-                self.localReady = false; self.connection = nil; value.cancel(); self.cloudRefresh(); return
+                self.localReady = false; self.connection = nil; value.cancel(); self.finishLocalSync(); self.cloudRefresh(); return
             }
-            self.localWaiting = nil
+            let processing = self.beginSync(), pendingRequest = self.localOperation
+            self.localOperation = nil; self.localWaiting = nil
+            defer { self.endSync(processing); self.endSync(pendingRequest) }
             if message.action == "pending" { self.status = "请在 Mac 点击“确认配对”" }
             else if message.action == "sync" {
                 if var paired = self.attempt {
@@ -176,26 +212,27 @@ private struct MobileDiskCache: Codable {
                 await self.apply(message.datasets ?? [])
                 guard stamp == self.generation else { return }
                 let stale = self.envelopes.contains { key,value in (message.known?[key] ?? 0) < value.revision }
-                self.localReady = !stale; self.status = stale ? "Mac 数据版本较旧 · 保留较新缓存" : "局域网直连"
-                if !stale { self.updated = Date() }; self.refreshing = false
+                self.localReady = !stale; self.status = stale ? "Mac 数据版本较旧 · 保留较新缓存" : "局域网"
+                if !stale { self.updated = Date() }
             } else if message.action == "error" { self.error = message.error; self.localReady = false; value.cancel(); self.connection = nil; if self.pairing { self.cancelPair() }; return }
             self.receive(value,stamp:stamp)
         }}
     }
     func refresh() {
         error = nil; cloudDenied = false
-        if localReady { refreshing = true; sendLocal() } else { nextCloud = .distantPast; cloudRefresh() }
+        if localReady { sendLocal() } else { nextCloud = .distantPast; cloudRefresh(); connect() }
     }
     private func cloudRefresh() {
         guard foreground, !pairing, !localReady, !cloudDenied, !cloudInFlight, Date() >= nextCloud, let device, device.code.cloud != nil else { return }
-        cloudInFlight = true; refreshing = true; let stamp = generation, known = envelopes.mapValues(\.revision)
+        cloudInFlight = true; let operation = beginSync(), stamp = generation, known = envelopes.mapValues(\.revision)
         let query = (["reader=\(device.reader.id)"]+known.map {"\($0.key)=\($0.value)"}).joined(separator:"&")
         task = Task {
+            defer { endSync(operation); if stamp == generation { cloudInFlight = false } }
             do {
                 let data = try await http.request("/v1/hosts/\(device.id)/sync?"+query,token:device.reader.cloudSecret)
                 let response = try await Task.detached(priority:.utility) {try JSONDecoder().decode(MobileMessage.self,from:data)}.value
                 guard stamp == generation, !Task.isCancelled else { return }
-                if !localReady { await apply(response.datasets ?? []); guard stamp == generation else { return }; if !localReady { status = "Cloudflare 同步"; updated = response.seen.map {Date(timeIntervalSince1970:$0)} } }
+                if !localReady { await apply(response.datasets ?? []); guard stamp == generation else { return }; if !localReady { status = "云同步"; updated = response.seen.map {Date(timeIntervalSince1970:$0)} } }
                 failures = 0; nextCloud = Date().addingTimeInterval(live?.runningCount ?? 0 > 0 ? 15 : 60)
             } catch {
                 guard stamp == generation, !Task.isCancelled else { return }
@@ -206,7 +243,6 @@ private struct MobileDiskCache: Codable {
                 }
                 if !localReady { status = cloudDenied ? "云端需重新授权" : "离线 · 显示上次数据" }
             }
-            if stamp == generation { cloudInFlight = false; refreshing = false }
         }
     }
     private func saveDevices() async throws {
@@ -221,11 +257,12 @@ private struct MobileDiskCache: Codable {
             values.filter {$0.valid()}.map { value in
                 (value, value.dataset == "live" ? try? value.decode(MobileLive.self) : nil,
                  value.dataset == "recent" ? try? value.decode([MobileRequest].self) : nil,
-                 value.dataset == "trends" ? try? value.decode(MobileTrends.self) : nil)
+                 value.dataset == "trends" ? try? value.decode(MobileTrends.self).singleModelsOnly() : nil)
             }
         }.value
         guard stamp == generation else { return }
         var changed = false
+        var renamed = false
         for (value,liveValue,recentValue,trendsValue) in decoded where ["live","recent","trends"].contains(value.dataset) {
             if let old = envelopes[value.dataset], old.revision >= value.revision {
                 if old.revision == value.revision && old.digest != value.digest { error = "同步版本冲突，已保留原数据" }
@@ -233,7 +270,11 @@ private struct MobileDiskCache: Codable {
             }
             do {
                 switch value.dataset {
-                case "live": guard let liveValue else { throw MobileError.message("invalid live") }; live = liveValue
+                case "live":
+                    guard let liveValue else { throw MobileError.message("invalid live") }; live = liveValue
+                    if !liveValue.name.isEmpty, let index = devices.firstIndex(where:{$0.id == selected}), devices[index].code.name != liveValue.name {
+                        devices[index].code.name = liveValue.name; renamed = true
+                    }
                 case "recent": guard let recentValue else { throw MobileError.message("invalid recent") }; recent = recentValue.filter {$0.started >= Date().timeIntervalSince1970-7*86400}.prefix(200).map {$0}
                 case "trends": guard let trendsValue else { throw MobileError.message("invalid trends") }; trends = trendsValue
                 default: break
@@ -241,6 +282,7 @@ private struct MobileDiskCache: Codable {
                 envelopes[value.dataset] = value; changed = true
             } catch { self.error = "同步数据格式不兼容，请更新 Codexio" }
         }
+        if renamed { do {try await saveDevices()} catch {self.error = error.localizedDescription}; guard stamp == generation else { return } }
         if changed { persistCache() }
     }
     private func persistCache() {

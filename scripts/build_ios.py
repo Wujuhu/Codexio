@@ -33,6 +33,10 @@ def main():
     assets = STAGE / "Assets.xcassets/AppIcon.appiconset"
     assets.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "src/codexio/icons/app-light.png", assets / "AppIcon.png")
+    wordmark = assets.parent / "CodexioWordmark.imageset"
+    wordmark.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / "src/codexio/icons/wordmark.png", wordmark / "wordmark.png")
+    (wordmark / "Contents.json").write_text(json.dumps({"images":[{"filename":"wordmark.png","idiom":"universal"}],"info":{"author":"xcode","version":1},"properties":{"template-rendering-intent":"template"}}), encoding="utf-8")
     (assets / "Contents.json").write_text(json.dumps({"images":[{"filename":"AppIcon.png","idiom":"universal","platform":"ios","size":"1024x1024"}],"info":{"author":"xcode","version":1}}), encoding="utf-8")
     run("xcrun", "actool", assets.parent, "--compile", APP, "--platform", "iphoneos", "--minimum-deployment-target", "26.0", "--app-icon", "AppIcon", "--target-device", "iphone", "--output-partial-info-plist", STAGE / "asset-info.plist")
     info = plistlib.loads((STAGE / "asset-info.plist").read_bytes())
