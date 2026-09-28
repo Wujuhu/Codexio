@@ -3985,6 +3985,22 @@
         }
       }
     },
+    "取消选择": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancel selection"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取消选择"
+          }
+        }
+      }
+    },
     "另一个 Codexio 正在使用上游检测": {
       "localizations": {
         "en": {
@@ -4541,6 +4557,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "回复预览"
+          }
+        }
+      }
+    },
+    "图标": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Icon"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "图标"
           }
         }
       }
@@ -5729,6 +5761,22 @@
         }
       }
     },
+    "已选择": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Selected"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已选择"
+          }
+        }
+      }
+    },
     "平台更新清单格式无效": {
       "localizations": {
         "en": {
@@ -5789,6 +5837,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "应用副本不完整"
+          }
+        }
+      }
+    },
+    "应用图标": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "App icon"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "应用图标"
           }
         }
       }
@@ -7825,6 +7889,22 @@
         }
       }
     },
+    "无法读取图标": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The icon could not be loaded"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法读取图标"
+          }
+        }
+      }
+    },
     "无法连接 ChatGPT（网络或代理异常）": {
       "localizations": {
         "en": {
@@ -8077,6 +8157,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "明天"
+          }
+        }
+      }
+    },
+    "显示上次成功获取的额度": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Showing the last successfully retrieved limits"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示上次成功获取的额度"
           }
         }
       }
@@ -11437,6 +11533,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "确定"
+          }
+        }
+      }
+    },
+    "确认应用": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apply selection"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "确认应用"
           }
         }
       }

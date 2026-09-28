@@ -70,13 +70,16 @@ private struct SidebarView: View {
             if state.sidebarVisible {
                 HStack {
                     HStack(spacing:1) {
-                        Image(nsImage:Branding.menuIcon()).resizable().frame(width:28,height:28)
+                        SidebarBrand(state:state)
                         Text("odexio").font(.system(size:23,weight:.semibold)).lineLimit(1).minimumScaleFactor(0.7)
                     }.accessibilityElement(children:.ignore).accessibilityLabel("Codexio")
                     Spacer(minLength:4)
                     Button { state.selectedPage = "logs"; NotificationCenter.default.post(name:.init("CodexioSearch"),object:nil) } label: { Image(systemName:"magnifyingglass").foregroundStyle(.secondary) }.buttonStyle(.plain).accessibilityLabel(L("搜索日志", "Search logs"))
                 }.padding(.horizontal,16).padding(.top,30).padding(.bottom,24)
-            } else { Color.clear.frame(height:28+30+24) }
+            } else {
+                SidebarBrand(state:state).frame(maxWidth:.infinity)
+                    .padding(.top,30).padding(.bottom,24)
+            }
             ForEach(navigation,id:\.self) { page in
                 SidebarNavigationRow(page:page,selected:state.selectedPage == page,expanded:state.sidebarVisible,draggedPage:$draggedPage) { if state.selectedPage != page { state.selectedPage = page } }
                     .padding(.horizontal,8).padding(.bottom,4)
@@ -110,6 +113,16 @@ private struct SidebarView: View {
                 previewWidth = nil; self.resizingFrom = nil; state.persistSidebar()
             }).frame(width:8)
         }
+    }
+}
+
+private struct SidebarBrand: View {
+    @ObservedObject var state: AppState
+    var body: some View {
+        Group {
+            if state.appIconStyle == "main" { Image(nsImage:Branding.menuIcon()).resizable() }
+            else { Image(nsImage:state.appLogoImage ?? Branding.logo(dark:false)).resizable() }
+        }.scaledToFit().frame(width:28,height:28).accessibilityLabel("Codexio")
     }
 }
 

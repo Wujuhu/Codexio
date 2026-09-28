@@ -106,6 +106,7 @@ struct SettingsView: View {
         VStack(spacing:0) {
             row(L("主题", "Theme")) { Picker("",selection:Binding(get:{state.theme},set:{state.setPreference("theme",$0)})) { Text(L("跟随系统", "Follow system")).tag("system"); Text(L("浅色", "Light")).tag("light"); Text(L("深色", "Dark")).tag("dark") }.labelsHidden().frame(width:155) }
             row(L("侧边栏", "Sidebar")) { Toggle("",isOn:Binding(get:{state.sidebarVisible},set:{ value in state.sidebarVisible = value; state.setPreference("sidebar_collapsed",!value) })).labelsHidden().toggleStyle(.switch) }
+            AppIconPicker(state:state).padding(.top,22)
         }
     }
     private var data: some View {
@@ -149,5 +150,35 @@ struct SettingsView: View {
     private func choose(directory: Bool) {
         let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = !directory; panel.allowsMultipleSelection = false
         if panel.runModal() == .OK, let url = panel.url { if directory { logRoot = url.path } else { codexPath = url.path } }
+    }
+}
+
+private struct AppIconPicker: View {
+    @ObservedObject var state: AppState
+    @State private var pending = "main"
+    @State private var previews: [Branding.IconPreview] = []
+    var body: some View {
+        VStack(alignment:.leading,spacing:16) {
+            Text(L("应用图标", "App icon")).font(.system(size:13,weight:.medium))
+            LazyVGrid(columns:[GridItem(.adaptive(minimum:76,maximum:92),spacing:12)],alignment:.leading,spacing:12) {
+                ForEach(previews) { option in
+                    Button { pending = option.id } label: {
+                        Image(nsImage:option.image).resizable().scaledToFit().frame(width:60,height:60)
+                            .padding(8).background(pending == option.id ? Color.accentColor.opacity(0.10) : Color.clear,in:RoundedRectangle(cornerRadius:17))
+                            .overlay(RoundedRectangle(cornerRadius:17).stroke(pending == option.id ? Color.accentColor : Color.secondary.opacity(0.15),lineWidth:pending == option.id ? 2 : 1))
+                    }.buttonStyle(.plain).disabled(state.appIconApplying)
+                        .accessibilityLabel(L("图标", "Icon")+" \((Branding.iconIDs.firstIndex(of:option.id) ?? 0)+1)")
+                        .accessibilityValue(pending == option.id ? L("已选择", "Selected") : "")
+                }
+            }
+            HStack {
+                Button(L("确认应用", "Apply selection")) { state.applyAppIcon(pending) }
+                    .disabled(pending == state.appIconStyle || state.appIconApplying)
+                Button(L("取消选择", "Cancel selection")) { pending = state.appIconStyle }
+                    .disabled(pending == state.appIconStyle || state.appIconApplying)
+                Spacer()
+            }
+        }.onAppear { pending = state.appIconStyle }
+            .task { previews = await Task.detached(priority:.utility) { Branding.iconPreviews() }.value }
     }
 }

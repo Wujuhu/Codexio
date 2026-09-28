@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
 STAGING = BUILD / "staging/macos"
 DESTINATION = BUILD / "dev/macos"
-WIDGET_VERSION = 19  # Increase for widget UI, registration, or host-lifecycle changes.
+WIDGET_VERSION = 20  # Increase for widget UI, registration, or host-lifecycle changes.
 
 
 def run(*args, **kwargs):
@@ -110,6 +110,10 @@ def build_native(bundle, version):
     (bundle / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
     for name in ("app-light.svg", "app-dark.svg", "app-light.png", "app-dark.png", "brand-mark.svg", "brand-mark.png"):
         shutil.copy2(ROOT / "src/codexio/icons" / name, resources / name)
+    icon_choices = resources / "app-icons"
+    icon_choices.mkdir()
+    for source in sorted((ROOT / "src/codexio/icons/app-icons").glob("*.png")):
+        shutil.copy2(source, icon_choices / source.name)
     for source in (ROOT / "src/codexio/icons/task-status").glob("*"):
         shutil.copy2(source, resources / source.name)
     iconset = BUILD / "cache/macos-resources/Codexio.iconset"

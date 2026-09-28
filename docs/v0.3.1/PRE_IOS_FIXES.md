@@ -1,6 +1,6 @@
 # iOS 开发前的 Mac 中间构建 · 2026-09-28
 
-程序版本保持 **0.3.1**，Widget 构建 **19／1.18**。这是 A～G 前置修复的本地开发包，等待用户测试确认；本轮不开始 iOS，不推送、不发布。
+程序版本保持 **0.3.1**，最新 Widget 构建 **20／1.19**（主 Logo 更新）。这是 A～G 前置修复与后续验收调整的本地开发包，等待用户测试确认；本轮不开始 iOS，不推送、不发布。
 
 ## 修复内容
 
@@ -32,10 +32,10 @@
 - APP：`build/dev/macos/Codexio.app`
 - ZIP：`build/dev/macos/Codexio.app.zip`
 - 合并开发清单：`build/dev/macos/latest.json`
-- 最新构建日志：`build/logs/sidebar-left-align-build.log`（首轮 A～G 构建记录保留在 `build/logs/pre-ios-mac-build.log`）
+- 最新构建日志：`build/logs/brand-options-menu-build.log`（先前记录保留在 `build/logs/pre-ios-mac-build.log`、`sidebar-left-align-build.log`）
 - 三项冒烟结果：`build/checks/macos-smoke/result.json`
-- ZIP 大小：1,612,797 bytes
-- ZIP SHA-256：`ccf227d76118e9e259d6db3c56ec23b3fc734d26388cc004353e7c63a2ef8cc2`
+- ZIP 大小：4,757,059 bytes
+- ZIP SHA-256：`98f30813d0ddb343b041c861e3606fcd721af41d2870c026da9d5dac9b25a0f2`
 
 开发清单顶层 Windows 字段保持原样，只有 `macos` 对象对应本次 0.3.1 开发包；它不是正式跨平台发布清单。未生成 Windows EXE、iOS IPA 或正式 Release 目录。
 
@@ -48,3 +48,14 @@
 用户将导航居中要求调整为左对齐，并要求展开／收起时图标位置相同。复用现有 `SidebarNavigationRow`，行外侧 8 pt 与行内左侧 13 pt 固定，20 pt 图标的左沿始终距侧栏左边 21 pt；收起后的 62 pt 侧栏中图标中心为 31 pt，展开时只在图标右侧加入文字。右侧排序把手独立定位，侧栏宽度调整不移动图标。收起时顶部占位从 76 pt 调整为与展开时一致的 82 pt（28 pt 字标高度＋30 pt 顶边距＋24 pt 底边距），消除切换时的纵向跳动。六页标题及其余 A～G 修复保留，版本与 Widget 构建号不变。
 
 本次 Mac 开发打包通过既有三项隔离冒烟、APP／Widget 版本、签名和 ZIP／清单校验；未增加测试项或截图，未启动用户安装版。新版开发包已交付 `build/dev/macos`，等待用户测试。
+
+## 2026-09-28 收起侧栏 Logo、额度保留与外观图标
+
+- 收起侧栏显示 28 pt 品牌图形，水平居中于 62 pt 栏宽，顶部／底部间距与展开时相同；导航图标保持先前固定位置。
+- 菜单面板的内容、玻璃／材质背景统一按连续 23 pt 圆角裁切，避免底部角落露出矩形内容层。
+- 新 `MenuQuota` 复用 Python `rate_limits.py:merge_rate_limit_snapshots` 的窗口合并思路，保存同账户各窗口的最后成功显示值；临时失败或缺少某个窗口时不置空，错误和最后成功时间仍显示。此缓存不授予重置权限、不续期正式额度新鲜度；换账户／额度不适用时清除。小型 `menu_quota_cache.json` 在后台原子保存，内容变化或成功数据的保活期限才写入，连续失败不反复写盘；首次无历史仍显示未知。
+- 默认主 Logo 改用用户 `Codexio-Logo-Pack` 的指定路径；底板中的主图占比从约 77% 微降到约 75%，保留 `(627,627)` 的原参考中心及 Dock 底板的透明外边距。菜单栏只更新主图形，不缩小显示尺寸。
+- 外观页提供主图＋12 款备选图的小型预览，无图下文字；点击只选中，下方确认按钮才持久化并应用，取消恢复当前选择。预览和选中大图分别在后台按需加载，确认图标不触发额度／历史扫描或主题重配。系统 Dock 图标及侧栏随选择更新，已签名 App 的内置默认图标不在运行时改写。
+- Widget 的固定品牌标记也换为主图，故构建号 19 → 20、短版本 1.18 → 1.19；四个 kind、布局和主宿主规则不变。
+
+验证：最终开发打包完成固定三项隔离冒烟、签名、版本、架构和 ZIP／清单校验。一次 stdin 隔离运行使用生产 `Core.swift`／`MenuQuota.swift` 核对首次未知、失败回退、观察时间保持、缓存恢复、部分窗口合并和账户隔离，无网络或真实配置访问；没有添加测试文件或扩展常规冒烟。仅查看 `build/checks/brand-options/settings-appearance-zh.png` 一张相关 UI 预览，13 款图标与下方确认按钮布局正常。没有启动或替换用户安装版。

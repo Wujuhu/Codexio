@@ -25,7 +25,7 @@ enum MenuBarField {
         let todayCost = ready ? today.flatMap {$0.cost ?? ($0.unknownCosts == 0 ? 0 : nil)} : nil
         let todayTokens = ready ? today.flatMap {$0.tokens ?? ($0.unknownCosts == 0 ? 0 : nil)} : nil
         switch field {
-        case "week": return percent(state.quota.fresh ? state.quota.week?.remaining : nil)
+        case "week": return percent(state.menuQuota.week?.remaining)
         case "task": return state.taskRunning.map {$0 ? L("运行中", "Running") : L("已完成", "Completed")} ?? "—"
         case "today_cost": return money(todayCost)
         case "today_tokens": return compact(todayTokens.map(Double.init))

@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import WidgetKit
+import AppKit
 
 final class AppState: ObservableObject {
     let paths: AppPaths
@@ -12,6 +13,8 @@ final class AppState: ObservableObject {
     let client = CodexClient()
     let clock = ScanClock()
     let quotaClock = ScanClock()
+    let menuQuotaClock = ScanClock()
+    private let brandingQueue = DispatchQueue(label:"com.wujuhu.codexio.branding",qos:.utility)
     private lazy var usageCache = UsageSnapshotCache(database:database,catalog:catalog)
     private let objectFiles = ObjectFileCache()
     let overviewProjection = AsyncProjection(TrendProjection())
@@ -25,6 +28,9 @@ final class AppState: ObservableObject {
     let reportQueue = DispatchQueue(label:"com.wujuhu.codexio.reports",qos:.utility)
     @Published var usage = UsageSnapshot()
     private(set) var quota = QuotaState()
+    private(set) var menuQuota = MenuQuota()
+    private var menuQuotaCacheLoaded = false // Owned by accountQueue.
+    private var menuQuotaWritten = Date.distantPast
     private var displayedQuotaKey = ""
     private var displayedQuotaFresh = false
     @Published var prices: [PriceRow] = []
@@ -36,6 +42,9 @@ final class AppState: ObservableObject {
     @Published var settingsSection = "appearance"
     @Published var usageSection = "activity"
     @Published var theme = "system"
+    @Published private(set) var appIconStyle = "main"
+    @Published private(set) var appLogoImage: NSImage?
+    @Published private(set) var appIconApplying = false
     @Published var sidebarVisible = true
     @Published var sidebarWidth: Double = 238
     @Published var menuVisible = true
@@ -84,6 +93,7 @@ final class AppState: ObservableObject {
         self.paths = paths; preferences = Preferences(paths)
         database = try Database(paths.database); catalog = PricingCatalog(paths.pricing); indexer = UsageIndexer(database); estimator = try WeeklyEstimator(database)
         theme = preferences.analytics.string("theme","system")
+        appIconStyle = Branding.iconID(preferences.analytics.string("app_icon","main"))
         sidebarVisible = !preferences.analytics.flag("sidebar_collapsed")
         sidebarWidth = min(320,max(140,preferences.analytics.number("native_sidebar_width") ?? preferences.analytics.number("sidebar_width") ?? 238))
         menuVisible = preferences.analytics.flag("menu_bar_visible",true)
@@ -198,14 +208,20 @@ final class AppState: ObservableObject {
         let hint = preferences.general.string("codex_path"), accountRoot = self.accountRoot
         accountQueue.async { [weak self] in
             guard let self else { return }
+            let identityBefore = try? BackendCredentials.load(root:accountRoot).account
+            let savedMenuQuota = self.menuQuotaCacheLoaded ? nil : readObject(self.paths.data.appendingPathComponent("menu_quota_cache.json"))
+            self.menuQuotaCacheLoaded = true
+            var accountSupportsQuota: Bool?
             do {
                 try self.client.start(hint:hint)
-                let identityBefore = try? BackendCredentials.load(root:accountRoot).account
                 let account = try self.client.request("account/read",["refreshToken":false]).object("account")
                 var next = QuotaState(); next.account = account
+                if let identityBefore { next.account["identityKey"] = identityBefore.key }
+                accountSupportsQuota = account.string("type") == "chatgpt"
                 let config = try self.client.request("config/read",["includeLayers":false]).object("config")
                 let provider = config.string("model_provider","openai")
                 next.applicable = account.string("type") == "chatgpt" && ["openai","codexio-upstream"].contains(provider)
+                accountSupportsQuota = next.applicable
                 if next.applicable {
                     let limits = try self.client.request("account/rateLimits/read",["excludeResetCreditDetails":false]); next.update(limits)
                     let identityAfter = try? BackendCredentials.load(root:accountRoot).account
@@ -227,7 +243,7 @@ final class AppState: ObservableObject {
                 DispatchQueue.main.async {
                     guard !self.stopped else { return }
                     if self.quota.account.string("identityKey") != next.account.string("identityKey") || self.quota.account.string("planType") != next.account.string("planType") { self.invalidateReports(); self.pendingResets.removeAll() }
-                    self.applyQuota(next)
+                    self.applyQuota(next,savedMenuQuota:savedMenuQuota)
                     let pendingIDs = Set(pending.map {$0.string("creditId")})
                     if self.pendingResets != pendingIDs { self.pendingResets = pendingIDs }
                     self.refreshing = false; self.publishWidget()
@@ -235,15 +251,38 @@ final class AppState: ObservableObject {
                 }
             } catch {
                 if !self.client.running { self.client.close() }
-                DispatchQueue.main.async { guard !self.stopped else { return }; var next = self.quota; next.error = error.localizedDescription; self.applyQuota(next); self.refreshing = false; self.publishWidget() }
+                let currentIdentity = try? BackendCredentials.load(root:accountRoot).account
+                let owner = currentIdentity?.key ?? ""
+                let applicable = identityBefore == currentIdentity ? accountSupportsQuota : nil
+                DispatchQueue.main.async {
+                    guard !self.stopped else { return }
+                    var next = self.quota
+                    if next.account.string("identityKey") != owner {
+                        next = QuotaState(); next.account["identityKey"] = owner
+                        self.invalidateReports(); self.pendingResets.removeAll()
+                    }
+                    if let applicable { next.applicable = applicable }
+                    next.error = error.localizedDescription
+                    self.applyQuota(next,savedMenuQuota:savedMenuQuota); self.refreshing = false; self.publishWidget()
+                }
             }
         }
     }
-    private func applyQuota(_ next: QuotaState) {
+    private func applyQuota(_ next: QuotaState,savedMenuQuota: Object? = nil) {
+        var nextMenu = savedMenuQuota.map(MenuQuota.init(saved:)) ?? menuQuota
+        nextMenu.receive(next)
+        let menuChanged = menuQuota.contentKey != nextMenu.contentKey
         let key = next.contentKey, fresh = next.fresh
-        let changed = key != displayedQuotaKey || fresh != displayedQuotaFresh
+        let changed = key != displayedQuotaKey || fresh != displayedQuotaFresh || menuChanged
         if changed { objectWillChange.send() }
         quota = next; displayedQuotaKey = key; displayedQuotaFresh = fresh
+        menuQuota = nextMenu
+        if menuQuotaClock.updated != nextMenu.updated { menuQuotaClock.updated = nextMenu.updated }
+        if !paths.mock, menuChanged || (!nextMenu.retained && nextMenu.updated != nil && Date().timeIntervalSince(menuQuotaWritten) >= 300) {
+            menuQuotaWritten = Date()
+            let payload = nextMenu.json, file = paths.data.appendingPathComponent("menu_quota_cache.json")
+            snapshotQueue.async { try? atomicJSON(payload,to:file) }
+        }
         if quotaClock.updated != next.updated { quotaClock.updated = next.updated }
         if changed { onQuotaChange?() }
     }
@@ -346,6 +385,30 @@ final class AppState: ObservableObject {
         if ["usage_refresh_interval_seconds","refresh_interval_seconds"].contains(key) { configureTimers() }
         if ["theme","menu_bar_visible","menu_bar_fields"].contains(key) { onSettingsChange?() }
         objectWillChange.send()
+    }
+    func applyAppIcon(_ selected: String, persist: Bool = true) {
+        let id = Branding.iconID(selected)
+        guard !appIconApplying, !persist || id != appIconStyle else { return }
+        appIconApplying = true
+        brandingQueue.async { [weak self] in
+            guard let self else { return }
+            do {
+                let image = try Branding.appIcon(id), dock = Branding.dockIcon(image)
+                if persist {
+                    let old = self.preferences.analytics.string("app_icon","main")
+                    self.preferences.analytics["app_icon"] = id
+                    do { try self.preferences.save() }
+                    catch { self.preferences.analytics["app_icon"] = old; throw error }
+                }
+                DispatchQueue.main.async {
+                    guard !self.stopped else { return }
+                    self.appIconStyle = id; self.appLogoImage = image; self.appIconApplying = false
+                    NSApp.applicationIconImage = dock
+                }
+            } catch {
+                DispatchQueue.main.async { self.appIconApplying = false; self.errorMessage = error.localizedDescription }
+            }
+        }
     }
     func toggleSidebar() { sidebarVisible.toggle(); persistSidebar() }
     func persistSidebar() {

@@ -3,11 +3,39 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const sharp = require('sharp');
 
+// Import vector art only: discard the presentation canvas outside the icon tile.
+// Retain the supplied (627, 627) reference centre, never re-centre the glyph bounds.
+async function importPack(pack, icons) {
+  const source = await fs.readFile(path.join(pack, 'main/codexio-main.svg'), 'utf8');
+  const paths = source.match(/<path\b[^>]*\/>/g) || [];
+  if (paths.length !== 3 || !paths[2].includes('fill="#030303"')) throw new Error('Unexpected main logo vector');
+  const glyph = paths[2].replace(/fill="[^"]+"/, 'fill="currentColor"');
+  const scale = 512 / 976;
+  for (const [name, background, foreground] of [['app-light', '#FFFFFF', '#000000'], ['app-dark', '#000000', '#FFFFFF']]) {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512"><title>Codexio</title><rect width="512" height="512" rx="112" fill="${background}"/><g color="${foreground}" transform="translate(256 256) scale(${scale}) translate(-627 -627)">${glyph}</g></svg>\n`;
+    await fs.writeFile(path.join(icons, name + '.svg'), svg, 'utf8');
+  }
+  await fs.writeFile(path.join(icons, 'brand-mark.svg'), `<svg xmlns="http://www.w3.org/2000/svg" viewBox="24 24 464 464" width="464" height="464"><title>Codexio</title><g color="#000000" transform="translate(256 256) scale(.54) translate(-627 -627)">${glyph}</g></svg>\n`, 'utf8');
+  const styles = path.join(icons, 'app-icons');
+  await fs.mkdir(styles, {recursive: true});
+  for (const name of (await fs.readdir(path.join(pack, 'variants'))).filter(name => name.endsWith('.svg')).sort()) {
+    const source = await fs.readFile(path.join(pack, 'variants', name), 'utf8');
+    const body = source.replace(/^[\s\S]*?<svg\b[^>]*>/, '').replace(/<\/svg>\s*$/, '');
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512"><defs><clipPath id="codexio-tile"><rect width="512" height="512" rx="112"/></clipPath></defs><g clip-path="url(#codexio-tile)"><g transform="translate(256 256) scale(${scale}) translate(-627 -627)">${body}</g></g></svg>\n`;
+    await fs.writeFile(path.join(styles, name), svg, 'utf8');
+  }
+}
+
 async function main() {
   const root = path.resolve(__dirname, '..');
   const icons = path.join(root, 'src', 'codexio', 'icons');
   const branding = path.join(root, 'docs', 'branding', 'codexio');
   await fs.mkdir(branding, {recursive: true});
+  const packArgument = process.argv.indexOf('--logo-pack');
+  if (packArgument !== -1) {
+    if (!process.argv[packArgument + 1]) throw new Error('--logo-pack requires a directory');
+    await importPack(path.resolve(process.argv[packArgument + 1]), icons);
+  }
   const svg = await fs.readFile(path.join(icons, 'app-light.svg'));
   await fs.writeFile(path.join(icons, 'app.svg'), svg);
   const raster = size => sharp(svg, {density: 288}).resize(size, size).png().toBuffer();
@@ -16,7 +44,16 @@ async function main() {
     const source = await fs.readFile(path.join(icons, name + '.svg'));
     await fs.writeFile(path.join(icons, name + '.png'), await sharp(source, {density: 288}).resize(1024, 1024, {fit: 'contain', background: '#00000000'}).png().toBuffer());
   }
-  for (const name of ['c-dot-ring-static', 'completed']) {
+  const styles = path.join(icons, 'app-icons');
+  await fs.mkdir(styles, {recursive: true});
+  for (const name of (await fs.readdir(styles)).filter(name => name.endsWith('.svg')).sort()) {
+    const source = await fs.readFile(path.join(styles, name), 'utf8');
+    const render = size => sharp(Buffer.from(source), {density: 144}).resize(size, size).png().toBuffer();
+    await fs.writeFile(path.join(styles, name.replace('.svg', '.png')), await render(1024));
+    await fs.writeFile(path.join(styles, name.replace('.svg', '-preview.png')), await render(160));
+  }
+  await fs.writeFile(path.join(styles, 'main-preview.png'), await sharp(svg).resize(160, 160).png().toBuffer());
+  for (const name of packArgument === -1 ? ['c-dot-ring-static', 'completed'] : []) {
     const icon = path.join(icons, 'task-status', name);
     await fs.writeFile(icon + '.png', await sharp(await fs.readFile(icon + '.svg'), {density: 288}).resize(144, 144).png().toBuffer());
   }

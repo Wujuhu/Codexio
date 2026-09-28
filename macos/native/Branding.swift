@@ -1,6 +1,8 @@
 import AppKit
 
 enum Branding {
+    static let iconIDs = ["main","01-teal-blue-gradient","02-violet-gradient-tile","03-graphite-relief","04-honey-orange","05-mint-ceramic","06-deep-ocean-aurora","07-ice-blue-glass","08-champagne-metal","09-cream-deboss","10-burgundy-enamel","11-obsidian-copper","12-moonlight-pearl"]
+    struct IconPreview: Identifiable { let id: String; let image: NSImage }
     private static let light = load("app-light")
     private static let dark = load("app-dark")
     private static let mark: NSImage = { let value = load("brand-mark"); value.isTemplate = true; return value }()
@@ -9,9 +11,26 @@ enum Branding {
         return image
     }
     static func logo(dark: Bool) -> NSImage { dark ? self.dark : light }
-    static let dockIcon: NSImage = NSImage(size:NSSize(width:1024,height:1024),flipped:false) { rect in
-        light.draw(in:rect.insetBy(dx:rect.width*0.09,dy:rect.height*0.09))
-        return true
+    static func iconID(_ value: String) -> String { iconIDs.contains(value) ? value : "main" }
+    // Call from the branding queue. Only the selected full-size artwork is loaded.
+    static func appIcon(_ id: String) throws -> NSImage {
+        let id = iconID(id)
+        guard let file = Bundle.main.url(forResource:id == "main" ? "app-light" : id,withExtension:"png",subdirectory:id == "main" ? nil : "app-icons"),
+              let image = NSImage(data:try Data(contentsOf:file)) else { throw AppFailure(L("无法读取图标", "The icon could not be loaded")) }
+        return image
+    }
+    static func iconPreviews() -> [IconPreview] {
+        iconIDs.compactMap { id in
+            guard let file = Bundle.main.url(forResource:id+"-preview",withExtension:"png",subdirectory:"app-icons"),
+                  let data = try? Data(contentsOf:file), let image = NSImage(data:data) else { return nil }
+            return IconPreview(id:id,image:image)
+        }
+    }
+    static func dockIcon(_ image: NSImage) -> NSImage {
+        NSImage(size:NSSize(width:1024,height:1024),flipped:false) { rect in
+            image.draw(in:rect.insetBy(dx:rect.width*0.09,dy:rect.height*0.09))
+            return true
+        }
     }
     static func menuIcon() -> NSImage {
         let image = mark.copy() as! NSImage; image.size = NSSize(width:18,height:18); image.isTemplate = true; return image

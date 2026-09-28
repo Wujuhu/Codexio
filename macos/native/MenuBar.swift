@@ -5,9 +5,9 @@ struct GlassBackground: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
     var body: some View {
-        if reduceTransparency || contrast == .increased { RoundedRectangle(cornerRadius:23).fill(Color(nsColor:.windowBackgroundColor)) }
-        else if #available(macOS 26.0, *) { Color.clear.glassEffect(.regular,in:RoundedRectangle(cornerRadius:23)) }
-        else { RoundedRectangle(cornerRadius:23).fill(.regularMaterial) }
+        if reduceTransparency || contrast == .increased { RoundedRectangle(cornerRadius:23,style:.continuous).fill(Color(nsColor:.windowBackgroundColor)) }
+        else if #available(macOS 26.0, *) { Color.clear.glassEffect(.regular,in:RoundedRectangle(cornerRadius:23,style:.continuous)) }
+        else { RoundedRectangle(cornerRadius:23,style:.continuous).fill(.regularMaterial) }
     }
 }
 
@@ -23,9 +23,10 @@ struct MenuBarView: View {
                     Spacer()
                 }.padding(.horizontal,6).padding(.bottom,3)
                 card {
-                    HStack { Text("Codex").font(.system(size:18,weight:.semibold)); Spacer(); ScanStamp(clock:state.quotaClock).font(.system(size:10)).foregroundStyle(.secondary) }
-                    meter(state.quota.five,title:L("5 小时额度", "5-hour limit"))
-                    meter(state.quota.week,title:L("周额度", "Weekly limit"))
+                    HStack { Text("Codex").font(.system(size:18,weight:.semibold)); Spacer(); ScanStamp(clock:state.menuQuotaClock).font(.system(size:10)).foregroundStyle(.secondary) }
+                    meter(state.menuQuota.five,title:L("5 小时额度", "5-hour limit"))
+                    meter(state.menuQuota.week,title:L("周额度", "Weekly limit"))
+                    if state.menuQuota.retained { StatusNote(text:L("显示上次成功获取的额度", "Showing the last successfully retrieved limits")) }
                     if let error = state.quota.error { StatusNote(text:error) }
                 }
                 card {
@@ -54,7 +55,8 @@ struct MenuBarView: View {
                     TrendChart(days:Array(state.usage.activity.days.suffix(7)),compactStyle:true)
                 }
             }.padding(14)
-        }.frame(width:420).background { GlassBackground() }
+        }.scrollContentBackground(.hidden).frame(width:420).background { GlassBackground() }
+            .clipShape(RoundedRectangle(cornerRadius:23,style:.continuous))
             .preferredColorScheme(state.theme == "dark" ? .dark : state.theme == "light" ? .light : nil)
     }
     private func card<Content:View>(@ViewBuilder _ content: () -> Content) -> some View {
@@ -62,8 +64,8 @@ struct MenuBarView: View {
     }
     private func meter(_ window: QuotaWindow?,title: String) -> some View {
         VStack(spacing:9) {
-            HStack { Text(title).font(.system(size:13)); Spacer(); Text(percent(state.quota.fresh ? window?.remaining : nil)).font(.system(size:17,weight:.medium)).monospacedDigit(); Text(L("剩余", "remaining")).font(.system(size:11)).foregroundStyle(.secondary) }
-            SegmentedMeter(value:state.quota.fresh ? window?.remaining : nil)
+            HStack { Text(title).font(.system(size:13)); Spacer(); Text(percent(window?.remaining)).font(.system(size:17,weight:.medium)).monospacedDigit(); Text(L("剩余", "remaining")).font(.system(size:11)).foregroundStyle(.secondary) }
+            SegmentedMeter(value:window?.remaining)
             HStack { Text(L("重置时间", "Resets at")); Spacer(); Text(dateText(window?.reset,timeOnly:window?.minutes == 300)) }.font(.system(size:11)).foregroundStyle(.secondary)
         }
     }
