@@ -38,6 +38,12 @@ def load_base(system, explicit=None, *, version=None):
         except UpdateError:
             continue
     candidates.extend(path for _, path in sorted(releases, reverse=True))
+    if system == "macos":
+        # Windows is frozen by default: prefer its last formal manifest over a
+        # potentially older Windows development package left in build/dev.
+        candidates = [path for _, path in sorted(releases, reverse=True)] + [
+            ROOT / "build/dev/macos/latest.json", ROOT / "build/dev/windows/latest.json"
+        ]
     for path in candidates:
         if path.exists():
             data = read_manifest(path)

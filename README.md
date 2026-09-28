@@ -1,8 +1,10 @@
 # Codexio
 
-当前开发版本：**0.3.1**。Mac 使用 Swift + SwiftUI/AppKit；Windows 使用 Python/PySide6。两端共享产品行为和数据口径。
+当前 Mac 版本：**0.3.2**。Mac 使用 Swift + SwiftUI/AppKit。Windows 保留现有 Python/PySide6 版本；按用户约定，今后默认不再修改或发布 Windows，只有特别明确要求时才恢复该平台工作。
 
 开发包、本地提交与正式发布分开管理。正式推送及发布需要用户开发验收后的第二次明确确认。
+
+Mac 版本独立保存在 `macos/VERSION`；默认发布附件为 `Codexio.app.zip` 与 `latest.json`。清单的 Windows 字段继续指向历史 Windows 安装包，不生成新的 EXE。iOS 仍使用独立开发 IPA，见 [手机端开发交付](docs/ios/DEVELOPMENT_HANDOFF.md)。
 
 ## v0.3.1
 
@@ -55,6 +57,8 @@ APP 由用户自行启动。首次从开发目录或下载位置启动时，完�
 自动发现优先尊重用户指定的路径，支持包清单入口、正在运行／已注册的官方 App、标准应用目录、Homebrew 与常用用户 CLI 路径。手动保存的旧版路径失效时可继续找到新版。详情见 [macOS 开发说明](docs/macos.md)。
 
 ## Windows 开发与使用
+
+以下仅保留为历史排障参考；除非用户单独明确要求，不执行 Windows 开发、构建或发布命令。
 
 运行要求 Windows 10/11 x64，开发使用 Python 3.13 和项目虚拟环境。
 
@@ -112,7 +116,7 @@ Mac 默认使用 `~/Library/Application Support/Codexio`，Windows 使用 `%LOCA
 用户验收开发包并第二次明确确认发布和版本号后，才执行：
 
 ```bash
-.venv/bin/python scripts/publish_release_from_macos.py --version 0.3.1 --confirm-publish
+.venv/bin/python scripts/publish_release_from_macos.py --version 0.3.2 --confirm-publish
 ```
 
-协调脚本核验 Mac 包、推送 main、创建空正文草稿、触发 Windows CI；三个附件全部通过同版本和哈希校验才发布，并下载复核归档到 `release/0.3.1/`：`Codexio.exe`、`Codexio.app.zip`、一份合并的 `latest.json`。历史发布保持原样，正式目录不自动覆盖。
+协调脚本默认核验 Mac 包、推送 main、创建空正文草稿，下载核验 Mac ZIP 与清单后发布，并下载复核归档到 `release/0.3.2/`：`Codexio.app.zip`、`latest.json`。不会触发 Windows CI。只有用户特别要求同时发布 Windows 时才使用 `--include-windows`；历史发布保持原样，正式目录不自动覆盖。

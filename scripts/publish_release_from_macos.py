@@ -1,4 +1,4 @@
-"""Publish a confirmed release: local Mac package plus a CI-built Windows EXE.
+"""Publish a confirmed Mac release. Windows CI requires --include-windows.
 
 This command is intentionally inert unless --confirm-publish is supplied. It
 never creates or overwrites an existing local formal release directory.
@@ -30,7 +30,7 @@ WORKFLOW = "release-windows.yml"
 
 def run(*args, capture=False, check=True):
     result = subprocess.run([str(value) for value in args], cwd=ROOT, text=True,
-                            capture_output=capture, check=False)
+                            encoding="utf-8", capture_output=capture, check=False)
     if check and result.returncode:
         detail = (result.stderr or result.stdout or "").strip()
         raise UpdateError("命令执行失败：%s%s" % (" ".join(map(str, args)), ("\n" + detail) if detail else ""))
@@ -82,9 +82,12 @@ def validate_mac(version, staging):
     return mac_stage
 
 
-def validate_repository(version):
-    if __version__ != version:
-        raise UpdateError("源码版本 %s 与确认发布版本 %s 不一致" % (__version__, version))
+def validate_repository(version, include_windows=False):
+    mac_version = (ROOT / "macos/VERSION").read_text(encoding="utf-8").strip()
+    if mac_version != version:
+        raise UpdateError("Mac 源码版本 %s 与确认发布版本 %s 不一致" % (mac_version, version))
+    if include_windows and __version__ != version:
+        raise UpdateError("Windows 源码版本与本次跨平台发布版本不一致")
     if output("git", "branch", "--show-current") != "main":
         raise UpdateError("正式发布只能从 main 分支执行")
     tracked = output("git", "status", "--porcelain", "--untracked-files=no")
@@ -103,14 +106,15 @@ def ensure_remote_main(commit):
         raise UpdateError("远程 main 未指向本次确认的提交")
 
 
-def validate_draft(release, tag, commit, staging, mac_stage):
+def validate_draft(release, tag, commit, staging, mac_stage, include_windows=False):
     if (not release or release.get("isDraft") is not True or release.get("tagName") != tag
             or release.get("name") != tag or release.get("targetCommitish") != commit):
         raise UpdateError("现有同版本 Release 不是可继续的草稿")
     if str(release.get("body") or "").strip():
         raise UpdateError("草稿 Release 正文不是空白")
     names = sorted(str(item.get("name") or "") for item in release.get("assets") or [])
-    if any(name not in (APP_ARCHIVE_NAME, "Codexio.exe", "latest.json") for name in names):
+    allowed = (APP_ARCHIVE_NAME, "Codexio.exe", "latest.json") if include_windows else (APP_ARCHIVE_NAME, "latest.json")
+    if any(name not in allowed for name in names):
         raise UpdateError("草稿 Release 的附件集合不符合当前发布约定")
     downloaded = staging / "draft-macos"
     downloaded.mkdir()
@@ -166,35 +170,57 @@ def dispatch_and_wait(version, commit):
     run("gh", "run", "watch", str(selected["databaseId"]), "--repo", REPOSITORY, "--exit-status")
 
 
-def verify_published(tag, commit=None):
+def verify_published(tag, commit=None, include_windows=False):
     release = gh_release(tag)
     if not release or release.get("isDraft") is not False or release.get("tagName") != tag or release.get("name") != tag:
-        raise UpdateError("Windows 工作流结束后未得到有效的正式 Release")
+        raise UpdateError("未得到有效的正式 Release")
     if str(release.get("body") or "").strip():
         raise UpdateError("正式 Release 正文不是空白")
     names = sorted(str(item.get("name") or "") for item in release.get("assets") or [])
-    if names != sorted(("Codexio.exe", APP_ARCHIVE_NAME, "latest.json")):
-        raise UpdateError("正式 Release 附件不是约定的三个文件")
+    expected = ("Codexio.exe", APP_ARCHIVE_NAME, "latest.json") if include_windows else (APP_ARCHIVE_NAME, "latest.json")
+    if names != sorted(expected):
+        raise UpdateError("正式 Release 附件与本次确认的平台不一致")
     if commit is not None and remote_ref("refs/tags/" + tag) != commit:
         raise UpdateError("正式 Release Tag 未指向确认提交")
     return release
 
 
-def sync_local_release(version, tag, staging):
+def finalize_mac_draft(tag, commit, staging, mac_stage):
+    release = gh_release(tag)
+    if (not release or release.get("isDraft") is not True or release.get("tagName") != tag
+            or release.get("name") != tag or release.get("targetCommitish") != commit
+            or str(release.get("body") or "").strip()):
+        raise UpdateError("Mac 草稿状态不符合发布条件")
+    if sorted(item.get("name") for item in release.get("assets") or []) != sorted((APP_ARCHIVE_NAME, "latest.json")):
+        raise UpdateError("Mac 草稿必须且只能有 ZIP 与 latest.json")
+    downloaded = staging / "verified-mac-draft"
+    downloaded.mkdir()
+    run("gh", "release", "download", tag, "--repo", REPOSITORY, "--dir", downloaded)
+    verify_release(downloaded, tag.removeprefix("v"), platform="macos")
+    for name in (APP_ARCHIVE_NAME, "latest.json"):
+        if file_sha256(downloaded / name) != file_sha256(mac_stage / name):
+            raise UpdateError("草稿附件与已验证本地文件不一致：" + name)
+    tag_commit = remote_ref("refs/tags/" + tag)
+    if tag_commit is not None and tag_commit != commit:
+        raise UpdateError("同名 Tag 已被其他提交占用")
+    run("gh", "release", "edit", tag, "--repo", REPOSITORY, "--draft=false", "--latest")
+
+
+def sync_local_release(version, tag, staging, include_windows=False):
     destination = ROOT / "release" / version
     if destination.exists():
         raise UpdateError("正式版本目录已存在，不自动覆盖：" + str(destination))
     final = staging / "final"
     final.mkdir()
     run("gh", "release", "download", tag, "--repo", REPOSITORY, "--dir", final)
-    verify_release(final, version)
+    verify_release(final, version, platform="both" if include_windows else "macos")
     destination.parent.mkdir(parents=True, exist_ok=True)
     final.rename(destination)
     run("git", "fetch", "origin", "tag", tag)
     return destination
 
 
-def publish(version, *, resume_draft=False, sync_only=False):
+def publish(version, *, resume_draft=False, sync_only=False, include_windows=False):
     version = ".".join(map(str, version_tuple(version)))
     tag = "v" + version
     if (ROOT / "release" / version).exists():
@@ -202,10 +228,10 @@ def publish(version, *, resume_draft=False, sync_only=False):
     staging = ROOT / "build/staging/release-coordinator" / uuid.uuid4().hex
     staging.mkdir(parents=True)
     try:
-        commit = validate_repository(version)
+        commit = validate_repository(version, include_windows)
         if sync_only:
-            verify_published(tag, commit)
-            return sync_local_release(version, tag, staging)
+            verify_published(tag, commit, include_windows)
+            return sync_local_release(version, tag, staging, include_windows)
         mac_stage = validate_mac(version, staging)
         existing = gh_release(tag)
         if existing is not None:
@@ -231,12 +257,15 @@ def publish(version, *, resume_draft=False, sync_only=False):
                 run("gh", "release", "edit", tag, "--repo", REPOSITORY, "--target", commit,
                     "--title", tag, "--notes-file", empty, "--draft=true")
                 existing = gh_release(tag)
-            validate_draft(existing, tag, commit, staging, mac_stage)
+            validate_draft(existing, tag, commit, staging, mac_stage, include_windows)
         else:
             create_draft(tag, commit, mac_stage, staging)
-        dispatch_and_wait(version, commit)
-        release = verify_published(tag, commit)
-        destination = sync_local_release(version, tag, staging)
+        if include_windows:
+            dispatch_and_wait(version, commit)
+        else:
+            finalize_mac_draft(tag, commit, staging, mac_stage)
+        release = verify_published(tag, commit, include_windows)
+        destination = sync_local_release(version, tag, staging, include_windows)
         print("已发布：" + str(release.get("url") or tag))
         return destination
     finally:
@@ -252,12 +281,14 @@ def main():
     parser.add_argument("--resume-draft", action="store_true",
                         help="继续同一版本、同一提交且附件匹配的失败草稿")
     parser.add_argument("--sync-only", action="store_true",
-                        help="只下载并核验已经发布的三个附件，补齐本地 release 归档")
+                        help="只下载并核验本平台已发布附件，补齐本地 release 归档")
+    parser.add_argument("--include-windows", action="store_true",
+                        help="仅在用户明确要求本次也发布 Windows 时使用；默认不触发 Windows CI")
     args = parser.parse_args()
     if not args.confirm_publish and not args.sync_only:
         parser.error("发布必须显式提供 --confirm-publish")
     try:
-        print(publish(args.version, resume_draft=args.resume_draft, sync_only=args.sync_only))
+        print(publish(args.version, resume_draft=args.resume_draft, sync_only=args.sync_only, include_windows=args.include_windows))
     except (OSError, ValueError, UpdateError, subprocess.SubprocessError) as exc:
         parser.exit(1, "发布未完成：%s\n" % exc)
 

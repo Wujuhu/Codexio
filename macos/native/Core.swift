@@ -5,7 +5,7 @@ import AppKit
 typealias Object = [String: Any]
 
 enum BuildInfo {
-    static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.3.1"
+    static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.3.2"
     static let bundleID = "com.wujuhu.codexio"
     static let widgetID = "com.wujuhu.codexio.widget"
     static let widgetVersion = Bundle.main.object(forInfoDictionaryKey:"CodexioWidgetBuild") as? String ?? ""

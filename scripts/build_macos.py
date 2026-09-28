@@ -187,12 +187,14 @@ def main():
     bundle = staging / "Codexio.app"
     target = DESTINATION / "Codexio.app"
     refuse_running(bundle)
-    version = re.search(r'__version__ = "([^"]+)"', (ROOT / "src/codexio/__init__.py").read_text(encoding="utf-8")).group(1)
+    version = (ROOT / "macos/VERSION").read_text(encoding="utf-8").strip()
+    if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version):
+        raise RuntimeError("macos/VERSION 不是有效的正式版本号")
     build_native(bundle, version)
     embed_widget(bundle)
     with (bundle / "Contents/Info.plist").open("rb") as stream:
         info = plistlib.load(stream)
-    version = re.search(r'__version__ = "([^"]+)"', (ROOT / "src/codexio/__init__.py").read_text(encoding="utf-8")).group(1)
+    version = (ROOT / "macos/VERSION").read_text(encoding="utf-8").strip()
     assert info["CFBundleShortVersionString"] == info["CFBundleVersion"] == version
     widget_info = plistlib.loads((bundle / "Contents/PlugIns/CodexioWidget.appex/Contents/Info.plist").read_bytes())
     assert widget_info["CFBundleVersion"] == str(WIDGET_VERSION)

@@ -1,4 +1,5 @@
-"""Set the one source of truth used by the app and Windows EXE metadata."""
+"""Set the Mac version by default; Windows requires an explicit platform choice."""
+import argparse
 from pathlib import Path
 import re
 import sys
@@ -15,5 +16,15 @@ def set_version(value: str, source: Path) -> None:
 
 
 if __name__ == "__main__":
-    set_version(sys.argv[1], Path(__file__).resolve().parents[1] / "src" / "codexio" / "__init__.py")
-    print("Version: " + sys.argv[1])
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("version")
+    parser.add_argument("--platform", choices=("macos", "windows"), default="macos")
+    args = parser.parse_args()
+    root = Path(__file__).resolve().parents[1]
+    if args.platform == "windows":
+        set_version(args.version, root / "src/codexio/__init__.py")
+    else:
+        if not re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", args.version):
+            parser.error("Use a stable version such as 0.3.2")
+        (root / "macos/VERSION").write_text(args.version + "\n", encoding="utf-8")
+    print(args.platform + " version: " + args.version)
