@@ -62,11 +62,11 @@ enum MobileProtocol {
 
 enum MobileError: LocalizedError {
     case message(String)
-    case http(Int, Double?)
+    case http(Int, Double?, String?)
     var errorDescription: String? {
         switch self {
         case .message(let value): return value
-        case .http(let code,_): return code == 401 || code == 403 ? "云端授权不可用，请在 Mac 检查配对" : "云端请求失败（\(code)），保留上次数据"
+        case .http(let code,_,_): return code == 401 || code == 403 ? "云端授权不可用，请在 Mac 检查配对" : "云端请求失败（\(code)），保留上次数据"
         }
     }
 }
@@ -188,6 +188,7 @@ struct MobileMessage: Codable {
     var error: String? = nil
     var seen: Double? = nil
     var cloud: String? = nil
+    var supportsAck: Bool? = nil
 }
 
 final class MobileHTTP: NSObject, URLSessionTaskDelegate {
@@ -200,7 +201,10 @@ final class MobileHTTP: NSObject, URLSessionTaskDelegate {
         request.setValue("application/json",forHTTPHeaderField:"Content-Type"); request.httpBody = body
         let (data,response) = try await session.data(for:request)
         guard let response = response as? HTTPURLResponse, data.count <= MobileProtocol.limit else { throw MobileError.message("无效同步响应") }
-        guard (200..<300).contains(response.statusCode) else { throw MobileError.http(response.statusCode,response.value(forHTTPHeaderField:"Retry-After").flatMap(Double.init)) }
+        guard (200..<300).contains(response.statusCode) else {
+            let code = (try? JSONSerialization.jsonObject(with:data) as? [String:Any])?["error"] as? String
+            throw MobileError.http(response.statusCode,response.value(forHTTPHeaderField:"Retry-After").flatMap(Double.init),code)
+        }
         return data
     }
     func stop() { session.invalidateAndCancel() }

@@ -1793,22 +1793,6 @@
         }
       }
     },
-    "iPhone 同步": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "iPhone sync"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "iPhone 同步"
-          }
-        }
-      }
-    },
     "{} 次请求未定价": {
       "localizations": {
         "en": {
@@ -4173,6 +4157,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "右侧"
+          }
+        }
+      }
+    },
+    "同步": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sync"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同步"
           }
         }
       }
@@ -8385,6 +8385,22 @@
         }
       }
     },
+    "暂无单模型数据": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No single-model data"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂无单模型数据"
+          }
+        }
+      }
+    },
     "暂无可用重置次数。": {
       "localizations": {
         "en": {
@@ -10381,6 +10397,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "模型供应商配置路径无效"
+          }
+        }
+      }
+    },
+    "模型占比": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model share"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型占比"
           }
         }
       }
@@ -13277,6 +13309,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "请增加每次请求的 Token 和等价美元详情，在 Session ID 旁边加上感叹号。鼠标悬停时显示会话标题和用户输入的两行预览，长内容在第二行末尾省略。"
+          }
+        }
+      }
+    },
+    "请求": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Requests"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请求"
           }
         }
       }

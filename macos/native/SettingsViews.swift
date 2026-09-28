@@ -73,7 +73,7 @@ struct SettingsView: View {
     @State private var logRoot = ""
     @State private var upstreamConfirmation = false
     @State private var desiredUpstream = false
-    private func sectionTitle(_ section: String) -> String { section == "mobile" ? L("iPhone 同步", "iPhone sync") : section == "appearance" ? L("外观", "Appearance") : section == "data" ? L("数据", "Data") : section == "menubar" ? L("菜单栏", "Menu bar") : L("应用", "App") }
+    private func sectionTitle(_ section: String) -> String { section == "mobile" ? L("同步", "Sync") : section == "appearance" ? L("外观", "Appearance") : section == "data" ? L("数据", "Data") : section == "menubar" ? L("菜单栏", "Menu bar") : L("应用", "App") }
     var body: some View {
         ScrollView {
             VStack(alignment:.leading,spacing:20) {

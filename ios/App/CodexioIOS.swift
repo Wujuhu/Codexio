@@ -43,7 +43,12 @@ struct MobileRoot: View {
             NavigationStack { MobileSettings(scan:{scanner=true}).navigationTitle("设置") }.tabItem {Label("设置",systemImage:"slider.horizontal.3")}
         }
         .sheet(isPresented:$scanner) { NavigationStack { QRScanner { value in scanner=false; store.beginPair(value) }.ignoresSafeArea(edges:.bottom).navigationTitle("扫描 Mac 配对二维码").navigationBarTitleDisplayMode(.inline).toolbar {ToolbarItem(placement:.cancellationAction) { Button("取消") {scanner=false} }} } }
-        .alert("同步提示",isPresented:Binding(get:{store.error != nil},set:{if !$0 {store.error=nil}})) { Button("知道了") {store.error=nil} } message: {Text(store.error ?? "")}
+        .alert(store.revokedPrompt != nil ? "Mac 配对已失效" : "同步提示",isPresented:Binding(get:{store.revokedPrompt != nil || store.error != nil},set:{if !$0 {store.error=nil;store.revokedPrompt=nil}})) {
+            if let id = store.revokedPrompt {
+                Button("稍后",role:.cancel) {store.revokedPrompt=nil}
+                Button("删除",role:.destructive) {store.remove(id)}
+            } else {Button("知道了") {store.error=nil}}
+        } message: {Text(store.revokedPrompt != nil ? "Mac 已撤销这部 iPhone 的配对。是否删除这台 Mac 及其手机缓存？" : store.error ?? "")}
     }
     @ToolbarContentBuilder private var header: some ToolbarContent {
         ToolbarItem(placement:.topBarLeading) {
@@ -215,7 +220,15 @@ struct MobileSettings: View {
     let scan: () -> Void
     var body: some View {
         Form {
-            Section("我的 Mac") {ForEach(store.devices) {device in Button {store.select(device.id)} label:{HStack {Label(device.code.name,systemImage:"laptopcomputer");Spacer();if device.id==store.selected {Image(systemName:"checkmark")}}}}; Button(action:scan) {Label("添加 Mac",systemImage:"qrcode.viewfinder")}}
+            Section("我的 Mac") {
+                ForEach(store.devices) {device in
+                    Button { if device.invalid == true {store.revokedPrompt=device.id} else {store.select(device.id)} } label: {
+                        HStack {VStack(alignment:.leading,spacing:4) {Label(device.code.name,systemImage:"laptopcomputer"); if device.invalid == true {Text("该 Mac 配对已失效").font(.caption)}}; Spacer(); if device.id==store.selected {Image(systemName:"checkmark")}}
+                            .foregroundStyle(device.invalid == true ? Color.red : Color.primary)
+                    }
+                }
+                Button(action:scan) {Label("添加 Mac",systemImage:"qrcode.viewfinder")}
+            }
             Section("外观") {Picker("主题",selection:$theme) {Text("跟随系统").tag("system");Text("浅色").tag("light");Text("深色").tag("dark")}}
             Section("此 iPhone") {TextField("设备名称",text:$phoneName).onSubmit {store.renamePhone(phoneName)}}
             Section("连接") {LabeledContent("当前连接",value:store.connectionLabel);Button("立即刷新") {store.refresh()}.disabled(store.device == nil)}

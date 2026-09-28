@@ -6,6 +6,7 @@ import UIKit
 struct PairedMac: Codable, Identifiable {
     var code: MobilePairCode
     var reader: MobileReader
+    var invalid: Bool?
     var id: String { code.host }
 }
 private struct MobileDiskCache: Codable {
@@ -28,6 +29,7 @@ private struct MobileDiskCache: Codable {
     @Published private(set) var phoneName = UIDevice.current.name
     @Published var pairing = false
     @Published var error: String?
+    @Published var revokedPrompt: String?
     private let queue = DispatchQueue(label:"com.wujuhu.codexio.ios.network",qos:.utility)
     private let files = DispatchQueue(label:"com.wujuhu.codexio.ios.cache",qos:.utility)
     private var envelopes: [String:MobileEnvelope] = [:]
@@ -65,6 +67,7 @@ private struct MobileDiskCache: Codable {
     }
     var device: PairedMac? { attempt ?? devices.first {$0.id == selected} }
     var connectionLabel: String {
+        if device?.invalid == true { return "配对已失效" }
         if localReady { return "局域网" }
         if status == "云同步" || status == "Cloudflare 同步" { return "云同步" }
         if device == nil { return "未配对" }
@@ -111,7 +114,7 @@ private struct MobileDiskCache: Codable {
                 self.status = "已显示缓存"; self.persistCache()
             }
         }
-        if foreground { connect(); startTimer() }
+        if foreground, device?.invalid != true { connect(); startTimer() }
     }
     func beginPair(_ data: String) {
         guard devices.count < 3 else { error = "最多配对 3 台 Mac"; return }
@@ -130,13 +133,23 @@ private struct MobileDiskCache: Codable {
         } catch { self.error = error.localizedDescription }
     }
     func cancelPair() { attempt = nil; pairing = false; select(devices.first?.id ?? "") }
-    func remove() {
-        let id = selected; deactivate(); devices.removeAll {$0.id == id}; attempt = nil
+    func remove(_ target: String? = nil) {
+        let id = target ?? selected
+        let removingSelected = id == selected
+        if removingSelected {deactivate(); attempt = nil}
+        devices.removeAll {$0.id == id}; if revokedPrompt == id {revokedPrompt = nil}
         let saved = devices
         files.async { do { try MobileKeychain.save(MobileProtocol.encode(saved),key:"ios-devices-v1") } catch { Task { @MainActor in self.error = error.localizedDescription } } }
         let url = cacheDirectory.appendingPathComponent(id+".json")
         files.async { try? FileManager.default.removeItem(at:url) }
-        foreground = true; select(devices.first?.id ?? "")
+        if removingSelected {foreground = true; select(devices.first?.id ?? "")}
+    }
+    private func pairingRevoked() {
+        guard let index = devices.firstIndex(where:{$0.id == selected}), devices[index].invalid != true else { return }
+        devices[index].invalid = true
+        let active = foreground, id = selected
+        deactivate(); foreground = active; status = "配对已失效"; error = nil; revokedPrompt = id
+        Task {do {try await saveDevices()} catch {self.error=error.localizedDescription}}
     }
     private func startTimer() {
         timer = Timer.scheduledTimer(withTimeInterval:3,repeats:true) { [weak self] _ in Task { @MainActor in
@@ -153,7 +166,7 @@ private struct MobileDiskCache: Codable {
         timer?.tolerance = 1
     }
     private func connect() {
-        guard foreground, let device else { return }
+        guard foreground, let device, device.invalid != true else { return }
         lastProbe = Date(); browser?.cancel(); connection?.cancel(); connection = nil; localReady = false
         finishLocalSync()
         let probe = beginSync()
@@ -209,11 +222,14 @@ private struct MobileDiskCache: Codable {
                     self.devices[index].code.cloud = MobileProtocol.cloudOrigin
                     do { try await self.saveDevices(); guard stamp == self.generation else { return } } catch { self.error = error.localizedDescription }
                 }
+                if message.cloud == MobileProtocol.cloudOrigin {self.cloudDenied = false}
                 await self.apply(message.datasets ?? [])
                 guard stamp == self.generation else { return }
                 let stale = self.envelopes.contains { key,value in (message.known?[key] ?? 0) < value.revision }
                 self.localReady = !stale; self.status = stale ? "Mac 数据版本较旧 · 保留较新缓存" : "局域网"
                 if !stale { self.updated = Date() }
+                if message.supportsAck == true {MobileProtocol.send(MobileMessage(action:"ack",known:self.envelopes.mapValues(\.revision)),over:value)}
+            } else if message.action == "revoked" { self.pairingRevoked(); return
             } else if message.action == "error" { self.error = message.error; self.localReady = false; value.cancel(); self.connection = nil; if self.pairing { self.cancelPair() }; return }
             self.receive(value,stamp:stamp)
         }}
@@ -223,7 +239,7 @@ private struct MobileDiskCache: Codable {
         if localReady { sendLocal() } else { nextCloud = .distantPast; cloudRefresh(); connect() }
     }
     private func cloudRefresh() {
-        guard foreground, !pairing, !localReady, !cloudDenied, !cloudInFlight, Date() >= nextCloud, let device, device.code.cloud != nil else { return }
+        guard foreground, !pairing, !localReady, !cloudDenied, !cloudInFlight, Date() >= nextCloud, let device, device.invalid != true, device.code.cloud != nil else { return }
         cloudInFlight = true; let operation = beginSync(), stamp = generation, known = envelopes.mapValues(\.revision)
         let query = (["reader=\(device.reader.id)"]+known.map {"\($0.key)=\($0.value)"}).joined(separator:"&")
         task = Task {
@@ -237,8 +253,9 @@ private struct MobileDiskCache: Codable {
             } catch {
                 guard stamp == generation, !Task.isCancelled else { return }
                 failures += 1; nextCloud = Date().addingTimeInterval(min(900,Double(30 * (1 << min(failures,5)))))
-                if case MobileError.http(let code,let retry) = error {
+                if case MobileError.http(let code,let retry,let reason) = error {
                     if let retry { nextCloud = max(nextCloud,Date().addingTimeInterval(retry)) }
+                    if code == 403 && reason == "REVOKED" { pairingRevoked(); return }
                     if code == 401 || code == 403 { cloudDenied = true }
                 }
                 if !localReady { status = cloudDenied ? "云端需重新授权" : "离线 · 显示上次数据" }

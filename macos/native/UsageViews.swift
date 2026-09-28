@@ -147,8 +147,8 @@ struct UsageTrendsView: View {
     var body: some View {
         VStack(alignment:.leading,spacing:22) {
             AdaptiveRow(spacing:8) {
-                PeriodPicker(selection:$period,custom:true)
-                Picker("",selection:$model) { Text(L("全部模型", "All models")).tag("all"); ForEach(state.usage.models,id:\.self) { Text($0).tag($0) } }.labelsHidden().fixedSize(horizontal:!compact,vertical:true)
+                PeriodPicker(selection:$period,custom:true,condensed:true)
+                Picker("",selection:$model) { Text(L("全部模型", "All models")).tag("all"); ForEach(state.usage.models.filter(MobileTrends.isSingleModel),id:\.self) { Text($0).tag($0) } }.labelsHidden().frame(width:112)
                 if !compact { Spacer() }
             }
             AdaptiveRow(spacing:8) {
@@ -158,6 +158,7 @@ struct UsageTrendsView: View {
             }
             SummaryMetrics(summary:projection.value.summary)
             TrendChart(days:projection.value.days).padding(18).overlay(RoundedRectangle(cornerRadius:14).stroke(.secondary.opacity(0.15)))
+            ModelShareCard(projection:projection.value)
             if projection.value.summary.unknownCosts > 0 { StatusNote(text:L("未定价调用", "Unpriced calls")+" · \(projection.value.summary.unknownCosts)") }
         }.onAppear(perform:load).onChange(of:key) { _,_ in load() }
         .onChange(of:period) { _,value in granularity = value == "today" ? "hour" : value == "all" ? "week" : "day" }

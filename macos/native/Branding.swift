@@ -6,7 +6,21 @@ enum Branding {
     private static let light = load("app-light")
     private static let dark = load("app-dark")
     private static let mark: NSImage = { let value = load("brand-mark"); value.isTemplate = true; return value }()
-    private static let wordmark: NSImage = { let value = load("wordmark"); value.isTemplate = true; return value }()
+    private static let wordmark: NSImage = {
+        let source = load("wordmark"), width: CGFloat = 170
+        let size = NSSize(width:width,height:width*source.size.height/max(1,source.size.width))
+        let result = NSImage(size:size)
+        // Native-scale template representations avoid repeatedly shrinking the
+        // large source through SwiftUI's template-image cache on Retina screens.
+        for scale in [1,2,3] {
+            guard let bitmap = NSBitmapImageRep(bitmapDataPlanes:nil,pixelsWide:Int(ceil(size.width*CGFloat(scale))),pixelsHigh:Int(ceil(size.height*CGFloat(scale))),bitsPerSample:8,samplesPerPixel:4,hasAlpha:true,isPlanar:false,colorSpaceName:.deviceRGB,bytesPerRow:0,bitsPerPixel:0), let context = NSGraphicsContext(bitmapImageRep:bitmap) else { continue }
+            NSGraphicsContext.saveGraphicsState(); NSGraphicsContext.current = context
+            context.imageInterpolation = .high; context.shouldAntialias = true
+            source.draw(in:NSRect(x:0,y:0,width:CGFloat(bitmap.pixelsWide),height:CGFloat(bitmap.pixelsHigh)),from:.zero,operation:.copy,fraction:1)
+            NSGraphicsContext.restoreGraphicsState(); bitmap.size = size; result.addRepresentation(bitmap)
+        }
+        result.isTemplate = true; return result
+    }()
     private static func load(_ name: String) -> NSImage {
         guard let file = Bundle.main.url(forResource:name,withExtension:"png"), let image = NSImage(contentsOf:file) else { return NSImage(size:NSSize(width:512,height:512)) }
         return image

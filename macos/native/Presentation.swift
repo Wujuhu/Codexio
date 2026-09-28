@@ -44,11 +44,19 @@ struct TrendProjection {
     var summary = UsageSummary()
     var days: [DayUsage] = []
     var recent: [UsageRow] = []
+    var modelRows: [[MobileModel]] = [[],[],[]]
     static func build(_ snapshot: UsageSnapshot,range: UsageRange,model: String,granularity: String) -> TrendProjection {
         let rows = snapshot.calls.filter {$0.local && range.contains($0) && (model == "all" || $0.raw.string("model") == model)}
         let ids = model == "all" ? Set<String>() : Set(rows.map(\.id))
         let requests = snapshot.requests.filter {$0.local && !$0.raw.flag("is_subagent") && $0.raw.string("record_kind") == "user_request" && range.contains($0) && (model == "all" || !ids.isDisjoint(with:$0.raw["member_ids"] as? [String] ?? []))}
-        return TrendProjection(summary:UsageSummary(rows:rows,requests:requests.count),days:range.buckets(rows,requests:requests,granularity:granularity),recent:Array(requests.prefix(3)))
+        let callsByModel = Dictionary(grouping:rows,by:{$0.raw.string("model")})
+        let requestsByModel = Dictionary(grouping:requests,by:{$0.raw.string("model")})
+        let models = Set(callsByModel.keys).union(requestsByModel.keys).filter(MobileTrends.isSingleModel).map { key -> MobileModel in
+            let total = UsageSummary(rows:callsByModel[key] ?? [],requests:requestsByModel[key]?.count ?? 0)
+            return MobileModel(id:key,name:modelName(key),metric:MobileMetric(tokens:total.tokens,cost:total.cost,requests:total.requests,costComplete:total.unknownCosts == 0,hitRate:total.cacheRate))
+        }
+        let sorted = (0..<3).map { metric in models.sorted { a,b in let x = ModelShareCard.amount(a.metric,metric), y = ModelShareCard.amount(b.metric,metric); return x == y ? a.id < b.id : x > y } }
+        return TrendProjection(summary:UsageSummary(rows:rows,requests:requests.count),days:range.buckets(rows,requests:requests,granularity:granularity),recent:Array(requests.prefix(3)),modelRows:sorted)
     }
 }
 
@@ -62,7 +70,7 @@ struct LogProjection {
     var pages: Int { max(1,(count+59)/60) }
     static func build(_ snapshot: UsageSnapshot,range: UsageRange,mode: String,model: String,tier: String,status: String,query: String,page: Int,filterKey: String = "") -> LogProjection {
         let rows = (mode == "requests" ? snapshot.requests : snapshot.calls).filter { row in
-            range.contains(row) && (model == "all" || row.raw.string("model").contains(model)) &&
+            range.contains(row) && (model == "all" || row.raw.string("model").components(separatedBy:" + ").contains(model)) &&
             (tier == "all" || normalizedTier(row.raw.string("service_tier")) == tier) &&
             (mode == "calls" || status == "all" || row.raw.string("status","completed") == status) &&
             (query.isEmpty || [row.title,row.raw.string("prompt_preview"),row.raw.string("output_preview"),row.raw.string("session_id"),row.id].joined(separator:" ").localizedCaseInsensitiveContains(query))

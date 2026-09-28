@@ -42,33 +42,43 @@ export default {
         const writerHash=await digest(b.writer);
         const result=await db.batch([
           db.prepare('UPDATE invites SET host=? WHERE hash=? AND expires>? AND (host IS NULL OR host=?)').bind(b.host,tokenHash,now,b.host),
-          db.prepare('INSERT INTO hosts(id,writer_hash,name) SELECT ?,?,? WHERE EXISTS(SELECT 1 FROM invites WHERE hash=? AND host=? AND expires>?) ON CONFLICT(id) DO NOTHING').bind(b.host,writerHash,b.name,tokenHash,b.host,now),
+          db.prepare("INSERT INTO hosts(id,writer_hash,name) SELECT ?,?,? WHERE EXISTS(SELECT 1 FROM invites WHERE hash=? AND host=? AND expires>?) ON CONFLICT(id) DO UPDATE SET writer_hash=excluded.writer_hash,name=excluded.name WHERE hosts.writer_hash LIKE 'disabled:%'").bind(b.host,writerHash,b.name,tokenHash,b.host,now),
           db.prepare('SELECT id FROM hosts WHERE id=? AND writer_hash=? AND EXISTS(SELECT 1 FROM invites WHERE hash=? AND host=? AND expires>?)').bind(b.host,writerHash,tokenHash,b.host,now)
         ]);
         return result[2].results.length ? json({ok:true}) : json({error:'INVITE_INVALID'},403);
       }
       const host=parts[2];if(parts[1]!=='hosts'||!id(host))return json({error:'INVALID'},400);
       const writer=await db.prepare('SELECT id FROM hosts WHERE id=? AND writer_hash=?').bind(host,tokenHash).first();
+      if(parts[3]==='key' && parts.length===4 && request.method==='DELETE') {
+        const disabled=writer || await db.prepare('SELECT id FROM hosts WHERE id=? AND writer_hash=?').bind(host,'disabled:'+tokenHash).first();
+        if(!disabled)return json({error:'UNAUTHORIZED'},403);
+        await db.batch([
+          db.prepare('UPDATE hosts SET writer_hash=? WHERE id=? AND writer_hash IN (?,?)').bind('disabled:'+tokenHash,host,tokenHash,'disabled:'+tokenHash),
+          db.prepare('DELETE FROM invites WHERE host=? AND EXISTS(SELECT 1 FROM hosts WHERE id=? AND writer_hash=?)').bind(host,host,'disabled:'+tokenHash)
+        ]);
+        return json({ok:true});
+      }
       if(parts[3]==='readers' && writer && request.method==='PUT' && parts.length===4) {
         const b=await body(request,4096);if(!id(b.id)||!secret(b.secret))return json({error:'INVALID'},400);
-        const row=await db.prepare('INSERT INTO readers(host,id,token_hash) SELECT ?,?,? WHERE (SELECT count(*) FROM readers WHERE host=?) < 3 OR EXISTS(SELECT 1 FROM readers WHERE host=? AND id=?) ON CONFLICT(host,id) DO UPDATE SET token_hash=excluded.token_hash RETURNING id').bind(host,b.id,await digest(b.secret),host,host,b.id).first();
+        const row=await db.prepare('INSERT INTO readers(host,id,token_hash) SELECT ?,?,? WHERE EXISTS(SELECT 1 FROM hosts WHERE id=? AND writer_hash=?) AND ((SELECT count(*) FROM readers WHERE host=?) < 3 OR EXISTS(SELECT 1 FROM readers WHERE host=? AND id=?)) ON CONFLICT(host,id) DO UPDATE SET token_hash=excluded.token_hash RETURNING id').bind(host,b.id,await digest(b.secret),host,tokenHash,host,host,b.id).first();
         return row?json({ok:true}):json({error:'READER_LIMIT'},409);
       }
       if(parts[3]==='readers' && writer && request.method==='DELETE' && parts.length===5 && id(parts[4])) {
-        await db.prepare('DELETE FROM readers WHERE host=? AND id=?').bind(host,parts[4]).run();return json({ok:true});
+        await db.prepare('DELETE FROM readers WHERE host=? AND id=? AND EXISTS(SELECT 1 FROM hosts WHERE id=? AND writer_hash=?)').bind(host,parts[4],host,tokenHash).run();return json({ok:true});
       }
       if(parts[3]==='data' && parts.length===5 && datasets.includes(parts[4]) && writer && request.method==='PUT') {
         const b=await body(request), dataset=parts[4];
         if(b.dataset!==dataset||!Number.isSafeInteger(b.revision)||b.revision<1||typeof b.payload!=='string'||new TextEncoder().encode(b.payload).length>({live:8000,recent:120000,trends:80000}[dataset])||await digest(b.payload)!==b.digest)return json({error:'INVALID'},400);
         const p=JSON.parse(b.payload);if(!validPayload(p)||dataset==='recent'&&!Array.isArray(p)||dataset==='trends'&&(!Array.isArray(p.daily)||p.daily.length>90||!Array.isArray(p.periods)||p.periods.length>3)||dataset==='live'&&(!p.today||!p.five||!p.week))return json({error:'INVALID'},400);
-        const result=await db.prepare('INSERT INTO datasets(host,dataset,revision,digest,payload,updated) VALUES(?,?,?,?,?,?) ON CONFLICT(host,dataset) DO UPDATE SET revision=excluded.revision,digest=excluded.digest,payload=excluded.payload,updated=excluded.updated WHERE excluded.revision>datasets.revision RETURNING revision').bind(host,dataset,b.revision,b.digest,b.payload,now).first();
+        const result=await db.prepare('INSERT INTO datasets(host,dataset,revision,digest,payload,updated) SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM hosts WHERE id=? AND writer_hash=?) ON CONFLICT(host,dataset) DO UPDATE SET revision=excluded.revision,digest=excluded.digest,payload=excluded.payload,updated=excluded.updated WHERE excluded.revision>datasets.revision RETURNING revision').bind(host,dataset,b.revision,b.digest,b.payload,now,host,tokenHash).first();
         if(!result){const old=await db.prepare('SELECT revision,digest FROM datasets WHERE host=? AND dataset=?').bind(host,dataset).first();if(old?.revision!==b.revision||old?.digest!==b.digest)return json({error:'REVISION_CONFLICT'},409);}
         return json({ok:true});
       }
       if(parts[3]==='sync' && parts.length===4 && request.method==='GET') {
         const readerID=url.searchParams.get('reader');if(!id(readerID))return json({error:'UNAUTHORIZED'},401);
-        const reader=await db.prepare('SELECT id FROM readers WHERE host=? AND id=? AND token_hash=?').bind(host,readerID,tokenHash).first();
+        const reader=await db.prepare('SELECT readers.id,hosts.writer_hash AS key_state FROM readers JOIN hosts ON hosts.id=readers.host WHERE readers.host=? AND readers.id=? AND readers.token_hash=?').bind(host,readerID,tokenHash).first();
         if(!reader)return json({error:'REVOKED'},403);
+        if(reader.key_state.startsWith('disabled:'))return json({error:'CLOUD_DISABLED'},403);
         const rows=await db.prepare('SELECT dataset,revision,digest,payload,updated FROM datasets WHERE host=? AND updated>?').bind(host,now-7*86400).all();
         return json({action:'sync',seen:Math.max(0,...rows.results.map(x=>x.updated)),datasets:rows.results.filter(x=>x.revision>Number(url.searchParams.get(x.dataset)??0)).map(({updated,...x})=>x)});
       }

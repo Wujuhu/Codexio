@@ -15,7 +15,13 @@ private struct MobileHostIdentity: Codable {
     var pin: String
     var readers: [MobileReader] = []
     var revoked: [String] = []
+    var pendingKeyRemoval: Bool?
+    var notes: [String:String]?
+    var lastSync: SyncStamp?
+    var localSyncs: [String:SyncStamp]?
+    var cloudSync: SyncStamp?
 }
+struct SyncStamp: Codable { var time: Date; var route: String }
 
 // Native listener and background export reuse the existing UsageSnapshot. No collector.
 // Transport, identity, outbox and revision state are confined to `queue`;
@@ -28,6 +34,13 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
     @Published private(set) var pending: MobileReader?
     @Published private(set) var readers: [MobileReader] = []
     @Published private(set) var deviceName = "我的 Mac"
+    @Published private(set) var removingKey = false
+    @Published private(set) var notes: [String:String] = [:]
+    @Published private(set) var lastSync: SyncStamp?
+    @Published private(set) var localSyncs: [String:SyncStamp] = [:]
+    @Published private(set) var cloudSync: SyncStamp?
+    @Published private(set) var syncError: String?
+    @Published var notice: String?
     private let queue = DispatchQueue(label:"com.wujuhu.codexio.mobile",qos:.utility)
     private let paths: AppPaths
     private var host: MobileHostIdentity?
@@ -53,6 +66,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
     private var failures = 0
     private var urgentPending = false
     private var transport = MobileHTTP()
+    private var metadataSaved = Date.distantPast
     init(paths: AppPaths) {
         self.paths = paths
         if !paths.mock {
@@ -62,7 +76,27 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
         }
     }
     private var stateURL: URL { paths.data.appendingPathComponent("mobile-projection.json") }
-    private func report(_ text: String) { DispatchQueue.main.async { if self.status != text { self.status = text } } }
+    private func report(_ text: String) {
+        let normal = ["尚未开启","局域网服务已开启","云端已启用","同步已停止","局域网优先"].contains {text.hasPrefix($0)}
+        DispatchQueue.main.async { if self.status != text { self.status = text }; self.syncError = normal ? nil : text }
+    }
+    private func synchronized(_ route: String, reader: String? = nil) {
+        let stamp = SyncStamp(time:Date(),route:route)
+        self.host?.lastSync = stamp
+        if route == "cloud" { self.host?.cloudSync = stamp }
+        if let reader { if host?.localSyncs == nil {host?.localSyncs = [:]}; host?.localSyncs?[reader] = stamp }
+        let local = host?.localSyncs ?? [:], cloud = host?.cloudSync
+        DispatchQueue.main.async { self.lastSync = stamp; self.localSyncs = local; self.cloudSync = cloud }
+        if Date().timeIntervalSince(metadataSaved) >= 300 { try? saveHost(); metadataSaved = Date() }
+    }
+    func setNote(_ id: String,_ value: String) {
+        let note = String(value.trimmingCharacters(in:.whitespacesAndNewlines).prefix(80))
+        queue.async {
+            guard self.host?.readers.contains(where:{$0.id == id}) == true, (self.host?.notes?[id] ?? "") != note else { return }
+            if self.host?.notes == nil {self.host?.notes = [:]}; self.host?.notes?[id] = note
+            do {try self.saveHost(); let notes = self.host?.notes ?? [:]; DispatchQueue.main.async {self.notes = notes}} catch {self.report(error.localizedDescription)}
+        }
+    }
     private func saveHost() throws {
         guard let host else { return }
         try MobileKeychain.save(MobileProtocol.encode(host),key:"mac-host-v1")
@@ -121,8 +155,8 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                 self.listener = listener; listener.start(queue:self.queue)
                 let timer = DispatchSource.makeTimerSource(queue:self.queue)
                 timer.schedule(deadline:.now()+2,repeating:30,leeway:.seconds(3)); timer.setEventHandler { [weak self = self] in self?.upload() }; timer.resume(); self.timer = timer
-                let cloud = self.host?.cloudEnabled ?? false, readers = self.host?.readers ?? []
-                DispatchQueue.main.async { self.enabled = true; self.cloudEnabled = cloud; self.readers = readers }
+                let cloud = self.host?.cloudEnabled ?? false, readers = self.host?.readers ?? [], notes = self.host?.notes ?? [:], last = self.host?.lastSync, local = self.host?.localSyncs ?? [:], removing = self.host?.pendingKeyRemoval == true, cloudStamp = self.host?.cloudSync
+                DispatchQueue.main.async { self.enabled = true; self.cloudEnabled = cloud; self.readers = readers; self.notes = notes; self.lastSync = last; self.localSyncs = local; self.removingKey = removing; self.cloudSync = cloudStamp }
             } catch { self.report(error.localizedDescription); self.active = false }
         }
     }
@@ -174,16 +208,22 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
     func revoke(_ id: String) {
         queue.async {
             self.host?.readers.removeAll {$0.id == id}; self.host?.revoked.append(id)
-            for (key,reader) in self.authenticated where reader == id { self.connections[key]?.cancel() }
+            self.host?.notes?.removeValue(forKey:id); self.host?.localSyncs?.removeValue(forKey:id)
+            for (key,reader) in self.authenticated where reader == id {
+                if let connection = self.connections[key] { MobileProtocol.send(MobileMessage(action:"revoked",error:"REVOKED"),over:connection) {_ in connection.cancel()} }
+                self.authenticated.removeValue(forKey:key)
+            }
             do { try self.saveHost(); self.upload() } catch { self.report(error.localizedDescription) }
             let readers = self.host?.readers ?? []
-            DispatchQueue.main.async { self.readers = readers }
+            DispatchQueue.main.async { self.readers = readers; self.notice = "已在本机撤销此 iPhone，请在 iPhone 的 Codexio 设置中删除这台 Mac。云端撤销将在连接可用时同步。" }
         }
     }
     func enroll(_ invite: String) {
         let name = deviceName
         queue.async {
-            guard self.active, let host = self.host, !self.sending else { return }
+            guard self.active, self.host?.pendingKeyRemoval != true, !self.sending else { return }
+            if self.host?.writer.isEmpty == true { do {self.host?.writer = try MobileProtocol.secret(); try self.saveHost()} catch {self.report(error.localizedDescription);return} }
+            guard let host = self.host else { return }
             self.sending = true; let generation = self.generation, transport = self.transport
             let body = try? JSONSerialization.data(withJSONObject:["host":host.id,"writer":host.writer,"name":name])
             Task {
@@ -197,6 +237,35 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                         self.report("云端已启用"); self.upload()
                     }
                 } catch { self.queue.async { guard generation == self.generation else { return }; self.sending = false; self.report(error.localizedDescription) } }
+            }
+        }
+    }
+    func removeCloudKey() {
+        queue.async {
+            guard self.active, self.host?.cloudEnabled == true else { return }
+            let previous = self.host
+            self.host?.cloudEnabled = false; self.host?.pendingKeyRemoval = true
+            do { try self.saveHost() } catch { self.host = previous; self.report(error.localizedDescription); return }
+            DispatchQueue.main.async { self.cloudEnabled = false; self.removingKey = true }
+            self.retryAt = .distantPast; self.upload()
+        }
+    }
+    private func finishKeyRemoval() {
+        guard active, !sending, let host, host.pendingKeyRemoval == true, Date() >= retryAt else { return }
+        sending = true; let stamp = generation, transport = transport
+        Task {
+            do {
+                _ = try await transport.request("/v1/hosts/\(host.id)/key",method:"DELETE",token:host.writer)
+                self.queue.async {
+                    guard self.generation == stamp else { return }
+                    let pending = self.host
+                    self.host?.writer = ""; self.host?.pendingKeyRemoval = false
+                    do { try self.saveHost() } catch {self.host=pending;self.report(error.localizedDescription);self.sending=false;return}
+                    self.sending = false; self.cloudReaders.removeAll(); self.sent.removeAll(); self.failures = 0
+                    DispatchQueue.main.async {self.removingKey = false; self.syncError = nil; self.notice = "云端密钥已移除。再次启用云同步时，需要添加新的邀请码。局域网配对仍可使用。"}
+                }
+            } catch {
+                self.queue.async {guard self.generation == stamp else {return}; self.sending=false; self.retryAt=Date().addingTimeInterval(60); self.report("密钥移除待完成："+error.localizedDescription)}
             }
         }
     }
@@ -219,6 +288,9 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
             guard let self, let connection, self.active, error == nil, let data, data.count <= MobileProtocol.limit,
                   let message = try? JSONDecoder().decode(MobileMessage.self,from:data) else { connection?.cancel(); return }
             let key = ObjectIdentifier(connection)
+            if message.action == "ack", let reader = self.authenticated[key] {
+                self.synchronized("lan",reader:reader); self.receive(connection); return
+            }
             if let reader = message.reader, self.host?.readers.contains(where:{$0.id == reader.id && MobileProtocol.equal($0.localSecret,reader.localSecret)}) == true {
                 let name = reader.name.trimmingCharacters(in:.whitespacesAndNewlines)
                 if !name.isEmpty, name.count <= 40, let index = self.host?.readers.firstIndex(where:{$0.id == reader.id}), self.host?.readers[index].name != name {
@@ -228,7 +300,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                 }
                 self.authenticated[key] = reader.id
                 let known = message.known ?? [:]
-                MobileProtocol.send(MobileMessage(action:"sync",known:self.datasets.mapValues(\.revision),datasets:self.datasets.values.filter {$0.revision > known[$0.dataset,default:0]},seen:Date().timeIntervalSince1970,cloud:self.cloudReaders.contains(reader.id) ? MobileProtocol.cloudOrigin : nil),over:connection)
+                MobileProtocol.send(MobileMessage(action:"sync",known:self.datasets.mapValues(\.revision),datasets:self.datasets.values.filter {$0.revision > known[$0.dataset,default:0]},seen:Date().timeIntervalSince1970,cloud:self.cloudReaders.contains(reader.id) ? MobileProtocol.cloudOrigin : nil,supportsAck:true),over:connection)
             } else if message.action == "pair", let reader = message.reader,
                       reader.id.count <= 64, reader.name.count <= 40, reader.localSecret.count == 43, reader.cloudSecret.count == 43,
                       let ticket = self.ticket, ticket.expires > Date().timeIntervalSince1970,
@@ -236,7 +308,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                 self.candidate = reader
                 DispatchQueue.main.async { self.pending = reader }
                 MobileProtocol.send(MobileMessage(action:"pending"),over:connection)
-            } else { MobileProtocol.send(MobileMessage(action:"error",error:"配对已过期、被拒绝或设备已撤销"),over:connection) }
+            } else { MobileProtocol.send(MobileMessage(action:message.action == "sync" ? "revoked" : "error",error:message.action == "sync" ? "REVOKED" : "配对已过期或被拒绝"),over:connection) }
             self.receive(connection)
         }
     }
@@ -293,7 +365,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                 if old != self.datasets {
                     try self.persist()
                     for (key,connection) in self.connections where self.authenticated[key] != nil {
-                        MobileProtocol.send(MobileMessage(action:"sync",known:self.datasets.mapValues(\.revision),datasets:self.datasets.values.filter {old[$0.dataset] != $0},seen:Date().timeIntervalSince1970),over:connection)
+                        MobileProtocol.send(MobileMessage(action:"sync",known:self.datasets.mapValues(\.revision),datasets:self.datasets.values.filter {old[$0.dataset] != $0},seen:Date().timeIntervalSince1970,supportsAck:true),over:connection)
                     }
                 }
                 if urgent || self.lastPrivacy != previews { self.lastPrivacy = previews; self.lastTaskKey = taskKey; self.urgentPending = true; self.upload() }
@@ -301,6 +373,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
         }
     }
     private func upload() {
+        if host?.pendingKeyRemoval == true { finishKeyRemoval(); return }
         guard active, let host, host.cloudEnabled, !sending, Date() >= retryAt else { return }
         let changed = datasets.values.filter {sent[$0.dataset] != $0.revision}
         let readers = host.readers.filter {!cloudReaders.contains($0.id)}
@@ -320,13 +393,14 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                     readers.forEach {self.cloudReaders.insert($0.id)}
                     let granted = Set(readers.map(\.id))
                     for (key,connection) in self.connections where granted.contains(self.authenticated[key] ?? "") {
-                        MobileProtocol.send(MobileMessage(action:"sync",known:self.datasets.mapValues(\.revision),datasets:[],seen:Date().timeIntervalSince1970,cloud:MobileProtocol.cloudOrigin),over:connection)
+                        MobileProtocol.send(MobileMessage(action:"sync",known:self.datasets.mapValues(\.revision),datasets:[],seen:Date().timeIntervalSince1970,cloud:MobileProtocol.cloudOrigin,supportsAck:true),over:connection)
                     }
                     self.host?.revoked.removeAll {host.revoked.contains($0)}
+                    self.synchronized("cloud")
                     try? self.saveHost(); self.sending = false; self.failures = 0
                     let pending = self.datasets.values.contains {self.sent[$0.dataset] != $0.revision}
                     self.report(pending ? "局域网优先 · 云端有更新待同步" : "局域网优先 · 云端已同步")
-                    if self.urgentPending { self.upload() }
+                    if self.urgentPending || self.host?.pendingKeyRemoval == true { self.upload() }
                 }
             } catch {
                 self.queue.async {
@@ -345,25 +419,59 @@ struct MobileSyncSettings: View {
     let refresh: () -> Void
     @State private var invite = ""
     @State private var name = ""
+    @State private var confirmRemoval = false
     var body: some View {
         VStack(alignment:.leading,spacing:18) {
-            Toggle("iPhone 同步",isOn:Binding(get:{sync.enabled},set:{$0 ? sync.start() : sync.stop(disable:true)}))
-            Text(sync.status).font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Toggle("同步",isOn:Binding(get:{sync.enabled},set:{$0 ? sync.start() : sync.stop(disable:true)}))
+                Spacer(); SyncStampView(stamp:sync.lastSync)
+            }
             if sync.enabled {
                 TextField("设备名称",text:$name).onAppear { name = sync.deviceName }.onSubmit { sync.rename(name); refresh() }
-                Text("同步额度、汇总和最近请求短预览，不同步详细日志。首次配对请让 iPhone 与 Mac 处于可互通的局域网。").font(.caption).foregroundStyle(.secondary)
-                if !sync.cloudEnabled {
-                    SecureField("云端邀请码（可选）",text:$invite)
-                    Button("启用 Cloudflare 同步") { sync.enroll(invite); invite = "" }.disabled(invite.isEmpty)
+                Text("首次配对请让 iPhone 与 Mac 处于可互通的局域网。").font(.caption).foregroundStyle(.secondary)
+                if sync.removingKey { HStack {ProgressView().controlSize(.small); Text("正在移除云端密钥")} }
+                else if !sync.cloudEnabled {
+                    SecureField("云端密钥／邀请码",text:$invite)
+                    Button("启用云同步") { sync.enroll(invite); invite = "" }.disabled(invite.isEmpty)
+                } else {
+                    HStack {Label("云同步",systemImage:"cloud"); Spacer(); Button("移除密钥",role:.destructive) {confirmRemoval = true}}
                 }
                 Button("添加 iPhone · 生成二维码") { sync.pair(); refresh() }.disabled(sync.readers.count >= 3)
-                if let image = sync.qrImage { Image(nsImage:image).interpolation(.none).resizable().scaledToFit().frame(width:220,height:220); Text("二维码 5 分钟有效，请勿转发").font(.caption).foregroundStyle(.secondary) }
+                if let image = sync.qrImage { Image(nsImage:image).interpolation(.none).resizable().scaledToFit().frame(width:220,height:220) }
                 if let pending = sync.pending {
                     Text("允许 \(pending.name) 读取这台 Mac 的摘要？")
                     HStack { Button("拒绝") { sync.approve(false) }; Button("确认配对") { sync.approve(true) } }
                 }
-                ForEach(sync.readers) { reader in HStack { Text(reader.name); Spacer(); Button("撤销") { sync.revoke(reader.id) } } }
+                ForEach(sync.readers) { reader in SyncReaderRow(sync:sync,reader:reader) }
+                if let error = sync.syncError {Text(error).foregroundStyle(.red)}
             }
         }
+        .confirmationDialog("移除云端密钥？",isPresented:$confirmRemoval,titleVisibility:.visible) {Button("移除密钥",role:.destructive) {sync.removeCloudKey()}} message: {Text("云同步将停止，再次使用需添加新的邀请码。局域网配对保留。")}
+        .alert("同步",isPresented:Binding(get:{sync.notice != nil},set:{if !$0 {sync.notice=nil}})) {Button("知道了") {sync.notice=nil}} message: {Text(sync.notice ?? "")}
+    }
+}
+private struct SyncStampView: View {
+    let stamp: SyncStamp?
+    var body: some View {
+        HStack(spacing:6) {
+            if let stamp {Image(systemName:stamp.route == "lan" ? "wifi" : "cloud").help(stamp.route == "lan" ? "iPhone 已确认接收" : "Mac 已上传到云端"); Text(lastUpdateText(stamp.time).replacingOccurrences(of:"上次更新",with:"上次同步"))}
+            else {Text("尚未同步")}
+        }.font(.caption).foregroundStyle(.secondary)
+    }
+}
+private struct SyncReaderRow: View {
+    @ObservedObject var sync: MobileSync
+    let reader: MobileReader
+    @State private var note = ""
+    private var stamp: SyncStamp? {
+        let local = sync.localSyncs[reader.id], cloud = sync.cloudSync
+        return [local,cloud].compactMap {$0}.max {$0.time < $1.time}
+    }
+    var body: some View {
+        VStack(alignment:.leading,spacing:8) {
+            HStack {Text(reader.name).fontWeight(.medium); Spacer(); Button("撤销",role:.destructive) {sync.revoke(reader.id)}}
+            HStack {TextField("备注",text:$note).onSubmit {sync.setNote(reader.id,note)}; Spacer(); SyncStampView(stamp:stamp)}
+        }.padding(12).background(Color.primary.opacity(0.035),in:RoundedRectangle(cornerRadius:10))
+            .onAppear {note=sync.notes[reader.id] ?? ""}.onDisappear {sync.setNote(reader.id,note)}
     }
 }

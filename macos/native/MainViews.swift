@@ -71,12 +71,12 @@ private struct SidebarView: View {
         VStack(alignment:.leading,spacing:0) {
             if state.sidebarVisible {
                 HStack {
-                    Image(nsImage:Branding.sidebarWordmark()).resizable().scaledToFit()
-                        .frame(width:min(138,max(72,(previewWidth ?? state.sidebarWidth)-72)),height:28,alignment:.leading)
+                    Image(nsImage:Branding.sidebarWordmark()).resizable().interpolation(.high).scaledToFit()
+                        .frame(width:min(170,max(72,(previewWidth ?? state.sidebarWidth)-64)),height:34,alignment:.leading)
                         .accessibilityLabel("Codexio")
                     Spacer(minLength:4)
                     Button { state.selectedPage = "logs"; NotificationCenter.default.post(name:.init("CodexioSearch"),object:nil) } label: { Image(systemName:"magnifyingglass").foregroundStyle(.secondary) }.buttonStyle(.plain).accessibilityLabel(L("搜索日志", "Search logs"))
-                }.padding(.horizontal,16).padding(.top,30).padding(.bottom,24)
+                }.padding(.horizontal,16).padding(.top,30).padding(.bottom,18)
             } else {
                 SidebarBrand(state:state).frame(maxWidth:.infinity)
                     .padding(.top,30).padding(.bottom,24)
@@ -176,6 +176,7 @@ struct OverviewView: View {
                 HStack { SectionHeading(title:L("本机用量", "Local usage")); Spacer(); PeriodPicker(selection:$period).fixedSize() }
                 SummaryMetrics(summary:projection.value.summary)
                 VStack(alignment:.leading,spacing:16) { SectionHeading(title:L("用量趋势", "Usage trend")); TrendChart(days:projection.value.days) }.padding(18).overlay(RoundedRectangle(cornerRadius:13).stroke(.secondary.opacity(0.15)))
+                ModelShareCard(projection:projection.value)
                 HStack { SectionHeading(title:L("最近请求", "Recent requests")); Button(L("查看全部", "View all")) { state.selectedPage = "logs" }.buttonStyle(.plain).foregroundStyle(.secondary) }
                 if !projection.value.recent.isEmpty {
                     CompactTable(columns:LogFields.columns(["content","model","total","cost","duration","details"]).map { column in
@@ -197,8 +198,9 @@ struct PeriodPicker: View {
     @Environment(\.compactPage) private var compact
     @Binding var selection: String
     var custom = false
+    var condensed = false
     private var picker: some View {
-        Picker("",selection:$selection) { Text(L("今日", "Today")).tag("today"); Text(L("近 7 天", "Last 7 days")).tag("week"); Text(L("近 30 天", "Last 30 days")).tag("month"); Text(L("历史", "All time")).tag("all"); if custom { Text(L("自选日期", "Custom")).tag("custom") } }.labelsHidden()
+        Picker("",selection:$selection) { Text(L("今日", "Today")).tag("today"); Text(L("近 7 天", "Last 7 days")).tag("week"); if !condensed { Text(L("近 30 天", "Last 30 days")).tag("month"); Text(L("历史", "All time")).tag("all") }; if custom { Text(L("自选日期", "Custom")).tag("custom") } }.labelsHidden()
     }
     var body: some View {
         if compact { picker.pickerStyle(.menu).fixedSize() }
@@ -220,6 +222,7 @@ struct LogsView: View {
     @State private var from = Calendar.current.date(byAdding:.day,value:-6,to:Date())!
     @State private var through = Date()
     @FocusState private var searchFocused: Bool
+    @State private var datesOpen = false
     init(state: AppState) { self.state = state; projection = state.logProjection }
     private var fields: [String] {
         let saved = state.preferences.analytics["native_log_columns"] as? [String] ?? LogFields.defaults
@@ -241,12 +244,12 @@ struct LogsView: View {
     }
     var body: some View {
         VStack(alignment:.leading,spacing:14) {
-            HStack { PeriodPicker(selection:$period,custom:true); Spacer() }
-            if period == "custom" { DateRangeControls(from:$from,through:$through) }
             HStack(spacing:10) {
+                PeriodPicker(selection:$period,custom:true,condensed:true)
+                if period == "custom" { Button {datesOpen=true} label:{Image(systemName:"calendar")}.popover(isPresented:$datesOpen) {DateRangeControls(from:$from,through:$through).padding(18).frame(width:360)} }
+                Spacer(minLength:4)
                 if compact { modePicker.pickerStyle(.menu).fixedSize() }
                 else { modePicker.pickerStyle(.segmented).fixedSize() }
-                TextField(L("搜索输入、聊天或 ID", "Search prompt, chat or ID"),text:$query).textFieldStyle(.roundedBorder).focused($searchFocused)
                 Menu(L("显示字段", "Columns")) {
                     ForEach(LogFields.all.filter {$0 != "content" && $0 != "details"},id:\.self) { field in
                         Toggle(LogFields.title(field),isOn:Binding(get:{fields.contains(field)},set:{toggle(field,$0)}))
@@ -254,12 +257,7 @@ struct LogsView: View {
                     Divider(); Button(L("恢复默认字段", "Reset columns")) { state.setPreference("native_log_columns",LogFields.defaults) }
                 }.fixedSize()
             }
-            HStack(spacing:10) {
-                Picker("",selection:$model) { Text(L("全部模型", "All models")).tag("all"); ForEach(state.usage.models,id:\.self) { Text($0).tag($0) } }.labelsHidden().fixedSize(horizontal:!compact,vertical:true)
-                Picker("",selection:$tier) { Text(L("全部速度", "All speeds")).tag("all"); Text("Fast").tag("priority"); Text(L("标准", "Standard")).tag("default"); Text(L("未知", "Unknown")).tag("unknown") }.labelsHidden().fixedSize(horizontal:!compact,vertical:true)
-                if mode == "requests" { Picker("",selection:$status) { Text(L("全部状态", "All statuses")).tag("all"); Text(L("已完成", "Completed")).tag("completed"); Text(L("进行中", "In progress")).tag("running"); Text(L("未知", "Unknown")).tag("unknown") }.labelsHidden().fixedSize(horizontal:!compact,vertical:true) }
-                if !compact { Spacer() }
-            }
+            if compact { ScrollView(.horizontal) {filters}.frame(height:30) } else { filters }
             CompactTable(columns:LogFields.columns(fields),rows:projection.value.rows.map { row in LogFields.row(row,timeOnly:period == "today") {state.usage.members(of:row)} },revision:projection.value.revision.uuidString+period,preferences:state.preferences,storageKey:"logs",scrollResetKey:projection.value.scrollResetKey)
                 .overlay(RoundedRectangle(cornerRadius:10).stroke(.secondary.opacity(0.16)))
             HStack {
@@ -272,6 +270,16 @@ struct LogsView: View {
         }.padding(.horizontal,PageLayout.inset).padding(.bottom,PageLayout.inset)
         .onAppear(perform:load).onChange(of:key) { _,_ in load() }
         .onChange(of:filterKey) { _,_ in page = 0 }
+        .onChange(of:period) { _,value in if value == "custom" { datesOpen = true } }
         .onReceive(NotificationCenter.default.publisher(for:.init("CodexioSearch"))) { _ in searchFocused = true }
+    }
+    private var filters: some View {
+        HStack(spacing:10) {
+            Picker("",selection:$model) {Text(L("全部模型", "All models")).tag("all"); ForEach(state.usage.models.filter(MobileTrends.isSingleModel),id:\.self) {Text($0).tag($0)}}.labelsHidden().frame(width:112)
+            Picker("",selection:$tier) {Text(L("全部速度", "All speeds")).tag("all"); Text("Fast").tag("priority"); Text(L("标准", "Standard")).tag("default"); Text(L("未知", "Unknown")).tag("unknown")}.labelsHidden().frame(width:112)
+            if mode == "requests" {Picker("",selection:$status) {Text(L("全部状态", "All statuses")).tag("all"); Text(L("已完成", "Completed")).tag("completed"); Text(L("进行中", "In progress")).tag("running"); Text(L("未知", "Unknown")).tag("unknown")}.labelsHidden().frame(width:112)}
+            TextField(L("搜索输入、聊天或 ID", "Search prompt, chat or ID"),text:$query).textFieldStyle(.roundedBorder).focused($searchFocused).frame(minWidth:100,idealWidth:200,maxWidth:220)
+            if !compact {Spacer(minLength:0)}
+        }
     }
 }

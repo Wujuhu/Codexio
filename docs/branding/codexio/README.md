@@ -28,4 +28,4 @@ macOS 外观页用 13 张图片（含主图）选择，点击只更新局部待�
 
 重新导入原素材包时使用 `node scripts/render_brand_assets.cjs --logo-pack build/design/logo/Codexio-Logo-Pack`；导入主图时不改任务状态动画资源。材质原 SVG 已随本仓库的包装源保留，后续重新导出不依赖被忽略的 `build/design` 目录。
 
-主窗口展开侧栏使用 `src/codexio/icons/wordmark.svg`，原样取自用户最终 `build/design/logo/Codexio-Wordmark-Final/codexio-wordmark.svg`。`render_brand_assets.cjs --wordmark-only` 仅生成对应透明 PNG，对称移除多余透明边距而不改变原画布视觉中心；运行时使用缓存的模板图跟随主题。高度框 28 pt，宽度随侧栏收缩且不超过 138 pt，保留搜索按钮及原导航位置。收起侧栏继续显示外观页选中的图形，Dock 与菜单栏主图形不因字标替换而改变。
+主窗口展开侧栏使用 `src/codexio/icons/wordmark.svg`，原样取自用户最终 `build/design/logo/Codexio-Wordmark-Final/codexio-wordmark.svg`。`render_brand_assets.cjs --wordmark-only` 仅生成对应透明 PNG，对称移除多余透明边距而不改变原画布视觉中心；运行时按 170 pt 原生显示宽度准备 1×／2×／3× 高质量模板表示，缓存后随主题使用，避免大图反复进入低质量模板缩放。高度框 34 pt，宽度随侧栏收缩且不超过 170 pt，底部间距减少 6 pt 保留原导航位置。收起侧栏继续显示外观页选中的图形，Dock 与菜单栏主图形不因字标替换而改变。
