@@ -1,0 +1,5 @@
+node_modules/
+.remotion/
+build/
+out/
+*.log
