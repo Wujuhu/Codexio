@@ -6,7 +6,6 @@ struct SubscriptionView: View {
     @State private var selectedReset: ResetCredit?
     @State private var confirming = false
     @State private var selectedAccount = ""
-    @State private var editingProfile = false
     @State private var expandedPeriods: Set<String> = []
     @State private var showLocalHistory = true
     private var profile: Object { state.preferences.analytics.object("subscription_profile") }
@@ -14,18 +13,16 @@ struct SubscriptionView: View {
     var body: some View {
         ScrollView {
             VStack(alignment:.leading,spacing:23) {
-                AdaptiveRow(spacing:28,alignment:.top) {
-                    VStack(alignment:.leading,spacing:12) {
-                        Text(profile.string("plan").isEmpty ? (state.quota.account.string("planType").isEmpty ? L("个人订阅资料", "Subscription profile") : "ChatGPT "+planName(state.quota.account.string("planType"))) : profile.string("plan")).font(.system(size:16,weight:.semibold))
-                        if !state.quota.account.string("email").isEmpty { Text(state.quota.account.string("email")).lineLimit(1).textSelection(.enabled) }
+                AdaptiveRow(spacing:16,alignment:.top) {
+                    VStack(alignment:.leading,spacing:8) {
+                        Text(profile.string("plan").isEmpty ? (state.quota.account.string("planType").isEmpty ? L("个人订阅资料", "Subscription profile") : "ChatGPT "+planName(state.quota.account.string("planType"))) : profile.string("plan")).font(.system(size:14,weight:.semibold))
+                        if !state.quota.account.string("email").isEmpty { Text(state.quota.account.string("email")).font(.system(size:11)).lineLimit(1).help(state.quota.account.string("email")).textSelection(.enabled) }
                         if let price = profile.number("price_usd") { Text(L("订阅价格", "Subscription price")+" · "+money(price)) }
                         if !profile.string("renewal_date").isEmpty { Text(L("续费日期", "Renewal date")+" · "+profile.string("renewal_date")) }
-                        Button(L("编辑资料", "Edit profile")) { editingProfile = true }.padding(.top,4)
-                    }.font(.system(size:12)).foregroundStyle(.secondary).frame(width:compact ? nil : 205,alignment:.leading)
-                    if !compact { Divider().frame(height:120) }
+                    }.font(.system(size:12)).foregroundStyle(.secondary).frame(width:compact ? nil : 150,alignment:.leading)
                     HStack(alignment:.top,spacing:12) {
-                        QuotaCard(window:state.quota.five,title:L("5 小时额度", "5-hour limit"),fresh:state.quota.fresh,size:31,stacked:true)
-                        QuotaCard(window:state.quota.week,title:L("周额度", "Weekly limit"),fresh:state.quota.fresh,size:31,stacked:true)
+                        QuotaCard(window:state.quota.five,title:L("5 小时额度", "5-hour limit"),fresh:state.quota.fresh,size:31,stacked:true,compactReset:true)
+                        QuotaCard(window:state.quota.week,title:L("周额度", "Weekly limit"),fresh:state.quota.fresh,size:31,stacked:true,compactReset:true)
                     }
                 }
                 if let error = state.quota.error { StatusNote(text:error) }
@@ -56,7 +53,6 @@ struct SubscriptionView: View {
                 localEstimates
             }.padding(.horizontal,PageLayout.inset).padding(.bottom,PageLayout.inset)
         }
-        .sheet(isPresented:$editingProfile) { SubscriptionEditor(state:state) }
         .alert(L("使用这次额度重置？", "Use this reset?"),isPresented:$confirming,presenting:selectedReset) { credit in
             Button(L("取消", "Cancel"),role:.cancel) { selectedReset = nil }
             Button(L("使用重置", "Use reset")) { state.consumeReset(credit,expectedAccount:selectedAccount); selectedReset = nil }

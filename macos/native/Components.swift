@@ -85,6 +85,7 @@ struct QuotaCard: View {
     let fresh: Bool
     var size: CGFloat = 34
     var stacked = false
+    var compactReset = false
     var body: some View {
         VStack(alignment:.leading,spacing:13) {
             if stacked { Text(title).font(.system(size:14,weight:.medium)) }
@@ -97,7 +98,8 @@ struct QuotaCard: View {
             HStack {
                 Text(L("已用", "Used")+" "+percent(fresh ? window?.used : nil))
                 Spacer(minLength:12)
-                Text(L("重置", "Resets")+" "+dateText(window?.reset,timeOnly:window?.minutes == 300))
+                Text(compactReset ? "Resets "+shortResetDate(window?.reset) : L("重置", "Resets")+" "+dateText(window?.reset,timeOnly:window?.minutes == 300))
+                    .help(dateText(window?.reset))
             }.font(.system(size:11)).foregroundStyle(.secondary).lineLimit(1)
         }.frame(maxWidth:.infinity,alignment:.leading).modifier(BubbleCard())
     }
