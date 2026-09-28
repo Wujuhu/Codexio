@@ -14,7 +14,7 @@ APP／Dock 默认主图使用 `translate(256 256) scale(512/976) translate(-627 
 - `codexio-icon-dark.svg`／`.png`：黑底白图，深色界面使用。
 - `codexio-icon.svg`／`.png`：浅色版的通用入口。
 - `Codexio.ico`：16、24、32、48、64、128、256 像素的 Windows 图标。
-- `codexio-lockup.svg`：历史横向组合参考；当前 Mac 字标由应用直接渲染。
+- `codexio-lockup.svg`：历史横向组合参考；当前 Mac 字标使用下述最终用户素材。
 
 应用的源文件在 `src/codexio/icons/`。`brand-mark.svg` 为透明单色模板，菜单栏和小组件提示使用相同猫形，不另画不同图形。功能导航图标保留各自含义。
 
@@ -28,4 +28,4 @@ macOS 外观页用 13 张图片（含主图）选择，点击只更新局部待�
 
 重新导入原素材包时使用 `node scripts/render_brand_assets.cjs --logo-pack build/design/logo/Codexio-Logo-Pack`；导入主图时不改任务状态动画资源。材质原 SVG 已随本仓库的包装源保留，后续重新导出不依赖被忽略的 `build/design` 目录。
 
-主窗口字标使用透明 C 标记接 `odexio`，Mac 图形与字母间距为 1 pt，以图形代替文字 C；App 文件名和程序名称仍为 Codexio。
+主窗口展开侧栏使用 `src/codexio/icons/wordmark.svg`，原样取自用户最终 `build/design/logo/Codexio-Wordmark-Final/codexio-wordmark.svg`。`render_brand_assets.cjs --wordmark-only` 仅生成对应透明 PNG，对称移除多余透明边距而不改变原画布视觉中心；运行时使用缓存的模板图跟随主题。高度框 28 pt，宽度随侧栏收缩且不超过 138 pt，保留搜索按钮及原导航位置。收起侧栏继续显示外观页选中的图形，Dock 与菜单栏主图形不因字标替换而改变。

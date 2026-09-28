@@ -108,7 +108,7 @@ def build_native(bundle, version):
         "NSAppTransportSecurity": {"NSAllowsArbitraryLoads": True, "NSAllowsLocalNetworking": True},
     }
     (bundle / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
-    for name in ("app-light.svg", "app-dark.svg", "app-light.png", "app-dark.png", "brand-mark.svg", "brand-mark.png"):
+    for name in ("app-light.svg", "app-dark.svg", "app-light.png", "app-dark.png", "brand-mark.svg", "brand-mark.png", "wordmark.svg", "wordmark.png"):
         shutil.copy2(ROOT / "src/codexio/icons" / name, resources / name)
     icon_choices = resources / "app-icons"
     icon_choices.mkdir()

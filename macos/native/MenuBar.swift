@@ -107,7 +107,7 @@ final class MenuBarController {
         guard key != displayed else { return }; displayed = key
         readout?.rootView = MenuBarReadout(state:state)
         readout?.layoutSubtreeIfNeeded()
-        item?.length = state.menuFields.isEmpty ? NSStatusItem.squareLength : ceil(readout?.fittingSize.width ?? 18)+12
+        item?.length = state.menuFields == ["logo"] ? NSStatusItem.squareLength : ceil(readout?.fittingSize.width ?? 18)+12
         item?.button?.setAccessibilityLabel("Codexio · "+state.menuFields.map {MenuBarField.title($0)+" "+MenuBarField.value($0,state:state)}.joined(separator:" · "))
         layoutReadout()
     }

@@ -271,6 +271,11 @@ final class Preferences {
         let defaults: Object = ["theme":"system", "menu_bar_visible":true, "menu_bar_content":"week", "macos_auto_update":true, "usage_refresh_interval_seconds":10, "week_estimate_interval_minutes":30, "sidebar_collapsed":false, "native_sidebar_width":258]
         for (key,value) in defaults where analytics[key] == nil { analytics[key] = value }
         if analytics["menu_bar_fields"] == nil { analytics["menu_bar_fields"] = ["week","task"] }
+        if analytics.integer("menu_bar_logo_field_version") != 1 {
+            let fields = analytics["menu_bar_fields"] as? [String] ?? ["week","task"]
+            analytics["menu_bar_fields"] = ["logo"]+fields.filter {$0 != "logo"}
+            analytics["menu_bar_logo_field_version"] = 1
+        }
         if analytics.integer("native_sidebar_resize_version") != 1 {
             analytics["native_sidebar_width"] = analytics.number("sidebar_width") ?? 238
             analytics["native_sidebar_resize_version"] = 1

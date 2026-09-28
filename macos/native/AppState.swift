@@ -48,7 +48,7 @@ final class AppState: ObservableObject {
     @Published var sidebarVisible = true
     @Published var sidebarWidth: Double = 238
     @Published var menuVisible = true
-    @Published var menuFields = ["week","task"]
+    @Published private(set) var menuFields = MenuBarField.defaults
     @Published var loading = true
     @Published var scanProgress = ""
     @Published var errorMessage: String?
@@ -97,7 +97,7 @@ final class AppState: ObservableObject {
         sidebarVisible = !preferences.analytics.flag("sidebar_collapsed")
         sidebarWidth = min(320,max(140,preferences.analytics.number("native_sidebar_width") ?? preferences.analytics.number("sidebar_width") ?? 238))
         menuVisible = preferences.analytics.flag("menu_bar_visible",true)
-        menuFields = MenuBarField.normalize(preferences.analytics["menu_bar_fields"] as? [String] ?? ["week","task"])
+        menuFields = MenuBarField.normalize(preferences.analytics["menu_bar_fields"] as? [String] ?? MenuBarField.defaults)
         client.onNotification = { [weak self] method, _ in
             guard ["account/rateLimits/updated","account/updated"].contains(method) else { return }
             DispatchQueue.main.async {
@@ -375,13 +375,14 @@ final class AppState: ObservableObject {
         }
     }
     func setPreference(_ key: String, _ value: Any, general: Bool = false) {
+        let value: Any = key == "menu_bar_fields" && !general ? MenuBarField.normalize(value as? [String] ?? MenuBarField.defaults) : value
         let previous = general ? preferences.general[key] : preferences.analytics[key]
         if let previous, jsonString(previous) == jsonString(value) { return }
         if general { preferences.general[key] = value } else { preferences.analytics[key] = value }
         do { try preferences.save() } catch { errorMessage = error.localizedDescription }
         if key == "theme" { theme = preferences.analytics.string("theme","system") }
         if key == "menu_bar_visible" { menuVisible = preferences.analytics.flag("menu_bar_visible",true) }
-        if key == "menu_bar_fields" { menuFields = MenuBarField.normalize(preferences.analytics["menu_bar_fields"] as? [String] ?? ["week","task"]) }
+        if key == "menu_bar_fields" { menuFields = MenuBarField.normalize(preferences.analytics["menu_bar_fields"] as? [String] ?? MenuBarField.defaults) }
         if ["usage_refresh_interval_seconds","refresh_interval_seconds"].contains(key) { configureTimers() }
         if ["theme","menu_bar_visible","menu_bar_fields"].contains(key) { onSettingsChange?() }
         objectWillChange.send()

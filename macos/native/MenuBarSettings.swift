@@ -3,12 +3,17 @@ import QuartzCore
 import SwiftUI
 
 enum MenuBarField {
-    static let all = ["week","task","today_cost","today_tokens","task_cost","task_tokens"]
+    static let all = ["logo","week","task","today_cost","today_tokens","task_cost","task_tokens"]
+    static let defaults = ["logo","week","task"]
     static func normalize(_ values: [String]) -> [String] {
-        var seen = Set<String>(); return values.filter {all.contains($0) && seen.insert($0).inserted}
+        var seen = Set<String>()
+        let fields = values.filter {all.contains($0) && seen.insert($0).inserted}
+        if fields.isEmpty { return ["logo"] }
+        return fields.contains("logo") ? ["logo"]+fields.filter {$0 != "logo"} : fields
     }
     static func title(_ field: String) -> String {
         switch field {
+        case "logo": return L("Codexio Logo", "Codexio Logo")
         case "week": return L("周额度", "Weekly allowance")
         case "task": return L("当前任务状态", "Current task status")
         case "today_cost": return L("今日总费用", "Today's total cost")
@@ -18,6 +23,7 @@ enum MenuBarField {
         }
     }
     static func value(_ field: String,state: AppState) -> String {
+        if field == "logo" { return "" }
         let today = state.usage.summaries["today"]
         let recent = state.usage.widgetRequest
         let ready = state.taskRunning != nil
@@ -33,7 +39,7 @@ enum MenuBarField {
         default: return compact(current?.tokens.map(Double.init))
         }
     }
-    static func text(_ state: AppState) -> String { state.menuFields.map {value($0,state:state)}.joined(separator:"  ") }
+    static func text(_ state: AppState) -> String { state.menuFields.filter {$0 != "logo"}.map {value($0,state:state)}.joined(separator:"  ") }
 }
 
 enum MenuBarMetrics {
@@ -129,10 +135,11 @@ struct MenuBarReadout: View {
     }
     var body: some View {
         HStack(alignment:.menuVisualCenter,spacing:7) {
-            Image(nsImage:Branding.menuIcon()).resizable().frame(width:18,height:18)
-                .alignmentGuide(.menuVisualCenter) { $0[VerticalAlignment.center]-0.65 }
             ForEach(fields,id:\.self) { field in
-                if field == "task", let running {
+                if field == "logo" {
+                    Image(nsImage:Branding.menuIcon()).resizable().frame(width:18,height:18)
+                        .alignmentGuide(.menuVisualCenter) { $0[VerticalAlignment.center]-0.65 }
+                } else if field == "task", let running {
                     TaskStatusImage(running:running).frame(width:MenuBarMetrics.taskSize,height:MenuBarMetrics.taskSize)
                 } else {
                     let size = MenuBarMetrics.numberSize
@@ -151,11 +158,11 @@ final class MenuBarReadoutHost: NSHostingView<MenuBarReadout> {
 
 struct MenuBarSettings: View {
     @ObservedObject var state: AppState
-    private var fields: [String] { state.menuFields+MenuBarField.all.filter {!state.menuFields.contains($0)} }
+    private var fields: [String] { ["logo"]+state.menuFields.filter {$0 != "logo"}+MenuBarField.all.filter {$0 != "logo" && !state.menuFields.contains($0)} }
     private func save(_ fields: [String]) { state.setPreference("menu_bar_fields",MenuBarField.normalize(fields)) }
     private func move(_ field: String,by offset: Int) {
         var fields = state.menuFields
-        guard let index = fields.firstIndex(of:field), fields.indices.contains(index+offset) else { return }
+        guard field != "logo", let index = fields.firstIndex(of:field), fields.indices.contains(index+offset), fields[index+offset] != "logo" else { return }
         fields.swapAt(index,index+offset); save(fields)
     }
     var body: some View {
@@ -167,19 +174,22 @@ struct MenuBarSettings: View {
                         Toggle(MenuBarField.title(field),isOn:Binding(get:{state.menuFields.contains(field)},set:{ enabled in
                             save(enabled ? state.menuFields+[field] : state.menuFields.filter {$0 != field})
                         })).toggleStyle(.checkbox).frame(maxWidth:.infinity,alignment:.leading)
-                        if state.menuFields.contains(field) {
+                            .disabled(state.menuFields.count == 1 && state.menuFields.contains(field))
+                        if field == "logo" {
+                            Text(L("固定首位", "Always first")).font(.system(size:11)).foregroundStyle(.secondary)
+                        } else if state.menuFields.contains(field) {
                             Image(systemName:"line.3.horizontal").foregroundStyle(.secondary).font(.system(size:11))
                                 .frame(width:26,height:28).contentShape(Rectangle())
                                 .draggable(field)
                                 .accessibilityLabel(L("调整显示顺序", "Reorder display"))
                                 .contextMenu {
-                                    Button(L("上移", "Move up")) { move(field,by:-1) }.disabled(state.menuFields.first == field)
+                                    Button(L("上移", "Move up")) { move(field,by:-1) }.disabled(state.menuFields.filter {$0 != "logo"}.first == field)
                                     Button(L("下移", "Move down")) { move(field,by:1) }.disabled(state.menuFields.last == field)
                                 }
                         }
                     }.font(.system(size:12)).padding(.horizontal,10).frame(height:32)
                         .dropDestination(for:String.self) { items,_ in
-                            guard let from = items.first, from != field,
+                            guard field != "logo", let from = items.first, from != "logo", from != field,
                                   let source = state.menuFields.firstIndex(of:from), let target = state.menuFields.firstIndex(of:field) else { return false }
                             var order = state.menuFields; order.remove(at:source); order.insert(from,at:target); save(order); return true
                         }
@@ -188,7 +198,7 @@ struct MenuBarSettings: View {
             HStack {
                 Text(L("实时预览", "Live preview")).font(.system(size:11)).foregroundStyle(.secondary)
                 Spacer()
-                Button(L("恢复默认", "Reset to default")) { save(["week","task"]) }.buttonStyle(.plain).font(.system(size:11)).foregroundStyle(.secondary)
+                Button(L("恢复默认", "Reset to default")) { save(MenuBarField.defaults) }.buttonStyle(.plain).font(.system(size:11)).foregroundStyle(.secondary)
             }
             ScrollView(.horizontal) {
                 MenuBarReadout(state:state).padding(.horizontal,12).frame(height:36)

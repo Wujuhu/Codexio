@@ -1297,6 +1297,22 @@
         }
       }
     },
+    "Codexio Logo": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codexio Logo"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codexio Logo"
+          }
+        }
+      }
+    },
     "Codexio · Codex 额度  1 week %s": {
       "localizations": {
         "en": {
@@ -4557,6 +4573,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "回复预览"
+          }
+        }
+      }
+    },
+    "固定首位": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Always first"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "固定首位"
           }
         }
       }

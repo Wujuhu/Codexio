@@ -3,6 +3,19 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const sharp = require('sharp');
 
+async function renderWordmark(icons) {
+  const source = await fs.readFile(path.join(icons, 'wordmark.svg'), 'utf8');
+  const full = await sharp(Buffer.from(source), {density: 144}).resize({width: 1536}).png().toBuffer({resolveWithObject: true});
+  const trimmed = await sharp(full.data).trim({threshold: 0}).png().toBuffer({resolveWithObject: true});
+  // Remove only symmetric transparent margins: keep the original canvas centre.
+  const left = Math.abs(trimmed.info.trimOffsetLeft || 0);
+  const top = Math.abs(trimmed.info.trimOffsetTop || 0);
+  const dx = Math.max(0, Math.min(left, full.info.width - left - trimmed.info.width) - 4);
+  const dy = Math.max(0, Math.min(top, full.info.height - top - trimmed.info.height) - 4);
+  await sharp(full.data).extract({left: dx, top: dy, width: full.info.width - 2 * dx, height: full.info.height - 2 * dy})
+    .png().toFile(path.join(icons, 'wordmark.png'));
+}
+
 // Import vector art only: discard the presentation canvas outside the icon tile.
 // Retain the supplied (627, 627) reference centre, never re-centre the glyph bounds.
 async function importPack(pack, icons) {
@@ -29,6 +42,8 @@ async function importPack(pack, icons) {
 async function main() {
   const root = path.resolve(__dirname, '..');
   const icons = path.join(root, 'src', 'codexio', 'icons');
+  await renderWordmark(icons);
+  if (process.argv.includes('--wordmark-only')) return;
   const branding = path.join(root, 'docs', 'branding', 'codexio');
   await fs.mkdir(branding, {recursive: true});
   const packArgument = process.argv.indexOf('--logo-pack');

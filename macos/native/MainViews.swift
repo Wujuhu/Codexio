@@ -71,10 +71,9 @@ private struct SidebarView: View {
         VStack(alignment:.leading,spacing:0) {
             if state.sidebarVisible {
                 HStack {
-                    HStack(spacing:1) {
-                        SidebarBrand(state:state)
-                        Text("odexio").font(.system(size:23,weight:.semibold)).lineLimit(1).minimumScaleFactor(0.7)
-                    }.accessibilityElement(children:.ignore).accessibilityLabel("Codexio")
+                    Image(nsImage:Branding.sidebarWordmark()).resizable().scaledToFit()
+                        .frame(width:min(138,max(72,(previewWidth ?? state.sidebarWidth)-72)),height:28,alignment:.leading)
+                        .accessibilityLabel("Codexio")
                     Spacer(minLength:4)
                     Button { state.selectedPage = "logs"; NotificationCenter.default.post(name:.init("CodexioSearch"),object:nil) } label: { Image(systemName:"magnifyingglass").foregroundStyle(.secondary) }.buttonStyle(.plain).accessibilityLabel(L("搜索日志", "Search logs"))
                 }.padding(.horizontal,16).padding(.top,30).padding(.bottom,24)

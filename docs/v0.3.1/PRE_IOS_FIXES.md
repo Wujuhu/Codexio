@@ -1,6 +1,6 @@
 # iOS 开发前的 Mac 中间构建 · 2026-09-28
 
-程序版本保持 **0.3.1**，最新 Widget 构建 **20／1.19**（主 Logo 更新）。这是 A～G 前置修复与后续验收调整的本地开发包，等待用户测试确认；本轮不开始 iOS，不推送、不发布。
+程序版本保持 **0.3.1**，最新 Widget 构建 **20／1.19**（主 Logo 更新）。这是 A～G 前置修复与后续验收调整的本地开发包。用户现已授权开始 iOS 主 App、配对与同步开发，并选择使用自己的 Cloudflare 账号统一部署供自己与少量朋友使用；云端尚未部署，不推送、不发布。
 
 2026-09-28 后续准备：用户要求在正式 iOS 开发前完成架构、配对、轻量同步、原生 UI 和后台能力设计，已整理至 [Mac ↔ iOS 开发设计](../ios/MAC_IOS_SYNC_DESIGN.md)。测试目标已明确为 iPhone 17／iOS 27／SideStore。手机仅保留必要简表，不同步详细日志；后台未划掉也可能挂起，免费机会式刷新与 APNs 及时更新的签名取舍待用户确认。本轮仅更新文档，未修改或重复打包 Mac，不代替用户验收，也未开始 iOS／部署云端。
 
@@ -34,16 +34,24 @@
 - APP：`build/dev/macos/Codexio.app`
 - ZIP：`build/dev/macos/Codexio.app.zip`
 - 合并开发清单：`build/dev/macos/latest.json`
-- 最新构建日志：`build/logs/compact-window-build.log`（先前记录保留在 `build/logs/pre-ios-mac-build.log`、`sidebar-left-align-build.log`、`brand-options-menu-build.log`）
+- 最新构建日志：`build/logs/sidebar-wordmark-menu-logo-build.log`（先前构建日志保留）
 - 三项冒烟结果：`build/checks/macos-smoke/result.json`
-- ZIP 大小：4,775,949 bytes
-- ZIP SHA-256：`0d13690a69f7397cfad4febca2fcaefa7aaa240df2160c136684d5ca82e5b070`
+- ZIP 大小：4,812,612 bytes
+- ZIP SHA-256：`7d4dd5f5d6cc4c9870d51497f01ee00026af57b8b94f90aff9798046392117f7`
 
 开发清单顶层 Windows 字段保持原样，只有 `macos` 对象对应本次 0.3.1 开发包；它不是正式跨平台发布清单。未生成 Windows EXE、iOS IPA 或正式 Release 目录。
 
 ## 用户确认重点
 
-请在自行退出旧版并打开开发 App 后，确认日志首行完整、六页标题固定、侧栏左对齐且展开／收起不移动图标、菜单栏数字及垂直位置、三处折线峰顶，以及上述历史续跑请求的预览／归组。菜单栏 1 pt 下移和 20 pt 状态图标的真实观感仍以用户环境的测试反馈为准。用户确认前不开始 iOS。
+请在自行退出旧版并打开开发 App 后，确认日志首行完整、六页标题固定、侧栏左对齐且展开／收起不移动图标、菜单栏数字及垂直位置、三处折线峰顶，以及上述历史续跑请求的预览／归组。菜单栏 1 pt 下移和 20 pt 状态图标的真实观感仍以用户环境的测试反馈为准。
+
+## 2026-09-28 最终字标与菜单栏 Logo 开关
+
+- 展开侧栏改为手机草图同款最终完整字标，模板前景跟随主题；收起侧栏及外观图标选择保留。
+- Logo 纳入原有菜单栏字段数组，显示时固定第一位，其余字段继续排序；至少选择一项，剩余唯一项目不能取消。旧配置迁移时补入原先固定显示的 Logo，保持既有显示。
+- 实际状态项与设置实时预览复用原组件，原字号、动画和视觉中心不变；设置操作不触发业务扫描。资源渲染沿用已有 Sharp 管线，运行时图像缓存复用。
+- 开发打包已通过原有三项隔离冒烟、版本／签名／架构与 ZIP／清单核验。仅查看一张相关界面 `build/checks/sidebar-wordmark-menu-logo/settings-menubar-zh.png`，没有启动或替换用户安装版。版本和 Widget 构建号不变。
+- iOS SDK 27.0 已可用；本次交付仍仅包含 Mac 开发包，尚无真实 iOS IPA、二维码配对服务或 Cloudflare 部署。后续需完成云端账号授权与部署地址确认，不以交互草图代替原生实现。
 
 ## 2026-09-28 导航对齐验收反馈
 

@@ -6,11 +6,13 @@ enum Branding {
     private static let light = load("app-light")
     private static let dark = load("app-dark")
     private static let mark: NSImage = { let value = load("brand-mark"); value.isTemplate = true; return value }()
+    private static let wordmark: NSImage = { let value = load("wordmark"); value.isTemplate = true; return value }()
     private static func load(_ name: String) -> NSImage {
         guard let file = Bundle.main.url(forResource:name,withExtension:"png"), let image = NSImage(contentsOf:file) else { return NSImage(size:NSSize(width:512,height:512)) }
         return image
     }
     static func logo(dark: Bool) -> NSImage { dark ? self.dark : light }
+    static func sidebarWordmark() -> NSImage { wordmark }
     static func iconID(_ value: String) -> String { iconIDs.contains(value) ? value : "main" }
     // Call from the branding queue. Only the selected full-size artwork is loaded.
     static func appIcon(_ id: String) throws -> NSImage {
