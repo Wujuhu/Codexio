@@ -76,7 +76,7 @@ private struct SidebarView: View {
                     Spacer(minLength:4)
                     Button { state.selectedPage = "logs"; NotificationCenter.default.post(name:.init("CodexioSearch"),object:nil) } label: { Image(systemName:"magnifyingglass").foregroundStyle(.secondary) }.buttonStyle(.plain).accessibilityLabel(L("搜索日志", "Search logs"))
                 }.padding(.horizontal,16).padding(.top,30).padding(.bottom,24)
-            } else { Color.clear.frame(height:76) }
+            } else { Color.clear.frame(height:28+30+24) }
             ForEach(navigation,id:\.self) { page in
                 SidebarNavigationRow(page:page,selected:state.selectedPage == page,expanded:state.sidebarVisible,draggedPage:$draggedPage) { if state.selectedPage != page { state.selectedPage = page } }
                     .padding(.horizontal,8).padding(.bottom,4)
@@ -126,8 +126,8 @@ private struct SidebarNavigationRow: View {
                 HStack(spacing:12) {
                     NavigationGlyph(name:page).stroke(style:StrokeStyle(lineWidth:1.6,lineCap:.round,lineJoin:.round)).frame(width:20,height:20)
                     if expanded { Text(Pages.title(page)).font(.system(size:14,weight:selected ? .medium : .regular)).lineLimit(1) }
-                }.foregroundStyle(.primary).padding(.horizontal,expanded ? 26 : 0)
-                    .frame(maxWidth:.infinity,alignment:.center).allowsHitTesting(false)
+                }.foregroundStyle(.primary).padding(.leading,13).padding(.trailing,expanded ? 26 : 13)
+                    .frame(maxWidth:.infinity,alignment:.leading).allowsHitTesting(false)
             }
             .overlay(alignment:.trailing) {
                 if expanded && page != "overview" {
