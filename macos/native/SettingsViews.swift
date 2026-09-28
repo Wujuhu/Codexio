@@ -73,18 +73,18 @@ struct SettingsView: View {
     @State private var logRoot = ""
     @State private var upstreamConfirmation = false
     @State private var desiredUpstream = false
-    private func sectionTitle(_ section: String) -> String { section == "appearance" ? L("外观", "Appearance") : section == "data" ? L("数据", "Data") : section == "menubar" ? L("菜单栏", "Menu bar") : L("应用", "App") }
+    private func sectionTitle(_ section: String) -> String { section == "mobile" ? L("iPhone 同步", "iPhone sync") : section == "appearance" ? L("外观", "Appearance") : section == "data" ? L("数据", "Data") : section == "menubar" ? L("菜单栏", "Menu bar") : L("应用", "App") }
     var body: some View {
         ScrollView {
             VStack(alignment:.leading,spacing:20) {
                 AdaptiveRow(spacing:28,alignment:.top) {
                     if compact {
                         Picker("",selection:$state.settingsSection) {
-                            ForEach(["appearance","data","app","menubar"],id:\.self) { Text(sectionTitle($0)).tag($0) }
+                            ForEach(["appearance","data","app","mobile","menubar"],id:\.self) { Text(sectionTitle($0)).tag($0) }
                         }.labelsHidden().pickerStyle(.menu).fixedSize()
                     } else {
                         VStack(spacing:5) {
-                            ForEach(["appearance","data","app","menubar"],id:\.self) { section in
+                            ForEach(["appearance","data","app","mobile","menubar"],id:\.self) { section in
                                 Button { state.settingsSection = section } label: { Text(sectionTitle(section)).frame(maxWidth:.infinity,alignment:.leading).padding(10).contentShape(Rectangle()).background(state.settingsSection == section ? Color.primary.opacity(0.07) : .clear,in:RoundedRectangle(cornerRadius:7)) }.buttonStyle(.plain)
                             }
                         }.frame(width:145)
@@ -96,6 +96,7 @@ struct SettingsView: View {
                         case "appearance": appearance
                         case "data": data
                         case "menubar": menuBar
+                        case "mobile": MobileSyncSettings(sync:state.mobileSync) { state.mobileSync.update(state.usage,quota:state.menuQuota) }
                         default: app
                         }
                     }.frame(maxWidth:.infinity,alignment:.leading)

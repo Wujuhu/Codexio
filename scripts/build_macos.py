@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
 STAGING = BUILD / "staging/macos"
 DESTINATION = BUILD / "dev/macos"
-WIDGET_VERSION = 20  # Increase for widget UI, registration, or host-lifecycle changes.
+WIDGET_VERSION = 21  # Main-host lifecycle now also stops the opt-in mobile listener.
 
 
 def run(*args, **kwargs):
@@ -88,7 +88,7 @@ def build_native(bundle, version):
     resources.mkdir(parents=True)
     environment = swift_environment()
     target = platform.machine() + "-apple-macos15.0"
-    sources = sorted((ROOT / "macos/native").glob("*.swift")) + sorted((ROOT / "macos/widget").glob("*.swift"))
+    sources = sorted((ROOT / "macos/native").glob("*.swift")) + sorted((ROOT / "macos/widget").glob("*.swift")) + sorted((ROOT / "apple/shared").glob("*.swift"))
     cache = BUILD / "cache/swift"
     cache.mkdir(parents=True, exist_ok=True)
     run("xcrun", "swiftc", "-swift-version", "5", "-O", "-whole-module-optimization", "-target", target,
@@ -104,6 +104,8 @@ def build_native(bundle, version):
         "LSMinimumSystemVersion": "15.0", "NSHighResolutionCapable": True,
         "NSPrincipalClass": "NSApplication", "NSSupportsAutomaticTermination": False,
         "CFBundleSupportedPlatforms": ["MacOSX"],
+        "NSLocalNetworkUsageDescription": "发现并安全连接你配对的 iPhone，只同步必要摘要。",
+        "NSBonjourServices": ["_codexio._tcp"],
         "CFBundleURLTypes": [{"CFBundleURLName": "Codexio", "CFBundleURLSchemes": ["codexio"]}],
         "NSAppTransportSecurity": {"NSAllowsArbitraryLoads": True, "NSAllowsLocalNetworking": True},
     }

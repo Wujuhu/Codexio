@@ -1,0 +1,12 @@
+{
+  "name": "codexio-sync",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-09-28",
+  "account_id": "f621704fda54fb7a08c6dc0f62cdd66f",
+  "workers_dev": true,
+  "observability": { "enabled": false },
+  "vars": { "DAILY_REQUEST_BUDGET": "20000" },
+  "d1_databases": [{ "binding": "DB", "database_name": "codexio-sync", "database_id": "4d5548d6-022d-4bd5-b2a5-c24e2053979d" }],
+  "ratelimits": [{ "name": "RATE", "namespace_id": "1001", "simple": { "limit": 120, "period": 60 } }],
+  "triggers": { "crons": ["19 0 * * *"] }
+}

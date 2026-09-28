@@ -1793,6 +1793,22 @@
         }
       }
     },
+    "iPhone 同步": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iPhone sync"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iPhone 同步"
+          }
+        }
+      }
+    },
     "{} 次请求未定价": {
       "localizations": {
         "en": {

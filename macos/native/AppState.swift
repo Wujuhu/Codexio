@@ -14,6 +14,7 @@ final class AppState: ObservableObject {
     let clock = ScanClock()
     let quotaClock = ScanClock()
     let menuQuotaClock = ScanClock()
+    lazy var mobileSync = MobileSync(paths:paths)
     private let brandingQueue = DispatchQueue(label:"com.wujuhu.codexio.branding",qos:.utility)
     private lazy var usageCache = UsageSnapshotCache(database:database,catalog:catalog)
     private let objectFiles = ObjectFileCache()
@@ -108,6 +109,7 @@ final class AppState: ObservableObject {
     }
     func start() {
         if paths.mock { seedMock(); return }
+        if UserDefaults.standard.bool(forKey:"codexio.mobile.enabled") { mobileSync.start() }
         refreshUsage(); refreshQuota()
         configureTimers()
         dataQueue.async { [weak self] in
@@ -130,6 +132,7 @@ final class AppState: ObservableObject {
         priceTimer?.tolerance = 180
     }
     func stop() {
+        if !paths.mock { mobileSync.stop() }
         stopped = true; scanTimer?.invalidate(); quotaTimer?.invalidate(); priceTimer?.invalidate(); indexer.cancel(); client.close()
         reportGeneration = UUID()
     }
@@ -439,6 +442,7 @@ final class AppState: ObservableObject {
     }
     func publishWidget() {
         guard !paths.mock, !stopped else { return }
+        mobileSync.update(usage,quota:menuQuota,observed:clock.updated)
         var request: Any = NSNull()
         if let selected = usage.widgetRequest {
             var value: Object = ["id":selected.id,"prompt":String(selected.raw.string("prompt_preview").prefix(240)),"model":modelName(selected.raw.string("model")),"reasoning_effort":logEffortName(selected.raw.string("reasoning_effort")),"duration_running":selected.raw.flag("duration_running")]

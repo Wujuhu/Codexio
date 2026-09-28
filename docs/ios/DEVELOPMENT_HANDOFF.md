@@ -1,0 +1,80 @@
+# iOS 主 App 与 Mac 同步开发交付 · 2026-09-28
+
+本次是 **0.3.1 本地开发版**，不是正式发布。用户已授权使用其 Cloudflare 账号、默认 workers.dev 域名，供自己和少量朋友使用。未推送 Git、未发布 GitHub Release、未升级套餐，未启动或替换用户正在使用的 Mac 安装版。
+
+## 交付与首次使用
+
+- Mac：`build/dev/macos/Codexio.app`／`Codexio.app.zip`，Widget 21／1.20（主宿主新增同步生命周期停止钩子，组件布局不变）。
+- iOS：`build/dev/ios/Codexio.ipa`，arm64、最低 iOS 26、使用 iOS 27 SDK，**未签名，须由 SideStore 重签**。没有嵌入 Apple Account、Cloudflare 管理凭据或邀请码。
+- iOS 清单：`build/dev/ios/build-info.json`；构建命令 `.venv/bin/python scripts/build_ios.py`。编译原生 SwiftUI／Charts，无 WebView 或模拟网页。
+- 云端：`https://codexio-sync.503948883.workers.dev`，独立 Worker `codexio-sync` 和独立 D1 `codexio-sync`；其他 Worker／数据库未修改。
+- 已为用户生成一个单台 Mac 使用、7 天内激活的邀请码，存放在 `build/dev/ios/private/` 的独立文件内（目录 0700、文件 0600）。邀请码未打印到日志，不提交 Git。为朋友生成独立邀请码：使用本机 Node 执行 `scripts/cloudflare_invite.mjs --create`。
+
+1. 用户自行退出旧 Mac App，打开上述开发 App；稳定宿主接管仍按原有规则执行。
+2. 设置 → iPhone 同步 → 开启。可设置设备名称。同步默认关闭，不因升级自动上传。
+3. 需要云端时，输入私有文件内的邀请码，点击“启用 Cloudflare 同步”。不需要将 Cloudflare 管理权限交给朋友。
+4. 希望手机显示短请求正文时，明确勾选“允许同步请求短预览”；默认不上传。短预览不是自动脱敏保证。
+5. Mac 点击“添加 iPhone · 生成二维码”；手机通过 SideStore 安装 IPA，点击“连接我的 Mac”，允许相机和本地网络权限，扫描二维码。
+6. **首次扫码须处于可互通的局域网**。在 Mac 上点击“确认配对”；二维码单次有效、5 分钟过期。配对后切换蜂窝网络可从 Cloudflare 读取已上传数据。
+7. 若先做局域网配对、之后才启用云端，手机下一次成功连接该 Mac 时会获知云端配置，无需把管理员凭据输入手机。
+
+当前没有实现跨公网首次扫码的中介流程；不要将这次“局域网扫码＋配对后云端回退”写成“支持异网首次配对”。
+
+## 已实现的主 App
+
+- 概览／用量／记录／设置四标签，原生 SwiftUI 导航、列表、表单与系统玻璃控件；最终字标沿用 Mac 的 `wordmark.png`。
+- 概览含手动刷新、连接来源与更新时间、始终存在的任务卡、两档额度、今日指标和最近 3 条请求。
+- 用量页三条曲线同图、各自按峰值缩放并保留顶部空间；点击日期的金额／Token／请求数是同一行小字。模型用完整名称的动态纵向列表，不限 Astra／Sol／Luna 三列；费用／Token／请求分别有占比。
+- 记录页只展示 Mac 归组后的用户请求简表，20 条增量显示、最多 200 条、最近 7 天；不提供详细日志或完整对话接口。
+- 设置提供多 Mac 切换、扫码、主题与手机本地移除。手机最多保存 3 台 Mac，每台 Mac 最多授权 3 部手机；Mac 可撤销读权限。
+- 本阶段未加入 iOS Widget／Live Activity／灵动岛／APNs，遵循用户“先只管主 App”的范围；不声称免费重签可实现后台常驻。
+
+## 安全与生命周期
+
+- 设备身份和 writer／local reader／cloud reader 分离；32 字节安全随机 secret，Cloud 只保存哈希。管理 OAuth 仅留在本机钥匙串保护的 Wrangler 环境。
+- Mac 首次开启同步时使用系统 OpenSSL 生成自签 TLS 身份；私钥 PKCS#12 及密码保存到钥匙串。生成过程的临时目录权限 0700，完成后删除；导入身份只在内存中，不安装全局根证书。
+- QR 固定证书 SHA-256 指纹，iOS 同时检查完全匹配的证书和 X.509 信任／有效期，不使用 verify-always-true。
+- 局域网复用 Apple Network.framework 的 Bonjour、TLS 与 WebSocket 消息帧。Bonjour endpoint 不具备 HTTP URL，因此双方使用系统 `skipHandshake` 直接在**已经认证的 TLS** 上分帧；没有关闭 TLS 验证，也没有自写 TCP 拆包。
+- 协议限制数据集与大小。Cloud 固定 HTTPS origin，拒绝重定向；数据按设备授权隔离，未放入公共 CDN Cache。
+- 同步完全由 Mac 主 App 持有，关闭窗口不影响，退出停止 listener、连接、定时器与 URLSession；mock 不创建生产身份、端口、Bonjour 或网络请求。
+- 手机仅在前台维护连接与轮询，退后台停止；缓存仍保留。Mac 停止后云端是旧快照，不会替 Mac 采集；过旧任务标“待更新”。
+- 关闭 Mac 同步是停止服务，**不是删除云副本**，设置状态明确提示保留最后上传值；云端超过 7 天未更新的快照由定时清理回收。手机移除设备会删除该设备本地缓存；远程撤销不能抹除离线手机已经保存的数据。
+
+## 同步与预算
+
+本开发版用 `live / recent / trends` 三份有硬上限的数据集与独立持久 revision／digest。与早期完整方案的逐行游标／tombstone 不同，**变化时发送该有界数据集的替换快照**；不把它称为已经实现逐行差量协议。普通 live 变化不使历史数据集重复发送；没有变化的 Cloud GET 只返回空增量。手机拒绝旧 revision 及同版本不同摘要，不因云端迟到而回退。
+
+Mac 原始采集不增加第二份。导出复用现有 `UsageSnapshot`／请求归组／额度回退：live 为小型白名单，历史导出依赖账本结果 revision、时区、日期、隐私和任务边界；普通历史变化合并到约 60 秒一次。Cloud 普通发送约 30 秒，关键任务／隐私变化优先，重试退避到 15 分钟。健康采样按 5 分钟桶更新，不把每次后台扫描变成完整历史同步。
+
+本版趋势含近 90 日日桶与 7／30／90 日模型汇总；不发送小时明细，不同步原始日志、调用参数、文件、邮箱或上游凭据。单份硬上限 live 8,000 bytes、recent 120,000 bytes、trends 80,000 bytes；超限明确失败，不截断 JSON 或扩大至全量账本。
+
+手机先显示缓存，给 Local 约 1.5 秒优先发现窗口；没有认证 Local 就绪时允许 Cloud 回退。Local 成功后停止 Cloud 轮询；连接失效再回退，约 60 秒重新尝试本地。前台 Cloud 有任务约 15 秒、空闲约 60 秒；不承诺所有数值端到端 10 秒更新。
+
+### 用户账号实际核对
+
+2026-09-28 通过已授权的只读 API 查询。原有 3 个 Worker、2 个 D1；过去查询范围包含 9 月 22～27 日六个完整 UTC 日：
+
+| 指标 | 现有项目单日最高 | 免费额度 |
+| --- | ---: | ---: |
+| Workers 请求 | 2,283 | 100,000／日 |
+| D1 rows_read | 8,984 | 5,000,000／日 |
+| D1 rows_written | 1,012 | 100,000／日 |
+
+原两个数据库合计 376,832 bytes（368 KiB）；新增数据库未复用原表。以上为官方 Analytics 返回值，不是对未来峰值的保证。账户订阅读取接口返回 403，不能据此断言账号套餐或账单状态；本次未调用套餐升级或付款接口。
+
+Codexio 配置每天最多 20,000 次进入业务处理的请求预算，持久计数并在达到时返回 429；限流绑定另限制单 IP 每分钟 120 次。计数本身也产生 D1 写入，已纳入预算设计。配对、最多三份快照和最多三个 reader 都有界；拒绝无限匿名设备注册，只有管理员单次邀请码可创建 writer。
+
+该预算**不等于全账号 Workers 请求硬上限**：拒绝请求仍可能消耗 Workers 请求，其他项目的流量也不受本服务控制，恶意流量不能靠业务计数完全拦在计费入口之外。当前历史余量支持少量朋友，不能保证其他项目未来突增后永不超额；限流／服务失败时保留缓存与待上传最新值。
+
+官方依据：[Workers 定价](https://developers.cloudflare.com/workers/platform/pricing/)、[D1 定价](https://developers.cloudflare.com/d1/platform/pricing/)、[D1 限制](https://developers.cloudflare.com/d1/platform/limits/)、[D1 batch](https://developers.cloudflare.com/d1/worker-api/d1-database/)、[Network WebSocket options](https://developer.apple.com/documentation/network/nwprotocolwebsocket/options)。
+
+## 验证与待用户验收
+
+- Mac 沿用原有三项隔离冒烟与版本、架构、完整签名、ZIP／清单校验，不增加维护性测试套件。
+- iOS 已编译为 iOS 设备 arm64 二进制，核对最低系统、SDK、IPA ZIP 完整性与版本；不是模拟器 IPA，也未冒充有效分发签名。
+- 使用一次性内存脚本核对了新云服务的模拟设备注册、上传、读取、未变化响应与撤销。只创建模拟值，随后删除对应临时 host、reader、snapshot 和 invite，未读取或修改原有项目内容。
+- 核对后读取的 Workers Analytics 统计包含 8 次请求、0 个运行错误；这是小型模拟数据的连通性样本，不代表满容量性能或真实用户峰值。
+- 局域网发现一个 HTTP Upgrade／Bonjour endpoint 配置问题后，定向修复并核对了固定证书 TLS＋原生消息帧的本机回环收发。该核对没有运行真实 Codexio App、写生产钥匙串或广播 Bonjour；**不等于 iPhone 真机已验证**。
+- 尚需用户在 iPhone 17／iOS 27／SideStore 上确认安装、扫码权限、Mac 点击批准、同网数据与切蜂窝回退。签名工具可能改变 Bundle ID／钥匙串组；实际续签保留凭据情况不能仅靠编译确认。
+
+构建日志：`build/logs/mobile-sync-macos-build.log`、`build/logs/ios-build.log`。正式发布仍需用户验收后的第二次明确授权，IPA 不擅自成为既有 GitHub 三附件发布的第四项。
