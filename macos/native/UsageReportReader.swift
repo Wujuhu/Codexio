@@ -29,14 +29,14 @@ struct UsageReportReader: View {
             if let data = model.documents[model.period] {
                 GeometryReader { geometry in
                     let widthScale = (geometry.size.width-24)/model.style.width
-                    let heightScale = (geometry.size.height-12)/model.style.height
+                    let heightScale = (geometry.size.height-12)/data.cardHeight
                     let scale = max(0.38, min(0.92, min(widthScale, heightScale)))
                     ScrollViewReader { proxy in
                         ScrollView(.vertical) {
                             UsageReportLiveCard(data: data, style: model.style)
-                                .frame(width: model.style.width, height: model.style.height)
+                                .frame(width: model.style.width, height: data.cardHeight)
                                 .scaleEffect(scale, anchor: .topLeading)
-                                .frame(width: model.style.width*scale, height: model.style.height*scale, alignment: .topLeading)
+                                .frame(width: model.style.width*scale, height: data.cardHeight*scale, alignment: .topLeading)
                                 .id("report-top")
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 6)
@@ -66,17 +66,24 @@ struct UsageReportReader: View {
                                 .foregroundStyle(model.period == period ? palette.paper : palette.ink)
                                 .frame(maxWidth: .infinity).frame(height: 36)
                                 .background(model.period == period ? palette.ink : .clear, in: RoundedRectangle(cornerRadius: 12))
-                            }
+                                .contentShape(RoundedRectangle(cornerRadius: 12))
+                        }
                         .buttonStyle(.plain).accessibilityAddTraits(model.period == period ? .isSelected : [])
                     }
                 }.padding(4).background(palette.secondary.opacity(0.35), in: RoundedRectangle(cornerRadius: 16))
                 Menu {
                     Picker(L("报告样式", "Report style"), selection: Binding(get: { model.style }, set: { model.onStyle?($0) })) { ForEach(UsageReportStyle.allCases) { Text($0.title).tag($0) } }
-                    Button(L("重新整理报告", "Refresh report")) { model.onRefresh?() }.disabled(model.busy)
                 } label: {
                     Label(L("样式", "Style"), systemImage: "paintpalette").font(.system(size: 12))
                 }
                 .menuStyle(.borderlessButton).fixedSize()
+                Button { model.onRefresh?() } label: {
+                    Label(L("重新整理报告", "Refresh report"), systemImage: "arrow.clockwise")
+                        .font(.system(size: 11)).frame(maxWidth: .infinity).frame(height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(model.busy)
+                .help(L("重新整理报告", "Refresh report"))
                 Spacer(minLength: 0)
                 if !atBottom, model.documents[model.period] != nil {
                     reportResourceImage(model.style.catAsset).resizable().scaledToFit().frame(width: 52, height: 34)
@@ -87,7 +94,7 @@ struct UsageReportReader: View {
                 Text(L("把小进展分享出去，喵", "Share your little progress"))
                     .font(.system(size: 10)).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
             }
-            .frame(width: 112)
+            .frame(width: 96)
             .padding(.leading, 6).padding(.trailing, 14).padding(.vertical, 14)
             if let error = model.error, !model.documents.isEmpty {
                 Text(error).font(.caption).foregroundStyle(.red).lineLimit(2).frame(width: 100)

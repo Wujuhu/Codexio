@@ -192,9 +192,9 @@ enum UsageReportRenderer {
         let canvas = ZStack {
             style.palette.surface.opacity(0.65)
             UsageReportCard(style: style, data: data)
-        }.frame(width: style.width+90, height: style.height+80)
+        }.frame(width: style.width+90, height: data.cardHeight+80)
         let renderer = ImageRenderer(content: canvas)
-        renderer.scale = 2; renderer.proposedSize = ProposedViewSize(width: style.width+90, height: style.height+80)
+        renderer.scale = 2; renderer.proposedSize = ProposedViewSize(width: style.width+90, height: data.cardHeight+80)
         guard let image = renderer.cgImage else { throw AppFailure(L("无法渲染报告", "Could not render the report")) }
         return image
     }

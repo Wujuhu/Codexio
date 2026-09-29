@@ -34,6 +34,12 @@ enum UsageReportStyle: String, CaseIterable, Identifiable {
     }
 }
 
+extension UsageReportData {
+    var cardHeight: CGFloat {
+        max(820, 952 - CGFloat(max(0, 3-min(3, models.count)))*50)
+    }
+}
+
 struct ReportArtCardPalette {
     let paper: Color
     let ink: Color
@@ -131,7 +137,7 @@ struct UsageReportCard: View {
                 .padding(.top, 76)
                 .padding(.bottom, 42)
         }
-        .frame(width: style.width, height: style.height)
+        .frame(width: style.width, height: data.cardHeight)
         .shadow(color: palette.ink.opacity(0.14), radius: 23, y: 12)
         .accessibilityElement(children: .contain)
     }
@@ -148,9 +154,7 @@ private struct ReportArtCompactReport: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ReportArtBrandHeader(data: data, palette: palette, centered: true)
-            Text(data.dateLabel).font(.system(size: 12, weight: .medium)).foregroundStyle(palette.muted).monospacedDigit()
-                .frame(maxWidth: .infinity).padding(.top, 5)
+            ReportArtBrandHeader(data: data, palette: palette, centered: false)
             ReportArtFineRule(color: palette.accent).padding(.top, 16)
             hero.padding(.top, 10)
             ReportArtFineRule(color: palette.accent).padding(.top, 10)
@@ -261,7 +265,7 @@ private struct ReportArtModelRows: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(L("模型使用", "Model usage")).font(reportEditorial(24)).fontWeight(.semibold)
+                Text(L("模型使用", "Model usage")).font(reportEditorial(26)).fontWeight(.semibold)
                 Spacer()
                 Text("\(data.modelCalls) " + L("次调用", "calls"))
                     .font(.system(size: 11)).foregroundStyle(palette.muted)
@@ -270,13 +274,13 @@ private struct ReportArtModelRows: View {
             ForEach(Array(data.models.prefix(3))) { model in
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(modelName(model.name)).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                        Text(modelName(model.name)).font(.system(size: 15, weight: .medium)).lineLimit(1)
                         Text(model.costLabel + " · " + reportTokenLabel(model.tokens) + " Token")
-                            .font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
+                            .font(.system(size: 12)).foregroundStyle(palette.muted).lineLimit(1)
                     }
                     Spacer(minLength: 8)
                     ReportArtNumber(value: "\(model.calls) " + L("次", "calls") + " · \(data.percent(model.calls, of: data.modelCalls))%")
-                        .font(.system(size: 12))
+                        .font(.system(size: 13))
                 }
             }
         }.foregroundStyle(palette.ink)

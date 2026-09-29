@@ -39,7 +39,13 @@ final class MockGallery {
             case "report-window":
                 ReportArtworkResources.prepare(style: .garden)
                 let model = UsageReportViewModel()
-                model.documents = [.day: UsageReportRenderer.previewData]
+                var preview = UsageReportRenderer.previewData
+                preview.models = Array(preview.models.prefix(2))
+                preview.modelCalls = 60
+                preview.totalTokens = 1_980_000
+                preview.inputTokens = 1_600_000
+                preview.costUSD = 9.32
+                model.documents = [.day: preview]
                 model.style = .garden
                 view = AnyView(UsageReportReader(model: model)); size = NSSize(width:540,height:690)
             case "menu": view = AnyView(menuPreview); size = NSSize(width:620,height:940)
