@@ -28,7 +28,7 @@ struct UsageReportReader: View {
         VStack(spacing: 0) {
             HStack {
                 Menu {
-                    Picker(L("报告样式", "Report style"), selection: $model.style) { ForEach(UsageReportStyle.allCases) { Text($0.title).tag($0) } }
+                    Picker(L("报告样式", "Report style"), selection: Binding(get: { model.style }, set: { model.onStyle?($0) })) { ForEach(UsageReportStyle.allCases) { Text($0.title).tag($0) } }
                     Button(L("重新整理报告", "Refresh report")) { model.onRefresh?() }.disabled(model.busy)
                 } label: { Image(systemName: "paintpalette").font(.system(size: 14)) }
                     .menuStyle(.borderlessButton).fixedSize().help(L("报告样式", "Report style"))
@@ -51,32 +51,40 @@ struct UsageReportReader: View {
             }.padding(.horizontal, 24).padding(.top, 10).padding(.bottom, 3)
             if let data = model.documents[model.period] {
                 GeometryReader { geometry in
-                    let scale = max(0.1, min(1, (geometry.size.width-24)/560))
+                    let widthScale = (geometry.size.width-44)/model.style.width
+                    let heightScale = (geometry.size.height-58)/model.style.height
+                    let scale = max(0.45, min(0.92, min(widthScale, heightScale)))
+                    let needsScroll = model.style.height*scale+54 > geometry.size.height+1
                     ScrollViewReader { proxy in
-                        ScrollView(.vertical) {
-                            VStack(spacing: 10) {
-                                UsageReportLiveCard(data: data, style: model.style)
-                                    .frame(width: 560, height: model.style.height)
-                                    .scaleEffect(scale, anchor: .topLeading)
-                                    .frame(width: 560*scale, height: model.style.height*scale, alignment: .topLeading)
-                                    .id("report-top")
-                                VStack(spacing: 8) {
-                                    ReportNativeShareButton(title: L("分享报告", "Share report"), action: model.onShare).frame(width: 118, height: 32)
-                                    Text(L("把小进展分享出去，喵", "Share your little progress")).font(.system(size: 11, weight: .medium))
-                                }.padding(.bottom, 22)
-                            }.padding(.top, 5).frame(maxWidth: .infinity)
+                        ZStack(alignment: .bottom) {
+                            ScrollView(.vertical) {
+                                VStack(spacing: 10) {
+                                    UsageReportLiveCard(data: data, style: model.style)
+                                        .frame(width: model.style.width, height: model.style.height)
+                                        .scaleEffect(scale, anchor: .topLeading)
+                                        .frame(width: model.style.width*scale, height: model.style.height*scale, alignment: .topLeading)
+                                        .id("report-top")
+                                    VStack(spacing: 8) {
+                                        ReportNativeShareButton(title: L("分享报告", "Share report"), action: model.onShare).frame(width: 118, height: 32)
+                                        Text(L("把小进展分享出去，喵", "Share your little progress")).font(.system(size: 11, weight: .medium))
+                                    }.padding(.bottom, 12)
+                                }.padding(.top, 5).frame(maxWidth: .infinity)
+                            }
+                            .onScrollGeometryChange(for: Bool.self) { value in value.visibleRect.maxY >= value.contentSize.height-8 } action: { _, value in atBottom = value }
+                            if needsScroll && !atBottom {
+                                HStack(spacing: 9) {
+                                    reportResourceImage(model.style.catAsset).resizable().scaledToFit().frame(width: 46, height: 29)
+                                    Text(L("往下滑，看看完整的小记录喵", "Scroll down for your full little story")).font(.system(size: 12, weight: .medium))
+                                    Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
+                                }
+                                .padding(.horizontal, 16).padding(.vertical, 5)
+                                .background(palette.surface.opacity(0.96), in: Capsule())
+                                .padding(.bottom, 4)
+                            }
                         }
-                        .onScrollGeometryChange(for: Bool.self) { value in value.visibleRect.maxY >= value.contentSize.height-8 } action: { _, value in atBottom = value }
                         .onChange(of: model.period) { _, _ in atBottom = false; proxy.scrollTo("report-top", anchor: .top) }
                         .onChange(of: model.style) { _, _ in atBottom = false; proxy.scrollTo("report-top", anchor: .top) }
                     }
-                }
-                if !atBottom {
-                    HStack(spacing: 9) {
-                        reportResourceImage(model.style.catAsset).resizable().scaledToFit().frame(width: 46, height: 29)
-                        Text(L("往下滑，看看完整的小记录喵", "Scroll down for your full little story")).font(.system(size: 12, weight: .medium))
-                        Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
-                    }.frame(maxWidth: .infinity).padding(.vertical, 4)
                 }
             } else {
                 VStack(spacing: 12) {
@@ -88,7 +96,6 @@ struct UsageReportReader: View {
         }
         .foregroundStyle(palette.ink).background(palette.surface)
         .preferredColorScheme(.light)
-        .onChange(of: model.style) { _, style in model.onStyle?(style) }
     }
 }
 

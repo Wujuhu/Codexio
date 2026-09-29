@@ -37,7 +37,7 @@ final class MockGallery {
             var view: AnyView, size = NSSize(width:1380,height:900)
             switch name {
             case "report-window":
-                ReportArtworkResources.prepare()
+                ReportArtworkResources.prepare(style: .garden)
                 let model = UsageReportViewModel()
                 model.documents = [.day: UsageReportRenderer.previewData]
                 model.style = .garden

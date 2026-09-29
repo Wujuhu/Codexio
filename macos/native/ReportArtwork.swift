@@ -1,5 +1,6 @@
 // Adapted from user-provided report-cards-234-source.zip.
 import AppKit
+import ImageIO
 import SwiftUI
 
 enum UsageReportStyle: String, CaseIterable, Identifiable {
@@ -16,11 +17,10 @@ enum UsageReportStyle: String, CaseIterable, Identifiable {
         }
     }
     var height: CGFloat {
-        switch self {
-        case .bookmark: 1190
-        case .garden: 1160
-        case .afternoon: 1190
-        }
+        980
+    }
+    var width: CGFloat {
+        500
     }
     var palette: ReportArtCardPalette {
         switch self {
@@ -127,21 +127,158 @@ struct UsageReportCard: View {
                     .allowsHitTesting(false)
             }
             cardContent
-                .padding(.horizontal, 55)
-                .padding(.top, 94)
-                .padding(.bottom, 65)
+                .padding(.horizontal, 42)
+                .padding(.top, 76)
+                .padding(.bottom, 42)
         }
-        .frame(width: 560, height: style.height)
+        .frame(width: style.width, height: style.height)
         .shadow(color: palette.ink.opacity(0.14), radius: 23, y: 12)
         .accessibilityElement(children: .contain)
     }
 
-    @ViewBuilder private var cardContent: some View {
-        switch style {
-        case .bookmark: ReportArtBookmarkReport(data: data, palette: palette)
-        case .garden: ReportArtGardenReport(data: data, palette: palette)
-        case .afternoon: ReportArtAfternoonReport(data: data, palette: palette)
+    private var cardContent: some View {
+        ReportArtCompactReport(data: data, style: style, palette: palette)
+    }
+}
+
+private struct ReportArtCompactReport: View {
+    let data: UsageReportData
+    let style: UsageReportStyle
+    let palette: ReportArtCardPalette
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ReportArtBrandHeader(data: data, palette: palette, centered: true)
+            Text(data.dateLabel).font(.system(size: 12, weight: .medium)).foregroundStyle(palette.muted).monospacedDigit()
+                .frame(maxWidth: .infinity).padding(.top, 5)
+            ReportArtFineRule(color: palette.accent).padding(.top, 16)
+            hero.padding(.top, 22)
+            ReportArtFineRule(color: palette.accent).padding(.top, 22)
+            metrics.padding(.vertical, 18)
+            ReportArtFineRule(color: palette.accent)
+            ReportArtTimeRhythm(data: data, palette: palette).padding(.top, 20)
+            ReportArtFineRule(color: palette.accent).padding(.top, 20)
+            ReportArtModelRows(data: data, palette: palette).padding(.top, 18)
+            Spacer(minLength: 20)
+            ReportArtCatInsight(text: data.activityInsight, palette: palette)
+            Text(L("专注 · 与 AI 共成长", "Focus · Grow with AI"))
+                .font(.system(size: 10)).tracking(3).foregroundStyle(palette.muted)
+                .frame(maxWidth: .infinity).padding(.top, 14)
         }
+    }
+
+    private var hero: some View {
+        ZStack(alignment: .bottomTrailing) {
+            VStack(alignment: .leading, spacing: 7) {
+                Text(style == .bookmark ? data.modelHeadline : data.activityHeadline)
+                    .font(reportEditorial(43)).fontWeight(.semibold)
+                    .lineSpacing(1).lineLimit(2).minimumScaleFactor(0.72)
+                if let peak = data.peakTimeSlice {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        ReportArtNumber(value: "\(peak.requests) / \(data.requests)")
+                            .font(reportEditorial(32)).fontWeight(.semibold)
+                        Text(L("次请求", "requests")).font(.system(size: 12))
+                    }
+                    Text(peak.name + " · " + "\(data.percent(peak.requests, of: data.requests))%")
+                        .font(.system(size: 14, weight: .medium)).foregroundStyle(palette.accent)
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            reportResourceImage(style.catAsset).resizable().scaledToFit()
+                .frame(width: 145, height: 112)
+        }
+        .foregroundStyle(palette.ink)
+        .frame(height: 178)
+    }
+
+    private var metrics: some View {
+        HStack(spacing: 0) {
+            ReportArtSmallMetric(value: data.costLabel, label: L("费用", "Cost"), palette: palette)
+            divider
+            ReportArtSmallMetric(value: data.tokenSummary, label: L("总 Token", "Total tokens"), palette: palette)
+            divider
+            ReportArtSmallMetric(value: "\(data.requests)", label: L("用户请求", "Requests"), palette: palette)
+            divider
+            ReportArtSmallMetric(value: data.cacheLabel, label: L("命中率", "Cache hit"), palette: palette)
+        }
+    }
+
+    private var divider: some View {
+        Rectangle().fill(palette.secondary.opacity(0.65)).frame(width: 1, height: 35)
+    }
+}
+
+private struct ReportArtTimeRhythm: View {
+    let data: UsageReportData
+    let palette: ReportArtCardPalette
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(L("使用节奏", "Usage rhythm")).font(reportEditorial(25)).fontWeight(.semibold)
+                Spacer()
+                if let peak = data.peakTimeSlice {
+                    Text(peak.name + L("最活跃", " was busiest"))
+                        .font(.system(size: 11, weight: .medium)).foregroundStyle(palette.accent)
+                }
+            }
+            HStack(alignment: .bottom, spacing: 14) {
+                ForEach(data.timeSlices) { slice in
+                    VStack(spacing: 3) {
+                        ReportArtNumber(value: "\(slice.requests)").font(reportEditorial(12)).fontWeight(.semibold)
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(slice.requests == data.peakTimeSlice?.requests ? palette.accent : palette.secondary)
+                            .frame(height: slice.requests == 0 ? 1 : max(3, CGFloat(slice.requests) / CGFloat(max(1, data.peakTimeSlice?.requests ?? 1)) * 52))
+                        Text(slice.name).font(.system(size: 10)).foregroundStyle(palette.muted)
+                    }.frame(maxWidth: .infinity)
+                }
+            }.frame(height: 82, alignment: .bottom)
+            HStack(alignment: .top, spacing: 10) {
+                timeNote(data.firstRequest, first: true)
+                Spacer(minLength: 0)
+                timeNote(data.lastRequest, first: false)
+            }
+        }.foregroundStyle(palette.ink)
+    }
+
+    private func timeNote(_ date: Date?, first: Bool) -> some View {
+        let hour = date.map { Calendar.current.component(.hour, from: $0) }
+        let message = first
+            ? ((hour ?? 12) >= 5 && (hour ?? 12) < 9 ? L("早早开工，继续加油喵", "An early start—keep it up") : L("按自己的节奏来，喵", "Keep your own pace"))
+            : ((hour ?? 12) >= 22 || (hour ?? 12) < 5 ? L("辛苦啦，早点休息喵", "Rest a little earlier") : L("努力收好，好好放松喵", "Time to unwind"))
+        return VStack(alignment: first ? .leading : .trailing, spacing: 1) {
+            Text((first ? L("最早", "First") : L("最晚", "Last")) + " · " + (date.map { $0.formatted(.dateTime.hour().minute()) } ?? "—"))
+                .font(.system(size: 10, weight: .medium)).monospacedDigit()
+            if date != nil { Text(message).font(.system(size: 9)).foregroundStyle(palette.muted).lineLimit(1) }
+        }
+    }
+}
+
+private struct ReportArtModelRows: View {
+    let data: UsageReportData
+    let palette: ReportArtCardPalette
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(L("模型使用", "Model usage")).font(reportEditorial(24)).fontWeight(.semibold)
+                Spacer()
+                Text("\(data.modelCalls) " + L("次调用", "calls"))
+                    .font(.system(size: 10)).foregroundStyle(palette.muted)
+            }
+            if data.models.isEmpty { Text(L("暂无模型调用", "No model calls")).font(.system(size: 10)).foregroundStyle(palette.muted) }
+            ForEach(Array(data.models.prefix(3))) { model in
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(modelName(model.name)).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                        Text(model.costLabel + " · " + reportTokenLabel(model.tokens) + " Token")
+                            .font(.system(size: 10)).foregroundStyle(palette.muted).lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    ReportArtNumber(value: "\(model.calls) " + L("次", "calls") + " · \(data.percent(model.calls, of: data.modelCalls))%")
+                        .font(.system(size: 11))
+                }
+            }
+        }.foregroundStyle(palette.ink)
     }
 }
 
@@ -303,18 +440,31 @@ func reportResourceImage(_ name: String) -> Image {
 enum ReportArtworkResources {
     private static let lock = NSLock()
     private static var images: [String: NSImage] = [:]
-    // Called by report preparation on AppState.dataQueue, before presentation.
-    static func prepare() {
-        for name in ["brand-mark", "cat-bookmark", "cat-garden", "cat-afternoon"] {
-            lock.lock(); let loaded = images[name] != nil; lock.unlock()
-            if loaded { continue }
-            guard let url = Bundle.main.url(forResource: name, withExtension: "png", subdirectory: "ReportCards"), let image = NSImage(contentsOf: url) else { continue }
-            lock.lock(); images[name] = image; lock.unlock()
+    // Only the currently visible card is decoded. The original artwork is much
+    // larger than its 2x rendering size, so downsampling avoids a permanent
+    // full-resolution CGImage cache.
+    static func prepare(style: UsageReportStyle) {
+        var loaded: [String: NSImage] = [:]
+        for (name, pixels) in [("brand-mark", 128), (style.catAsset, 384)] {
+            guard let url = Bundle.main.url(forResource: name, withExtension: "png", subdirectory: "ReportCards"),
+                  let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { continue }
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: pixels,
+                kCGImageSourceShouldCacheImmediately: true
+            ]
+            guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { continue }
+            loaded[name] = NSImage(cgImage: thumbnail, size: NSSize(width: thumbnail.width, height: thumbnail.height))
         }
+        lock.lock(); images = loaded; lock.unlock()
+    }
+    static func release() {
+        lock.lock(); images.removeAll(keepingCapacity: false); lock.unlock()
     }
     static func image(_ name: String) -> Image {
         lock.lock(); let image = images[name]; lock.unlock()
-        return image.map { Image(nsImage: $0) } ?? Image(systemName: "cat")
+        return image.map { Image(nsImage: $0) } ?? Image(systemName: name == "brand-mark" ? "c.circle.fill" : "cat")
     }
 }
 

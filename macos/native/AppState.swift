@@ -183,7 +183,6 @@ final class AppState: ObservableObject {
                     let generation = try self.database.query("SELECT revision FROM usage_revisions WHERE kind='ledger'").first?.integer("revision") ?? 0
                     return (snapshot, generation)
                 }
-                ReportArtworkResources.prepare()
                 result = .success(try self.usageReportStore.load(snapshot: input.0, ledger: input.1, priceVersion: self.catalog.version, sourceKey: sourceKey))
             } catch { result = .failure(error) }
             DispatchQueue.main.async {

@@ -150,9 +150,9 @@ final class UsageReportStore {
         var requests = 0, modelCalls = 0, input = 0, output = 0, cached = 0, total = 0, unknownTokens = 0, unknownCosts = 0, priced = 0
         var cost = 0.0
         var models: [String: UsageReportModel] = [:]
-        var projects: [String: Int] = [:]
         var times = [0,0,0,0]
         var first: Date?, last: Date?
+        var firstClock = Int.max, lastClock = -1
         mutating func call(_ row: UsageRow) {
             if let n = row.tokens { total += n } else { unknownTokens += 1 }
             output += row.outputTokens ?? 0
@@ -167,12 +167,14 @@ final class UsageReportStore {
             else { value.costComplete = false }
             models[name] = value
         }
-        mutating func request(_ row: UsageRow, date: Date, hour: Int) {
-            requests += 1; first = min(first ?? date, date); last = max(last ?? date, date)
+        mutating func request(date: Date, calendar: Calendar) {
+            let components = calendar.dateComponents([.hour, .minute, .second], from: date)
+            let hour = components.hour ?? 0
+            let clock = hour*3600 + (components.minute ?? 0)*60 + (components.second ?? 0)
+            requests += 1
+            if clock < firstClock { firstClock = clock; first = date }
+            if clock > lastClock { lastClock = clock; last = date }
             times[min(3, max(0, hour/6))] += 1
-            let rawPath = ["cwd", "turn_cwd", "session_cwd"].map { row.raw.string($0) }.first { !$0.isEmpty }
-            let path = rawPath.map { URL(fileURLWithPath: $0).standardizedFileURL.path } ?? "unassigned"
-            projects[path, default: 0] += 1
         }
         var costValue: Double? { priced > 0 ? cost : nil }
     }
@@ -197,8 +199,7 @@ final class UsageReportStore {
             }
             for row in snapshot.requests where row.local && row.raw.string("record_kind") == "user_request" && !row.raw.flag("is_subagent") {
                 guard let date = row.date, date >= floor, date < ceiling else { continue }
-                let hour = calendar.component(.hour, from: date)
-                for index in allRanges.indices where date >= allRanges[index].start && date < allRanges[index].end { aggregates[index].request(row, date: date, hour: hour) }
+                for index in allRanges.indices where date >= allRanges[index].start && date < allRanges[index].end { aggregates[index].request(date: date, calendar: calendar) }
             }
             var documents: [UsageReportPeriod: UsageReportData] = [:]
             for index in periods.indices {
@@ -209,21 +210,12 @@ final class UsageReportStore {
                     let amounts = remaining.compactMap(\.costUSD)
                     models = Array(models.prefix(3)) + [UsageReportModel(name: L("其他模型", "Other models"), calls: remaining.reduce(0) {$0+$1.calls}, tokens: remaining.reduce(0) {$0+$1.tokens}, costUSD: amounts.isEmpty ? nil : amounts.reduce(0,+), costComplete: remaining.allSatisfy(\.costComplete))]
                 }
-                var projects: [UsageReportProject] = []
-                for (path, count) in value.projects {
-                    let name = path == "unassigned" ? L("未归属", "Unassigned") : URL(fileURLWithPath: path).lastPathComponent
-                    projects.append(UsageReportProject(id: path, name: name, requests: count))
-                }
-                projects.sort { left, right in left.requests == right.requests ? left.id < right.id : left.requests > right.requests }
-                let names: [String: [UsageReportProject]] = Dictionary(grouping: projects, by: { $0.name })
-                projects = projects.map { row in var row = row; if names[row.name, default: []].count > 1 { row.name += " · " + URL(fileURLWithPath: row.id).deletingLastPathComponent().lastPathComponent }; return row }
-                if projects.count > 3 { let rest = projects.dropFirst(3); projects = Array(projects.prefix(3)) + [UsageReportProject(id: "other", name: L("其他项目", "Other projects"), requests: rest.reduce(0) {$0+$1.requests})] }
                 let namesOfTimes = [L("凌晨", "Night"), L("上午", "Morning"), L("午后", "Afternoon"), L("晚间", "Evening")]
                 labelFormatter.locale = Locale(identifier: L("zh_CN", "en_US")); labelFormatter.timeZone = calendar.timeZone
                 labelFormatter.dateFormat = period == .month ? "yyyy.MM" : "yyyy.MM.dd"
                 var label = labelFormatter.string(from: range.start)
                 if period == .week { labelFormatter.dateFormat = "MM.dd"; label += " — " + labelFormatter.string(from: calendar.date(byAdding: .day, value: -1, to: range.end)!) }
-                let data = UsageReportData(period: period, start: range.start, end: range.end, timeZone: calendar.timeZone.identifier, dateLabel: label, fileDate: dayFormatter.string(from: range.start), sourceKey: sourceID, priceVersion: priceVersion, requests: value.requests, modelCalls: value.modelCalls, inputTokens: value.input, outputTokens: value.output, cachedInputTokens: value.cached, totalTokens: value.total, tokensComplete: value.unknownTokens == 0, costUSD: value.costValue, costComplete: value.unknownCosts == 0, models: models, projects: projects, timeSlices: (0..<4).map { UsageReportTimeSlice(name: namesOfTimes[$0], requests: value.times[$0]) }, firstRequest: value.first, lastRequest: value.last, previousTokens: previous.total, previousRequests: previous.requests, previousCostUSD: previous.costValue, comparisonComplete: value.unknownTokens == 0 && previous.unknownTokens == 0)
+                let data = UsageReportData(period: period, start: range.start, end: range.end, timeZone: calendar.timeZone.identifier, dateLabel: label, fileDate: dayFormatter.string(from: range.start), sourceKey: sourceID, priceVersion: priceVersion, requests: value.requests, modelCalls: value.modelCalls, inputTokens: value.input, outputTokens: value.output, cachedInputTokens: value.cached, totalTokens: value.total, tokensComplete: value.unknownTokens == 0, costUSD: value.costValue, costComplete: value.unknownCosts == 0, models: models, projects: [], timeSlices: (0..<4).map { UsageReportTimeSlice(name: namesOfTimes[$0], requests: value.times[$0]) }, firstRequest: value.first, lastRequest: value.last, previousTokens: previous.total, previousRequests: previous.requests, previousCostUSD: previous.costValue, comparisonComplete: value.unknownTokens == 0 && previous.unknownTokens == 0)
                 let folder = directory.appendingPathComponent(sourceID).appendingPathComponent(period.rawValue)
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
                 let destination = folder.appendingPathComponent(data.fileDate + ".json"), bytes = try encoder.encode(data)

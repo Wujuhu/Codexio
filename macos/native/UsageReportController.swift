@@ -15,6 +15,9 @@ final class UsageReportController: NSObject, NSWindowDelegate {
     private var checkedDay = ""
     private var shown = Set<String>()
     private var sharePicker: NSSharingServicePicker?
+    private var resourceStyle: UsageReportStyle?
+    private var resourceLoading = false
+    private var resourceGeneration = UUID()
     var onPresentationNeeded: (() -> Void)?
     var onPresentationFinished: (() -> Void)?
     var isPresenting: Bool { panel != nil }
@@ -25,7 +28,7 @@ final class UsageReportController: NSObject, NSWindowDelegate {
         model.style = UsageReportStyle(rawValue: state.preferences.analytics.string("usage_report_style", "garden")) ?? .garden
         model.onClose = { [weak self] in self?.close() }
         model.onRefresh = { [weak self] in self?.prepare() }
-        model.onStyle = { [weak self] style in self?.state.setPreference("usage_report_style", style.rawValue) }
+        model.onStyle = { [weak self] style in self?.selectStyle(style) }
         model.onShare = { [weak self] view in Task { @MainActor in self?.share(from: view) } }
         state.$loading.removeDuplicates().sink { [weak self] loading in
             guard let self, !loading, self.pendingAutomatic || self.pendingManual else { return }
@@ -83,6 +86,7 @@ final class UsageReportController: NSObject, NSWindowDelegate {
               window.isVisible, NSApp.isActive, window.attachedSheet == nil else { return false }
         guard pendingManual || Calendar.current.component(.hour, from: Date()) >= 8 else { return false }
         if !pendingManual, (shown.contains(collection.presentationDay) || collection.alreadyPresented) { pendingAutomatic = false; return false }
+        guard resourceStyle == model.style else { loadResources(for: model.style); return false }
         model.period = UsageReportPeriod.preferred()
         let available = window.contentLayoutRect.size
         let size = NSSize(width: min(660, max(480, available.width-32)), height: min(590, max(365, available.height-32)))
@@ -99,16 +103,54 @@ final class UsageReportController: NSObject, NSWindowDelegate {
             state.markUsageReportPresented(collection.presentationDay)
         }
         window.beginSheet(panel) { [weak self] _ in
-            panel.orderOut(nil); self?.panel = nil; self?.onPresentationFinished?()
+            panel.orderOut(nil); panel.contentView = nil
+            self?.finishPresentation()
         }
         return true
     }
     func close() {
         guard let panel else { return }
         if let parent = panel.sheetParent { parent.endSheet(panel) }
-        else { panel.orderOut(nil); self.panel = nil; onPresentationFinished?() }
+        else { panel.orderOut(nil); panel.contentView = nil; finishPresentation() }
     }
     func windowShouldClose(_ sender: NSWindow) -> Bool { close(); return false }
+
+    private func loadResources(for style: UsageReportStyle) {
+        guard !resourceLoading else { return }
+        resourceLoading = true
+        let generation = UUID(); resourceGeneration = generation
+        state.dataQueue.async { [weak self] in
+            ReportArtworkResources.prepare(style: style)
+            DispatchQueue.main.async {
+                guard let self else { ReportArtworkResources.release(); return }
+                guard generation == self.resourceGeneration else { ReportArtworkResources.release(); return }
+                self.resourceLoading = false; self.resourceStyle = style
+                self.onPresentationNeeded?()
+            }
+        }
+    }
+
+    private func selectStyle(_ style: UsageReportStyle) {
+        guard style != model.style, !resourceLoading else { return }
+        resourceLoading = true
+        let generation = UUID(); resourceGeneration = generation
+        state.dataQueue.async { [weak self] in
+            ReportArtworkResources.prepare(style: style)
+            DispatchQueue.main.async {
+                guard let self else { ReportArtworkResources.release(); return }
+                guard generation == self.resourceGeneration, self.panel != nil else { ReportArtworkResources.release(); return }
+                self.resourceLoading = false; self.resourceStyle = style; self.model.style = style
+                self.state.setPreference("usage_report_style", style.rawValue)
+            }
+        }
+    }
+
+    private func finishPresentation() {
+        panel = nil; collection = nil; model.documents = [:]
+        resourceGeneration = UUID(); resourceLoading = false; resourceStyle = nil
+        ReportArtworkResources.release()
+        onPresentationFinished?()
+    }
 
     @MainActor private func share(from anchor: NSView) {
         guard let data = model.documents[model.period], !model.busy else { return }
@@ -148,15 +190,16 @@ enum UsageReportRenderer {
         let canvas = ZStack {
             style.palette.surface.opacity(0.65)
             UsageReportCard(style: style, data: data)
-        }.frame(width: 650, height: style.height+80)
+        }.frame(width: style.width+90, height: style.height+80)
         let renderer = ImageRenderer(content: canvas)
-        renderer.scale = 2; renderer.proposedSize = ProposedViewSize(width: 650, height: style.height+80)
+        renderer.scale = 2; renderer.proposedSize = ProposedViewSize(width: style.width+90, height: style.height+80)
         guard let image = renderer.cgImage else { throw AppFailure(L("无法渲染报告", "Could not render the report")) }
         return image
     }
     @MainActor static func preview(to destination: URL, style: UsageReportStyle = .garden) throws {
         NSApplication.shared.setActivationPolicy(.prohibited)
-        ReportArtworkResources.prepare()
+        ReportArtworkResources.prepare(style: style)
+        defer { ReportArtworkResources.release() }
         let image = try image(data: previewData, style: style)
         guard let bytes = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else { throw AppFailure("Could not encode report preview") }
         try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)

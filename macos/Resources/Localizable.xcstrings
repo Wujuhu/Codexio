@@ -3345,6 +3345,22 @@
         }
       }
     },
+    "使用节奏": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usage rhythm"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用节奏"
+          }
+        }
+      }
+    },
     "使用这次额度重置？": {
       "localizations": {
         "en": {
@@ -3793,22 +3809,6 @@
         }
       }
     },
-    "其他项目": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Other projects"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "其他项目"
-          }
-        }
-      }
-    },
     "内嵌字体不可用，界面改用系统字体": {
       "localizations": {
         "en": {
@@ -4189,6 +4189,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "加载内嵌字体失败，回退系统字体: %s"
+          }
+        }
+      }
+    },
+    "努力收好，好好放松喵": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Time to unwind"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "努力收好，好好放松喵"
           }
         }
       }
@@ -7953,6 +7969,22 @@
         }
       }
     },
+    "按自己的节奏来，喵": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep your own pace"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按自己的节奏来，喵"
+          }
+        }
+      }
+    },
     "接口尚未提供逐次截止时间。": {
       "localizations": {
         "en": {
@@ -8989,6 +9021,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "旧路由需要先在原版 Codexio 中关闭，恢复记录已保留"
+          }
+        }
+      }
+    },
+    "早早开工，继续加油喵": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "An early start—keep it up"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "早早开工，继续加油喵"
           }
         }
       }
@@ -10065,6 +10113,54 @@
         }
       }
     },
+    "最早": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "First"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最早"
+          }
+        }
+      }
+    },
+    "最晚": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Last"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最晚"
+          }
+        }
+      }
+    },
+    "最活跃": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": " was busiest"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最活跃"
+          }
+        }
+      }
+    },
     "最热闹": {
       "localizations": {
         "en": {
@@ -10365,22 +10461,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "未定价调用"
-          }
-        }
-      }
-    },
-    "未归属": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Unassigned"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "未归属"
           }
         }
       }
@@ -11517,6 +11597,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "模型价格同步失败，沿用已缓存价格"
+          }
+        }
+      }
+    },
+    "模型使用": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model usage"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型使用"
           }
         }
       }
@@ -12806,7 +12902,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "User requests"
+            "value": "Requests"
           }
         },
         "zh-Hans": {
@@ -15773,6 +15869,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "输出 Token"
+          }
+        }
+      }
+    },
+    "辛苦啦，早点休息喵": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rest a little earlier"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "辛苦啦，早点休息喵"
           }
         }
       }
