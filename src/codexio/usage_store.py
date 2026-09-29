@@ -8,9 +8,11 @@ use the same store safely, without sharing a sqlite connection across threads.
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
+import time
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -62,6 +64,10 @@ class UsageStore:
                 );
                 CREATE INDEX IF NOT EXISTS usage_origins_item ON usage_origins(source_id,kind,item_id);
                 CREATE TABLE IF NOT EXISTS usage_revisions (kind TEXT PRIMARY KEY, revision INTEGER NOT NULL);
+                CREATE TABLE IF NOT EXISTS usage_request_messages (
+                    id TEXT PRIMARY KEY,data TEXT NOT NULL,digest TEXT NOT NULL,
+                    revision INTEGER NOT NULL,size INTEGER NOT NULL,accessed REAL NOT NULL);
+                CREATE INDEX IF NOT EXISTS usage_request_messages_accessed ON usage_request_messages(accessed);
                 INSERT OR IGNORE INTO usage_revisions VALUES('ledger',0),('observations',0);
             """)
             # Changes to durable inputs invalidate the derived query index. Cursor
@@ -228,8 +234,58 @@ class UsageStore:
             if not existing or existing[0] != payload:
                 db.execute("INSERT INTO " + table + " VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data", (identity, payload))
                 changed += 1
+            if kind == "turn" and value.get("alias_of"):
+                previous = db.execute("SELECT data,digest,revision,size,accessed FROM usage_request_messages WHERE id=?",
+                                      (value["id"],)).fetchone()
+                if previous and not db.execute("SELECT 1 FROM usage_request_messages WHERE id=?", (value["alias_of"],)).fetchone():
+                    db.execute("INSERT INTO usage_request_messages VALUES(?,?,?,?,?,?)",
+                               (value["alias_of"], *previous))
+                    db.execute("DELETE FROM usage_request_messages WHERE id=?", (value["id"],))
             self._save_origin(db, origin, source_id, kind, identity)
         return changed
+
+    def _upsert_messages(self, db, rows):
+        changed = 0
+        for patch in rows:
+            ident = str(patch.get("id") or "")
+            if not ident or len(ident.encode("utf-8")) > 512:
+                continue
+            existing = db.execute("SELECT data,revision FROM usage_request_messages WHERE id=?", (ident,)).fetchone()
+            value = json.loads(existing[0]) if existing else {}
+            for field in ("user", "final", "user_complete", "final_complete", "attachments"):
+                if field in patch:
+                    value[field] = patch[field]
+            if not value:
+                continue
+            data = self._json(value)
+            size = len(data.encode("utf-8"))
+            if size > 1_048_576:
+                value.update(user=str(value.get("user") or "")[:1200], final=str(value.get("final") or "")[:5000],
+                             user_complete=False, final_complete=False, availability="capacity", attachments=[])
+                data = self._json(value)
+                size = len(data.encode("utf-8"))
+            if existing and existing[0] == data:
+                continue
+            digest = hashlib.sha256(data.encode("utf-8")).hexdigest()
+            revision = max(int(existing[1]) if existing else 0, int(time.time()*1000))+1
+            db.execute("INSERT INTO usage_request_messages VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+                       "data=excluded.data,digest=excluded.digest,revision=excluded.revision,"
+                       "size=excluded.size,accessed=excluded.accessed",
+                       (ident, data, digest, revision, size, time.time()))
+            changed += 1
+        if not changed:
+            return 0
+        rows = db.execute("SELECT id,size FROM usage_request_messages ORDER BY accessed DESC,id").fetchall()
+        retained = 0
+        for index, row in enumerate(rows):
+            retained += row[1]
+            if index >= 512 or retained > 64*1024*1024:
+                db.execute("DELETE FROM usage_request_messages WHERE id=?", (row[0],))
+        return changed
+
+    def save_messages(self, rows):
+        with self._connect() as db:
+            return self._upsert_messages(db, rows)
 
     def upsert_turns(self, rows, source_id="local") -> int:
         with self._connect() as db:
@@ -254,11 +310,12 @@ class UsageStore:
                 result.setdefault(row[0], []).append(row[1])
         return result
 
-    def commit_batch(self, records, observations, source_id: str, key: str, cursor: dict, *, turns=(), agent_links=()) -> int:
+    def commit_batch(self, records, observations, source_id: str, key: str, cursor: dict, *, turns=(), agent_links=(), messages=()) -> int:
         with self._connect() as db:
             changed = self._upsert_records(db, records, source_id)
             changed += self._upsert_metadata(db, turns, source_id, "turn")
             changed += self._upsert_metadata(db, agent_links, source_id, "agent_link")
+            changed += self._upsert_messages(db, messages)
             if cursor.get("scan_complete") and cursor.get("reconcile_pending"):
                 changed += self._reconcile_origin(db, source_id, key, cursor["generation"])
                 cursor = dict(cursor, reconcile_pending=False)
@@ -271,6 +328,7 @@ class UsageStore:
             changed = self._upsert_records(db, frames.get("records", []), source_id)
             changed += self._upsert_metadata(db, frames.get("turns", []), source_id, "turn")
             changed += self._upsert_metadata(db, frames.get("agent_links", []), source_id, "agent_link")
+            changed += self._upsert_messages(db, frames.get("messages", []))
             for origin in frames.get("reconciliations", []):
                 changed += self._reconcile_origin(db, source_id, origin["file_key"], origin["generation"])
             if meta_key is not None:
@@ -417,6 +475,95 @@ class UsageStore:
 
     def get_meta(self, key: str) -> Any:
         return self._get_value("usage_meta", key)
+
+    def recover_recent_context_compactions(self, roots, maximum_files=4) -> int:
+        """Classify old empty turns from at most four registered recent rollouts."""
+        from codexio.mobile_request_detail import _registered_file
+        cutoff = utc_iso(datetime.now(timezone.utc)-timedelta(days=14))
+        marker = "v0.3.3-context-compaction-recovery"
+        with self._connect() as db:
+            stored = db.execute("SELECT data FROM usage_meta WHERE key=?", (marker,)).fetchone()
+            done = set(json.loads(stored[0])) if stored else set()
+            rows = db.execute("SELECT id,data FROM usage_turns WHERE json_extract(data,'$.observed_at')>=? "
+                              "AND json_extract(data,'$.status')='completed' "
+                              "AND COALESCE(json_extract(data,'$.prompt_preview'),'')='' "
+                              "AND json_extract(data,'$.has_usage')=1 "
+                              "ORDER BY json_extract(data,'$.observed_at') DESC LIMIT 64", (cutoff,)).fetchall()
+            candidates = []
+            files = {}
+            for identity, raw in rows:
+                if identity in done or len(candidates) >= 12:
+                    continue
+                value = json.loads(raw)
+                if value.get("record_kind") == "context_compaction" or value.get("is_subagent"):
+                    done.add(identity)
+                    continue
+                file = _registered_file(db, str(value.get("session_id") or ""), list(roots))
+                if file is not None and file.stat().st_size > 32*1024*1024:
+                    file = None
+                if file is not None and file not in files and len(files) >= maximum_files:
+                    continue
+                candidates.append((identity, value, file))
+                if file is not None:
+                    files.setdefault(file, {})[str(value.get("turn_id") or "")] = identity
+                else:
+                    done.add(identity)
+            evidence = {}
+            for file, targets in files.items():
+                state = {turn: dict(started=False, compacted=False, completed=False, user=False, final=False)
+                         for turn in targets}
+                current = ""
+                try:
+                    with file.open("rb") as source:
+                        for raw in source:
+                            if len(raw) > 2*1024*1024 or not any(value in raw for value in
+                                (b'task_started', b'turn_started', b'ContextCompaction', b'compacted', b'task_complete', b'turn_complete',
+                                 b'user_message', b'"role":"user"', b'"role": "user"')):
+                                continue
+                            try:
+                                event = json.loads(raw)
+                            except (ValueError, UnicodeDecodeError):
+                                continue
+                            payload = event.get("payload") or {}
+                            if not isinstance(payload, dict):
+                                continue
+                            kind, subtype = event.get("type"), payload.get("type")
+                            turn = str(payload.get("turn_id") or current)
+                            if subtype in ("task_started", "turn_started"):
+                                current = str(payload.get("turn_id") or current)
+                                turn = current
+                            if turn not in state:
+                                continue
+                            item = payload.get("item") or {}
+                            row = state[turn]
+                            if subtype in ("task_started", "turn_started"):
+                                row["started"] = True
+                            if kind == "compacted" or subtype == "item_completed" and isinstance(item, dict) and item.get("type") == "ContextCompaction":
+                                row["compacted"] = True
+                            if subtype in ("task_complete", "turn_complete"):
+                                row["completed"] = "last_agent_message" in payload and payload["last_agent_message"] is None
+                                row["final"] = bool(payload.get("last_agent_message"))
+                            if subtype == "user_message" or kind == "response_item" and payload.get("role") == "user":
+                                row["user"] = True
+                    evidence.update({identity: state[turn] for turn, identity in targets.items()})
+                except OSError:
+                    pass
+            changed = 0
+            for identity, value, _file in candidates:
+                row = evidence.get(identity, {})
+                if (row.get("started") and row.get("compacted") and row.get("completed")
+                        and not row.get("user") and not row.get("final") and not value.get("prompt_preview")
+                        and not value.get("continuation_of") and not value.get("is_subagent")):
+                    value.update(record_kind="context_compaction", context_compaction_observed=True,
+                                 explicit_task_start=True, context_compaction_completed=True)
+                    db.execute("UPDATE usage_turns SET data=? WHERE id=?", (self._json(value), identity))
+                    changed += 1
+                done.add(identity)
+            values = sorted(done)[-256:]
+            if changed or candidates:
+                db.execute("INSERT INTO usage_meta VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
+                           (marker, self._json(values)))
+            return changed
 
     def set_meta(self, key: str, value: Any) -> None:
         self._set_value("usage_meta", key, value)

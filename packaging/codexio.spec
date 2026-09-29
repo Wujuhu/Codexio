@@ -28,6 +28,8 @@ datas = [
     (str(SRC / "codexio" / "translations.json"), "codexio"),
 ]
 datas.extend((str(path), "codexio/icons") for path in (SRC / "codexio" / "icons").glob("chevron-*.svg"))
+datas.extend((str(path), "codexio/report-cards") for path in (ROOT / "macos" / "Resources" / "ReportCards").glob("*.png"))
+datas.extend((str(path), "codexio/icons/app-icons") for path in (SRC / "codexio" / "icons" / "app-icons").glob("*.*")
 hiddenimports = [
     "codexio",
     "codexio.__main__",

@@ -1,7 +1,7 @@
 """The application's native main window. Data acquisition belongs to its controller."""
 from __future__ import annotations
 
-from codexio.i18n import tr
+from codexio.i18n import language, tr
 
 import copy
 import math
@@ -12,8 +12,8 @@ from datetime import datetime, time, timedelta, timezone
 from typing import Callable, Optional
 from pathlib import Path
 
-from PySide6.QtCore import QDate, QEvent, QPoint, QPointF, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QKeySequence, QPainter, QShortcut, QTextLayout, QTextOption
+from PySide6.QtCore import QDate, QEvent, QPoint, QPointF, QRectF, QSize, Qt, QTimer, Signal, QUrl
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QFontMetrics, QKeySequence, QPainter, QShortcut, QTextLayout, QTextOption
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QColorDialog, QComboBox, QDateEdit,
     QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFormLayout, QFrame,
@@ -25,11 +25,14 @@ from PySide6.QtWidgets import (
 
 from codexio import __version__
 from codexio.insight_widgets import LocalActivityMetrics, LocalInsights, PlanUsagePanel, ChatUsagePanel
+from codexio.model_share_widget import ModelSharePanel
+from codexio.appearance_icons import AppIconPicker
+from codexio.mobile_sync_settings import MobileSyncSettings
 
 from codexio.money import usd
 from codexio.charts import UsageChart, bucket_records, compact_number, parse_timestamp, period_bounds
 from codexio.activity import UsageActivity, activity_bounds
-from codexio.settings import AppSettings
+from codexio.settings import AppSettings, data_dir
 from codexio.model_display import display_effort
 from codexio.durations import duration_text, duration_tooltip
 from codexio.rate_limits import format_reset_time, format_reset_date, QuotaStatus
@@ -50,10 +53,17 @@ PAGE_NAMES = NAVIGATION_PAGES
 PAGE_LABELS = tuple(PAGE_TITLES[name] for name in PAGE_NAMES)
 PERIODS = ((tr("今日"), "today"), (tr("近 7 天"), "week"), (tr("近 30 天"), "month"), (tr("全部"), "all"))
 PRICING_MODELS = (
-    ("gpt-6-astra", "GPT-6 Astra"), ("gpt-6-sol", "GPT-6 Sol"), ("gpt-6-luna", "GPT-6 Luna"),
+    ("gpt-6-astra", "GPT-6 Astra"), ("gpt-6-sol", "GPT-6 Sol"), ("gpt-6-terra", "GPT-6 Terra"), ("gpt-6-luna", "GPT-6 Luna"),
     ("gpt-5.6-sol", "GPT-5.6 Sol"), ("gpt-5.6-terra", "GPT-5.6 Terra"),
     ("gpt-5.6-luna", "GPT-5.6 Luna"), ("gpt-5.5", "GPT-5.5"),
 )
+def pricing_display_key(model: str) -> tuple:
+    match = re.match(r"^gpt-(\d+(?:\.\d+)*)(?:-([a-z]+))?", model.removeprefix("openai/").lower())
+    if not match:
+        return (1, (0, 0, 0), 5, model)
+    family = tuple(-int(part) for part in (match.group(1).split(".") + ["0", "0"])[:3])
+    rank = {"astra": 0, "sol": 1, "terra": 2, "luna": 3}.get(match.group(2), 4)
+    return (0, family, rank, model)
 PRICE_STATUS_LABELS = {"priced": tr("已定价"), "unpriced": tr("未定价"), "estimated": tr("参考估值"), "invalid": tr("计量分项异常"),
                        "partial": tr("部分未定价"), "unmetered": tr("待计量")}
 CALL_HEADERS = [tr("时间"), tr("模型"), tr("档位"), tr("输入"), tr("输出"), tr("费用"), tr("耗时"), "Session ID", tr("来源")]
@@ -958,6 +968,10 @@ class Dashboard(QMainWindow):
         self._refresh_button.setProperty("quiet", True)
         self._refresh_button.clicked.connect(lambda: self._callback("refresh"))
         header.addWidget(self._refresh_button)
+        report_button = QPushButton(tr("AI 使用报告"))
+        report_button.setProperty("quiet", True)
+        report_button.clicked.connect(lambda: self._callback("open_usage_report"))
+        header.addWidget(report_button)
         main.addLayout(header)
         self._startup_banner, startup_layout = card()
         startup_row = QHBoxLayout()
@@ -1006,7 +1020,8 @@ class Dashboard(QMainWindow):
         action = tr("展开导航栏") if collapsed else tr("收起导航栏")
         self._sidebar_toggle.setToolTip(action)
         self._sidebar_toggle.setAccessibleName(action)
-        self._sidebar_toggle.setIcon(ui_icon("expand_sidebar" if collapsed else "collapse_sidebar", theme_colors(self._theme)["text"]))
+        self._sidebar_toggle.setIcon(QApplication.instance().windowIcon() if collapsed else ui_icon("collapse_sidebar", theme_colors(self._theme)["text"]))
+        self._sidebar_toggle.setIconSize(QSize(30, 30) if collapsed else QSize(18, 18))
 
     def _toggle_sidebar(self):
         self._config["sidebar_collapsed"] = not self._config["sidebar_collapsed"]
@@ -1062,8 +1077,6 @@ class Dashboard(QMainWindow):
             meter = QuotaMeter(title)
             meters[key] = meter
             top.addWidget(meter, 1)
-        self._token_composition = TokenComposition()
-        top.addWidget(self._token_composition, 1)
         self._quota_widgets["overview"] = meters
         layout.addLayout(top)
         self._overview_quota_note = plain_label("", muted=True, wrap=True)
@@ -1111,6 +1124,8 @@ class Dashboard(QMainWindow):
         more.clicked.connect(lambda: self.open_page("trends", self._overview_period.value()))
         content.addWidget(more, alignment=Qt.AlignmentFlag.AlignRight)
         layout.addWidget(graph)
+        self._model_share = ModelSharePanel()
+        layout.addWidget(self._model_share)
         self._latest_box, self._latest_content = card()
         heading = QHBoxLayout()
         heading.addWidget(plain_label(tr("最近请求")), 1)
@@ -1120,7 +1135,7 @@ class Dashboard(QMainWindow):
         heading.addWidget(all_requests)
         self._latest_content.addLayout(heading)
         self._recent_table = LedgerTable(compact=True)
-        self._recent_table.setFixedHeight(270)
+        self._recent_table.setFixedHeight(43 + 3 * 58 + 16)
         self._recent_table.cellClicked.connect(self._open_recent_request)
         self._recent_empty = plain_label(tr("暂无可识别的用户请求"), muted=True)
         self._latest_content.addWidget(self._recent_table)
@@ -1201,6 +1216,8 @@ class Dashboard(QMainWindow):
         content.addLayout(heading)
         self._local_metrics = LocalActivityMetrics()
         content.addWidget(self._local_metrics)
+        self._token_composition = TokenComposition()
+        content.addWidget(self._token_composition)
         self._activity_summary = plain_label(tr("等待用量记录"), muted=True)
         content.addWidget(self._activity_summary)
         self._activity_chart = UsageActivity()
@@ -1360,7 +1377,7 @@ class Dashboard(QMainWindow):
         self._settings_sections = QListWidget()
         self._settings_sections.setObjectName("settingsSections")
         self._settings_sections.setFixedWidth(118)
-        self._settings_sections.addItems([tr("外观"), *([] if self._is_macos else [tr("悬浮窗")]), tr("数据"), tr("应用")])
+        self._settings_sections.addItems([tr("外观"), *([] if self._is_macos else [tr("悬浮窗")]), tr("数据"), tr("同步"), tr("应用")])
         self._settings_stack = QStackedWidget()
         body.addWidget(self._settings_sections)
         body.addWidget(self._settings_stack, 1)
@@ -1385,6 +1402,8 @@ class Dashboard(QMainWindow):
         self._theme_combo.setMaximumWidth(220)
         form.addRow(tr("主界面主题"), self._theme_combo)
         appearance.addLayout(form)
+        self._icon_picker = AppIconPicker(self._config.get("app_icon", "main"), lambda style: self._callback("app_icon", style))
+        appearance.addWidget(self._icon_picker)
         appearance.addStretch()
         if not self._is_macos:
             self._build_floating_settings(section)
@@ -1409,7 +1428,29 @@ class Dashboard(QMainWindow):
         maintenance.addWidget(rescan)
         maintenance.addStretch()
         sources.addLayout(maintenance)
+        report_path = data_dir() / "Reports"
+        report_row = QHBoxLayout()
+        report_text = QLineEdit(str(report_path))
+        report_text.setReadOnly(True)
+        report_row.addWidget(report_text, 1)
+        open_reports = QPushButton(tr("在文件管理器中打开"))
+        open_reports.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(report_path))))
+        report_row.addWidget(open_reports)
+        sources.addWidget(plain_label(tr("AI 使用报告存放路径"), muted=True))
+        sources.addLayout(report_row)
+        auto_report = QCheckBox(tr("每天 08:00 后首次打开时显示"))
+        auto_report.setChecked(bool(self._config.get("usage_report_auto", True)))
+        auto_report.toggled.connect(lambda value: self._save_setting("usage_report_auto", value))
+        sources.addWidget(auto_report)
         sources.addStretch()
+        sync = section(tr("同步"), "")
+        mobile_host = self._callbacks.get("mobile_host")
+        if mobile_host is not None:
+            self._mobile_settings = MobileSyncSettings(mobile_host,
+                                                        bool(self._config.get("mobile_sync_enabled")),
+                                                        lambda value: self._callback("mobile_toggle", value))
+            sync.addWidget(self._mobile_settings)
+        sync.addStretch()
         updates = section(tr("应用"), "Codexio " + __version__ + (" · macOS" if self._is_macos else ""))
         def settings_card(title, badge, hint=None):
             frame, content = card()
@@ -1849,16 +1890,14 @@ class Dashboard(QMainWindow):
         granularity = "hour" if period == "today" else "week" if period == "all" else "day"
         lower, upper = period_bounds(period)
         if self._queries:
-            result = self._queries.page(mode="user_request", start=lower, end=upper, page_size=4)
-            recent = result["rows"]
+            recent = self._queries.recent_user_requests(start=lower, end=upper, limit=3)
             buckets = self._queries.chart_buckets(period, granularity)
         else:
             buckets = bucket_records(self._records, period, granularity)
             candidates = [row for row in self._user_requests if (stamp := parse_timestamp(row.get("timestamp"))) is not None
                           and stamp <= upper and (lower is None or stamp >= lower)]
-            recent = candidates[:4]
+            recent = [row for row in candidates if row.get("record_kind") == "user_request" and not row.get("is_subagent")][:3]
         self._overview_chart.set_buckets(buckets, granularity)
-        self._token_composition.set_buckets(buckets)
         comparison = self._period_comparison(period)
         if comparison:
             summary = comparison["current"]
@@ -1870,6 +1909,7 @@ class Dashboard(QMainWindow):
         self._overview_cache.setText(cache_percentage(summary["cache_hit_rate"]))
         for metric, widget in self._overview_comparisons.items():
             widget.set_comparison(comparison, metric, self._theme)
+        self._model_share.set_data(self._data.get("model_shares", {}).get(period) or [], summary)
         self._overview_requests.setToolTip(tr("按主请求发起时间统计；关联子代理不重复计入，未归属调用不计为用户请求。"))
         self._overview_cache.setToolTip(cache_tooltip(summary))
         self._overview_tokens.setToolTip(tr("输入 + 输出") + (tr("\n按已确认数据计算") if summary["skipped"]["tokens"] else ""))
@@ -1879,12 +1919,13 @@ class Dashboard(QMainWindow):
             price_note = "\n".join(filter(None, (price_note, tr("按已确认数据计算"))))
         self._overview_cost.setToolTip(price_note)
         self._overview_cost.setAccessibleDescription(price_note)
-        self._overview_period_label.setText(next((label + tr("用量") for label, key in PERIODS if key == period), tr("用量")))
+        self._overview_period_label.setText(next((label + (" " if language() == "en" else "") + tr("用量")
+                                                  for label, key in PERIODS if key == period), tr("用量")))
         self._recent_rows = recent
         self._recent_table.set_records(recent, request_cost_text, self._theme)
         self._recent_table.setVisible(bool(recent))
         self._recent_empty.setVisible(not recent)
-        self._recent_table.setFixedHeight(43 + min(4, len(recent)) * 58 + 16)
+        self._recent_table.setFixedHeight(43 + len(recent) * 58 + 16)
         self._latest_record = copy.deepcopy(self._data.get("latest_request") if self._queries else
                                           next((row for row in self._user_requests if row.get("record_kind") == "user_request" and not row.get("is_subagent")), None))
     def apply_quota(self, state) -> None:
@@ -2097,6 +2138,8 @@ class Dashboard(QMainWindow):
 
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
+        if event.type() == QEvent.Type.ActivationChange and self.isActiveWindow():
+            QTimer.singleShot(0, lambda: self._callback("main_activated"))
         if event.type() == QEvent.Type.WindowStateChange and hasattr(self, "_duration_timer"):
             self._sync_duration_timer()
             self._refresh_visible()
@@ -2151,7 +2194,7 @@ class Dashboard(QMainWindow):
             for widget in widgets.values():
                 widget.set_theme(self._theme)
         if "overview" in self._pages:
-            self._token_composition.set_theme(self._theme)
+            self._model_share.set_theme(self._theme)
             self._recent_table.set_theme(self._theme)
             for widget in self._overview_comparisons.values():
                 widget.set_theme(self._theme)
@@ -2161,6 +2204,8 @@ class Dashboard(QMainWindow):
             self._size_price_columns()
         if "logs" in self._pages:
             self._log_table.set_theme(self._theme)
+        if "trends" in self._pages:
+            self._token_composition.set_theme(self._theme)
             self._log_table.queue_columns()
         for name, attribute in (("overview", "_overview_chart"), ("trends", "_trend_chart")):
             if name in self._pages:
@@ -2334,15 +2379,18 @@ class Dashboard(QMainWindow):
         if self._log_mode.currentData() == "user_request":
             if self._queries:
                 counts = self._query_page["counts"]
-                unassigned, children = counts["unassigned"], counts["subagents"]
+                unassigned, children, compactions = counts["unassigned"], counts["subagents"], counts.get("compactions", 0)
             else:
                 unassigned = sum(row.get("record_kind") == "unassigned" for row in self._filtered_records)
                 children = sum(bool(row.get("is_subagent")) for row in self._filtered_records if row.get("record_kind") != "unassigned")
-            pieces = [tr("%s 次用户请求") % format(count - unassigned - children, ",")]
+                compactions = sum(row.get("record_kind") == "context_compaction" for row in self._filtered_records)
+            pieces = [tr("%s 次用户请求") % format(count - unassigned - children - compactions, ",")]
             if children:
                 pieces.append(tr("%s 次独立子代理请求") % format(children, ","))
             if unassigned:
                 pieces.append(tr("%s 条未归属调用") % format(unassigned, ","))
+            if compactions:
+                pieces.append(tr("%s 次上下文压缩") % format(compactions, ","))
             label = " · ".join(pieces)
         else:
             label = tr("%s 条模型调用记录") % format(count, ",")
@@ -2406,6 +2454,8 @@ class Dashboard(QMainWindow):
                 self._trend_chart.set_buckets(buckets, granularity)
             else:
                 self._trend_chart.set_records(rows, self._trend_period.currentData(), self._granularity.currentData(), start=start, end=end)
+                buckets = bucket_records(rows, self._trend_period.currentData(), self._granularity.currentData(), start=start, end=end)
+            self._token_composition.set_buckets(buckets)
             comparison = self._period_comparison(self._trend_period.currentData(), model or "")
             if comparison:
                 summary = comparison["current"]
@@ -2500,20 +2550,21 @@ class Dashboard(QMainWindow):
         if not hasattr(self, "_price_table"):
             return
         search = self._price_search.text().strip().lower()
-        allowed = {model for model, _label in PRICING_MODELS}
+        labels = dict(PRICING_MODELS)
         standard = self._data.get("standard_prices")
         if standard is None:
             standard = [dict(p, **p.get("base_rates", {})) for p in self._data.get("prices", [])
                         if isinstance(p, dict) and p.get("service_tier", "default") in ("default", "standard")
                         and not p.get("threshold")]
-        self._standard_prices_by_model = {p["model"]: p for p in standard if isinstance(p, dict) and p.get("model") in allowed}
+        self._standard_prices_by_model = {p["model"]: p for p in standard if isinstance(p, dict) and isinstance(p.get("model"), str) and p["model"].startswith("gpt-")}
+        models = sorted(set(labels) | set(self._standard_prices_by_model), key=pricing_display_key)
         self._visible_prices = [dict(self._standard_prices_by_model.get(model, {"model": model, "service_tier": "default"}))
-                                for model, label in PRICING_MODELS if search in model or search in label.lower()]
+                                for model in models if search in model or search in labels.get(model, model).lower()]
         self._price_table.blockSignals(True)
         self._price_table.setRowCount(len(self._visible_prices))
         selected = None
         for index, price in enumerate(self._visible_prices):
-            display = next(label for model, label in PRICING_MODELS if model == price.get("model"))
+            display = labels.get(price.get("model"), str(price.get("model") or "").replace("gpt-", "GPT-", 1))
             values = [display,
                       *[price_rate_text(price.get(k)) for k in ("input", "cache_read", "cache_write", "output")]]
             for column, value in enumerate(values):
@@ -2644,7 +2695,7 @@ class Dashboard(QMainWindow):
             return
         if key == "border_color":
             self._settings_message.hide()
-        if key in ("theme", "usage_refresh_interval_seconds", "week_estimate_interval_minutes"):
+        if key in ("theme", "usage_refresh_interval_seconds", "week_estimate_interval_minutes", "usage_report_auto"):
             if self._config.get(key) == value:
                 return
             self._config[key] = value

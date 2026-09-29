@@ -81,11 +81,11 @@ jobs:
             throw "Release notes must be empty."
           }
           $Names = @($Release.assets | ForEach-Object { $_.name })
-          foreach ($Required in @("Codexio.app.zip", "latest.json")) {
+          foreach ($Required in @("Codexio.app.zip", "Codexio.ipa", "latest.json")) {
             if ($Required -notin $Names) { throw "Draft release is missing $Required." }
           }
           foreach ($Name in $Names) {
-            if ($Name -notin @("Codexio.exe", "Codexio.app.zip", "latest.json")) {
+            if ($Name -notin @("Codexio.exe", "Codexio.app.zip", "Codexio.ipa", "latest.json")) {
               throw "Draft release contains an unexpected asset: $Name"
             }
           }
@@ -97,9 +97,9 @@ jobs:
           $Tag = "v$env:RELEASE_VERSION"
           $MacDir = Join-Path $PWD "build\staging\release-ci\macos"
           New-Item -ItemType Directory -Path $MacDir -Force | Out-Null
-          gh release download $Tag --repo $env:GITHUB_REPOSITORY --dir $MacDir --pattern "Codexio.app.zip" --pattern "latest.json" --clobber
+          gh release download $Tag --repo $env:GITHUB_REPOSITORY --dir $MacDir --pattern "Codexio.app.zip" --pattern "Codexio.ipa" --pattern "latest.json" --clobber
           if ($LASTEXITCODE -ne 0) { throw "Could not download the Mac draft assets." }
-          python scripts\verify_release.py --version $env:RELEASE_VERSION --directory $MacDir --platform macos
+          python scripts\verify_release.py --version $env:RELEASE_VERSION --directory $MacDir --platform macos --include-ios
           if ($LASTEXITCODE -ne 0) { throw "Mac draft asset verification failed." }
 
       - name: Build the Windows executable
@@ -121,14 +121,14 @@ jobs:
             throw "Windows executable does not have an MZ header."
           }
 
-      - name: Assemble and verify the three release assets
+      - name: Assemble and verify the four release assets
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $MacDir = Join-Path $PWD "build\staging\release-ci\macos"
           python scripts\prepare_release.py --version $env:RELEASE_VERSION --windows "build\dev\windows" --macos $MacDir
           if ($LASTEXITCODE -ne 0) { throw "Could not assemble the complete release." }
-          python scripts\verify_release.py --version $env:RELEASE_VERSION --directory "release\$env:RELEASE_VERSION"
+          python scripts\verify_release.py --version $env:RELEASE_VERSION --directory "release\$env:RELEASE_VERSION" --include-ios
           if ($LASTEXITCODE -ne 0) { throw "Complete release verification failed." }
 
       - name: Upload Windows EXE and final merged manifest
@@ -141,7 +141,7 @@ jobs:
             (Join-Path $ReleaseDir "Codexio.exe") `
             (Join-Path $ReleaseDir "latest.json")
           if ($LASTEXITCODE -ne 0) { throw "Could not upload the Windows release assets." }
-          $Expected = @("Codexio.app.zip", "Codexio.exe", "latest.json") | Sort-Object
+          $Expected = @("Codexio.app.zip", "Codexio.exe", "Codexio.ipa", "latest.json") | Sort-Object
           $Verified = $false
           for ($Attempt = 0; $Attempt -lt 8; $Attempt++) {
             $Release = gh release view $Tag --repo $env:GITHUB_REPOSITORY --json isDraft,tagName,name,body,assets | ConvertFrom-Json
@@ -191,5 +191,5 @@ jobs:
             throw "Published release notes are not empty."
           }
           $Names = @($Release.assets | ForEach-Object { $_.name } | Sort-Object)
-          $Expected = @("Codexio.app.zip", "Codexio.exe", "latest.json") | Sort-Object
+          $Expected = @("Codexio.app.zip", "Codexio.exe", "Codexio.ipa", "latest.json") | Sort-Object
           if (Compare-Object $Expected $Names) { throw "Published release assets are incomplete." }

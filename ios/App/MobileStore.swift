@@ -129,7 +129,7 @@ private struct MobileDetailTransfer {
         }
         live = nil; recent = []; trends = MobileTrends(daily:[],periods:[]); envelopes = [:]; updated = nil
         recordPath = []; detailValues = [:]; detailErrors = [:]; detailEnvelopes = [:]; detailAccess = [:]; detailVersions = [:]; supportsDetails = false
-        guard device != nil else { status = "扫描 Mac 上的二维码开始配对"; return }
+        guard device != nil else { status = "扫描电脑上的二维码开始配对"; return }
         let stamp = generation, url = cacheDirectory.appendingPathComponent(id+".json")
         files.async {
             let data = try? Data(contentsOf:url)
@@ -146,7 +146,7 @@ private struct MobileDetailTransfer {
         if foreground, device?.invalid != true { connect(); startTimer() }
     }
     func beginPair(_ data: String) {
-        guard devices.count < 3 else { error = "最多配对 3 台 Mac"; return }
+        guard devices.count < 3 else { error = "最多配对 3 台电脑"; return }
         do {
             guard data.utf8.count <= 4096 else { throw MobileError.message("无效二维码") }
             let code = try JSONDecoder().decode(MobilePairCode.self,from:Data(data.utf8))
@@ -158,7 +158,7 @@ private struct MobileDetailTransfer {
             attempt = PairedMac(code:code,reader:reader); selected = code.host; envelopes = [:]
             live = nil; recent = []; trends = MobileTrends(daily:[],periods:[])
             recordPath = []; detailValues = [:]; detailEnvelopes = [:]; detailVersions = [:]; supportsDetails = false; detailErrors = [:]
-            pairing = true; status = "正在寻找 Mac，请保持同一局域网"; error = nil
+            pairing = true; status = "正在寻找电脑，请保持同一局域网"; error = nil
             connect(); startTimer()
         } catch { self.error = error.localizedDescription }
     }
@@ -190,7 +190,7 @@ private struct MobileDetailTransfer {
             if let waiting = self.localWaiting, Date().timeIntervalSince(waiting) > 8 {
                 self.connection?.cancel(); self.connection = nil; self.localReady = false; self.finishLocalSync()
             }
-            if let attempt = self.attempt, Date().timeIntervalSince1970 > attempt.code.expires { self.error = "配对超时，请在 Mac 重新生成二维码"; self.cancelPair(); return }
+            if let attempt = self.attempt, Date().timeIntervalSince1970 > attempt.code.expires { self.error = "配对超时，请在电脑上重新生成二维码"; self.cancelPair(); return }
             if self.pairing { if self.connection == nil && Date().timeIntervalSince(self.lastProbe) >= 3 { self.connect() } else { self.sendLocal() } }
             else if self.localReady { if Date().timeIntervalSince(self.lastProbe) >= 30 { self.lastProbe = Date(); self.sendLocal() } }
             else { self.cloudRefresh(); if Date().timeIntervalSince(self.lastProbe) > 60 { self.connect() } }
@@ -252,7 +252,7 @@ private struct MobileDetailTransfer {
             let processing = self.beginSync(), pendingRequest = self.localOperation
             self.localOperation = nil; self.localWaiting = nil
             defer { self.endSync(processing); self.endSync(pendingRequest) }
-            if message.action == "pending" { self.status = "请在 Mac 点击“确认配对”" }
+            if message.action == "pending" { self.status = "请在电脑上点击“确认配对”" }
             else if message.action == "sync" {
                 if var paired = self.attempt {
                     paired.code.ticket = ""; paired.code.cloud = nil; self.devices.removeAll {$0.id == paired.id}; self.devices.append(paired)
@@ -269,7 +269,7 @@ private struct MobileDetailTransfer {
                 await self.apply(message.datasets ?? [])
                 guard stamp == self.generation else { return }
                 let stale = self.envelopes.contains { key,value in (message.known?[key] ?? 0) < value.revision }
-                self.localReady = !stale; self.status = stale ? "Mac 数据版本较旧 · 保留较新缓存" : "局域网"
+                self.localReady = !stale; self.status = stale ? "电脑数据版本较旧 · 保留较新缓存" : "局域网"
                 if !stale { self.updated = Date() }
                 if message.supportsAck == true {MobileProtocol.send(MobileMessage(action:"ack",known:self.envelopes.mapValues(\.revision)),over:value)}
             } else if message.action == "revoked" { self.pairingRevoked(); return
@@ -363,7 +363,7 @@ private struct MobileDetailTransfer {
         }
         if detailLoading.contains(id) { if full { expandAfterLoad.insert(id) }; return }
         guard detailLoading.count < 2 else { detailErrors[id] = "正在读取其他详情，请稍后重试。"; return }
-        guard supportsDetails else { detailErrors[id] = "当前连接尚未提供原文详情。请更新 Mac 与云端同步服务；现有摘要仍可查看。"; return }
+        guard supportsDetails else { detailErrors[id] = "当前连接尚未提供原文详情。请更新电脑端与云端同步服务；现有摘要仍可查看。"; return }
         detailLoading.insert(id); detailErrors.removeValue(forKey:id)
         let stamp = generation
         if localReady, let connection {
@@ -372,7 +372,7 @@ private struct MobileDetailTransfer {
             detailTasks[id] = Task {
                 do { try await Task.sleep(for:.seconds(20)) } catch { return }
                 guard stamp == generation, localDetails.removeValue(forKey:id) != nil else { return }
-                detailErrors[id] = "Mac 暂未返回详情，请稍后重试。"; finishDetail(id,full:full)
+                detailErrors[id] = "电脑暂未返回详情，请稍后重试。"; finishDetail(id,full:full)
             }
         } else {
             guard device.code.cloud != nil, !cloudDenied else { detailErrors[id] = "当前离线，原文详情尚未缓存。"; finishDetail(id,full:full); return }
@@ -400,7 +400,7 @@ private struct MobileDetailTransfer {
         switch code {
         case "DETAIL_EXPIRED": return "这条详情已超过 7 天保留期。"
         case "DETAILS_UNSUPPORTED", "NOT_FOUND": return "云端尚未提供原文详情，现有摘要仍可查看。"
-        case "DETAIL_CAPACITY": return "这条详情超过单条 1 MiB 或云端容量限制，全文保留在 Mac，本机仅显示预览。"
+        case "DETAIL_CAPACITY": return "这条详情超过单条 1 MiB 或云端容量限制，全文保留在电脑端，本机仅显示预览。"
         default: return "原文详情尚未同步或已过期，不能从摘要恢复全文。"
         }
     }

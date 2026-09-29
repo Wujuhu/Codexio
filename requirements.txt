@@ -3,3 +3,7 @@ aiohttp>=3.10,<4
 tomlkit>=0.13,<1
 psutil>=6,<8
 certifi>=2024.8.30
+cryptography>=45,<52
+zeroconf>=0.140,<1
+qrcode>=8,<10
+tzlocal>=5,<6

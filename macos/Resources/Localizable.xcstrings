@@ -689,6 +689,22 @@
         }
       }
     },
+    "%s 次上下文压缩": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%s context compactions"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%s 次上下文压缩"
+          }
+        }
+      }
+    },
     "%s 次可用": {
       "localizations": {
         "en": {
@@ -1021,6 +1037,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "AI 使用报告…"
+          }
+        }
+      }
+    },
+    "AI 使用报告存放路径": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AI report storage path"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AI 使用报告存放路径"
           }
         }
       }
@@ -2785,6 +2817,86 @@
         }
       }
     },
+    "云同步将停止，再次使用需添加新的邀请码。局域网配对保留。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cloud sync will stop and a new invitation code will be needed. Local pairing remains."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "云同步将停止，再次使用需添加新的邀请码。局域网配对保留。"
+          }
+        }
+      }
+    },
+    "云端密钥已移除": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cloud key removed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "云端密钥已移除"
+          }
+        }
+      }
+    },
+    "云端密钥／邀请码": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cloud key / invitation code"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "云端密钥／邀请码"
+          }
+        }
+      }
+    },
+    "云端已同步": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cloud sync completed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "云端已同步"
+          }
+        }
+      }
+    },
+    "云端已启用": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cloud sync is on"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "云端已启用"
+          }
+        }
+      }
+    },
     "五": {
       "localizations": {
         "en": {
@@ -3085,6 +3197,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "从"
+          }
+        }
+      }
+    },
+    "从 GitHub 直接下载 Codexio.exe": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download Codexio.exe directly from GitHub"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "从 GitHub 直接下载 Codexio.exe"
           }
         }
       }
@@ -3485,6 +3613,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "倍率：Fast 消耗速度为 2.5 倍。超过 272K 上下文时，除 GPT-6 Astra 外，输入和缓存为 2 倍，输出为1.5 倍。"
+          }
+        }
+      }
+    },
+    "允许 %s 读取这台电脑的用量与请求内容？": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow %s to read this computer's usage and request content?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许 %s 读取这台电脑的用量与请求内容？"
           }
         }
       }
@@ -3949,6 +4093,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "分享"
+          }
+        }
+      }
+    },
+    "分享报告": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Share report"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "分享报告"
           }
         }
       }
@@ -4497,6 +4657,38 @@
         }
       }
     },
+    "发现新版本": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New version available"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "发现新版本"
+          }
+        }
+      }
+    },
+    "发现新版本 %s": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New version %s is available"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "发现新版本 %s"
+          }
+        }
+      }
+    },
     "发起时间 ": {
       "localizations": {
         "en": {
@@ -4753,6 +4945,22 @@
         }
       }
     },
+    "同步已停止": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sync is stopped"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同步已停止"
+          }
+        }
+      }
+    },
     "同步时间：": {
       "localizations": {
         "en": {
@@ -4829,6 +5037,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "启动时模型价格同步失败，沿用已缓存价格"
+          }
+        }
+      }
+    },
+    "启用云同步": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enable cloud sync"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "启用云同步"
           }
         }
       }
@@ -5313,6 +5537,22 @@
         }
       }
     },
+    "在文件管理器中打开": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open in File Explorer"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在文件管理器中打开"
+          }
+        }
+      }
+    },
     "在菜单栏显示": {
       "localizations": {
         "en": {
@@ -5357,6 +5597,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "处理中"
+          }
+        }
+      }
+    },
+    "备注": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Note"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "备注"
           }
         }
       }
@@ -5905,6 +6161,22 @@
         }
       }
     },
+    "尚未开启": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not enabled"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尚未开启"
+          }
+        }
+      }
+    },
     "尚未更新": {
       "localizations": {
         "en": {
@@ -5949,6 +6221,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "就绪"
+          }
+        }
+      }
+    },
+    "局域网服务已开启": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local network service is on"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "局域网服务已开启"
           }
         }
       }
@@ -7713,18 +8001,18 @@
         }
       }
     },
-    "报告样式": {
+    "拒绝": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Report style"
+            "value": "Deny"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "报告样式"
+            "value": "拒绝"
           }
         }
       }
@@ -9153,6 +9441,22 @@
         }
       }
     },
+    "是否现在更新？": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update now?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "是否现在更新？"
+          }
+        }
+      }
+    },
     "显示上次成功获取的额度": {
       "localizations": {
         "en": {
@@ -10337,6 +10641,22 @@
         }
       }
     },
+    "有新版本 %s": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update available: %s"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "有新版本 %s"
+          }
+        }
+      }
+    },
     "服务暂不可用": {
       "localizations": {
         "en": {
@@ -11409,6 +11729,22 @@
         }
       }
     },
+    "校验通过，准备安装并重新启动…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verified; preparing to install and restart…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "校验通过，准备安装并重新启动…"
+          }
+        }
+      }
+    },
     "校验通过，正在准备安装…": {
       "localizations": {
         "en": {
@@ -11501,6 +11837,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "检查更新"
+          }
+        }
+      }
+    },
+    "检查更新失败": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not check for updates"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "检查更新失败"
           }
         }
       }
@@ -12017,6 +12369,22 @@
         }
       }
     },
+    "正在下载 %s": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Downloading %s"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在下载 %s"
+          }
+        }
+      }
+    },
     "正在下载 %s · %d%%": {
       "localizations": {
         "en": {
@@ -12029,6 +12397,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "正在下载 %s · %d%%"
+          }
+        }
+      }
+    },
+    "正在下载并校验安装包…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Downloading and verifying the installer…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在下载并校验安装包…"
           }
         }
       }
@@ -12881,6 +13265,22 @@
         }
       }
     },
+    "生成二维码": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Generate QR code"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "生成二维码"
+          }
+        }
+      }
+    },
     "用户": {
       "localizations": {
         "en": {
@@ -13217,6 +13617,22 @@
         }
       }
     },
+    "确认配对": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Approve pairing"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "确认配对"
+          }
+        }
+      }
+    },
     "磁贴": {
       "localizations": {
         "en": {
@@ -13229,6 +13645,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "磁贴"
+          }
+        }
+      }
+    },
+    "移除云端密钥？": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove cloud key?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移除云端密钥？"
+          }
+        }
+      }
+    },
+    "移除密钥": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove key"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移除密钥"
           }
         }
       }
@@ -14717,6 +15165,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "记录质量"
+          }
+        }
+      }
+    },
+    "设备名称": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Device name"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设备名称"
           }
         }
       }
@@ -16609,22 +17073,6 @@
         }
       }
     },
-    "重新整理报告": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Refresh report"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "重新整理报告"
-          }
-        }
-      }
-    },
     "重置": {
       "localizations": {
         "en": {
@@ -17233,6 +17681,22 @@
         }
       }
     },
+    "首次配对请让 iPhone 与电脑处于可互通的局域网。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "For first pairing, keep the iPhone and computer on a reachable local network."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "首次配对请让 iPhone 与电脑处于可互通的局域网。"
+          }
+        }
+      }
+    },
     "高度": {
       "localizations": {
         "en": {
@@ -17245,6 +17709,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "高度"
+          }
+        }
+      }
+    },
+    "，": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": ", "
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "，"
           }
         }
       }

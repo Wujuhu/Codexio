@@ -270,6 +270,30 @@ def _assistant_preview(payload) -> str:
     return _plain(content, PREVIEW_LIMIT)
 
 
+def _visible_message(value, *, user=False):
+    """Keep Markdown and file names, never tool/reasoning payloads or file bytes."""
+    parts, attachments = [], []
+    for item in value if isinstance(value, list) else [value]:
+        if isinstance(item, str):
+            parts.append(_request_text(item) if user else item.strip())
+        elif isinstance(item, dict):
+            kind = str(item.get("type") or "").replace("_", "").lower()
+            if kind in ("text", "inputtext", "outputtext") and isinstance(item.get("text"), str):
+                parts.append(_request_text(item["text"]) if user else item["text"].strip())
+            elif kind in ("image", "inputimage", "localimage", "imageurl", "file", "inputfile"):
+                source = str(item.get("path") or "")
+                name = str(item.get("name") or source).replace("\\", "/").split("/")[-1][:240]
+                attachments.append(dict(id=_hash((kind, name))[:32], name=name or "附件",
+                                        mime="image/*" if "image" in kind else "application/octet-stream",
+                                        path=source if len(source) <= 4096 else ""))
+    text = "\n".join(part for part in parts if part)
+    maximum = 1_048_576
+    full = len(text.encode("utf-8")) <= maximum
+    if not full:
+        text = text.encode("utf-8")[:6_000].decode("utf-8", errors="ignore")
+    return dict(text=text, complete=full, attachments=attachments[:6])
+
+
 def _remember_preview_record(state, record):
     # A small response-ID lookup permits explicit, out-of-order metadata updates
     # across incremental scans without retaining whole conversations in cursors.
@@ -558,6 +582,13 @@ def _turn_save(state, row, timestamp=""):
         state["request_first_verified"] = row["turn_id"]
     row["first_turn"] = row["turn_id"] == state["request_first_verified"]
     row["observed_at"] = timestamp or row.get("observed_at") or row.get("started_at") or ""
+    if row.get("has_user_message") or row.get("continuation_of") or row.get("root_turn_id") not in (None, "", row["turn_id"]):
+        row["record_kind"] = "user_request"
+    elif (row.get("context_compaction_observed") and row.get("explicit_task_start")
+          and row.get("context_compaction_completed") and not row.get("prompt_preview")
+          and not row.get("resume_kind") and not row.get("has_final_message")
+          and not row.get("is_subagent")):
+        row["record_kind"] = "context_compaction"
     state.setdefault("request_updates", {})[row["id"]] = json.loads(json.dumps(row))
 
 
@@ -570,6 +601,9 @@ def _turn_activate(state, turn_id, timestamp, owned=False, explicit_start=False)
             replacement = dict(old, id=_turn_key(state["session_id"], turn_id), turn_id=turn_id, synthetic=False)
             state.setdefault("request_turns", {})[turn_id] = replacement
             old["alias_of"] = replacement["id"]
+            messages = state.setdefault("request_message_updates", {})
+            if old["id"] in messages:
+                messages.setdefault(replacement["id"], {}).update(messages.pop(old["id"]))
             if state.get("request_first_verified") == current:
                 state["request_first_verified"] = turn_id
             _turn_save(state, old, timestamp)
@@ -659,6 +693,9 @@ def _turn_before(entry, state):
                              _turn_owned(entry, state), kind == "event_msg")
         if row:
             row["synthetic"] = False
+            if kind == "event_msg" and subtype in ("task_started", "turn_started"):
+                row["explicit_task_start"] = True
+                _turn_save(state, row, timestamp)
     message, representation = _request_message(entry)
     internal, call_ids = _question_reply(message) if message is not None else (False, ())
     if internal:
@@ -698,6 +735,13 @@ def _turn_before(entry, state):
         if current.get("continuation_of") and not current.get("has_usage"):
             current.pop("continuation_of", None)
         current["verified"] = bool(current.get("verified") or _turn_owned(entry, state))
+        current["has_user_message"] = True
+        full = _visible_message(message, user=True)
+        patch = state.setdefault("request_message_updates", {}).setdefault(current["id"], {})
+        if full["text"] and len(full["text"]) >= len(patch.get("user", "")):
+            patch.update(user=full["text"], user_complete=full["complete"])
+        if full["attachments"]:
+            patch["attachments"] = full["attachments"]
         if not current.get("ended_at"):
             current["status"] = "running"
         if not current.get("prompt_preview"):
@@ -820,6 +864,10 @@ def _turn_after(entry, state, records):
                   or implicit)
     row = _turn_get(state, turn_id, timestamp)
     if row:
+        item = payload.get("item") if isinstance(payload.get("item"), dict) else {}
+        if (entry.get("type") == "compacted" or entry.get("type") == "event_msg" and payload.get("type") == "item_completed"
+                and item.get("type") == "ContextCompaction") and (not payload.get("thread_id") or payload.get("thread_id") == state["session_id"]):
+            row["context_compaction_observed"] = True
         if state.get("model") not in (None, "", "unknown"):
             row["model"] = state["model"]
         if state.get("reasoning_effort"):
@@ -838,6 +886,11 @@ def _turn_after(entry, state, records):
             row["latest_output_preview"] = text
             if payload.get("phase") in ("final", "final_answer") or payload.get("channel") == "final":
                 row.update(output_preview=text, ended_at=timestamp, status="completed")
+                row["has_final_message"] = True
+                full = _visible_message(payload.get("content"))
+                if full["text"]:
+                    state.setdefault("request_message_updates", {}).setdefault(row["id"], {}).update(
+                        final=full["text"], final_complete=full["complete"])
         if entry.get("type") == "event_msg" and payload.get("type") in ("task_complete", "turn_complete", "turn_aborted"):
             row["ended_at"] = _timestamp(payload.get("completed_at")) or timestamp
             row["status"] = "aborted" if payload["type"] == "turn_aborted" else "completed"
@@ -850,6 +903,14 @@ def _turn_after(entry, state, records):
             final = _plain(payload.get("last_agent_message"), PREVIEW_LIMIT)
             if final:
                 row["output_preview"] = final
+                row["has_final_message"] = True
+                full = _visible_message(payload.get("last_agent_message"))
+                if full["text"]:
+                    state.setdefault("request_message_updates", {}).setdefault(row["id"], {}).update(
+                        final=full["text"], final_complete=full["complete"])
+            row["context_compaction_completed"] = ("last_agent_message" in payload
+                                                   and payload["last_agent_message"] is None
+                                                   and payload["type"] != "turn_aborted")
         _turn_save(state, row, timestamp)
     _turn_agent_entry(entry, state, timestamp)
 
@@ -873,7 +934,9 @@ def process_entry(entry: dict, state: dict, context: _Context,
 def _drain_request_updates(state, origin):
     turns = [dict(row, _origin=origin) for row in state.pop("request_updates", {}).values()]
     links = [dict(row, _origin=origin) for row in state.pop("request_link_updates", {}).values()]
-    return turns, links
+    messages = [dict(patch, id=identity, _origin=origin)
+                for identity, patch in state.pop("request_message_updates", {}).items()]
+    return turns, links, messages
 
 
 def _diagnose(state, name):
@@ -1334,13 +1397,13 @@ def iter_scan(root, get_cursor, source_id="local", source_name="本机", account
                         except (ValueError, TypeError, AttributeError, KeyError, OverflowError):
                             _diagnose(state, "malformed_lines")
                     if bytes_read >= 2 * 1024 * 1024 or len(records) + len(observations) >= 1000:
-                        turns, agent_links = _drain_request_updates(state, origin)
+                        turns, agent_links, messages = _drain_request_updates(state, origin)
                         checkpoint = _checkpoint(stream, path, offset, state)
                         checkpoint.update(generation=generation, reconcile_pending=reconcile_pending, scan_complete=False)
                         yield {"key": key, "cursor": checkpoint, "records": records, "observations": observations,
-                               "bytes_read": bytes_read, "turns": turns, "agent_links": agent_links}
+                               "bytes_read": bytes_read, "turns": turns, "agent_links": agent_links, "messages": messages}
                         records, observations, bytes_read = [], [], 0
-                turns, agent_links = _drain_request_updates(state, origin)
+                turns, agent_links, messages = _drain_request_updates(state, origin)
                 checkpoint = _checkpoint(stream, path, offset, state)
                 complete = offset == checkpoint["size"] and not _stopped(stop)
                 partial_tail = (partial_tail and checkpoint["size"] == stat.st_size
@@ -1350,7 +1413,7 @@ def iter_scan(root, get_cursor, source_id="local", source_name="本机", account
                                   scan_complete=complete and not state.get("pending_parent") and not state.get("diagnostics", {}).get("malformed_lines"))
                 yield {"key": key, "cursor": checkpoint, "records": records, "observations": observations,
                        "bytes_read": bytes_read, "indexed_file": complete, "partial_file": not complete,
-                       "turns": turns, "agent_links": agent_links,
+                       "turns": turns, "agent_links": agent_links, "messages": messages,
                        "diagnostics": state.get("diagnostics", {}),
                        "pending_parent": state.get("pending_parent")}
         except OSError as error:
@@ -1360,7 +1423,7 @@ def iter_scan(root, get_cursor, source_id="local", source_name="本机", account
 def scan_directory(root, cursors=None, source_id="local", source_name="本机", account_since=None, stop=None):
     """Serializable local-directory scan interface."""
     cursors = dict(cursors or {})
-    result = {"records": [], "observations": [], "turns": [], "agent_links": [], "cursors": cursors, "titles": {}, "files": 0,
+    result = {"records": [], "observations": [], "turns": [], "agent_links": [], "messages": [], "cursors": cursors, "titles": {}, "files": 0,
               "bytes_read": 0, "errors": [], "deferred_files": 0, "partial_files": 0, "diagnostics": {}, "reconciliations": []}
     for batch in iter_scan(root, cursors.get, source_id, source_name, account_since, stop):
         if "titles" in batch:
@@ -1369,6 +1432,7 @@ def scan_directory(root, cursors=None, source_id="local", source_name="本机", 
         result["observations"].extend(batch.get("observations", []))
         result["turns"].extend(batch.get("turns", []))
         result["agent_links"].extend(batch.get("agent_links", []))
+        result["messages"].extend(batch.get("messages", []))
         result["bytes_read"] += batch.get("bytes_read", 0)
         if "cursor" in batch:
             checkpoint = batch["cursor"]
@@ -1423,7 +1487,8 @@ class Collector:
                         self._title_cache[source_id] = batch["titles"]
                 if "cursor" in batch:
                     status["changed"] += self.store.commit_batch(batch["records"], batch["observations"], source_id, batch["key"], batch["cursor"],
-                                                                turns=batch.get("turns", []), agent_links=batch.get("agent_links", []))
+                                                                turns=batch.get("turns", []), agent_links=batch.get("agent_links", []),
+                                                                messages=batch.get("messages", []))
                     checkpoint = batch["cursor"]
                     if checkpoint.get("scan_complete") and checkpoint.get("reconcile_pending"):
                         checkpoint = dict(checkpoint, reconcile_pending=False)

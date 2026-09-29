@@ -33,6 +33,9 @@ from codexio.analytics_config import load_analytics_config, save_analytics_confi
 from codexio.usage_worker import UsageWorker
 from codexio.analytics_client import AccountReportsWorker
 from codexio.dashboard_host import DashboardHost
+from codexio.appearance_icons import app_icon
+from codexio.usage_report_ui import UsageReportController
+from codexio.mobile_windows import MobileWindowsHost
 from codexio.settings import data_dir
 from codexio.upstream_manager import UpstreamManager
 
@@ -76,7 +79,8 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationDisplayName("Codexio")
     app.setQuitOnLastWindowClosed(False)
     app.setFont(display_font(13))
-    app.setWindowIcon(load_app_icon())
+    app.setWindowIcon(app_icon(analytics_config.get("app_icon", "main")))
+    mobile_host = MobileWindowsHost(app, mock=args.mock)
 
     worker = QuotaWorker(settings, mock=args.mock)
     usage = UsageWorker(analytics_config, mock=args.mock)
@@ -94,6 +98,7 @@ def main(argv: list[str] | None = None) -> int:
             upstream.stop()
         if updater is not None:
             updater.stop()
+        mobile_host.close()
         dashboard_host.save_geometry()
         window.persist_settings()
         worker.stop()
@@ -117,7 +122,34 @@ def main(argv: list[str] | None = None) -> int:
         usage.request_refresh()
 
     def open_main(page: str = "overview", period: str | None = None) -> None:
-        return dashboard_host.open(page, period)
+        dashboard = dashboard_host.open(page, period)
+        def present_pending():
+            if updater is not None:
+                updater.present_if_possible()
+            usage_reports.opened(dashboard, dashboard_host._data)
+        QTimer.singleShot(0, present_pending)
+        return dashboard
+
+    def save_report_style(style: str) -> None:
+        analytics_config["usage_report_style"] = style
+        save_analytics_config(analytics_config)
+
+    def toggle_mobile(enabled: bool) -> None:
+        analytics_config["mobile_sync_enabled"] = bool(enabled)
+        save_analytics_config(analytics_config)
+        if enabled:
+            mobile_host.start()
+            mobile_host.update(dashboard_host._data, dashboard_host._quota)
+        else:
+            mobile_host.stop(disable=True)
+
+    def apply_app_icon(style: str) -> None:
+        analytics_config["app_icon"] = style
+        save_analytics_config(analytics_config)
+        app.setWindowIcon(app_icon(style))
+        if dashboard_host.dashboard is not None:
+            dashboard_host.dashboard.setWindowIcon(app.windowIcon())
+        dashboard_host.config_updated(analytics_config)
 
     def apply_config(config: dict) -> None:
         nonlocal analytics_config
@@ -168,7 +200,15 @@ def main(argv: list[str] | None = None) -> int:
         "main_hidden": save_main_geometry,
         "check_update": lambda: updater.check() if updater is not None else None,
         "upstream_toggle": lambda value: upstream.toggle(value),
+        "open_usage_report": lambda: usage_reports.open_manual(dashboard_host.dashboard, dashboard_host._data),
+        "main_activated": lambda: (updater.present_if_possible() if updater is not None else None,
+                                    usage_reports.data_available(dashboard_host.dashboard, dashboard_host._data)),
+        "app_icon": apply_app_icon,
+        "mobile_host": mobile_host, "mobile_toggle": toggle_mobile,
     }, app)
+    usage_reports = UsageReportController(app, lambda: analytics_config, save_report_style,
+                                          can_present=lambda: updater is None or not updater.is_resolving_startup,
+                                          mock=args.mock)
     upstream = UpstreamManager(app, data_dir(), lambda: analytics_config, apply_config,
                                lambda: dashboard_host.dashboard, mock=args.mock)
     upstream.on_quit = finish_quit
@@ -193,6 +233,8 @@ def main(argv: list[str] | None = None) -> int:
         icon=load_app_icon(),
     )
     updater = UpdateManager(app, lambda: upstream.quit_for_update(finish_quit), available=False if args.mock else None)
+    updater.set_presentation(lambda: dashboard_host.dashboard,
+                             lambda: usage_reports.data_available(dashboard_host.dashboard, dashboard_host._data))
 
     def update_status(message: str, busy: bool) -> None:
         dashboard_host.set_update_status(message, busy)
@@ -211,10 +253,13 @@ def main(argv: list[str] | None = None) -> int:
         tray.update_state(state, show_five=window.shows_five_hour())
         widget_action.setChecked(bool(analytics_config.get("widget_visible", True)))
         window.setVisible(bool(analytics_config.get("widget_visible", True)))
+        mobile_host.update(dashboard_host._data, state)
 
     def on_usage(data) -> None:
         dashboard_host.apply_data(data)
         window.apply_usage_summary(data["summaries"]["today"])
+        usage_reports.data_available(dashboard_host.dashboard, data)
+        mobile_host.update(data, dashboard_host._quota)
 
     def update_theme(*_args) -> None:
         window.apply_theme("dark")
@@ -241,6 +286,8 @@ def main(argv: list[str] | None = None) -> int:
     reports.start()
     worker.start()
     updater.start(bool(analytics_config.get("auto_update", True)))
+    if analytics_config.get("mobile_sync_enabled"):
+        mobile_host.start()
     QTimer.singleShot(0, upstream.start)
     if not args.mock:
         QTimer.singleShot(1500, acknowledge_restart)

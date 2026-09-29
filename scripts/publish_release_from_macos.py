@@ -245,8 +245,6 @@ def sync_local_release(version, tag, staging, include_windows=False, include_ios
 
 
 def publish(version, *, resume_draft=False, sync_only=False, include_windows=False):
-    if include_windows and not sync_only:
-        raise UpdateError("Windows 默认冻结；旧 Windows CI 不支持当前含 IPA 的附件集合，需单独确认并适配后才能启用。未推送或触发 CI。")
     version = ".".join(map(str, version_tuple(version)))
     tag = "v" + version
     if (ROOT / "release" / version).exists():

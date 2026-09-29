@@ -277,7 +277,8 @@ def iter_user_requests(records, turns=(), agent_links=(), sources=(), *, detail_
         if meta.get("started_inferred", True) and first.get("timestamp"):
             started = min(filter(None, (started, first["timestamp"])))
         group = {
-            "id": root, "record_kind": "unassigned" if root.startswith("unassigned:") else "user_request",
+            "id": root, "record_kind": ("unassigned" if root.startswith("unassigned:") else
+                "context_compaction" if meta.get("record_kind") == "context_compaction" and not meta.get("prompt_preview") else "user_request"),
             "session_id": meta.get("session_id") or first.get("session_id") or "",
             "turn_id": meta.get("turn_id") or first.get("turn_id") or "",
             "timestamp": started,

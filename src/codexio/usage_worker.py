@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import queue
+import sqlite3
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -374,6 +375,11 @@ class UsageWorker(QThread):
         from codexio.available_models import load_available_models
         from codexio.usage_queries import UsageQueries
         sources = [source for source in self._store.sources() if not str(source.get("id", source.get("source_id", ""))).startswith("lan:")]
+        if not self._mock:
+            try:
+                self._store.recover_recent_context_compactions(self._config.get("codex_roots", []))
+            except (OSError, ValueError, sqlite3.Error):
+                logger.exception("Could not classify recent context compactions")
         queries = UsageQueries(self._store.path)
         generation = queries.rebuild(self._catalog, sources)
         if getattr(self, "_activity_generation", None) != (generation, datetime.now().astimezone().date()):
@@ -413,6 +419,13 @@ class UsageWorker(QThread):
             self._summary_key = summary_key
             self._summary_at = now
             self._next_summary_at = parse_time(queries.next_record_at(now))
+        if getattr(self, "_model_share_key", None) != summary_key:
+            from codexio.charts import period_bounds
+            self._model_shares = {}
+            for period in ("today", "week", "month", "all"):
+                start, end = period_bounds(period, now)
+                self._model_shares[period] = queries.model_shares(start=start, end=end)
+            self._model_share_key = summary_key
         if self._quota_applicable and self._estimates_visible:
             self._estimates = self._rolling.rows()
         elif not self._quota_applicable:
@@ -433,6 +446,7 @@ class UsageWorker(QThread):
             "local_activity": self._local_activity, "local_threads": self._local_threads,
             "query_path": str(self._store.path), "query_generation": generation,
             "summaries": self._summaries, "latest_request": queries.latest_request(),
+            "model_shares": self._model_shares,
             "widget_request": queries.widget_request(), "filters": queries.filters(),
             "menu_bar_today": self._menu_bar_today, "today_date": now.date().isoformat(),
             "prices": self._catalog.rows(),

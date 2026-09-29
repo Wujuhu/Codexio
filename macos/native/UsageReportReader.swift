@@ -72,18 +72,18 @@ struct UsageReportReader: View {
                     }
                 }.padding(4).background(palette.secondary.opacity(0.35), in: RoundedRectangle(cornerRadius: 16))
                 Menu {
-                    Picker(L("报告样式", "Report style"), selection: Binding(get: { model.style }, set: { model.onStyle?($0) })) { ForEach(UsageReportStyle.allCases) { Text($0.title).tag($0) } }
+                    ForEach(UsageReportStyle.allCases) { style in
+                        Button {
+                            model.onStyle?(style)
+                        } label: {
+                            if model.style == style { Image(systemName: "checkmark") }
+                            Text(style.title)
+                        }
+                    }
                 } label: {
                     Label(L("样式", "Style"), systemImage: "paintpalette").font(.system(size: 12))
                 }
                 .menuStyle(.borderlessButton).fixedSize()
-                Button { model.onRefresh?() } label: {
-                    Label(L("重新整理报告", "Refresh report"), systemImage: "arrow.clockwise")
-                        .font(.system(size: 11)).frame(maxWidth: .infinity).frame(height: 28)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain).disabled(model.busy)
-                .help(L("重新整理报告", "Refresh report"))
                 Spacer(minLength: 0)
                 if !atBottom, model.documents[model.period] != nil {
                     reportResourceImage(model.style.catAsset).resizable().scaledToFit().frame(width: 52, height: 34)

@@ -14,25 +14,31 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from codexio.app_archive import APP_ARCHIVE_NAME
 from codexio.updates import UpdateError, version_tuple
+from ios_release import IPA_NAME
 from update_manifest import read_manifest
 from verify_release import verify_release
 
 
-def prepare_release(version, windows, macos, *, root=ROOT, platform="both", base=None):
+def prepare_release(version, windows, macos, *, root=ROOT, platform="both", base=None, include_ios=True):
     version = ".".join(map(str, version_tuple(version)))
     destination = root / "release" / version
     if destination.exists():
         raise UpdateError(f"正式版本目录已存在，不自动覆盖：{destination}")
     manifest = read_manifest(base or windows / "latest.json")
-    manifest["macos"] = read_manifest(macos / "latest.json")["macos"]
+    mac_manifest = read_manifest(macos / "latest.json")
+    manifest["macos"] = mac_manifest["macos"]
+    if include_ios:
+        manifest["ios"] = mac_manifest["ios"]
     staging = root / "build/staging/release" / uuid.uuid4().hex
     staging.mkdir(parents=True)
     try:
         if platform == "both":
             shutil.copy2(windows / "Codexio.exe", staging / "Codexio.exe")
         shutil.copy2(macos / APP_ARCHIVE_NAME, staging / APP_ARCHIVE_NAME)
+        if include_ios:
+            shutil.copy2(macos / IPA_NAME, staging / IPA_NAME)
         (staging / "latest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        verify_release(staging, version, platform=platform)
+        verify_release(staging, version, platform=platform, include_ios=include_ios)
         destination.parent.mkdir(parents=True, exist_ok=True)
         staging.rename(destination)
     finally:
@@ -42,7 +48,7 @@ def prepare_release(version, windows, macos, *, root=ROOT, platform="both", base
 
 
 def main():
-    parser = argparse.ArgumentParser(description="仅在确认发布后，将两端已验证开发包归档到 release/<确认的版本号>。")
+    parser = argparse.ArgumentParser(description="仅在确认发布后，将已验证 Windows、Mac、iOS 包归档到 release/<确认的版本号>。")
     parser.add_argument("--version", required=True, help="用户明确确认的发布版本；必须与两端程序一致")
     parser.add_argument("--windows", type=Path, default=ROOT / "build/dev/windows")
     parser.add_argument("--macos", type=Path, default=ROOT / "build/dev/macos")

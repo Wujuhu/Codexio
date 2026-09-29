@@ -19,7 +19,7 @@ from codexio.usage_collector import _user_preview
 from codexio.usage_metrics import dashboard_summary
 from codexio.upstream_store import UpstreamStore, enrich_rows
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 METRIC_FIELDS = ("id", "timestamp", "model", "reasoning_effort", "service_tier", "model_context_window",
                  "source_id", "source_name", "source_ids",
                  "session_id", "turn_id", "request_turn_id", "total_tokens", "cost_usd", "pricing_status",
@@ -27,7 +27,9 @@ METRIC_FIELDS = ("id", "timestamp", "model", "reasoning_effort", "service_tier",
 TURN_FIELDS = ("id", "session_id", "turn_id", "verified", "observed_at", "ended_at", "status", "started_at",
                "started_inferred", "duration_ms", "first_turn", "input_hashes", "source_id", "source_ids", "alias_of",
                "is_subagent", "parent_session_id", "parent_turn_id", "agent_path", "has_usage", "synthetic",
-               "continuation_of", "model", "reasoning_effort", "service_tier", "model_context_window", "provider")
+               "continuation_of", "model", "reasoning_effort", "service_tier", "model_context_window", "provider",
+               "record_kind", "has_user_message", "context_compaction_observed", "explicit_task_start",
+               "context_compaction_completed", "has_final_message", "resume_kind")
 
 
 def _json(value):
@@ -318,6 +320,8 @@ class UsageQueries:
                      prompt_preview=_user_preview(meta.get("prompt_preview") or "") or _user_preview(primary.get("prompt_preview") or ""),
                      output_preview=preview or final_meta.get("output_preview") or meta.get("output_preview")
                      or preview_call.get("output_preview") or "")
+        if group.get("record_kind") == "context_compaction":
+            group["prompt_preview"] = "上下文压缩"
 
     @staticmethod
     def _call_filters(alias, source, model, tier):
@@ -381,13 +385,14 @@ class UsageQueries:
         with self._connect() as db:
             if grouped:
                 count = db.execute("SELECT COUNT(*),COALESCE(SUM(record_kind='user_request' AND is_subagent=0),0),"
-                                   "COALESCE(SUM(record_kind='user_request' AND is_subagent<>0),0),COALESCE(SUM(record_kind='unassigned'),0) FROM "
+                                   "COALESCE(SUM(record_kind='user_request' AND is_subagent<>0),0),COALESCE(SUM(record_kind='unassigned'),0),"
+                                   "COALESCE(SUM(record_kind='context_compaction'),0) FROM "
                                    + table + " " + alias + where, args).fetchone()
                 total = count[0]
-                counts = dict(requests=count[1], subagents=count[2], unassigned=count[3])
+                counts = dict(requests=count[1], subagents=count[2], unassigned=count[3], compactions=count[4])
             else:
                 total = db.execute("SELECT COUNT(*) FROM " + table + " " + alias + where, args).fetchone()[0]
-                counts = dict(requests=total, subagents=0, unassigned=0)
+                counts = dict(requests=total, subagents=0, unassigned=0, compactions=0)
             index, size, pages = self._pagination(page, page_size, total)
             rows = [json.loads(row[0]) for row in db.execute("SELECT " + alias + ".data FROM " + table + " " + alias + where
                     + " ORDER BY " + alias + ".timestamp DESC," + alias + ".id DESC LIMIT ? OFFSET ?", args + [size, index * size])]
@@ -416,6 +421,131 @@ class UsageQueries:
             rows = db.execute("SELECT c.metrics FROM usage_request_members m JOIN usage_priced_calls c ON c.id=m.record_id "
                               "WHERE m.request_id=?", (request_id,))
             return summarize_model_calls(json.loads(row[0]) for row in rows)
+
+    def recent_user_requests(self, *, start=None, end=None, limit=3):
+        clauses, args = self._dates("g", start, end)
+        clauses.extend(["g.record_kind='user_request'", "g.is_subagent=0"])
+        with self._connect() as db:
+            return [json.loads(row[0]) for row in db.execute(
+                "SELECT g.data FROM usage_request_groups g WHERE " + " AND ".join(clauses)
+                + " ORDER BY g.timestamp DESC,g.id DESC LIMIT ?", args + [max(1, min(3, int(limit)))])]
+
+    def recent_mobile_requests(self, *, start=None, end=None, limit=200):
+        clauses, args = self._dates("g", start, end)
+        clauses.extend(["g.record_kind='user_request'", "g.is_subagent=0"])
+        with self._connect() as db:
+            result = []
+            for raw, in db.execute("SELECT g.data FROM usage_request_groups g WHERE " + " AND ".join(clauses)
+                                   + " ORDER BY g.timestamp DESC,g.id DESC LIMIT ?", args + [max(1, min(400, int(limit)*2))]):
+                row = json.loads(raw)
+                if any(str(source or "") == "local" or str(source or "").startswith("local:")
+                       for source in row.get("source_ids") or [row.get("source_id")]):
+                    result.append(row)
+                    if len(result) >= limit:
+                        break
+            return result
+
+    def mobile_trends(self):
+        """Ninety local days in one bounded background read, not per phone poll."""
+        import time
+        from datetime import date
+        from codexio.confirmed_usage import confirmed_cost, confirmed_tokens
+        today = date.today()
+        oldest = today-timedelta(days=89)
+        start = datetime.fromtimestamp(time.mktime((oldest.year, oldest.month, oldest.day, 0, 0, 0, 0, 0, -1)), timezone.utc)
+        end = datetime.now(timezone.utc)
+        calls = []
+        requests = []
+        with self._connect() as db:
+            for raw, stamp in db.execute("SELECT c.metrics,c.timestamp FROM usage_priced_calls c WHERE c.timestamp>=? AND c.timestamp<=? "
+                                         "AND EXISTS(SELECT 1 FROM usage_query_sources s WHERE s.record_id=c.id "
+                                         "AND (s.source_id='local' OR s.source_id LIKE 'local:%'))", (_stamp(start), _stamp(end))):
+                value = json.loads(raw)
+                value["_day"] = datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone().date()
+                calls.append(value)
+            for raw, stamp in db.execute("SELECT g.data,g.timestamp FROM usage_request_groups g WHERE g.timestamp>=? AND g.timestamp<=? "
+                                         "AND g.record_kind='user_request' AND g.is_subagent=0", (_stamp(start), _stamp(end))):
+                value = json.loads(raw)
+                if any(str(source or "") == "local" or str(source or "").startswith("local:")
+                       for source in value.get("source_ids") or [value.get("source_id")]):
+                    value["_day"] = datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone().date()
+                    requests.append(value)
+
+        def summary(records, groups):
+            known_cost, known_tokens = [], []
+            unknown = False
+            input_total = cached_total = 0
+            for row in records:
+                tokens, cost = confirmed_tokens(row), confirmed_cost(row)
+                if tokens is not None:
+                    known_tokens.append(tokens)
+                if cost is not None:
+                    known_cost.append(cost)
+                else:
+                    unknown = True
+                input_total += _count(row.get("input_tokens"))
+                cached_total += _count(row.get("cached_input_tokens"))
+            return dict(tokens=sum(known_tokens) if known_tokens or not records else None,
+                        cost=math.fsum(known_cost) if known_cost or not records else None,
+                        requests=len(groups), costComplete=not unknown,
+                        hitRate=cached_total/input_total if input_total else None)
+
+        daily = []
+        for index in range(90):
+            day = oldest+timedelta(days=index)
+            timestamp = time.mktime((day.year, day.month, day.day, 0, 0, 0, 0, 0, -1))
+            daily.append(dict(id=str(timestamp), start=timestamp,
+                              metric=summary([row for row in calls if row["_day"] == day],
+                                             [row for row in requests if row["_day"] == day])))
+        periods = []
+        for count in (7, 30, 90):
+            floor = today-timedelta(days=count-1)
+            relevant_calls = [row for row in calls if row["_day"] >= floor]
+            relevant_requests = [row for row in requests if row["_day"] >= floor]
+            names = sorted({str(row.get("model") or "") for row in relevant_calls}
+                           | {str(row.get("model") or "") for row in relevant_requests})
+            models = []
+            for name in names:
+                normalized = name.lower()
+                if not name or normalized in ("unknown", "mixed", "multiple", "多模型", "未知") or any(mark in name for mark in ("+", "→", ",", "，", "\n")):
+                    continue
+                metric = summary([row for row in relevant_calls if row.get("model") == name],
+                                 [row for row in relevant_requests if row.get("model") == name])
+                models.append(dict(id=name, name=name, metric=metric))
+            periods.append(dict(days=count, total=summary(relevant_calls, relevant_requests), models=models))
+        return dict(daily=daily, periods=periods)
+
+    def model_shares(self, *, start=None, end=None):
+        """Bounded presentation aggregates; only known single models receive shares."""
+        from codexio.confirmed_usage import confirmed_call, confirmed_cost, confirmed_tokens
+        import math
+        clauses, args = self._dates("c", start, end)
+        clauses.append("EXISTS(SELECT 1 FROM usage_query_sources s WHERE s.record_id=c.id "
+                       "AND (s.source_id='local' OR s.source_id LIKE 'local:%'))")
+        grouped = {}
+        with self._connect() as db:
+            for raw, in db.execute("SELECT c.metrics FROM usage_priced_calls c WHERE " + " AND ".join(clauses), args):
+                row = json.loads(raw)
+                name = str(row.get("model") or "").strip()
+                if not name or name.lower() in ("unknown", "mixed", "multiple", "多模型", "未知"):
+                    continue
+                value = grouped.setdefault(name, dict(id=name, name=name, tokens=0, cost=0.0, priced=0, requests=0))
+                tokens, cost = confirmed_tokens(row), confirmed_cost(row)
+                if tokens is not None:
+                    value["tokens"] += tokens
+                if cost is not None:
+                    value["cost"] += cost
+                    value["priced"] += 1
+            request_clauses, request_args = self._dates("g", start, end)
+            request_clauses.extend(["g.record_kind='user_request'", "g.is_subagent=0"])
+            for raw, in db.execute("SELECT g.data FROM usage_request_groups g WHERE " + " AND ".join(request_clauses), request_args):
+                row = json.loads(raw)
+                name = str(row.get("model") or "").strip()
+                if name in grouped and any(str(source or "") == "local" or str(source or "").startswith("local:") for source in row.get("source_ids") or [row.get("source_id")]):
+                    grouped[name]["requests"] += 1
+        for value in grouped.values():
+            value["cost"] = math.fsum([value["cost"]]) if value.pop("priced") else None
+        return list(grouped.values())
 
     def _one(self, table, ident):
         with self._connect() as db:
@@ -449,7 +579,8 @@ class UsageQueries:
                              "ORDER BY timestamp DESC,id DESC LIMIT 1").fetchone()
             if row is None:
                 row = db.execute("SELECT data FROM usage_request_groups WHERE record_kind='user_request' AND is_subagent=0 "
-                                 "ORDER BY timestamp DESC,id DESC LIMIT 1").fetchone()
+                                 "AND json_extract(data,'$.request_status')='completed' "
+                                 "ORDER BY COALESCE(NULLIF(json_extract(data,'$.ended_at'),''),timestamp) DESC,id DESC LIMIT 1").fetchone()
             return json.loads(row[0]) if row else None
 
     def filters(self):

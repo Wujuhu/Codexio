@@ -42,13 +42,13 @@ struct MobileRoot: View {
             NavigationStack(path:$store.recordPath) { RecordsPage().navigationTitle("记录").navigationDestination(for:String.self) { RequestDetails(id:$0) } }.tabItem {Label("记录",systemImage:"list.bullet")}.tag(2)
             NavigationStack { MobileSettings(scan:{scanner=true}).navigationTitle("设置") }.tabItem {Label("设置",systemImage:"slider.horizontal.3")}.tag(3)
         }
-        .sheet(isPresented:$scanner) { NavigationStack { QRScanner { value in scanner=false; store.beginPair(value) }.ignoresSafeArea(edges:.bottom).navigationTitle("扫描 Mac 配对二维码").navigationBarTitleDisplayMode(.inline).toolbar {ToolbarItem(placement:.cancellationAction) { Button("取消") {scanner=false} }} } }
-        .alert(store.revokedPrompt != nil ? "Mac 配对已失效" : "同步提示",isPresented:Binding(get:{store.revokedPrompt != nil || store.error != nil},set:{if !$0 {store.error=nil;store.revokedPrompt=nil}})) {
+        .sheet(isPresented:$scanner) { NavigationStack { QRScanner { value in scanner=false; store.beginPair(value) }.ignoresSafeArea(edges:.bottom).navigationTitle("扫描电脑配对二维码").navigationBarTitleDisplayMode(.inline).toolbar {ToolbarItem(placement:.cancellationAction) { Button("取消") {scanner=false} }} } }
+        .alert(store.revokedPrompt != nil ? "电脑配对已失效" : "同步提示",isPresented:Binding(get:{store.revokedPrompt != nil || store.error != nil},set:{if !$0 {store.error=nil;store.revokedPrompt=nil}})) {
             if let id = store.revokedPrompt {
                 Button("稍后",role:.cancel) {store.revokedPrompt=nil}
                 Button("删除",role:.destructive) {store.remove(id)}
             } else {Button("知道了") {store.error=nil}}
-        } message: {Text(store.revokedPrompt != nil ? "Mac 已撤销这部 iPhone 的配对。是否删除这台 Mac 及其手机缓存？" : store.error ?? "")}
+        } message: {Text(store.revokedPrompt != nil ? "电脑已撤销这部 iPhone 的配对。是否删除这台电脑及其手机缓存？" : store.error ?? "")}
     }
     @ToolbarContentBuilder private var header: some ToolbarContent {
         ToolbarItem(placement:.topBarLeading) {
@@ -60,8 +60,8 @@ struct MobileRoot: View {
         ToolbarItem(placement:.topBarTrailing) {
             Menu {
                 ForEach(store.devices) { device in Button(device.code.name) {store.select(device.id)} }
-                Button("添加 Mac",systemImage:"qrcode.viewfinder") {scanner=true}
-            } label: {Label(store.live?.name ?? "Mac",systemImage:"laptopcomputer").font(.subheadline)}
+                Button("添加电脑",systemImage:"qrcode.viewfinder") {scanner=true}
+            } label: {Label(store.live?.name ?? "电脑",systemImage:"laptopcomputer").font(.subheadline)}
         }
     }
 }
@@ -84,7 +84,7 @@ struct OverviewPage: View {
                         Text(store.updated.map {"上次更新："+MobileFormat.update.string(from:$0)} ?? "尚未同步").monospacedDigit()
                     }.font(.caption).foregroundStyle(.secondary)
                 }
-                if store.devices.isEmpty && !store.pairing { Button(action:scan) {Label("连接我的 Mac",systemImage:"qrcode.viewfinder").frame(maxWidth:.infinity)}.buttonStyle(.glassProminent) }
+                if store.devices.isEmpty && !store.pairing { Button(action:scan) {Label("连接我的电脑",systemImage:"qrcode.viewfinder").frame(maxWidth:.infinity)}.buttonStyle(.glassProminent) }
                 if store.pairing { MobileCard {Label("正在配对",systemImage:"link").font(.headline); Text(store.status); Button("取消配对") {store.cancelPair()} } }
                 Button { if let task = store.overviewTask { store.showRequest(task) } } label: {
                     MobileCard {
@@ -239,7 +239,7 @@ struct RequestDetails: View {
                 Section { Text(error).font(.caption).foregroundStyle(.secondary); Button("重试详情") { store.loadDetail(id,full:expandUser || expandFinal) } }
             }
             if detail?.availability == "capacity" {
-                Section { Text("这条原文超过手机单条容量上限，当前仅显示预览；全文保留在 Mac。").font(.caption).foregroundStyle(.secondary) }
+                Section { Text("这条原文超过手机单条容量上限，当前仅显示预览；全文保留在电脑端。").font(.caption).foregroundStyle(.secondary) }
             }
             if let detail, !detail.attachments.isEmpty {
                 Section("附件") {
@@ -285,19 +285,19 @@ struct MobileSettings: View {
     let scan: () -> Void
     var body: some View {
         Form {
-            Section("我的 Mac") {
+            Section("我的电脑") {
                 ForEach(store.devices) {device in
                     Button { if device.invalid == true {store.revokedPrompt=device.id} else {store.select(device.id)} } label: {
-                        HStack {VStack(alignment:.leading,spacing:4) {Label(device.code.name,systemImage:"laptopcomputer"); if device.invalid == true {Text("该 Mac 配对已失效").font(.caption)}}; Spacer(); if device.id==store.selected {Image(systemName:"checkmark")}}
+                        HStack {VStack(alignment:.leading,spacing:4) {Label(device.code.name,systemImage:"laptopcomputer"); if device.invalid == true {Text("该电脑配对已失效").font(.caption)}}; Spacer(); if device.id==store.selected {Image(systemName:"checkmark")}}
                             .foregroundStyle(device.invalid == true ? Color.red : Color.primary)
                     }
                 }
-                Button(action:scan) {Label("添加 Mac",systemImage:"qrcode.viewfinder")}
+                Button(action:scan) {Label("添加电脑",systemImage:"qrcode.viewfinder")}
             }
             Section("外观") {Picker("主题",selection:$theme) {Text("跟随系统").tag("system");Text("浅色").tag("light");Text("深色").tag("dark")}}
             Section("此 iPhone") {TextField("设备名称",text:$phoneName).onSubmit {store.renamePhone(phoneName)}}
             Section("连接") {LabeledContent("当前连接",value:store.connectionLabel);Button("立即刷新") {store.refresh()}.disabled(store.device == nil)}
-            if store.device != nil {Section {Button("移除此 Mac",role:.destructive) {remove=true}}}
-        }.onAppear {phoneName=store.phoneName}.onDisappear {store.renamePhone(phoneName)}.confirmationDialog("移除此 Mac 并清除手机缓存？",isPresented:$remove,titleVisibility:.visible) {Button("移除",role:.destructive) {store.remove()}}
+            if store.device != nil {Section {Button("移除此电脑",role:.destructive) {remove=true}}}
+        }.onAppear {phoneName=store.phoneName}.onDisappear {store.renamePhone(phoneName)}.confirmationDialog("移除此电脑并清除手机缓存？",isPresented:$remove,titleVisibility:.visible) {Button("移除",role:.destructive) {store.remove()}}
     }
 }
