@@ -32,6 +32,7 @@ struct LocalActivityView: View {
     @Environment(\.compactPage) private var isCompact
     @ObservedObject var state: AppState
     @State private var aggregation = "day"
+    @State private var heatmapWidth: CGFloat = 430
     private var stats: ActivityStats { state.usage.activity }
     private var buckets: [DayUsage] {
         let days = stats.days
@@ -67,8 +68,9 @@ struct LocalActivityView: View {
                 Picker("",selection:$aggregation) { Text(L("每日", "Daily")).tag("day"); Text(L("每周", "Weekly")).tag("week"); Text(L("累计", "Cumulative")).tag("cumulative") }.labelsHidden().pickerStyle(.segmented).frame(width:210)
             }.padding(.top,10)
             GeometryReader { geometry in
-                ScrollView(.horizontal) { heatmap.frame(width:max(430,geometry.size.width)) }
-            }.frame(height:aggregation == "week" ? 70 : 164)
+                ScrollView(.horizontal) { heatmap(width:max(430,geometry.size.width)) }
+            }.frame(height:heatmapHeight(width:heatmapWidth))
+                .onGeometryChange(for:CGFloat.self) { max(430,$0.size.width) } action: { if abs(heatmapWidth-$0) > 0.5 { heatmapWidth = $0 } }
             SectionHeading(title:L("活动洞察", "Activity insights")).padding(.top,10)
             AdaptiveRow(spacing:isCompact ? 16 : 55) {
                 HStack { Text(L("快速模式", "Fast mode")).foregroundStyle(.secondary); Spacer(); Text(percent(stats.fastPercent)).monospacedDigit() }
@@ -93,14 +95,20 @@ struct LocalActivityView: View {
         VStack(spacing:9) { Text(value).font(.system(size:22,weight:.medium)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.75); Text(title).font(.system(size:12)).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.8) }.frame(maxWidth:.infinity).padding(.horizontal,8)
     }
     private func dayCount(_ count: Int) -> String { count == 1 ? L("1 天", "1 day") : "\(count) "+L("天", "days") }
-    private var heatmap: some View {
-        let values = buckets, maximum = max(1,values.compactMap(\.tokens).max() ?? 0)
+    private func heatmapDimensions(width: CGFloat) -> (rows: Int,columns: Int,offset: Int,side: CGFloat) {
+        let values = buckets, rows = aggregation == "week" ? 1 : 7
         let offset = aggregation == "week" ? 0 : ((values.first.map {Calendar.current.component(.weekday,from:$0.date)} ?? 2)+5)%7
-        let rows = aggregation == "week" ? 1 : 7
         let columns = max(1,(values.count+offset+rows-1)/rows)
-        return GeometryReader { geometry in
-            let side = max(4,min(16,(geometry.size.width-CGFloat(columns-1)*4)/CGFloat(columns)))
-            VStack(alignment:.leading,spacing:10) {
+        return (rows,columns,offset,max(4,min(16,(width-CGFloat(columns-1)*4)/CGFloat(columns))))
+    }
+    private func heatmapHeight(width: CGFloat) -> CGFloat {
+        let grid = heatmapDimensions(width:width), cellHeight = aggregation == "week" ? 44 : grid.side
+        return CGFloat(grid.rows)*cellHeight+CGFloat(grid.rows-1)*4+10+16
+    }
+    private func heatmap(width: CGFloat) -> some View {
+        let values = buckets, maximum = max(1,values.compactMap(\.tokens).max() ?? 0)
+        let grid = heatmapDimensions(width:width), rows = grid.rows, columns = grid.columns, offset = grid.offset, side = grid.side
+        return VStack(alignment:.leading,spacing:10) {
             HStack(alignment:.top,spacing:4) {
                 ForEach(0..<columns,id:\.self) { column in
                     VStack(spacing:4) {
@@ -124,8 +132,7 @@ struct LocalActivityView: View {
                         .offset(x:CGFloat((index+offset)/rows)*(side+4))
                 }
             }.frame(height:16)
-            }
-        }.frame(height:aggregation == "week" ? 70 : 164)
+        }.frame(width:width,height:heatmapHeight(width:width),alignment:.topLeading)
     }
 }
 

@@ -5,6 +5,8 @@ import Network
 import Security
 import CoreImage.CIFilterBuiltins
 import SystemConfiguration
+import ImageIO
+import UniformTypeIdentifiers
 
 private struct MobileHostIdentity: Codable {
     var id: String
@@ -22,6 +24,11 @@ private struct MobileHostIdentity: Codable {
     var cloudSync: SyncStamp?
 }
 struct SyncStamp: Codable { var time: Date; var route: String }
+private struct MobileDetailStamp: Codable {
+    var revision: Int64
+    var digest: String
+    var sent: String?
+}
 
 // Native listener and background export reuse the existing UsageSnapshot. No collector.
 // Transport, identity, outbox and revision state are confined to `queue`;
@@ -43,6 +50,15 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
     @Published var notice: String?
     private let queue = DispatchQueue(label:"com.wujuhu.codexio.mobile",qos:.utility)
     private let paths: AppPaths
+    private let detailProvider: ((String) throws -> Object?)?
+    private var details: [String:MobileEnvelope] = [:]
+    private var detailSizes: [String:Int] = [:]
+    private var detailDates: [String:Double] = [:]
+    private var detailSources: [String:String] = [:]
+    private var detailStamps: [String:MobileDetailStamp] = [:]
+    private var detailDeferred: [String:Date] = [:]
+    private var cloudDetails: Bool?
+    private var nextCapabilityCheck = Date.distantPast
     private var host: MobileHostIdentity?
     private var listener: NWListener?
     private var connections: [ObjectIdentifier:NWConnection] = [:]
@@ -69,8 +85,9 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
     private var urgentPending = false
     private var transport = MobileHTTP()
     private var metadataSaved = Date.distantPast
-    init(paths: AppPaths) {
+    init(paths: AppPaths, detailProvider: ((String) throws -> Object?)? = nil) {
         self.paths = paths
+        self.detailProvider = detailProvider
         if !paths.mock {
             let saved = UserDefaults.standard.string(forKey:"codexio.mobile.name")?.trimmingCharacters(in:.whitespacesAndNewlines) ?? ""
             let system = SCDynamicStoreCopyComputerName(nil,nil) as String? ?? "Mac"
@@ -78,6 +95,12 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
         }
     }
     private var stateURL: URL { paths.data.appendingPathComponent("mobile-projection.json") }
+    private var detailStateURL: URL { paths.data.appendingPathComponent("mobile-detail-revisions.json") }
+    private var capabilities: [String] { detailProvider == nil ? [] : [MobileProtocol.detailCapability] }
+    private func saveDetailStamps() throws {
+        try MobileProtocol.encode(detailStamps).write(to:detailStateURL,options:.atomic)
+        try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:detailStateURL.path)
+    }
     private func report(_ text: String) {
         let normal = ["尚未开启","局域网服务已开启","云端已启用","同步已停止","局域网优先"].contains {text.hasPrefix($0)}
         DispatchQueue.main.async { if self.status != text { self.status = text }; self.syncError = normal ? nil : text }
@@ -144,6 +167,9 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
             do {
                 let identity = try self.identity()
                 if let data = try? Data(contentsOf:self.stateURL) { self.datasets = try JSONDecoder().decode([String:MobileEnvelope].self,from:data) }
+                if let data = try? Data(contentsOf:self.detailStateURL) { self.detailStamps = (try? JSONDecoder().decode([String:MobileDetailStamp].self,from:data)) ?? [:] }
+                self.cloudDetails = nil; self.nextCapabilityCheck = .distantPast
+                self.exportRevision = nil; self.nextHistory = .distantPast
                 if let value = self.datasets["trends"], let trends = try? value.decode(MobileTrends.self) { try self.put("trends",trends.singleModelsOnly()); try self.persist() }
                 self.active = true; self.generation = UUID(); self.transport = MobileHTTP()
                 UserDefaults.standard.set(true,forKey:"codexio.mobile.enabled")
@@ -171,6 +197,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
             self.listener?.cancel(); self.listener = nil
             self.connections.values.forEach {$0.cancel()}; self.connections.removeAll(); self.authenticated.removeAll()
             self.transport.stop(); self.sending = false; self.ticket = nil; self.candidate = nil
+            self.details.removeAll(); self.detailSources.removeAll(); self.detailSizes.removeAll(); self.detailDates.removeAll()
             DispatchQueue.main.async { self.enabled = false; self.qrImage = nil; self.pending = nil }
             self.report("同步已停止；云端保留最后已上传的数据")
         }
@@ -271,6 +298,8 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                     self.host?.writer = ""; self.host?.pendingKeyRemoval = false
                     do { try self.saveHost() } catch {self.host=pending;self.report(error.localizedDescription);self.sending=false;return}
                     self.sending = false; self.cloudReaders.removeAll(); self.sent.removeAll(); self.failures = 0
+                    self.cloudDetails = nil; self.nextCapabilityCheck = .distantPast
+                    for id in self.detailStamps.keys { self.detailStamps[id]?.sent = nil }; try? self.saveDetailStamps()
                     DispatchQueue.main.async {self.removingKey = false; self.syncError = nil; self.notice = "云端密钥已移除。再次启用云同步时，需要添加新的邀请码。局域网配对仍可使用。"}
                 }
             } catch {
@@ -308,8 +337,16 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                     catch { self.report(error.localizedDescription) }
                 }
                 self.authenticated[key] = reader.id
+                if message.action == "detail", let id = message.detailID, id.count == 64 {
+                    do {
+                        MobileProtocol.send(try self.detailMessage(id,full:message.full == true,part:message.detailPart ?? 0),over:connection)
+                    } catch {
+                        MobileProtocol.send(MobileMessage(action:"detail",error:"DETAIL_UNAVAILABLE",capabilities:self.capabilities,detailID:id,full:message.full == true),over:connection)
+                    }
+                    self.receive(connection); return
+                }
                 let known = message.known ?? [:]
-                MobileProtocol.send(MobileMessage(action:"sync",known:self.datasets.mapValues(\.revision),datasets:self.datasets.values.filter {$0.revision > known[$0.dataset,default:0]},seen:Date().timeIntervalSince1970,cloud:self.cloudReaders.contains(reader.id) ? MobileProtocol.cloudOrigin : nil,supportsAck:true),over:connection)
+                MobileProtocol.send(MobileMessage(action:"sync",known:self.datasets.mapValues(\.revision),datasets:self.datasets.values.filter {$0.revision > known[$0.dataset,default:0]},seen:Date().timeIntervalSince1970,cloud:self.cloudReaders.contains(reader.id) ? MobileProtocol.cloudOrigin : nil,supportsAck:true,capabilities:self.capabilities,detailVersions:self.details.mapValues(\.revision)),over:connection)
             } else if message.action == "pair", let reader = message.reader,
                       reader.id.count <= 64, reader.name.count <= 40, reader.localSecret.count == 43, reader.cloudSecret.count == 43,
                       let ticket = self.ticket, ticket.expires > Date().timeIntervalSince1970,
@@ -331,6 +368,102 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
         let revision = max(datasets[dataset]?.revision ?? 0,Int64(Date().timeIntervalSince1970*1000))+1
         datasets[dataset] = MobileEnvelope(dataset:dataset,revision:revision,digest:hash,payload:String(decoding:data,as:UTF8.self))
     }
+    private func thumbnail(_ path: String) -> String? {
+        // Decode only local regular images supplied by the ledger, with bounded
+        // compressed input, decoded dimensions and final output. No URL fetches.
+        guard path.hasPrefix("/"), let attributes = try? FileManager.default.attributesOfItem(atPath:path),
+              attributes[.type] as? FileAttributeType == .typeRegular,
+              let size = attributes[.size] as? NSNumber, size.intValue <= 12 * 1_024 * 1_024,
+              let source = CGImageSourceCreateWithURL(URL(fileURLWithPath:path) as CFURL,[kCGImageSourceShouldCache:false] as CFDictionary),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source,0,nil) as? [CFString:Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? NSNumber,
+              let height = properties[kCGImagePropertyPixelHeight] as? NSNumber,
+              width.intValue > 0, height.intValue > 0, width.intValue <= 16_384, height.intValue <= 16_384,
+              width.intValue * height.intValue <= 40_000_000,
+              let image = CGImageSourceCreateThumbnailAtIndex(source,0,[kCGImageSourceCreateThumbnailFromImageAlways:true,kCGImageSourceThumbnailMaxPixelSize:240,kCGImageSourceCreateThumbnailWithTransform:true] as CFDictionary) else { return nil }
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(output,UTType.jpeg.identifier as CFString,1,nil) else { return nil }
+        CGImageDestinationAddImage(destination,image,[kCGImageDestinationLossyCompressionQuality:0.55] as CFDictionary)
+        guard CGImageDestinationFinalize(destination), output.length <= 12_288 else { return nil }
+        return (output as Data).base64EncodedString()
+    }
+    private func loadDetail(_ requestID: String) throws -> MobileEnvelope? {
+        guard let raw = try detailProvider?(requestID) else { return nil }
+        let canonical = raw.string("id"), id = MobileProtocol.hash(Data(canonical.utf8))
+        guard !canonical.isEmpty else { return nil }
+        let started = raw.number("started_at") ?? 0, completed = raw.number("completed_at")
+        guard started > 0, max(started,completed ?? started) >= Date().timeIntervalSince1970-MobileProtocol.detailRetention else { return nil }
+        let sourceUser = raw.string("user"), sourceFinal = raw.string("final")
+        var thumbnails = 0
+        let attachments = (raw["attachments"] as? [Object] ?? []).prefix(6).map { attachment -> MobileAttachment in
+            let name = MobileProtocol.prefix(attachment.string("name",URL(fileURLWithPath:attachment.string("path")).lastPathComponent),bytes:240)
+            let mime = attachment.string("mime")
+            let image = thumbnails < 2 && mime.hasPrefix("image/") ? thumbnail(attachment.string("path")) : nil
+            if image != nil { thumbnails += 1 }
+            return MobileAttachment(id:MobileProtocol.hash(Data((attachment.string("id")+name).utf8)),name:name.isEmpty ? "附件" : name,mime:mime.isEmpty ? nil : mime,thumbnail:image)
+        }
+        var value = MobileRequestDetail(id:id,started:started,completed:completed,status:raw.string("status"),user:sourceUser,final:sourceFinal,userComplete:raw.flag("user_complete"),finalComplete:raw.flag("final_complete"),availability:raw.string("availability","unavailable"),attachments:attachments,full:true)
+        var data = try MobileProtocol.encode(value)
+        if data.count > MobileProtocol.detailLimit {
+            value.attachments = value.attachments.map { var item = $0; item.thumbnail = nil; return item }
+            data = try MobileProtocol.encode(value)
+        }
+        if data.count > MobileProtocol.detailLimit {
+            // Keep the originals in the ledger. An outlier is explicitly
+            // unavailable for full phone transfer, never silently truncated.
+            value = value.preview(); value.availability = "capacity"
+            value.userComplete = false; value.finalComplete = false
+            data = try MobileProtocol.encode(value)
+        }
+        if value.availability == "available", !value.userComplete || (!value.final.isEmpty && !value.finalComplete) { value.availability = "partial"; data = try MobileProtocol.encode(value) }
+        let digest = MobileProtocol.hash(data), old = detailStamps[id]
+        let revision = old?.digest == digest ? old!.revision : max(old?.revision ?? 0,Int64(Date().timeIntervalSince1970*1_000))+1
+        let envelope = MobileEnvelope(dataset:"detail-"+id,revision:revision,digest:digest,payload:String(decoding:data,as:UTF8.self))
+        details[id] = envelope
+        detailSizes[id] = data.count; detailDates[id] = started
+        while details.count > MobileProtocol.detailRows || detailSizes.values.reduce(0,+) > 8 * 1_024 * 1_024 {
+            guard let evicted = detailDates.filter({$0.key != id}).min(by:{$0.value < $1.value})?.key else { break }
+            details.removeValue(forKey:evicted); detailSizes.removeValue(forKey:evicted); detailDates.removeValue(forKey:evicted)
+        }
+        detailStamps[id] = MobileDetailStamp(revision:revision,digest:digest,sent:old?.sent)
+        if old?.digest != digest { detailDeferred.removeValue(forKey:id) }
+        if detailStamps.count > 256, let oldest = detailStamps.min(by:{$0.value.revision < $1.value.revision})?.key { detailStamps.removeValue(forKey:oldest) }
+        return envelope
+    }
+    private func detailMessage(_ id: String, full: Bool, part: Int) throws -> MobileMessage {
+        let wasCached = details[id] != nil
+        guard let envelope = try details[id] ?? loadDetail(id), let value = try? envelope.decode(MobileRequestDetail.self), value.expires > Date().timeIntervalSince1970 else { return MobileMessage(action:"detail",error:"DETAIL_UNAVAILABLE",detailID:id,full:full) }
+        if !wasCached { try saveDetailStamps() }
+        if full {
+            guard value.availability != "capacity" else { return MobileMessage(action:"detail",error:"DETAIL_CAPACITY",detailID:id,full:true) }
+            let bytes = Data(envelope.payload.utf8)
+            let count = (bytes.count+MobileProtocol.detailChunkBytes-1)/MobileProtocol.detailChunkBytes
+            guard part >= 0, part < count else { return MobileMessage(action:"detail",error:"INVALID",detailID:id,full:true) }
+            let start = part*MobileProtocol.detailChunkBytes, end = min(bytes.count,start+MobileProtocol.detailChunkBytes)
+            return MobileMessage(action:"detail",detailID:id,full:true,detailPart:part,detailManifest:MobileDetailManifest(id:id,revision:envelope.revision,digest:envelope.digest,bytes:bytes.count,parts:count),detailChunk:bytes.subdata(in:start..<end).base64EncodedString())
+        }
+        let data = try MobileProtocol.encode(value.preview())
+        return MobileMessage(action:"detail",detailID:id,full:false,detail:MobileEnvelope(dataset:envelope.dataset,revision:envelope.revision,digest:MobileProtocol.hash(data),payload:String(decoding:data,as:UTF8.self)))
+    }
+    private func updateDetails(_ rows: [UsageRow]) throws {
+        guard detailProvider != nil else { return }
+        let keep = Set(rows.prefix(MobileProtocol.detailRows).map {MobileProtocol.hash(Data($0.id.utf8))})
+        var changed = false
+        for row in rows.prefix(MobileProtocol.detailRows).reversed() {
+            let id = MobileProtocol.hash(Data(row.id.utf8))
+            // The ledger's content digest excludes scan/fetch timestamps. Legacy
+            // rows use only business fields, and recovery is bounded per request.
+            let source = row.raw.string("message_digest") + "/" + row.raw.string("status") + "/" + String(row.raw.number("message_revision") ?? 0) + "/" + row.raw.string("prompt_preview") + "/" + (row.tokens.map(String.init) ?? "")
+            guard detailSources[id] != source else { continue }
+            let old = details[id]
+            _ = try loadDetail(row.id); detailSources[id] = source
+            if old != details[id] { changed = true }
+        }
+        if details.keys.contains(where:{!keep.contains($0)}) || detailStamps.keys.contains(where:{!keep.contains($0)}) { changed = true }
+        details = details.filter {keep.contains($0.key)}; detailSources = detailSources.filter {keep.contains($0.key)}; detailStamps = detailStamps.filter {keep.contains($0.key)}
+        detailSizes = detailSizes.filter {details[$0.key] != nil}; detailDates = detailDates.filter {details[$0.key] != nil}
+        if changed { try saveDetailStamps() }
+    }
     func update(_ snapshot: UsageSnapshot,quota: MenuQuota,observed: Date? = nil) {
         guard !paths.mock, enabled else { return }
         let previews = true, name = deviceName
@@ -345,16 +478,22 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                 }
                 func window(_ value: QuotaWindow?) -> MobileQuota { MobileQuota(remaining:value?.remaining,reset:value?.reset?.timeIntervalSince1970,observed:quota.updated?.timeIntervalSince1970,retained:quota.retained) }
                 let sample = (observed ?? snapshot.updated).map {floor($0.timeIntervalSince1970/300)*300}
-                let live = MobileLive(name:name,timeZone:TimeZone.current.identifier,observed:sample,task:snapshot.widgetRequest?.raw.flag("duration_running") == true ? snapshot.widgetRequest.map(request) : nil,runningCount:snapshot.requests.filter {$0.local && $0.raw.string("record_kind") == "user_request" && !$0.raw.flag("is_subagent") && $0.raw.flag("duration_running")}.count,today:metric(snapshot.summaries["today"] ?? UsageSummary()),five:window(quota.five),week:window(quota.week))
+                let main = snapshot.requests.filter {$0.local && $0.raw.string("record_kind") == "user_request" && !$0.raw.flag("is_subagent") && ($0.date ?? .distantFuture) <= Date()}
+                let running = main.filter {$0.raw.flag("duration_running") || $0.raw.string("status") == "running"}
+                let completed = main.filter {$0.raw.string("status") == "completed" && !$0.raw.flag("duration_running")}.max { ($0.raw.number("completed_at") ?? $0.date?.timeIntervalSince1970 ?? 0) < ($1.raw.number("completed_at") ?? $1.date?.timeIntervalSince1970 ?? 0) }
+                let current = running.first ?? completed
+                let live = MobileLive(name:name,timeZone:TimeZone.current.identifier,observed:sample,task:current.map(request),runningCount:running.count,today:metric(snapshot.summaries["today"] ?? UsageSummary()),five:window(quota.five),week:window(quota.week))
                 let old = self.datasets
+                let oldDetails = self.details.mapValues(\.revision)
                 try self.put("live",live)
                 let dayKey = String(Calendar.current.startOfDay(for:Date()).timeIntervalSince1970)+TimeZone.current.identifier
                 let taskKey = (live.task?.id ?? "")+"/"+String(live.runningCount)
                 let urgent = self.exportPreview != previews || self.exportDay != dayKey || self.lastTaskKey != taskKey
                 if urgent || (self.exportRevision != snapshot.revision && Date() >= self.nextHistory) {
                     let floor = Date().addingTimeInterval(-7*86400)
-                    let main = snapshot.requests.filter {$0.local && $0.raw.string("record_kind") == "user_request" && !$0.raw.flag("is_subagent") && ($0.date ?? .distantFuture) <= Date()}
-                    try self.put("recent",main.lazy.filter {($0.date ?? .distantPast) >= floor}.prefix(200).map(request))
+                    let recent = main.filter {($0.date ?? .distantPast) >= floor}
+                    try self.put("recent",recent.prefix(200).map(request))
+                    try self.updateDetails(recent)
                     let calendar = Calendar.current, today = calendar.startOfDay(for:Date())
                     let oldest = calendar.date(byAdding:.day,value:-89,to:today)!
                     let days = snapshot.allDays.filter {$0.date >= oldest && $0.date <= today}.map {MobileDay(id:String($0.date.timeIntervalSince1970),start:$0.date.timeIntervalSince1970,metric:MobileMetric(tokens:$0.tokens,cost:$0.cost,requests:$0.requests))}
@@ -372,10 +511,10 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                     self.exportRevision = snapshot.revision; self.exportPreview = previews; self.exportDay = dayKey
                     self.nextHistory = Date().addingTimeInterval(60)
                 }
-                if old != self.datasets {
-                    try self.persist()
+                if old != self.datasets || oldDetails != self.details.mapValues(\.revision) {
+                    if old != self.datasets { try self.persist() }
                     for (key,connection) in self.connections where self.authenticated[key] != nil {
-                        MobileProtocol.send(MobileMessage(action:"sync",known:self.datasets.mapValues(\.revision),datasets:self.datasets.values.filter {old[$0.dataset] != $0},seen:Date().timeIntervalSince1970,supportsAck:true),over:connection)
+                        MobileProtocol.send(MobileMessage(action:"sync",known:self.datasets.mapValues(\.revision),datasets:self.datasets.values.filter {old[$0.dataset] != $0},seen:Date().timeIntervalSince1970,supportsAck:true,capabilities:self.capabilities,detailVersions:self.details.mapValues(\.revision)),over:connection)
                     }
                 }
                 if urgent || self.lastPrivacy != previews { self.lastPrivacy = previews; self.lastTaskKey = taskKey; self.urgentPending = true; self.upload() }
@@ -387,7 +526,10 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
         guard active, let host, host.cloudEnabled, !sending, Date() >= retryAt else { return }
         let changed = datasets.values.filter {sent[$0.dataset] != $0.revision}
         let readers = host.readers.filter {!cloudReaders.contains($0.id)}
-        guard !changed.isEmpty || !readers.isEmpty || !host.revoked.isEmpty else { return }
+        let detailChanges = details.values.filter { detailStamps[String($0.dataset.dropFirst(7))]?.sent != $0.digest && Date() >= (detailDeferred[String($0.dataset.dropFirst(7))] ?? .distantPast) }.sorted {$0.revision > $1.revision}
+        let probe = detailProvider != nil && Date() >= nextCapabilityCheck
+        let support = cloudDetails
+        guard !changed.isEmpty || !readers.isEmpty || !host.revoked.isEmpty || probe || (support == true && !detailChanges.isEmpty) else { return }
         sending = true; urgentPending = false; let generation = generation, transport = transport
         Task {
             do {
@@ -397,19 +539,50 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                     _ = try await transport.request("/v1/hosts/\(host.id)/readers",method:"PUT",token:host.writer,body:body)
                 }
                 for value in changed { _ = try await transport.request("/v1/hosts/\(host.id)/data/\(value.dataset)",method:"PUT",token:host.writer,body:MobileProtocol.encode(value)) }
+                // Detail negotiation and uploads cannot turn a successful legacy
+                // summary sync into failure. Old Workers return no capability.
+                var supported = support, uploaded: [MobileEnvelope] = [], capacityIDs: [String] = []
+                var detailFailure: String?
+                if probe {
+                    do {
+                        let response = try await transport.request("/v1/hosts/\(host.id)/capabilities",token:host.writer)
+                        let message = try JSONDecoder().decode(MobileMessage.self,from:response)
+                        supported = message.capabilities?.contains(MobileProtocol.detailCapability) == true
+                    } catch { supported = false }
+                }
+                if supported == true {
+                    for value in detailChanges.prefix(4) {
+                        do {
+                            let id = String(value.dataset.dropFirst(7))
+                            _ = try await transport.request("/v1/hosts/\(host.id)/details/\(id)",method:"PUT",token:host.writer,body:MobileProtocol.encode(value))
+                            uploaded.append(value)
+                        } catch {
+                            if case MobileError.http(_,_,let code) = error, code == "DETAIL_CAPACITY" { capacityIDs.append(String(value.dataset.dropFirst(7))); continue }
+                            detailFailure = error.localizedDescription; break
+                        }
+                    }
+                }
+                let resolvedSupport = supported, sentDetails = uploaded, failure = detailFailure, deferred = capacityIDs
                 self.queue.async {
                     guard self.generation == generation else { return }
+                    self.cloudDetails = resolvedSupport
+                    if probe { self.nextCapabilityCheck = Date().addingTimeInterval(3_600) }
                     for value in changed { self.sent[value.dataset] = value.revision }
+                    for value in sentDetails { self.detailStamps[String(value.dataset.dropFirst(7))]?.sent = value.digest }
+                    for id in deferred { self.detailDeferred[id] = Date().addingTimeInterval(3_600) }
+                    if !sentDetails.isEmpty { try? self.saveDetailStamps() }
                     readers.forEach {self.cloudReaders.insert($0.id)}
                     let granted = Set(readers.map(\.id))
                     for (key,connection) in self.connections where granted.contains(self.authenticated[key] ?? "") {
-                        MobileProtocol.send(MobileMessage(action:"sync",known:self.datasets.mapValues(\.revision),datasets:[],seen:Date().timeIntervalSince1970,cloud:MobileProtocol.cloudOrigin,supportsAck:true),over:connection)
+                        MobileProtocol.send(MobileMessage(action:"sync",known:self.datasets.mapValues(\.revision),datasets:[],seen:Date().timeIntervalSince1970,cloud:MobileProtocol.cloudOrigin,supportsAck:true,capabilities:self.capabilities,detailVersions:self.details.mapValues(\.revision)),over:connection)
                     }
                     self.host?.revoked.removeAll {host.revoked.contains($0)}
                     self.synchronized("cloud")
                     try? self.saveHost(); self.sending = false; self.failures = 0
                     let pending = self.datasets.values.contains {self.sent[$0.dataset] != $0.revision}
-                    self.report(pending ? "局域网优先 · 云端有更新待同步" : "局域网优先 · 云端已同步")
+                    if let failure { self.report("摘要已同步；详情待重试："+failure); self.retryAt = Date().addingTimeInterval(60) }
+                    else if !deferred.isEmpty { self.report("局域网优先 · 部分详情达到云端容量，仍可在局域网读取") }
+                    else { self.report(pending ? "局域网优先 · 云端有更新待同步" : "局域网优先 · 云端已同步") }
                     if self.urgentPending || self.host?.pendingKeyRemoval == true { self.upload() }
                 }
             } catch {
@@ -422,6 +595,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
             }
         }
     }
+
 }
 
 struct MobileSyncSettings: View {
@@ -449,7 +623,7 @@ struct MobileSyncSettings: View {
                 Button("生成二维码") { sync.pair(); refresh() }.disabled(sync.readers.count >= 3)
                 if let image = sync.qrImage { Image(nsImage:image).interpolation(.none).resizable().scaledToFit().frame(width:220,height:220) }
                 if let pending = sync.pending {
-                    Text("允许 \(pending.name) 读取这台 Mac 的摘要？")
+                    Text("允许 \(pending.name) 读取这台 Mac 的用量与请求内容？")
                     HStack { Button("拒绝") { sync.approve(false) }; Button("确认配对") { sync.approve(true) } }
                 }
                 ForEach(sync.readers) { reader in SyncReaderRow(sync:sync,reader:reader) }

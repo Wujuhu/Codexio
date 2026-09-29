@@ -273,6 +273,38 @@
         }
       }
     },
+    " 次。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": " requests."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": " 次。"
+          }
+        }
+      }
+    },
+    " 项目。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": " 项目。"
+          }
+        }
+      }
+    },
     "%.1f 秒": {
       "localizations": {
         "en": {
@@ -961,6 +993,86 @@
         }
       }
     },
+    "AI 使用报告": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AI usage report"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AI 使用报告"
+          }
+        }
+      }
+    },
+    "AI 使用报告…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AI usage reports…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AI 使用报告…"
+          }
+        }
+      }
+    },
+    "AI周报": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AI Weekly"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AI周报"
+          }
+        }
+      }
+    },
+    "AI日报": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AI Daily"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AI日报"
+          }
+        }
+      }
+    },
+    "AI月报": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AI Monthly"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AI月报"
+          }
+        }
+      }
+    },
     "API 基础价 × Codex 倍率": {
       "localizations": {
         "en": {
@@ -1345,6 +1457,38 @@
         }
       }
     },
+    "Codexio · 让 AI 融入每一个灵感时刻": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codexio · A little AI in every idea"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codexio · 让 AI 融入每一个灵感时刻"
+          }
+        }
+      }
+    },
+    "Codexio · 陪你看见每一点进展": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codexio · Every little step counts"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codexio · 陪你看见每一点进展"
+          }
+        }
+      }
+    },
     "Codexio 已应用上游检测设置": {
       "localizations": {
         "en": {
@@ -1373,6 +1517,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "Codexio 已恢复模型服务配置"
+          }
+        }
+      }
+    },
+    "Codexio 更新": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codexio Update"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codexio 更新"
+          }
+        }
+      }
+    },
+    "Codexio 有新版本": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A new Codexio is available"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codexio 有新版本"
           }
         }
       }
@@ -1549,6 +1725,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Qt 拒绝内嵌字体，回退系统字体: %s"
+          }
+        }
+      }
+    },
+    "Release 页面": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Release page"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Release 页面"
           }
         }
       }
@@ -1793,6 +1985,22 @@
         }
       }
     },
+    "zh_CN": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "en_US"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "zh_CN"
+          }
+        }
+      }
+    },
     "{} 次请求未定价": {
       "localizations": {
         "en": {
@@ -1917,6 +2125,102 @@
           "stringUnit": {
             "state": "translated",
             "value": "上下文"
+          }
+        }
+      }
+    },
+    "上下文压缩": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Context compaction"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上下文压缩"
+          }
+        }
+      }
+    },
+    "上午": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Morning"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上午"
+          }
+        }
+      }
+    },
+    "上周": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Last week"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上周"
+          }
+        }
+      }
+    },
+    "上月": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Last month"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上月"
+          }
+        }
+      }
+    },
+    "上次更新未完成，可重新下载该版本。当前应用仍可继续使用。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The previous update was interrupted. You can download that version again and keep using this app."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上次更新未完成，可重新下载该版本。当前应用仍可继续使用。"
+          }
+        }
+      }
+    },
+    "上次更新未能完成": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The previous update did not finish"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上次更新未能完成"
           }
         }
       }
@@ -2161,6 +2465,38 @@
         }
       }
     },
+    "下载 Mac ZIP": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download Mac ZIP"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下载 Mac ZIP"
+          }
+        }
+      }
+    },
+    "下载更新失败": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not download the update"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下载更新失败"
+          }
+        }
+      }
+    },
     "下载未完成，请检查网络和磁盘空间后重试": {
       "localizations": {
         "en": {
@@ -2173,6 +2509,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "下载未完成，请检查网络和磁盘空间后重试"
+          }
+        }
+      }
+    },
+    "下载没有生成更新文件": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The download did not produce an update file"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下载没有生成更新文件"
           }
         }
       }
@@ -2205,6 +2557,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "不贴边"
+          }
+        }
+      }
+    },
+    "专注 · 与 AI 共成长": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Focus · Grow with AI"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "专注 · 与 AI 共成长"
           }
         }
       }
@@ -2381,6 +2749,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "主题"
+          }
+        }
+      }
+    },
+    "也没有用量记录。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": " also had no recorded usage."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "也没有用量记录。"
           }
         }
       }
@@ -3329,6 +3713,22 @@
         }
       }
     },
+    "关闭报告": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close report"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭报告"
+          }
+        }
+      }
+    },
     "关闭窗口": {
       "localizations": {
         "en": {
@@ -3377,6 +3777,38 @@
         }
       }
     },
+    "其他模型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Other models"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "其他模型"
+          }
+        }
+      }
+    },
+    "其他项目": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Other projects"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "其他项目"
+          }
+        }
+      }
+    },
     "内嵌字体不可用，界面改用系统字体": {
       "localizations": {
         "en": {
@@ -3409,6 +3841,38 @@
         }
       }
     },
+    "再前一周": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the preceding week"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "再前一周"
+          }
+        }
+      }
+    },
+    "再前一月": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the preceding month"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "再前一月"
+          }
+        }
+      }
+    },
     "写入额度缓存失败": {
       "localizations": {
         "en": {
@@ -3425,6 +3889,22 @@
         }
       }
     },
+    "凌晨": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Night"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "凌晨"
+          }
+        }
+      }
+    },
     "减少 ": {
       "localizations": {
         "en": {
@@ -3437,6 +3917,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "减少 "
+          }
+        }
+      }
+    },
+    "分享报告": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Share report"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "分享报告"
           }
         }
       }
@@ -3569,6 +4065,22 @@
         }
       }
     },
+    "前天": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the preceding day"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "前天"
+          }
+        }
+      }
+    },
     "前期为 0": {
       "localizations": {
         "en": {
@@ -3681,6 +4193,22 @@
         }
       }
     },
+    "努力收好，好好放松喵": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep your progress and unwind"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "努力收好，好好放松喵"
+          }
+        }
+      }
+    },
     "包含已明确关联的子代理；只有整轮结束后才显示完成。": {
       "localizations": {
         "en": {
@@ -3709,6 +4237,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "包含模型"
+          }
+        }
+      }
+    },
+    "午后": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Afternoon"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "午后"
           }
         }
       }
@@ -4129,6 +4673,22 @@
         }
       }
     },
+    "可下载此版本的 Mac ZIP，或打开对应 Release 页面。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download the Mac ZIP for this version or open its release page."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可下载此版本的 Mac ZIP，或打开对应 Release 页面。"
+          }
+        }
+      }
+    },
     "可检测 Responses 上游实际返回的模型型号。该功能只把当前模型服务地址临时改为本机回环代理，退出时恢复；需要生效或无法确认时，可选择现在重启 Codex 客户端或稍后自行重启。": {
       "localizations": {
         "en": {
@@ -4381,6 +4941,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "周四"
+          }
+        }
+      }
+    },
+    "周报": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weekly"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "周报"
           }
         }
       }
@@ -4689,6 +5265,22 @@
         }
       }
     },
+    "在 ": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "in "
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在 "
+          }
+        }
+      }
+    },
     "在 Finder 中打开": {
       "localizations": {
         "en": {
@@ -4849,6 +5441,22 @@
         }
       }
     },
+    "多 ": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": ": +"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "多 "
+          }
+        }
+      }
+    },
     "多上游（%d）": {
       "localizations": {
         "en": {
@@ -4957,6 +5565,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "套餐用量历史"
+          }
+        }
+      }
+    },
+    "奶油猫尾书签": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cream bookmark"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "奶油猫尾书签"
           }
         }
       }
@@ -5137,6 +5761,38 @@
         }
       }
     },
+    "小猫发现：": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cat note: "
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "小猫发现："
+          }
+        }
+      }
+    },
+    "小猫正在整理报告…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your report is being prepared…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "小猫正在整理报告…"
+          }
+        }
+      }
+    },
     "小组件数据已加载": {
       "localizations": {
         "en": {
@@ -5181,6 +5837,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "少"
+          }
+        }
+      }
+    },
+    "少 ": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": ": −"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "少 "
           }
         }
       }
@@ -5585,6 +6257,22 @@
         }
       }
     },
+    "已恢复旧版。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The previous version was restored."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已恢复旧版。"
+          }
+        }
+      }
+    },
     "已恢复遗留配置；请重新开启上游检测以重启客户端": {
       "localizations": {
         "en": {
@@ -5709,6 +6397,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "已更新"
+          }
+        }
+      }
+    },
+    "已更新至": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Updated to"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已更新至"
           }
         }
       }
@@ -6374,7 +7078,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Current version"
+            "value": "Current"
           }
         },
         "zh-Hans": {
@@ -6865,6 +7569,22 @@
         }
       }
     },
+    "打开报告": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open reports"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开报告"
+          }
+        }
+      }
+    },
     "打开数据目录": {
       "localizations": {
         "en": {
@@ -6941,6 +7661,54 @@
           "stringUnit": {
             "state": "translated",
             "value": "找不到可安全修改的用户配置层"
+          }
+        }
+      }
+    },
+    "找不到当前应用程序": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The current app executable is missing"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "找不到当前应用程序"
+          }
+        }
+      }
+    },
+    "把这份小记录收好，喵": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep this little record"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "把这份小记录收好，喵"
+          }
+        }
+      }
+    },
+    "报告样式": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Report style"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "报告样式"
           }
         }
       }
@@ -7153,6 +7921,22 @@
         }
       }
     },
+    "按模型调用计": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model calls"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按模型调用计"
+          }
+        }
+      }
+    },
     "按用户请求": {
       "localizations": {
         "en": {
@@ -7165,6 +7949,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "按用户请求"
+          }
+        }
+      }
+    },
+    "按自己的节奏来，喵": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Find your own pace"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按自己的节奏来，喵"
           }
         }
       }
@@ -7485,6 +8285,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "数据源"
+          }
+        }
+      }
+    },
+    "数据源已变化，请重新打开报告": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The data source changed. Reopen the report."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "数据源已变化，请重新打开报告"
           }
         }
       }
@@ -7841,6 +8657,38 @@
         }
       }
     },
+    "无法渲染报告": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not render the report"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法渲染报告"
+          }
+        }
+      }
+    },
+    "无法生成报告图片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not create the report image"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法生成报告图片"
+          }
+        }
+      }
+    },
     "无法确认 Codex 认证状态，未修改路由": {
       "localizations": {
         "en": {
@@ -8065,6 +8913,22 @@
         }
       }
     },
+    "日报": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Daily"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "日报"
+          }
+        }
+      }
+    },
     "旧版 Codexio 进程未能退出": {
       "localizations": {
         "en": {
@@ -8077,6 +8941,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "旧版 Codexio 进程未能退出"
+          }
+        }
+      }
+    },
+    "旧版备份仍保留，可用于恢复。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The previous app backup is retained for recovery."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "旧版备份仍保留，可用于恢复。"
           }
         }
       }
@@ -8125,6 +9005,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "旧路由需要先在原版 Codexio 中关闭，恢复记录已保留"
+          }
+        }
+      }
+    },
+    "早早开工，今天也加油喵": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "An early start—keep it up"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "早早开工，今天也加油喵"
           }
         }
       }
@@ -8205,6 +9101,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "明天"
+          }
+        }
+      }
+    },
+    "昨天": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yesterday"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "昨天"
+          }
+        }
+      }
+    },
+    "是主角": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": " took the lead"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "是主角"
           }
         }
       }
@@ -8317,6 +9245,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "显示边框"
+          }
+        }
+      }
+    },
+    "晚间": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Evening"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "晚间"
           }
         }
       }
@@ -8449,6 +9393,22 @@
         }
       }
     },
+    "暂无报告数据": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No report data"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂无报告数据"
+          }
+        }
+      }
+    },
     "暂无有效数据": {
       "localizations": {
         "en": {
@@ -8477,6 +9437,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "暂无本机聊天记录"
+          }
+        }
+      }
+    },
+    "暂无模型调用": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No model calls"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂无模型调用"
           }
         }
       }
@@ -8577,6 +9553,54 @@
         }
       }
     },
+    "更新": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新"
+          }
+        }
+      }
+    },
+    "更新…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新…"
+          }
+        }
+      }
+    },
+    "更新下载已取消": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update download cancelled"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新下载已取消"
+          }
+        }
+      }
+    },
     "更新下载必须使用 HTTPS": {
       "localizations": {
         "en": {
@@ -8625,6 +9649,22 @@
         }
       }
     },
+    "更新后将重新打开 Codexio。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codexio will reopen after the update."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新后将重新打开 Codexio。"
+          }
+        }
+      }
+    },
     "更新失败，请稍后重试": {
       "localizations": {
         "en": {
@@ -8641,18 +9681,18 @@
         }
       }
     },
-    "更新已下载，可立即安装": {
+    "更新已准备，可稍后继续安装": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Update downloaded and ready to install"
+            "value": "The update is ready to install later"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "更新已下载，可立即安装"
+            "value": "更新已准备，可稍后继续安装"
           }
         }
       }
@@ -8669,6 +9709,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "更新已就绪，正常退出后安装"
+          }
+        }
+      }
+    },
+    "更新已校验。点击“更新”后继续正常退出并安装。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The update is verified. Choose Update to quit normally and install."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新已校验。点击“更新”后继续正常退出并安装。"
+          }
+        }
+      }
+    },
+    "更新文件 SHA-256 不匹配": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The update SHA-256 does not match"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新文件 SHA-256 不匹配"
           }
         }
       }
@@ -8717,6 +9789,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "更新文件不是有效的 Windows 程序"
+          }
+        }
+      }
+    },
+    "更新文件大小不匹配": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The update size does not match"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新文件大小不匹配"
           }
         }
       }
@@ -8785,6 +9873,22 @@
         }
       }
     },
+    "更新文件超过清单中的大小": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The update exceeds the size in its manifest"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新文件超过清单中的大小"
+          }
+        }
+      }
+    },
     "更新时间 ": {
       "localizations": {
         "en": {
@@ -8829,6 +9933,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "更新暂存已存在"
+          }
+        }
+      }
+    },
+    "更新未完成": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update not completed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新未完成"
           }
         }
       }
@@ -8929,6 +10049,38 @@
         }
       }
     },
+    "最多，共 ": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": ", with "
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最多，共 "
+          }
+        }
+      }
+    },
+    "最常用模型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Most-used model"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最常用模型"
+          }
+        }
+      }
+    },
     "最常用的推理强度": {
       "localizations": {
         "en": {
@@ -8941,6 +10093,54 @@
           "stringUnit": {
             "state": "translated",
             "value": "最常用的推理强度"
+          }
+        }
+      }
+    },
+    "最早请求": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "First request"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最早请求"
+          }
+        }
+      }
+    },
+    "最晚请求": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Last request"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最晚请求"
+          }
+        }
+      }
+    },
+    "最热闹": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": " was busiest"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最热闹"
           }
         }
       }
@@ -9069,6 +10269,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "最高"
+          }
+        }
+      }
+    },
+    "月报": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Monthly"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "月报"
           }
         }
       }
@@ -9213,6 +10429,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "未定价调用"
+          }
+        }
+      }
+    },
+    "未归属": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unassigned"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未归属"
           }
         }
       }
@@ -9905,6 +11137,22 @@
         }
       }
     },
+    "杏色时段图": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apricot afternoon"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "杏色时段图"
+          }
+        }
+      }
+    },
     "条件": {
       "localizations": {
         "en": {
@@ -10337,6 +11585,22 @@
         }
       }
     },
+    "模型使用分布": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model usage"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型使用分布"
+          }
+        }
+      }
+    },
     "模型供应商": {
       "localizations": {
         "en": {
@@ -10497,6 +11761,22 @@
         }
       }
     },
+    "模型调用分布": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model calls"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型调用分布"
+          }
+        }
+      }
+    },
     "模型：": {
       "localizations": {
         "en": {
@@ -10577,6 +11857,38 @@
         }
       }
     },
+    "次": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "calls"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "次"
+          }
+        }
+      }
+    },
+    "次上下文压缩": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "context compactions"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "次上下文压缩"
+          }
+        }
+      }
+    },
     "次可用": {
       "localizations": {
         "en": {
@@ -10605,6 +11917,54 @@
           "stringUnit": {
             "state": "translated",
             "value": "次未归属调用"
+          }
+        }
+      }
+    },
+    "次模型调用": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "model calls"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "次模型调用"
+          }
+        }
+      }
+    },
+    "次用户请求": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "user requests"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "次用户请求"
+          }
+        }
+      }
+    },
+    "次请求": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "requests"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "次请求"
           }
         }
       }
@@ -10669,6 +12029,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "正在使用"
+          }
+        }
+      }
+    },
+    "正在准备安装更新": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preparing to install the update"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在准备安装更新"
+          }
+        }
+      }
+    },
+    "正在准备安装，Codexio 将正常退出并重新打开…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preparing to install. Codexio will quit normally and reopen…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在准备安装，Codexio 将正常退出并重新打开…"
           }
         }
       }
@@ -10861,6 +12253,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "正在抓取数据"
+          }
+        }
+      }
+    },
+    "正在校验安装包与应用签名…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verifying the package and app signature…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在校验安装包与应用签名…"
+          }
+        }
+      }
+    },
+    "正在校验更新": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verifying the update"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在校验更新"
           }
         }
       }
@@ -11089,6 +12513,22 @@
         }
       }
     },
+    "每天 08:00 后首次打开时显示": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show on first open after 08:00"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每天 08:00 后首次打开时显示"
+          }
+        }
+      }
+    },
     "每小时": {
       "localizations": {
         "en": {
@@ -11197,6 +12637,54 @@
           "stringUnit": {
             "state": "translated",
             "value": "没有可用重置次数"
+          }
+        }
+      }
+    },
+    "没有用量记录，新的小脚印已记好喵。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": " had no usage; your new activity is recorded."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有用量记录，新的小脚印已记好喵。"
+          }
+        }
+      }
+    },
+    "没有请求记录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": " had no recorded requests"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有请求记录"
+          }
+        }
+      }
+    },
+    "没有项目请求，休息也很重要喵。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": " had no project requests. Rest matters too."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有项目请求，休息也很重要喵。"
           }
         }
       }
@@ -11441,6 +12929,22 @@
         }
       }
     },
+    "用户请求时段": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "User request times"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用户请求时段"
+          }
+        }
+      }
+    },
     "用户请求详情": {
       "localizations": {
         "en": {
@@ -11485,6 +12989,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "用量"
+          }
+        }
+      }
+    },
+    "用量小结": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usage summary"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用量小结"
           }
         }
       }
@@ -11617,6 +13137,54 @@
         }
       }
     },
+    "的请求分布在不同项目，稳稳前进喵。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": " had requests across several projects. Steady progress."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "的请求分布在不同项目，稳稳前进喵。"
+          }
+        }
+      }
+    },
+    "的请求在": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": " was busiest in "
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "的请求在"
+          }
+        }
+      }
+    },
+    "目标版本": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Target"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目标版本"
+          }
+        }
+      }
+    },
     "确定": {
       "localizations": {
         "en": {
@@ -11661,6 +13229,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "磁贴"
+          }
+        }
+      }
+    },
+    "稍后": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Later"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "稍后"
           }
         }
       }
@@ -11725,6 +13309,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "立即同步"
+          }
+        }
+      }
+    },
+    "第": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Page "
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "第"
           }
         }
       }
@@ -12353,6 +13953,22 @@
         }
       }
     },
+    "缓存命中率 ": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cache hit rate "
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "缓存命中率 "
+          }
+        }
+      }
+    },
     "缓存命中率 = 缓存读取 Token ÷ 输入 Token（含缓存）；不把缓存创建计为命中。": {
       "localizations": {
         "en": {
@@ -12817,6 +14433,22 @@
         }
       }
     },
+    "自动检查更新": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check for updates automatically"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动检查更新"
+          }
+        }
+      }
+    },
     "自动（按订阅）": {
       "localizations": {
         "en": {
@@ -12893,6 +14525,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "菜单栏内容"
+          }
+        }
+      }
+    },
+    "薄荷猫咪花园": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mint garden"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "薄荷猫咪花园"
           }
         }
       }
@@ -13985,6 +15633,38 @@
         }
       }
     },
+    "轻轻下滑，还有小发现喵": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scroll down for more little discoveries"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "轻轻下滑，还有小发现喵"
+          }
+        }
+      }
+    },
+    "较": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Compared with "
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "较"
+          }
+        }
+      }
+    },
     "较前 30 天": {
       "localizations": {
         "en": {
@@ -14225,6 +15905,22 @@
         }
       }
     },
+    "辛苦啦，今晚早点休息喵": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Take an earlier rest tonight"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "辛苦啦，今晚早点休息喵"
+          }
+        }
+      }
+    },
     "边框颜色": {
       "localizations": {
         "en": {
@@ -14253,6 +15949,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "边框颜色无效，请使用 #RRGGBB。"
+          }
+        }
+      }
+    },
+    "过半的请求都在 ": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": ": more than half of requests were in "
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "过半的请求都在 "
           }
         }
       }
@@ -14721,6 +16433,22 @@
         }
       }
     },
+    "部分记录未提供工作目录，小猫没有猜测项目归属。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Some records have no working directory; their project is unknown."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "部分记录未提供工作目录，小猫没有猜测项目归属。"
+          }
+        }
+      }
+    },
     "部分请求尚无可用价格。": {
       "localizations": {
         "en": {
@@ -14909,6 +16637,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "重新扫描本地记录"
+          }
+        }
+      }
+    },
+    "重新整理报告": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Refresh report"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新整理报告"
           }
         }
       }
@@ -15217,6 +16961,22 @@
         }
       }
     },
+    "项目使用情况": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Project usage"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "项目使用情况"
+          }
+        }
+      }
+    },
     "预估费用": {
       "localizations": {
         "en": {
@@ -15517,6 +17277,70 @@
           "stringUnit": {
             "state": "translated",
             "value": "高度"
+          }
+        }
+      }
+    },
+    "，\n三个项目平分秋色": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": ",\nthree projects in balance"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "，\n三个项目平分秋色"
+          }
+        }
+      }
+    },
+    "，\n最常陪你思考的是它": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": ",\nyour most-used model"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "，\n最常陪你思考的是它"
+          }
+        }
+      }
+    },
+    "，\n没有项目请求": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": ",\nno project requests"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "，\n没有项目请求"
+          }
+        }
+      }
+    },
+    "，\n项目使用各有侧重": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": ",\nactivity across projects"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "，\n项目使用各有侧重"
           }
         }
       }

@@ -15,7 +15,9 @@ final class AppState: ObservableObject {
     let fetchActivity = FetchActivity()
     let quotaClock = ScanClock()
     let menuQuotaClock = ScanClock()
-    lazy var mobileSync = MobileSync(paths:paths)
+    lazy var mobileSync = MobileSync(paths: paths, detailProvider: { [weak self] id in try self?.database.requestMessageDetail(id) })
+    var usageReportDirectory: URL { paths.data.appendingPathComponent("Reports", isDirectory: true) }
+    private lazy var usageReportStore = UsageReportStore(directory: usageReportDirectory)
     private let brandingQueue = DispatchQueue(label:"com.wujuhu.codexio.branding",qos:.utility)
     private lazy var usageCache = UsageSnapshotCache(database:database,catalog:catalog)
     private let objectFiles = ObjectFileCache()
@@ -86,6 +88,7 @@ final class AppState: ObservableObject {
     var onInstallUpdate: (() -> Void)?
     var onUpstreamChange: ((Bool) -> Void)?
     var onOpenWindow: (() -> Void)?
+    var onOpenUsageReport: (() -> Void)?
     var onQuit: (() -> Void)?
     var onCancelQuit: (() -> Void)?
     var onRestartCodex: ((@escaping () -> Void) -> Void)?
@@ -168,6 +171,35 @@ final class AppState: ObservableObject {
         WidgetCenter.shared.reloadAllTimelines()
     }
     func refresh() { refreshUsage(); refreshQuota(); if selectedPage == "subscription" || usageSection == "threads" { refreshReports(force:true) } }
+    private var usageReportSourceKey: String { preferences.roots.map(\.path).sorted().joined(separator: "\n") + "\n" + accountRoot.path }
+    func prepareUsageReports(completion: @escaping (Result<UsageReportCollection, Error>) -> Void) {
+        let sourceKey = usageReportSourceKey
+        dataQueue.async { [weak self] in
+            guard let self else { return }
+            let result: Result<UsageReportCollection, Error>
+            do {
+                let input = try self.database.transaction { () throws -> (UsageSnapshot, Int) in
+                    let snapshot = try self.usageCache.load()
+                    let generation = try self.database.query("SELECT revision FROM usage_revisions WHERE kind='ledger'").first?.integer("revision") ?? 0
+                    return (snapshot, generation)
+                }
+                ReportArtworkResources.prepare()
+                result = .success(try self.usageReportStore.load(snapshot: input.0, ledger: input.1, priceVersion: self.catalog.version, sourceKey: sourceKey))
+            } catch { result = .failure(error) }
+            DispatchQueue.main.async {
+                guard !self.stopped else { return }
+                guard sourceKey == self.usageReportSourceKey else { completion(.failure(AppFailure(L("数据源已变化，请重新打开报告", "The data source changed. Reopen the report.")))); return }
+                completion(result)
+            }
+        }
+    }
+    func markUsageReportPresented(_ day: String) {
+        dataQueue.async { [weak self] in
+            guard let self else { return }
+            do { try self.usageReportStore.markPresented(day) }
+            catch { DispatchQueue.main.async { self.errorMessage = error.localizedDescription } }
+        }
+    }
     func refreshUsage() {
         guard !scanning, !stopped, !paths.mock else { return }
         scanning = true; let roots = preferences.roots; let initial = loading; let operation = fetchActivity.begin()

@@ -24,6 +24,7 @@ final class UsageSnapshotCache {
     private struct PricedRecord {
         let payload: String
         let title: String
+        let cwd: String
         let local: Bool
         let upstreamPresent: Bool
         let row: UsageRow
@@ -61,9 +62,9 @@ final class UsageSnapshotCache {
     private func prepareCalls() throws -> [UsageRow] {
         var calls: [UsageRow] = [], retained: [String:PricedRecord] = [:], retainedBytes = 0
         for entry in try database.recordPayloads() {
-            let id = entry.string("id"), payload = entry.string("data"), title = entry.string("title"), local = entry.integer("local_origin") == 1
+            let id = entry.string("id"), payload = entry.string("data"), title = entry.string("title"), cwd = entry.string("cwd"), local = entry.integer("local_origin") == 1
             let value: UsageRow
-            if let old = pricedRecords[id], old.payload == payload, old.title == title, old.local == local,
+            if let old = pricedRecords[id], old.payload == payload, old.title == title, old.cwd == cwd, old.local == local,
                old.upstreamPresent == upstreamPresent,
                old.row.raw.string("price_version") == catalog.version,
                (!upstreamPresent || old.row.raw.string("upstream_model") == (upstreamModels[old.row.raw.string("response_id")] ?? "")) {
@@ -71,6 +72,7 @@ final class UsageSnapshotCache {
             } else {
                 var raw = jsonObject(Data(payload.utf8))
                 if !title.isEmpty { raw["session_title"] = title }
+                if !cwd.isEmpty { raw["session_cwd"] = cwd }
                 raw["local_origin"] = local || raw.string("source_id").hasPrefix("local")
                 if upstreamPresent { raw["upstream_model"] = upstreamModels[raw.string("response_id")] }
                 value = UsageRow(raw:catalog.price(raw))
@@ -78,7 +80,7 @@ final class UsageSnapshotCache {
             calls.append(value)
             let size = payload.utf8.count
             if retained.count < 8192 && retainedBytes+size <= 8_388_608 {
-                retained[id] = PricedRecord(payload:payload,title:title,local:local,upstreamPresent:upstreamPresent,row:value); retainedBytes += size
+                retained[id] = PricedRecord(payload:payload,title:title,cwd:cwd,local:local,upstreamPresent:upstreamPresent,row:value); retainedBytes += size
             }
         }
         pricedRecords = retained

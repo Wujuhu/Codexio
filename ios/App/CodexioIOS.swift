@@ -36,11 +36,11 @@ struct MobileRoot: View {
     @EnvironmentObject var store: MobileStore
     @State private var scanner = false
     var body: some View {
-        TabView {
-            NavigationStack { OverviewPage(scan:{scanner=true}).navigationTitle("").toolbar {header} }.tabItem {Label("概览",systemImage:"square.grid.2x2")}
-            NavigationStack { UsagePage().navigationTitle("用量").navigationBarTitleDisplayMode(.large) }.tabItem {Label("用量",systemImage:"chart.xyaxis.line")}
-            NavigationStack { RecordsPage().navigationTitle("记录") }.tabItem {Label("记录",systemImage:"list.bullet")}
-            NavigationStack { MobileSettings(scan:{scanner=true}).navigationTitle("设置") }.tabItem {Label("设置",systemImage:"slider.horizontal.3")}
+        TabView(selection:$store.tab) {
+            NavigationStack { OverviewPage(scan:{scanner=true}).navigationTitle("").toolbar {header} }.tabItem {Label("概览",systemImage:"square.grid.2x2")}.tag(0)
+            NavigationStack { UsagePage().navigationTitle("用量").navigationBarTitleDisplayMode(.large) }.tabItem {Label("用量",systemImage:"chart.xyaxis.line")}.tag(1)
+            NavigationStack(path:$store.recordPath) { RecordsPage().navigationTitle("记录").navigationDestination(for:String.self) { RequestDetails(id:$0) } }.tabItem {Label("记录",systemImage:"list.bullet")}.tag(2)
+            NavigationStack { MobileSettings(scan:{scanner=true}).navigationTitle("设置") }.tabItem {Label("设置",systemImage:"slider.horizontal.3")}.tag(3)
         }
         .sheet(isPresented:$scanner) { NavigationStack { QRScanner { value in scanner=false; store.beginPair(value) }.ignoresSafeArea(edges:.bottom).navigationTitle("扫描 Mac 配对二维码").navigationBarTitleDisplayMode(.inline).toolbar {ToolbarItem(placement:.cancellationAction) { Button("取消") {scanner=false} }} } }
         .alert(store.revokedPrompt != nil ? "Mac 配对已失效" : "同步提示",isPresented:Binding(get:{store.revokedPrompt != nil || store.error != nil},set:{if !$0 {store.error=nil;store.revokedPrompt=nil}})) {
@@ -86,20 +86,28 @@ struct OverviewPage: View {
                 }
                 if store.devices.isEmpty && !store.pairing { Button(action:scan) {Label("连接我的 Mac",systemImage:"qrcode.viewfinder").frame(maxWidth:.infinity)}.buttonStyle(.glassProminent) }
                 if store.pairing { MobileCard {Label("正在配对",systemImage:"link").font(.headline); Text(store.status); Button("取消配对") {store.cancelPair()} } }
-                MobileCard {
-                    HStack {Text("当前任务").font(.headline); Spacer(); if store.live?.runningCount ?? 0 > 0 {Image(systemName:"circle.dotted").symbolEffect(.rotate)} }
-                    if let task = store.live?.task {
-                        if Date().timeIntervalSince1970-(store.live?.observed ?? 0) > 900 { Text("任务状态待更新").font(.caption).foregroundStyle(.orange) }
-                        Text(task.preview ?? "请求预览未同步").font(.title3.weight(.semibold)).lineLimit(3)
-                        Text([task.model,task.effort ?? ""].filter {!$0.isEmpty}.joined(separator:" · ")).font(.caption).foregroundStyle(.secondary)
-                        HStack {Text(MobileFormat.tokens(task.tokens)+" Token"); Spacer();Text(MobileFormat.money(task.cost))}.monospacedDigit()
-                    } else { Label("当前未有任务正在进行",systemImage:"checkmark.circle").foregroundStyle(.secondary).padding(.vertical,10) }
-                }
+                Button { if let task = store.overviewTask { store.showRequest(task) } } label: {
+                    MobileCard {
+                        HStack {
+                            Text(store.overviewTask?.status == "completed" ? "最近完成的任务" : "当前任务").font(.headline)
+                            Spacer()
+                            if store.overviewTask?.status == "running" { Image(systemName:"circle.dotted").symbolEffect(.rotate) }
+                            else if store.overviewTask?.status == "completed" { Image(systemName:"checkmark.circle.fill").foregroundStyle(.green).accessibilityLabel("已完成") }
+                            if store.overviewTask != nil { Image(systemName:"chevron.right").font(.caption).foregroundStyle(.secondary) }
+                        }
+                        if let task = store.overviewTask {
+                            if task.status == "running", Date().timeIntervalSince1970-(store.live?.observed ?? 0) > 900 { Text("任务状态待更新").font(.caption).foregroundStyle(.orange) }
+                            Text(task.preview ?? "请求预览未同步").font(.title3.weight(.semibold)).lineLimit(3)
+                            Text([task.model,task.effort ?? ""].filter {!$0.isEmpty}.joined(separator:" · ")).font(.caption).foregroundStyle(.secondary)
+                            HStack {Text(MobileFormat.tokens(task.tokens)+" Token"); Spacer();Text(MobileFormat.money(task.cost))}.monospacedDigit()
+                        } else { Text("暂无运行或已完成的任务").foregroundStyle(.secondary).padding(.vertical,10) }
+                    }
+                }.buttonStyle(.plain).disabled(store.overviewTask == nil)
                 MobileCard { quota("5 小时额度",store.live?.five); Divider();quota("周额度",store.live?.week) }
                 MobileCard { Text("今天").font(.headline); metricRow(store.live?.today ?? MobileMetric()) }
                 if !store.recent.isEmpty {
                     Text("最近使用").font(.title2.bold())
-                    MobileCard { ForEach(Array(store.recent.prefix(3))) { item in NavigationLink { RequestDetails(item:item) } label: {RequestSummary(item:item)}.buttonStyle(.plain); if item.id != store.recent.prefix(3).last?.id {Divider()} } }
+                    MobileCard { ForEach(Array(store.recent.prefix(3))) { item in Button { store.showRequest(item) } label: {RequestSummary(item:item)}.buttonStyle(.plain); if item.id != store.recent.prefix(3).last?.id {Divider()} } }
                 }
             }.padding(20)
         }.background(Color(uiColor:.systemGroupedBackground)).refreshable {store.refresh()}
@@ -193,23 +201,80 @@ struct RecordsPage: View {
     private var rows: [MobileRequest] {store.recent.filter {query.isEmpty || ($0.preview ?? "").localizedCaseInsensitiveContains(query) || $0.model.localizedCaseInsensitiveContains(query)}}
     var body: some View {
         List {
-            ForEach(Array(rows.prefix(count))) {item in NavigationLink {RequestDetails(item:item)} label:{RequestSummary(item:item)}}
+            ForEach(Array(rows.prefix(count))) {item in NavigationLink(value:item.id) {RequestSummary(item:item)}}
             if count < rows.count {Button("显示更多") {count+=20}.frame(maxWidth:.infinity)}
         }.searchable(text:$query,prompt:"搜索请求或模型").overlay {if rows.isEmpty {ContentUnavailableView("暂无记录",systemImage:"list.bullet")}}.onChange(of:query) {_,_ in count=20}.refreshable {store.refresh()}
     }
 }
 struct RequestDetails: View {
-    let item: MobileRequest
+    @EnvironmentObject var store: MobileStore
+    let id: String
+    @State private var expandUser = false
+    @State private var expandFinal = false
+    private var item: MobileRequest? { store.request(id) }
+    private var detail: MobileRequestDetail? { store.detailValues[id] }
+    private var loadKey: String { store.selected+id+String(store.supportsDetails)+String(store.detailVersions[id] ?? 0) }
     var body: some View {
         List {
-            Section {Text(item.preview ?? "请求预览未同步")}
-            LabeledContent("模型",value:item.model)
-            LabeledContent("状态",value:["running":"进行中","completed":"已完成","aborted":"已中断"][item.status] ?? item.status)
-            LabeledContent("思考强度",value:item.effort ?? "—")
-            LabeledContent("费用",value:MobileFormat.money(item.cost))
-            LabeledContent("Token",value:MobileFormat.tokens(item.tokens))
-            LabeledContent("耗时",value:item.duration.map {String(format:"%.0f 秒",$0)} ?? "—")
+            Section("用户原文") {
+                if let detail, !detail.user.isEmpty {
+                    message(detail.user,lines:5,expanded:expandUser)
+                    if expandUser, detail.full, !detail.userComplete { Text("原文超出容量限制或源记录不完整，当前仅保留部分内容。").font(.caption).foregroundStyle(.secondary) }
+                    expandButton("用户原文",expanded:$expandUser)
+                } else if store.detailLoading.contains(id) { ProgressView("正在读取原文") }
+                else {
+                    Text("原文暂不可用").foregroundStyle(.secondary)
+                    if let preview = item?.preview { Text(preview).font(.caption).foregroundStyle(.secondary); Text("以上为摘要，不是完整原文。").font(.caption2).foregroundStyle(.secondary) }
+                }
+            }
+            Section("最终回复") {
+                if let detail, !detail.final.isEmpty {
+                    message(detail.final,lines:20,expanded:expandFinal)
+                    if expandFinal, detail.full, !detail.finalComplete { Text("回复超出容量限制或源记录不完整，当前仅保留部分内容。").font(.caption).foregroundStyle(.secondary) }
+                    expandButton("最终回复",expanded:$expandFinal)
+                } else if store.detailLoading.contains(id) { ProgressView("正在读取回复") }
+                else { Text(item?.status == "running" ? "任务仍在进行，尚无最终回复。" : "最终回复尚未同步或源记录中没有可用正文。").foregroundStyle(.secondary) }
+            }
+            if let error = store.detailErrors[id] {
+                Section { Text(error).font(.caption).foregroundStyle(.secondary); Button("重试详情") { store.loadDetail(id,full:expandUser || expandFinal) } }
+            }
+            if detail?.availability == "capacity" {
+                Section { Text("这条原文超过手机单条容量上限，当前仅显示预览；全文保留在 Mac。").font(.caption).foregroundStyle(.secondary) }
+            }
+            if let detail, !detail.attachments.isEmpty {
+                Section("附件") {
+                    ForEach(detail.attachments) { MobileAttachmentView(attachment:$0) }
+                    if !detail.full, detail.attachments.contains(where:{($0.mime ?? "").hasPrefix("image/")}) { Button("读取可用缩略图") { store.loadDetail(id,full:true) } }
+                }
+            }
+            if let item {
+                Section("请求信息") {
+                    LabeledContent("模型",value:item.model)
+                    LabeledContent("状态",value:["running":"进行中","completed":"已完成","aborted":"已中断"][item.status] ?? item.status)
+                    LabeledContent("思考强度",value:item.effort ?? "—")
+                    LabeledContent("费用",value:MobileFormat.money(item.cost))
+                    LabeledContent("Token",value:MobileFormat.tokens(item.tokens))
+                    LabeledContent("耗时",value:item.duration.map {String(format:"%.0f 秒",$0)} ?? "—")
+                }
+            }
+            Section { Text("云端详情最多保留 7 天；容量不足时，部分记录可能尚未同步或已被移除。").font(.caption).foregroundStyle(.secondary) }
         }.navigationTitle("请求").navigationBarTitleDisplayMode(.inline)
+            .task(id:loadKey) { store.loadDetail(id,full:expandUser || expandFinal) }
+            .onDisappear { store.cancelDetail(id) }
+    }
+    private func message(_ text: String, lines: Int, expanded: Bool) -> some View {
+        MobileMarkdownView(text:text)
+            .fixedSize(horizontal:false,vertical:true)
+            .frame(maxHeight:expanded && detail?.full == true ? nil : UIFont.preferredFont(forTextStyle:.body).lineHeight*CGFloat(lines),alignment:.top)
+            .clipped()
+    }
+    private func expandButton(_ label: String, expanded: Binding<Bool>) -> some View {
+        Button {
+            expanded.wrappedValue.toggle()
+            if expanded.wrappedValue { store.loadDetail(id,full:true) }
+        } label: {
+            HStack { Text(expanded.wrappedValue ? "收起" : "展开全文"); if expanded.wrappedValue && store.detailLoading.contains(id) { ProgressView().controlSize(.small) } }
+        }.accessibilityLabel((expanded.wrappedValue ? "收起" : "展开")+label)
     }
 }
 struct MobileSettings: View {

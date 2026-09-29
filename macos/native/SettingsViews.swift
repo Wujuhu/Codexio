@@ -7,7 +7,7 @@ struct PricingView: View {
     @State private var selected: String?
     @State private var editing = false
     private var selectedModel: String? { state.prices.first {$0.id == selected}?.model }
-    private var filtered: [PriceRow] { state.prices.filter {(state.modelIDs.isEmpty || state.modelIDs.contains($0.model)) && (search.isEmpty || $0.model.localizedCaseInsensitiveContains(search))} }
+    private var filtered: [PriceRow] { PricingDisplayOrder.sorted(state.prices.filter {(state.modelIDs.isEmpty || state.modelIDs.contains($0.model)) && (search.isEmpty || $0.model.localizedCaseInsensitiveContains(search))}) }
     var body: some View {
         VStack(alignment:.leading,spacing:20) {
             HStack { StatusNote(text:L("美元 / 1M Token", "USD / 1M tokens")); Spacer(); Text(lastUpdateText(state.priceUpdated)).font(.caption).foregroundStyle(.secondary) }
@@ -130,16 +130,24 @@ struct SettingsView: View {
             row(L("本地索引", "Local index")) { Text("\(state.usage.calls.count)").foregroundStyle(.secondary).monospacedDigit() }
             row(L("重新扫描本地记录", "Rescan local records")) { Button(L("开始扫描", "Rescan now")) { state.rescan() }.disabled(state.loading || state.paths.mock) }
             row(L("数据目录", "Data folder")) { Button(L("在 Finder 中打开", "Show in Finder")) { NSWorkspace.shared.open(state.paths.data) } }
+            Divider().padding(.vertical, 6)
+            HStack { Text(L("AI 使用报告", "AI usage reports")).font(.system(size: 13, weight: .medium)); Spacer(); Button(L("打开报告", "Open reports")) { state.onOpenUsageReport?() } }
+            Text(state.usageReportDirectory.path).font(.system(size: 11)).foregroundStyle(.secondary).textSelection(.enabled)
+            HStack {
+                Button(L("在 Finder 中打开", "Show in Finder")) { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: state.usageReportDirectory.path) }
+                Spacer()
+                Toggle(L("每天 08:00 后首次打开时显示", "Show on first open after 08:00"), isOn: Binding(get: { state.preferences.analytics.flag("usage_report_auto", true) }, set: { state.setPreference("usage_report_auto", $0) })).toggleStyle(.switch)
+            }.font(.system(size: 12))
         }
     }
     private var app: some View {
         VStack(spacing:0) {
             row(L("当前版本", "Current version")+" · Codexio "+BuildInfo.version) {
-                if state.updateAvailable { Button(L("退出并更新", "Quit and update")) { state.onInstallUpdate?() } }
+                if state.updateAvailable { Button(L("更新…", "Update…")) { state.onInstallUpdate?() } }
                 else { Button(L("检查更新", "Check for updates")) { state.onCheckUpdate?() }.disabled(state.paths.mock) }
             }
             if !state.updateStatus.isEmpty { StatusNote(text:state.updateStatus).padding(.vertical,8) }
-            row(L("自动下载更新", "Download updates automatically")) { Toggle("",isOn:Binding(get:{state.preferences.analytics.flag("macos_auto_update",true)},set:{state.setPreference("macos_auto_update",$0)})).labelsHidden().toggleStyle(.switch) }
+            row(L("自动检查更新", "Check for updates automatically")) { Toggle("",isOn:Binding(get:{state.preferences.analytics.flag("macos_auto_update",true)},set:{state.setPreference("macos_auto_update",$0)})).labelsHidden().toggleStyle(.switch) }
             row(L("上游检测", "Upstream detection")) { Toggle("",isOn:Binding(get:{state.preferences.analytics.flag("upstream_detection_enabled")},set:{desiredUpstream = $0; upstreamConfirmation = true})).labelsHidden().toggleStyle(.switch).disabled(state.paths.mock) }
             if !state.upstreamStatus.isEmpty { StatusNote(text:state.upstreamStatus).padding(.vertical,8) }
             row(L("自动同步价格", "Sync prices automatically")) { Toggle("",isOn:Binding(get:{state.preferences.analytics.flag("auto_sync_prices",true)},set:{state.setPreference("auto_sync_prices",$0)})).labelsHidden().toggleStyle(.switch) }

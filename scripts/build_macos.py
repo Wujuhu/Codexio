@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
 STAGING = BUILD / "staging/macos"
 DESTINATION = BUILD / "dev/macos"
-WIDGET_VERSION = 21  # Main-host lifecycle now also stops the opt-in mobile listener.
+WIDGET_VERSION = 22  # v0.3.3 host/update lifecycle and request classification.
 
 
 def run(*args, **kwargs):
@@ -104,7 +104,7 @@ def build_native(bundle, version):
         "LSMinimumSystemVersion": "15.0", "NSHighResolutionCapable": True,
         "NSPrincipalClass": "NSApplication", "NSSupportsAutomaticTermination": False,
         "CFBundleSupportedPlatforms": ["MacOSX"],
-        "NSLocalNetworkUsageDescription": "发现并安全连接你配对的 iPhone，只同步必要摘要。",
+        "NSLocalNetworkUsageDescription": "发现并安全连接你配对的 iPhone，同步用量与请求内容。",
         "NSBonjourServices": ["_codexio._tcp"],
         "CFBundleURLTypes": [{"CFBundleURLName": "Codexio", "CFBundleURLSchemes": ["codexio"]}],
         "NSAppTransportSecurity": {"NSAllowsArbitraryLoads": True, "NSAllowsLocalNetworking": True},
@@ -122,6 +122,7 @@ def build_native(bundle, version):
     run(executable, "--render-icon", iconset)
     run("iconutil", "-c", "icns", iconset, "-o", resources / "Codexio.icns")
     shutil.copy2(ROOT / "src/codexio/pricing_seed.json", resources / "pricing_seed.json")
+    shutil.copytree(ROOT / "macos/Resources/ReportCards", resources / "ReportCards")
     localization_resources(resources)
 
 

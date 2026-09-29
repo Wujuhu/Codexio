@@ -9,6 +9,9 @@ final class UsageIndexer {
     private var fileLists: [URL:FileList] = [:]
     private var titleInputs: [URL:[URL:FileStamp]] = [:]
     private var resumeRepairSessions: Set<String>?
+    private var detailTargets: Set<String>?
+    private var metadataOnly = false
+    private var recoveryLegacyMessage: (String,Object)?
     private let rolloutPattern = try! NSRegularExpression(pattern:#"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"#)
     private let counters = ["input_tokens","cached_input_tokens","cache_write_input_tokens","output_tokens","reasoning_output_tokens","total_tokens"]
     init(_ database: Database) { self.database = database }
@@ -44,6 +47,7 @@ final class UsageIndexer {
         fileLists = fileLists.filter {active.contains($0.key)}; titleInputs = titleInputs.filter {active.contains($0.key)}
         let paths = Set(fileLists.values.flatMap {$0.files.map(\.path)})
         scannedFiles = scannedFiles.filter {paths.contains($0.key)}
+        try repairRecentMaintenance()
     }
     private func sessionFiles(_ root: URL) -> [URL] {
         let now = ProcessInfo.processInfo.systemUptime
@@ -73,7 +77,7 @@ final class UsageIndexer {
         let inputs = [index]+states.flatMap {[$0,$0.deletingLastPathComponent().appendingPathComponent($0.lastPathComponent+"-wal")]}
         let signatures = Dictionary(uniqueKeysWithValues:inputs.map {($0,FileStamp($0))})
         if titleInputs[root] == signatures { return }
-        var values: [String:String] = [:], complete = true
+        var values: [String:String] = [:], contexts: [String:String] = [:], complete = true
         func displayTitle(_ value: String) -> String {
             let text = value.trimmingCharacters(in:.whitespacesAndNewlines)
             guard !text.hasPrefix("# Files mentioned by the user:"), !text.hasPrefix("# AGENTS.md") else { return "" }
@@ -89,15 +93,18 @@ final class UsageIndexer {
         for file in states.sorted(by:{$0.lastPathComponent < $1.lastPathComponent}) {
             if let db = try? Database(file,readOnly:true), let columns = try? db.query("PRAGMA table_info(threads)") {
                 let hasName = columns.contains {$0.string("name") == "name"}
-                guard let rows = try? db.query(hasName ? "SELECT id,name,title FROM threads" : "SELECT id,title FROM threads") else { complete = false; continue }
+                let hasCWD = columns.contains {$0.string("name") == "cwd"}
+                guard let rows = try? db.query("SELECT id,title"+(hasName ? ",name" : "")+(hasCWD ? ",cwd" : "")+" FROM threads") else { complete = false; continue }
                 for row in rows where !row.string("id").isEmpty {
                     let id = row.string("id"), name = displayTitle(row.string("name")), title = displayTitle(row.string("title"))
                     if !name.isEmpty { values[id] = name }
                     else if values[id] == nil && !title.isEmpty { values[id] = title }
+                    if row.string("cwd").hasPrefix("/") { contexts[id] = row.string("cwd") }
                 }
             } else { complete = false }
         }
         try database.updateTitles(values)
+        try database.updateSessionContexts(contexts)
         if complete { titleInputs[root] = signatures }
     }
     private func scanFile(_ file: URL, root: URL) throws {
@@ -132,6 +139,8 @@ final class UsageIndexer {
             }
         }
         var offset = cursor.integer("offset") ?? 0
+        let registeredSession = cursor.object("state").string("session_id",rollout)
+        try database.registerSessionFile(file,root:root,session:registeredSession)
         if offset == size && cursor.number("modified") == modified && cursor.integer("resume_metadata_version") == 1 { scannedFiles[file.path] = signature; return }
         let handle = try FileHandle(forReadingFrom:file); defer { try? handle.close() }
         var valid = offset <= size && cursor.integer("parser") == 1
@@ -166,6 +175,7 @@ final class UsageIndexer {
             if !oversized { try checkpoint(handle:handle,key:key,state:state,offset:offset,modified:modified) }
         }
         if !oversized { try checkpoint(handle:handle,key:key,state:state,offset:offset,modified:modified) }
+        try database.registerSessionFile(file,root:root,session:state.string("session_id"))
         if !cancelled { scannedFiles[file.path] = signature }
     }
     private func checkpoint(handle: FileHandle,key: String,state: Object,offset: Int,modified: Double) throws {
@@ -175,11 +185,74 @@ final class UsageIndexer {
         try handle.seek(toOffset:current)
         try database.put("usage_cursors",key:key,value:["parser":1,"resume_metadata_version":1,"offset":offset,"modified":modified,"tail_hash":hash,"state":state])
     }
+    private func shouldPersist(_ id: String) -> Bool { detailTargets?.contains(id) ?? true }
+    private func persistTurn(_ row: Object) throws {
+        guard shouldPersist(row.string("id")) else { return }
+        if detailTargets == nil { try database.writeTurn(row) }
+        else { try database.repairRequestMetadata(row) }
+    }
+    private func saveMessage(_ state: Object,patch: Object) throws {
+        guard !metadataOnly, !state.string("turn_id").isEmpty else { return }
+        let row = state.object("turns").object(state.string("turn_id")), id = "turn:"+state.string("session_id")+":"+state.string("turn_id")
+        var value = patch
+        value["status"] = row.string("status","unknown")
+        value["started_at"] = parsedDate(row["started_at"])?.timeIntervalSince1970 ?? NSNull() as Any
+        value["completed_at"] = parsedDate(row["ended_at"])?.timeIntervalSince1970 ?? NSNull() as Any
+        if shouldPersist(id) { try database.writeRequestMessage(id,patch:value) }
+        else if state.string("turn_id").hasPrefix("legacy-user:"), patch["user"] != nil { recoveryLegacyMessage = (id,value) }
+    }
+    func recoverMessageDetails(ids: Set<String>,file: URL,root: URL,metadataOnly: Bool = false) throws {
+        guard !ids.isEmpty else { return }
+        detailTargets = ids; self.metadataOnly = metadataOnly
+        defer { detailTargets = nil; self.metadataOnly = false; recoveryLegacyMessage = nil }
+        let rollout = rolloutID(file)
+        var state: Object = ["rollout_id":rollout,"session_id":rollout,"model":"unknown","provider":"unknown","turn_id":"","prompt_preview":"","turns":Object()]
+        let reader = try FileHandle(forReadingFrom:file); defer { try? reader.close() }
+        // Recovery is limited to this indexed related session. Metering, agent
+        // links and cursors are never replayed; an incomplete source stays partial.
+        let limit = metadataOnly ? 33_554_432 : 67_108_864
+        var pending = Data(), read = 0, oversized = false, complete = Set<String>()
+        while read < limit && !cancelled {
+            let chunk = try reader.read(upToCount:min(1_048_576,limit-read)) ?? Data()
+            if chunk.isEmpty { break }; read += chunk.count; pending.append(chunk)
+            try database.transaction {
+                while let newline = pending.firstIndex(of:10) {
+                    if !oversized {
+                        let entry = jsonObject(pending.subdata(in:0..<newline))
+                        if !entry.isEmpty { try process(entry,state:&state) }
+                        let row = state.object("turns").object(state.string("turn_id"))
+                        if ids.contains(row.string("id")), !row.string("ended_at").isEmpty { complete.insert(row.string("id")) }
+                    }
+                    oversized = false; pending.removeSubrange(0...newline)
+                }
+                if pending.count > 16_000_000 { pending.removeAll(); oversized = true }
+            }
+            if complete == ids { break }
+        }
+    }
+    private func repairRecentMaintenance() throws {
+        let key = "maintenance-record-metadata-v1"
+        var progress = database.object("usage_meta",key:key)
+        guard !progress.flag("complete"), !cancelled else { return }
+        if progress["ids"] == nil {
+            let since = iso(Date().addingTimeInterval(-14*86400))
+            let rows = try database.query("SELECT id FROM usage_turns WHERE COALESCE(json_extract(data,'$.prompt_preview'),'')='' AND json_extract(data,'$.status')='completed' AND COALESCE(json_extract(data,'$.is_subagent'),0)=0 AND json_extract(data,'$.started_at')>=? AND EXISTS(SELECT 1 FROM json_each(json_extract(data,'$.source_ids')) WHERE value='local' OR value LIKE 'local:%') ORDER BY json_extract(data,'$.started_at') DESC LIMIT 12",[since])
+            progress["ids"] = rows.map {$0.string("id")}; progress["done"] = [String]()
+            try database.put("usage_meta",key:key,value:progress)
+        }
+        let ids = progress["ids"] as? [String] ?? [], done = Set(progress["done"] as? [String] ?? [])
+        let recovered = try database.recoverRecentRequestMetadata(ids.filter {!done.contains($0)},maximumFiles:4)
+        let accounted = done.union(recovered.done)
+        progress["done"] = Array(accounted).sorted()
+        progress["unavailable"] = Array(Set(progress["unavailable"] as? [String] ?? []).union(recovered.unavailable)).sorted()
+        progress["complete"] = ids.allSatisfy { accounted.contains($0) }
+        try database.put("usage_meta",key:key,value:progress)
+    }
     private func applyResume(_ patch: Object,state: inout Object) throws {
         let turn = patch.string("turn"), id = "turn:"+state.string("session_id")+":"+turn
         var recent = state.object("turns")
         var row = recent.object(turn)
-        if row.isEmpty, let stored = try database.query("SELECT data FROM usage_turns WHERE id=?",[id]).first {
+        if row.isEmpty, detailTargets == nil, let stored = try database.query("SELECT data FROM usage_turns WHERE id=?",[id]).first {
             row = jsonObject(Data(stored.string("data").utf8))
         }
         guard !row.isEmpty else { return }
@@ -195,7 +268,7 @@ final class UsageIndexer {
                 row["continuation_of"] = patch.string("continuation"); row["model_switch_continuation"] = true
             }
         }
-        try database.writeTurn(row)
+        try persistTurn(row)
         if recent[turn] != nil { recent[turn] = row; state["turns"] = recent }
         if state.string("turn_id") == turn { state["prompt_preview"] = row["prompt_preview"] }
     }
@@ -255,13 +328,19 @@ final class UsageIndexer {
         if row.isEmpty {
             row = ["id":id,"session_id":state.string("session_id"),"turn_id":turn,"started_at":stamp,"started_inferred":true,"status":"unknown","prompt_preview":"","output_preview":"","verified":true,"is_subagent":state.flag("is_subagent"),"parent_session_id":state.string("parent_session_id"),"parent_turn_id":state.string("parent_turn_id"),"agent_path":state.string("agent_path"),"source_ids":["local"]]
         }
-        for key in ["model","reasoning_effort","service_tier","model_context_window","provider","root_turn_id"] {
+        for key in ["model","reasoning_effort","service_tier","model_context_window","provider","root_turn_id","cwd","session_cwd"] {
             if let value = state[key], !(value is NSNull) { row[key] = value }
         }
         mutate(&row); row["observed_at"] = stamp
+        if row.flag("has_user_message") || !row.string("continuation_of").isEmpty || (!row.string("root_turn_id").isEmpty && row.string("root_turn_id") != turn) {
+            row["record_kind"] = "user_request"
+        } else if row.flag("context_compaction_observed") && row.flag("explicit_task_start") && row.flag("context_compaction_completed") && row.string("prompt_preview").isEmpty && row.string("resume_kind").isEmpty && !row.flag("has_final_message") && !row.flag("is_subagent") {
+            row["record_kind"] = "context_compaction"
+        }
         recent[turn] = row
         if recent.count > 24 { for key in recent.keys.sorted() where key != turn { recent.removeValue(forKey:key); if recent.count <= 24 { break } } }
-        state["turns"] = recent; try database.writeTurn(row)
+        state["turns"] = recent
+        try persistTurn(row)
     }
     private func activateTurn(_ id: String,state: inout Object,owned: Bool) throws {
         guard !id.isEmpty, id != state.string("turn_id") else { return }
@@ -274,7 +353,12 @@ final class UsageIndexer {
             state["turns"] = recent
             var input = state.object("request_last_input")
             if input.string("turn_id") == previous { input["turn_id"] = id; state["request_last_input"] = input }
-            try database.writeTurn(old); try database.writeTurn(promoted)
+            try persistTurn(old); try persistTurn(promoted)
+            if !metadataOnly, shouldPersist(key) {
+                if let pending = recoveryLegacyMessage, pending.0 == old.string("id") {
+                    try database.writeRequestMessage(key,patch:pending.1); recoveryLegacyMessage = nil
+                } else { try database.promoteRequestMessage(from:old.string("id"),to:key) }
+            }
         }
         state["previous_turn_id"] = previous; state["turn_id"] = id
         state["prompt_preview"] = recent.object(id).string("prompt_preview")
@@ -316,6 +400,8 @@ final class UsageIndexer {
             state["parent_session_id"] = spawn.string("parent_thread_id")
             state["parent_turn_id"] = spawn.string("parent_turn_id",payload.string("parent_turn_id"))
             state["agent_path"] = spawn.string("agent_path")
+            state["session_cwd"] = payload["cwd"]; state["cwd"] = payload["cwd"]
+            if detailTargets == nil { try database.updateSessionContexts([state.string("session_id"):payload.string("cwd")]) }
             var context: Object = [:]
             _ = RequestResume.observe(entry,context:&context,preview:{self.plain($0,user:true)})
             state["resume_tracking"] = context
@@ -324,13 +410,14 @@ final class UsageIndexer {
         let inherited: Bool
         if let boundary = state.integer("history_start"), let ordinal = entry.integer("ordinal") { inherited = ordinal < boundary }
         else { inherited = !state.string("parent_id").isEmpty && !stamp.isEmpty && stamp < state.string("fork_timestamp") }
-        if !inherited { try agentEvent(entry,state:&state,stamp:stamp) }
+        if !inherited, detailTargets == nil { try agentEvent(entry,state:&state,stamp:stamp) }
         if kind == "event_msg" && subtype == "thread_settings_applied" {
             let settings = payload.object("thread_settings").isEmpty ? payload.object("settings") : payload.object("thread_settings")
-            for key in ["model","reasoning_effort","service_tier"] { if let value = settings[key] { state[key] = value } }
+            for key in ["model","reasoning_effort","service_tier","cwd"] { if let value = settings[key] { state[key] = value } }
             if let provider = settings["model_provider_id"] ?? settings["model_provider"] { state["provider"] = provider }
         }
         if kind == "turn_context" {
+            if let cwd = payload["cwd"] { state["cwd"] = cwd }
             if let model = payload["model"] ?? payload.object("info")["model"] { state["model"] = model }
             state["reasoning_effort"] = payload["effort"] ?? payload["reasoning_effort"]
             if let tier = payload["service_tier"] { state["service_tier"] = tier }
@@ -342,14 +429,20 @@ final class UsageIndexer {
         }
         if kind == "event_msg" && ["task_started","turn_started"].contains(subtype) {
             let settings = payload.object("thread_settings").isEmpty ? payload.object("settings") : payload.object("thread_settings")
-            for key in ["model","reasoning_effort","service_tier","model_context_window"] { if let value = settings[key] ?? payload[key] { state[key] = value } }
+            for key in ["model","reasoning_effort","service_tier","model_context_window","cwd"] { if let value = settings[key] ?? payload[key] { state[key] = value } }
             let id = payload.string("turn_id",payload.string("id"))
             try activateTurn(id,state:&state,owned:!inherited)
             if let root = payload["root_turn_id"] { state["root_turn_id"] = root }
             state["output_preview"] = ""
-            if !inherited { try saveTurn(&state,stamp:stamp) { $0["started_at"] = payload["started_at"].flatMap(parsedDate).map(iso) ?? stamp; $0["started_inferred"] = false; $0["status"] = "running" } }
+            if !inherited { try saveTurn(&state,stamp:stamp) { $0["started_at"] = payload["started_at"].flatMap(parsedDate).map(iso) ?? stamp; $0["started_inferred"] = false; $0["status"] = "running"; $0["explicit_task_start"] = true } }
         }
         let item = payload.object("item")
+        if !inherited, (kind == "compacted" || (kind == "event_msg" && subtype == "item_completed" && item.string("type") == "ContextCompaction")) {
+            let owner = payload.string("thread_id",state.string("session_id")), turn = payload.string("turn_id",state.string("turn_id"))
+            if owner == state.string("session_id"), turn == state.string("turn_id") {
+                try saveTurn(&state,stamp:stamp) { $0["context_compaction_observed"] = true; if item.string("type") == "ContextCompaction" { $0["context_compaction_item_id"] = item["id"] } }
+            }
+        }
         let userContent: Any? = kind == "event_msg" && subtype == "user_message" ? payload["message"] ?? payload["content"] : kind == "response_item" && payload.string("role") == "user" ? payload["content"] : kind == "event_msg" && ["user_message","userMessage","UserMessage"].contains(item.string("type")) ? item["content"] ?? item["message"] : nil
         if let content = userContent, !inherited {
             let text = plain(content,user:true)
@@ -371,8 +464,11 @@ final class UsageIndexer {
             state["request_last_input"] = ["fingerprint":fingerprint,"message_id":messageID,"representation":representation,"turn_id":state.string("turn_id")]
             try saveTurn(&state,stamp:stamp) { row in
                 if !text.isEmpty { row["prompt_preview"] = text }
+                row["has_user_message"] = true
                 if reply && !previous.isEmpty { row["continuation_of"] = previous }
             }
+            let detail = RequestMessageText.extract(content,user:true)
+            if !detail.isEmpty { try saveMessage(state,patch:["user":detail.string("text"),"user_complete":detail.flag("complete"),"attachments":detail.objects("attachments")]) }
         }
         if !inherited, !state.flag("is_subagent") {
             var context = state.object("resume_tracking")
@@ -391,11 +487,16 @@ final class UsageIndexer {
             if let patch { try applyResume(patch,state:&state) }
         }
         if !inherited && ((kind == "response_item" && payload.string("role") == "assistant") || (kind == "event_msg" && subtype == "agent_message")) {
-            guard ["","commentary","final","final_answer"].contains(payload.string("phase")), ["","commentary","final"].contains(payload.string("channel")), ["","all","user"].contains(payload.string("recipient")), kind != "response_item" || payload.string("type","message") == "message" else { return }
+            guard ["","commentary","final","final_answer"].contains(payload.string("phase")), ["","commentary","final","final_answer"].contains(payload.string("channel")), ["","all","user"].contains(payload.string("recipient")), kind != "response_item" || payload.string("type","message") == "message" else { return }
             let metadata = payload.object("internal_chat_message_metadata_passthrough")
             let owner = payload.string("thread_id",metadata.string("thread_id")), explicitTurn = payload.string("turn_id",metadata.string("turn_id"))
             guard owner.isEmpty || owner == state.string("session_id"), explicitTurn.isEmpty || explicitTurn == state.string("turn_id") else { return }
             let output = plain(payload["content"] ?? payload["message"],user:false)
+            if ["final","final_answer"].contains(payload.string("phase")) || ["final","final_answer"].contains(payload.string("channel")) {
+                let detail = RequestMessageText.extract(payload["content"] ?? payload["message"],user:false)
+                try saveMessage(state,patch:["final":detail.string("text"),"final_complete":detail.flag("complete")])
+                try saveTurn(&state,stamp:stamp) { $0["has_final_message"] = !detail.string("text").isEmpty }
+            }
             if !output.isEmpty {
                 state["output_preview"] = output
                 try saveTurn(&state,stamp:stamp) { $0["output_preview"] = output; $0["latest_output_preview"] = output }
@@ -412,15 +513,24 @@ final class UsageIndexer {
             }
         }
         if kind == "event_msg" && ["task_complete","turn_complete","turn_aborted"].contains(subtype), !inherited {
+            let explicitTurn = payload.string("turn_id")
+            guard explicitTurn.isEmpty || explicitTurn == state.string("turn_id") else { return }
+            let detail = RequestMessageText.extract(payload["last_agent_message"],user:false)
             try saveTurn(&state,stamp:stamp) { row in
                 row["ended_at"] = parsedDate(payload["completed_at"]).map(iso) ?? stamp
                 row["status"] = subtype == "turn_aborted" ? "aborted" : "completed"
                 let final = plain(payload["last_agent_message"],user:false)
                 if !final.isEmpty { row["output_preview"] = final; row["latest_output_preview"] = final }
                 if let duration = payload.number("duration_ms"), duration >= 0 { row["duration_ms"] = duration }
+                if !detail.string("text").isEmpty { row["has_final_message"] = true }
+                row["context_compaction_completed"] = payload["last_agent_message"] is NSNull && subtype != "turn_aborted"
             }
+            var patch: Object = [:]
+            if !detail.string("text").isEmpty { patch["final"] = detail.string("text"); patch["final_complete"] = detail.flag("complete") }
+            try saveMessage(state,patch:patch)
             state["preview_pending"] = [Object]()
         }
+        if detailTargets != nil { return }
         if kind == "event_msg" && subtype == "raw_response_completed", !payload.string("response_id").isEmpty {
             let response = payload.string("response_id")
             if response != state.string("active_response_id") { state["modern_candidate"] = nil }
@@ -499,7 +609,7 @@ final class UsageIndexer {
         record["context_owner_verified"] = owns
         record["model"] = owns ? state.string("model","unknown") : "unknown"
         if owns {
-            for key in ["reasoning_effort","service_tier","model_context_window","prompt_preview"] { record[key] = state[key] }
+            for key in ["reasoning_effort","service_tier","model_context_window","prompt_preview","cwd","session_cwd"] { record[key] = state[key] }
         }
         if usage[1]+usage[2] > usage[0] || usage[4] > usage[3] { record["quality"] = quality+":invalid_subsets" }
         return record

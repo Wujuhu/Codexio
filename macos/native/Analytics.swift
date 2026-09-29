@@ -29,6 +29,7 @@ struct UsageRow: Identifiable {
         inputTokens = raw.integer("input_tokens"); cachedTokens = raw.integer("cached_input_tokens"); outputTokens = raw.integer("output_tokens")
     }
     var title: String {
+        if raw.string("record_kind") == "context_compaction" { return L("上下文压缩", "Context compaction") }
         if raw.string("record_kind") == "user_request", !raw.string("prompt_preview").isEmpty { return raw.string("prompt_preview") }
         return raw.string("session_title").isEmpty ? raw.string("prompt_preview",raw.string("session_id")) : raw.string("session_title")
     }
@@ -201,9 +202,18 @@ enum Analytics {
             var row = own
             let prompt = ([own]+members).map { requestPreview($0.string("prompt_preview")) }.first { !$0.isEmpty }
                 ?? calls.map { $0.raw.string("prompt_preview") }.first { !$0.isEmpty }
-            row["prompt_preview"] = prompt ?? L("任务记录", "Task record")
+            let maintenance = own.string("record_kind") == "context_compaction"
+            row["prompt_preview"] = maintenance ? L("上下文压缩", "Context compaction") : prompt ?? L("任务记录", "Task record")
             let summary = UsageSummary(rows:calls)
-            row["id"] = id; row["record_kind"] = "user_request"
+            row["id"] = id; row["record_kind"] = maintenance ? "context_compaction" : "user_request"
+            let ownCalls = calls.filter {$0.raw.string("session_id") == own.string("session_id")}
+            if row.string("cwd").isEmpty { row["cwd"] = ownCalls.first(where:{!$0.raw.string("cwd").isEmpty})?.raw["cwd"] }
+            if row.string("session_cwd").isEmpty { row["session_cwd"] = ownCalls.first(where:{!$0.raw.string("session_cwd").isEmpty})?.raw["session_cwd"] }
+            let messageMembers = members.filter {!$0.flag("is_subagent")}.sorted {$0.string("id") < $1.string("id")}
+            if messageMembers.contains(where:{!$0.string("message_digest").isEmpty}) {
+                row["message_digest"] = identity(messageMembers.map {[$0.string("id"),$0.string("message_digest")]})
+                row["message_revision"] = messageMembers.reduce(0) {$0+($1.integer("message_revision") ?? 0)}
+            }
             row["timestamp"] = own["started_at"] ?? calls.last?.raw["timestamp"]
             row["total_tokens"] = summary.tokens; row["cost_usd"] = summary.cost; row["pricing_status"] = summary.unknownCosts > 0 ? "estimated" : "priced"
             row["call_count"] = summary.calls; row["cache_hit_rate"] = summary.cacheRate
@@ -236,11 +246,14 @@ enum Analytics {
                     .max { $0.string("ended_at",$0.string("started_at")) < $1.string("ended_at",$1.string("started_at")) }
                 row["status"] = latestContinuation?.string("status") ?? own.string("status")
             } else { row["duration_running"] = false; row["duration_ms"] = nil; row["status"] = "unknown" }
+            if row.string("status") == "completed", let end = members.compactMap({ parsedDate($0["ended_at"]) }).max() {
+                row["completed_at"] = end.timeIntervalSince1970
+            } else { row["completed_at"] = nil }
             result.requests.append(UsageRow(raw:row))
         }
         result.requests.sort { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
         let mainRequests = result.requests.filter {$0.raw.string("record_kind") == "user_request" && !$0.raw.flag("is_subagent") && $0.local}
-        result.widgetRequest = mainRequests.first(where:{$0.raw.string("status") == "running"}) ?? mainRequests.first
+        result.widgetRequest = mainRequests.first(where:{$0.raw.string("status") == "running"}) ?? mainRequests.filter { $0.raw.string("status") == "completed" }.max { ($0.raw.number("completed_at") ?? $0.date?.timeIntervalSince1970 ?? 0) < ($1.raw.number("completed_at") ?? $1.date?.timeIntervalSince1970 ?? 0) }
         let calendar = Calendar.current, startToday = calendar.startOfDay(for:now)
         let periods: [(String,Date)] = [("today",startToday),("week",calendar.date(byAdding:.day,value:-6,to:startToday)!),("month",calendar.date(byAdding:.day,value:-29,to:startToday)!),("all",.distantPast)]
         let local = result.calls.filter {$0.local && ($0.date ?? .distantFuture) <= now}

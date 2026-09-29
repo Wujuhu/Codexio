@@ -8,6 +8,18 @@ enum MobileProtocol {
     static let service = "_codexio._tcp"
     static let cloudOrigin = "https://codexio-sync.503948883.workers.dev"
     static let limit = 262_144
+    static let detailCapability = "request-details-v1"
+    static let detailLimit = 1_048_576
+    static let detailChunkBytes = 65_536
+    static let detailRows = 64
+    static let detailRetention: Double = 7 * 86_400
+    static func prefix(_ value: String, bytes: Int) -> String {
+        guard value.utf8.count > bytes else { return value }
+        var result = String(decoding:value.utf8.prefix(max(0,bytes)),as:UTF8.self)
+        // A UTF-8 byte boundary can cut a scalar. Remove replacement suffixes.
+        while result.last == "\u{FFFD}" { result.removeLast() }
+        return result
+    }
     static func encode<T: Encodable>(_ value: T) throws -> Data {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return try encoder.encode(value)
@@ -162,7 +174,7 @@ struct MobileEnvelope: Codable, Equatable {
     var digest: String
     var payload: String
     func decode<T: Decodable>(_ type: T.Type) throws -> T { try JSONDecoder().decode(type,from:Data(payload.utf8)) }
-    func valid() -> Bool { revision > 0 && payload.utf8.count < MobileProtocol.limit && MobileProtocol.hash(Data(payload.utf8)) == digest }
+    func valid(limit: Int = MobileProtocol.limit) -> Bool { revision > 0 && payload.utf8.count <= limit && MobileProtocol.hash(Data(payload.utf8)) == digest }
 }
 struct MobilePairCode: Codable {
     var version: Int = 1
@@ -189,6 +201,63 @@ struct MobileMessage: Codable {
     var seen: Double? = nil
     var cloud: String? = nil
     var supportsAck: Bool? = nil
+    var capabilities: [String]? = nil
+    var detailVersions: [String:Int64]? = nil
+    var detailID: String? = nil
+    var full: Bool? = nil
+    var detail: MobileEnvelope? = nil
+    var detailPart: Int? = nil
+    var detailManifest: MobileDetailManifest? = nil
+    var detailChunk: String? = nil
+}
+
+struct MobileDetailManifest: Codable, Equatable {
+    var id: String
+    var revision: Int64
+    var digest: String
+    var bytes: Int
+    var parts: Int
+    func valid(for value: String) -> Bool {
+        id == value && revision > 0 && digest.count == 64 && bytes > 0 && bytes <= MobileProtocol.detailLimit
+            && parts == (bytes + MobileProtocol.detailChunkBytes - 1) / MobileProtocol.detailChunkBytes
+    }
+}
+
+// These records are separate from live/recent/trends so older Workers retain
+// their original allow-list. No paths, tool messages, or execution controls.
+struct MobileAttachment: Codable, Identifiable, Equatable {
+    var id: String
+    var name: String
+    var mime: String?
+    var thumbnail: String? // Bounded JPEG data; never a local or remote URL.
+}
+struct MobileRequestDetail: Codable, Equatable {
+    var id: String
+    var started: Double
+    var completed: Double?
+    var status: String
+    var user: String
+    var final: String
+    var userComplete: Bool
+    var finalComplete: Bool
+    var availability: String
+    var attachments: [MobileAttachment]
+    var full: Bool
+    var expires: Double { max(started,completed ?? started) + MobileProtocol.detailRetention }
+    func preview() -> Self {
+        var value = self
+        value.user = MobileProtocol.prefix(user,bytes:1_200)
+        value.final = MobileProtocol.prefix(final,bytes:5_000)
+        value.attachments = attachments.map { var item = $0; item.thumbnail = nil; return item }
+        value.full = false
+        return value
+    }
+    func valid(for requestID: String) -> Bool {
+        id == requestID && id.count == 64 && started.isFinite && started > 0
+            && (completed?.isFinite ?? true) && user.utf8.count <= MobileProtocol.detailLimit
+            && final.utf8.count <= MobileProtocol.detailLimit && attachments.count <= 6
+            && attachments.allSatisfy { $0.name.utf8.count <= 240 && ($0.thumbnail?.utf8.count ?? 0) <= 16_384 }
+    }
 }
 
 final class MobileHTTP: NSObject, URLSessionTaskDelegate {

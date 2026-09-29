@@ -46,7 +46,7 @@ def main():
         "CFBundleSupportedPlatforms":["iPhoneOS"], "MinimumOSVersion":"26.0", "UIDeviceFamily":[1], "LSRequiresIPhoneOS":True,
         "UILaunchScreen":{}, "UIApplicationSceneManifest":{"UIApplicationSupportsMultipleScenes":False},
         "NSCameraUsageDescription":"扫描 Mac 上的 Codexio 二维码以配对设备。",
-        "NSLocalNetworkUsageDescription":"发现并安全连接你配对的 Mac，优先通过局域网同步必要摘要。", "NSBonjourServices":["_codexio._tcp"],
+        "NSLocalNetworkUsageDescription":"发现并安全连接你配对的 Mac，同步用量与请求内容。", "NSBonjourServices":["_codexio._tcp"],
         "UISupportedInterfaceOrientations":["UIInterfaceOrientationPortrait"], "ITSAppUsesNonExemptEncryption":False})
     (APP / "Info.plist").write_bytes(plistlib.dumps(info))
     # The device binary's linker ad-hoc signature is not a distribution signature.
