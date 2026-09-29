@@ -288,7 +288,7 @@ struct ReportArtSmallMetric: View {
     let palette: ReportArtCardPalette
     var body: some View {
         VStack(spacing: 4) {
-            Text(value).font(reportEditorial(27)).fontWeight(.semibold).monospacedDigit()
+            ReportArtNumber(value: value).font(reportEditorial(27)).fontWeight(.semibold).lineLimit(1).minimumScaleFactor(0.65)
             Text(label).font(.system(size: 11)).foregroundStyle(palette.muted)
         }
         .foregroundStyle(palette.ink)
@@ -315,5 +315,23 @@ enum ReportArtworkResources {
     static func image(_ name: String) -> Image {
         lock.lock(); let image = images[name]; lock.unlock()
         return image.map { Image(nsImage: $0) } ?? Image(systemName: "cat")
+    }
+}
+
+// Static exports show the final values; the live card opts into native number transitions.
+private struct ReportArtNumbersVisibleKey: EnvironmentKey { static let defaultValue = true }
+extension EnvironmentValues {
+    var reportArtNumbersVisible: Bool {
+        get { self[ReportArtNumbersVisibleKey.self] }
+        set { self[ReportArtNumbersVisibleKey.self] = newValue }
+    }
+}
+struct ReportArtNumber: View {
+    let value: String
+    @Environment(\.reportArtNumbersVisible) private var visible
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var body: some View {
+        Text(visible || reduceMotion ? value : "0").monospacedDigit().contentTransition(.numericText())
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.45), value: value)
     }
 }

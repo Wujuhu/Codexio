@@ -4193,22 +4193,6 @@
         }
       }
     },
-    "努力收好，好好放松喵": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Keep your progress and unwind"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "努力收好，好好放松喵"
-          }
-        }
-      }
-    },
     "包含已明确关联的子代理；只有整轮结束后才显示完成。": {
       "localizations": {
         "en": {
@@ -7201,6 +7185,22 @@
         }
       }
     },
+    "往下滑，看看完整的小记录喵": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scroll down for your full little story"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "往下滑，看看完整的小记录喵"
+          }
+        }
+      }
+    },
     "待确认账号": {
       "localizations": {
         "en": {
@@ -7681,18 +7681,18 @@
         }
       }
     },
-    "把这份小记录收好，喵": {
+    "把小进展分享出去，喵": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Keep this little record"
+            "value": "Share your little progress"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "把这份小记录收好，喵"
+            "value": "把小进展分享出去，喵"
           }
         }
       }
@@ -7949,22 +7949,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "按用户请求"
-          }
-        }
-      }
-    },
-    "按自己的节奏来，喵": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Find your own pace"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "按自己的节奏来，喵"
           }
         }
       }
@@ -9005,22 +8989,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "旧路由需要先在原版 Codexio 中关闭，恢复记录已保留"
-          }
-        }
-      }
-    },
-    "早早开工，今天也加油喵": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "An early start—keep it up"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "早早开工，今天也加油喵"
           }
         }
       }
@@ -10093,38 +10061,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "最常用的推理强度"
-          }
-        }
-      }
-    },
-    "最早请求": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "First request"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "最早请求"
-          }
-        }
-      }
-    },
-    "最晚请求": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Last request"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "最晚请求"
           }
         }
       }
@@ -11585,22 +11521,6 @@
         }
       }
     },
-    "模型使用分布": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Model usage"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "模型使用分布"
-          }
-        }
-      }
-    },
     "模型供应商": {
       "localizations": {
         "en": {
@@ -12993,22 +12913,6 @@
         }
       }
     },
-    "用量小结": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Usage summary"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "用量小结"
-          }
-        }
-      }
-    },
     "用量待补齐": {
       "localizations": {
         "en": {
@@ -13309,22 +13213,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "立即同步"
-          }
-        }
-      }
-    },
-    "第": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Page "
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "第"
           }
         }
       }
@@ -15633,22 +15521,6 @@
         }
       }
     },
-    "轻轻下滑，还有小发现喵": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Scroll down for more little discoveries"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "轻轻下滑，还有小发现喵"
-          }
-        }
-      }
-    },
     "较": {
       "localizations": {
         "en": {
@@ -15901,22 +15773,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "输出 Token"
-          }
-        }
-      }
-    },
-    "辛苦啦，今晚早点休息喵": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Take an earlier rest tonight"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "辛苦啦，今晚早点休息喵"
           }
         }
       }

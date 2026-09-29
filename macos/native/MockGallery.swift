@@ -15,7 +15,7 @@ final class MockGallery {
         self.state = state; self.window = window; self.directory = directory
         if let index = CommandLine.arguments.firstIndex(of:"--gallery-only"), CommandLine.arguments.indices.contains(index+1) {
             let selected = CommandLine.arguments[index+1]
-            names = selected == "settings-menubar" ? [selected] : names.filter {$0 == selected}
+            names = ["settings-menubar", "report-window"].contains(selected) ? [selected] : names.filter {$0 == selected}
         }
     }
     func start() {
@@ -36,6 +36,12 @@ final class MockGallery {
             NSApp.appearance = NSAppearance(named:name == "menu" ? .darkAqua : .aqua)
             var view: AnyView, size = NSSize(width:1380,height:900)
             switch name {
+            case "report-window":
+                ReportArtworkResources.prepare()
+                let model = UsageReportViewModel()
+                model.documents = [.day: UsageReportRenderer.previewData]
+                model.style = .garden
+                view = AnyView(UsageReportReader(model: model)); size = NSSize(width:660,height:590)
             case "menu": view = AnyView(menuPreview); size = NSSize(width:620,height:940)
             case "widgets-quota": view = AnyView(quotaWidgets); size = NSSize(width:740,height:350)
             case "widgets-request": view = AnyView(requestWidgets); size = NSSize(width:1060,height:530)

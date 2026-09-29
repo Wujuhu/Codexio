@@ -108,7 +108,7 @@ struct ReportArtGardenReport: View {
                 VStack(alignment: .leading, spacing: 5) {
                     if let top = data.topProject {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text("\(top.requests) / \(data.requests)")
+                            ReportArtNumber(value: "\(top.requests) / \(data.requests)")
                                 .font(reportEditorial(49)).fontWeight(.semibold).monospacedDigit()
                             Text(L("次请求", "requests")).font(.system(size: 13))
                         }
@@ -176,7 +176,7 @@ struct ReportArtAfternoonReport: View {
             HStack(alignment: .bottom, spacing: 25) {
                 ForEach(data.timeSlices) { slice in
                     VStack(spacing: 7) {
-                        Text("\(slice.requests)")
+                        ReportArtNumber(value: "\(slice.requests)")
                             .font(reportEditorial(19)).fontWeight(.semibold).monospacedDigit()
                         RoundedRectangle(cornerRadius: 9)
                             .fill(slice.name == "午后" ? palette.accent : palette.secondary.opacity(0.65))

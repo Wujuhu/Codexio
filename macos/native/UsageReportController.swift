@@ -83,7 +83,7 @@ final class UsageReportController: NSObject, NSWindowDelegate {
               window.isVisible, NSApp.isActive, window.attachedSheet == nil else { return false }
         guard pendingManual || Calendar.current.component(.hour, from: Date()) >= 8 else { return false }
         if !pendingManual, (shown.contains(collection.presentationDay) || collection.alreadyPresented) { pendingAutomatic = false; return false }
-        model.period = UsageReportPeriod.preferred(); model.page = 0
+        model.period = UsageReportPeriod.preferred()
         let available = window.contentLayoutRect.size
         let size = NSSize(width: min(660, max(480, available.width-32)), height: min(590, max(365, available.height-32)))
         let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
@@ -163,7 +163,7 @@ enum UsageReportRenderer {
         try bytes.write(to: destination, options: .atomic)
         print(destination.path)
     }
-    private static var previewData: UsageReportData {
+    static var previewData: UsageReportData {
         var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
         let start = calendar.date(from: DateComponents(year: 2026, month: 9, day: 28))!, end = calendar.date(byAdding: .day, value: 1, to: start)!
         return UsageReportData(period: .day, start: start, end: end, timeZone: calendar.timeZone.identifier, dateLabel: "2026.09.28", fileDate: "2026-09-28", sourceKey: "isolated-preview", priceVersion: "preview", requests: 42, modelCalls: 68, inputTokens: 1_800_000, outputTokens: 380_000, cachedInputTokens: 900_000, totalTokens: 2_180_000, tokensComplete: true, costUSD: 9.84, costComplete: true,
