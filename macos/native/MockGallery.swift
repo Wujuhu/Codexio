@@ -41,7 +41,7 @@ final class MockGallery {
                 let model = UsageReportViewModel()
                 model.documents = [.day: UsageReportRenderer.previewData]
                 model.style = .garden
-                view = AnyView(UsageReportReader(model: model)); size = NSSize(width:880,height:690)
+                view = AnyView(UsageReportReader(model: model)); size = NSSize(width:540,height:690)
             case "menu": view = AnyView(menuPreview); size = NSSize(width:620,height:940)
             case "widgets-quota": view = AnyView(quotaWidgets); size = NSSize(width:740,height:350)
             case "widgets-request": view = AnyView(requestWidgets); size = NSSize(width:1060,height:530)

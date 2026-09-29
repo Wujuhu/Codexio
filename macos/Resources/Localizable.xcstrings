@@ -2449,6 +2449,22 @@
         }
       }
     },
+    "下滑看完整报告": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scroll for more"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下滑看完整报告"
+          }
+        }
+      }
+    },
     "下移": {
       "localizations": {
         "en": {
@@ -3921,18 +3937,18 @@
         }
       }
     },
-    "分享报告": {
+    "分享": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Share report"
+            "value": "Share"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "分享报告"
+            "value": "分享"
           }
         }
       }
@@ -7197,22 +7213,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "当前额度"
-          }
-        }
-      }
-    },
-    "往下滑，看看完整的小记录喵": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Scroll down for your full little story"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "往下滑，看看完整的小记录喵"
           }
         }
       }
