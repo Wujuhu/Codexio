@@ -52,9 +52,9 @@ struct UsageReportReader: View {
             if let data = model.documents[model.period] {
                 GeometryReader { geometry in
                     let widthScale = (geometry.size.width-44)/model.style.width
-                    let heightScale = (geometry.size.height-58)/model.style.height
-                    let scale = max(0.45, min(0.92, min(widthScale, heightScale)))
-                    let needsScroll = model.style.height*scale+54 > geometry.size.height+1
+                    let heightScale = (geometry.size.height-82)/model.style.height
+                    let scale = max(0.38, min(0.92, min(widthScale, heightScale)))
+                    let needsScroll = model.style.height*scale+82 > geometry.size.height+1
                     ScrollViewReader { proxy in
                         ZStack(alignment: .bottom) {
                             ScrollView(.vertical) {

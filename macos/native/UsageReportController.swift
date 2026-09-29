@@ -89,7 +89,7 @@ final class UsageReportController: NSObject, NSWindowDelegate {
         guard resourceStyle == model.style else { loadResources(for: model.style); return false }
         model.period = UsageReportPeriod.preferred()
         let available = window.contentLayoutRect.size
-        let size = NSSize(width: min(660, max(480, available.width-32)), height: min(590, max(365, available.height-32)))
+        let size = NSSize(width: min(340, max(320, available.width-32)), height: min(560, max(500, available.height-32)))
         let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
         panel.title = L("AI 使用报告", "AI usage report"); panel.titleVisibility = .hidden; panel.titlebarAppearsTransparent = true
         panel.standardWindowButton(.closeButton)?.isHidden = true

@@ -152,8 +152,8 @@ private struct ReportArtCompactReport: View {
             Text(data.dateLabel).font(.system(size: 12, weight: .medium)).foregroundStyle(palette.muted).monospacedDigit()
                 .frame(maxWidth: .infinity).padding(.top, 5)
             ReportArtFineRule(color: palette.accent).padding(.top, 16)
-            hero.padding(.top, 22)
-            ReportArtFineRule(color: palette.accent).padding(.top, 22)
+            hero.padding(.top, 10)
+            ReportArtFineRule(color: palette.accent).padding(.top, 10)
             metrics.padding(.vertical, 18)
             ReportArtFineRule(color: palette.accent)
             ReportArtTimeRhythm(data: data, palette: palette).padding(.top, 20)
@@ -184,10 +184,11 @@ private struct ReportArtCompactReport: View {
                 }
             }.frame(maxWidth: .infinity, alignment: .leading)
             reportResourceImage(style.catAsset).resizable().scaledToFit()
-                .frame(width: 145, height: 112)
+                .frame(width: 100, height: 75)
+                .padding(.trailing, 3)
         }
         .foregroundStyle(palette.ink)
-        .frame(height: 178)
+        .frame(height: 150)
     }
 
     private var metrics: some View {
