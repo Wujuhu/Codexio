@@ -1,62 +1,63 @@
-# Build a development Codexio.exe under build/dev/windows; never write release/.
-# ASCII-only so Windows PowerShell 5.x can parse this file without a UTF-8 BOM.
+# Build and verify a Windows development artifact. No publishing or version bump.
 param([string]$Version, [string]$ManifestPath)
-$ErrorActionPreference = "Stop"
-$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-Set-Location $Root
-
-$VenvPython = Join-Path $Root ".venv\Scripts\python.exe"
-if (-not (Test-Path -LiteralPath $VenvPython)) {
-    throw "Virtual environment not found. Run .\run.ps1 once first, or create .venv and install requirements.txt."
-}
-if ($Version) {
-    & $VenvPython (Join-Path $Root "scripts\set_version.py") $Version
-    if ($LASTEXITCODE -ne 0) { throw "Invalid release version." }
-}
-
-Write-Host "Installing PyInstaller..."
-& $VenvPython -m pip install -q -r (Join-Path $Root "requirements.txt") "pyinstaller>=6.3,<7"
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "pip failed; retrying without proxy..."
-    foreach ($name in @("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy")) {
-        Remove-Item "Env:$name" -ErrorAction SilentlyContinue
-    }
-    $env:NO_PROXY = "*"
-    $env:no_proxy = "*"
-    & $VenvPython -m pip install -q -r (Join-Path $Root "requirements.txt") "pyinstaller>=6.3,<7"
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to install PyInstaller. Check network or proxy, then retry."
-    }
-}
-
-$Spec = Join-Path $Root "packaging\codexio.spec"
-$Staging = Join-Path $Root "build\staging\windows"
-$Work = Join-Path $Root "build\cache\pyinstaller\windows"
-& $VenvPython -m py_compile $Spec
-if ($LASTEXITCODE -ne 0) { throw "Windows packaging spec has invalid Python syntax." }
-Write-Host "Building Codexio.exe..."
-& $VenvPython -m PyInstaller --noconfirm --clean --distpath $Staging --workpath $Work $Spec
-if ($LASTEXITCODE -ne 0) {
-    throw "PyInstaller failed."
-}
-
-$StagedExe = Join-Path $Staging "Codexio.exe"
-if (-not (Test-Path -LiteralPath $StagedExe)) {
-    throw "Build finished but $StagedExe was not created."
-}
-$ReleaseVersion = (Get-Item -LiteralPath $StagedExe).VersionInfo.ProductVersion
-$DevelopmentDir = Join-Path $Root "build\dev\windows"
-$StagedManifest = Join-Path $Staging "latest.json"
-$ManifestArgs = @()
-if ($ManifestPath) { $ManifestArgs = @("--base", $ManifestPath) }
-& $VenvPython (Join-Path $Root "scripts\update_manifest.py") --platform windows `
-    --asset $StagedExe --version $ReleaseVersion --output $StagedManifest @ManifestArgs
-if ($LASTEXITCODE -ne 0) { throw "Could not merge latest.json; the staged build is preserved." }
-& (Join-Path $Root "scripts\publish_exe.ps1") -StagedExe $StagedExe -Version $ReleaseVersion
-$Exe = Join-Path $DevelopmentDir "Codexio.exe"
-Move-Item -LiteralPath $StagedManifest -Destination (Join-Path $DevelopmentDir "latest.json") -Force
-
-Write-Host ""
-Write-Host "Built: $Exe"
-Write-Host "Copy this EXE to another Windows PC. That PC still needs Codex installed and signed in."
-Write-Host "Existing settings and history are preserved automatically."
+$ErrorActionPreference = 'Stop'
+$ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $ProjectRoot 'scripts\windows_build_common.ps1')
+$EnvironmentBefore = Get-CodexioBuildEnvironment
+try {
+    Initialize-CodexioWindowsTools -ProjectRoot $ProjectRoot
+    $ActualVersion = (Get-Content -LiteralPath (Join-Path $ProjectRoot 'windows\VERSION') -Encoding UTF8 -Raw).Trim()
+    if ($ActualVersion -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') { throw 'Invalid windows/VERSION.' }
+    if ($Version -and $Version -ne $ActualVersion) { throw 'This command never changes versions. Confirm and update windows/VERSION separately.' }
+    $Version = $ActualVersion
+    Build-CodexioFrontend -ProjectRoot $ProjectRoot
+    $BuildFingerprint = Get-CodexioWindowsFingerprint -ProjectRoot $ProjectRoot
+    $Staging = Join-Path $ProjectRoot 'build\staging\windows'
+    $Checks = Join-Path $ProjectRoot ("build\checks\v" + $Version)
+    foreach ($Directory in @($Staging, $Checks)) { New-Item -ItemType Directory -Path $Directory -Force | Out-Null }
+    $CLI = Join-Path $ProjectRoot 'build\cache\tools\wails3.exe'
+    $Resource = Join-Path $Staging 'rsrc_windows_amd64.syso'
+    & $CLI generate syso -arch amd64 -manifest (Join-Path $ProjectRoot 'windows\build\windows\Codexio.exe.manifest') -icon (Join-Path $ProjectRoot 'src\codexio\icons\app.ico') -info (Join-Path $ProjectRoot 'windows\build\windows\info.json') -out $Resource
+    if ($LASTEXITCODE -ne 0) { throw 'Wails resource generation failed.' }
+    # Go's Windows linker reads .syso paths directly, so a source snapshot keeps
+    # the resource and every generated intermediate under build/staging.
+    $CompileRoot = Join-Path $ProjectRoot ('build\staging\windows-source-' + [Guid]::NewGuid().ToString('N'))
+    New-CodexioWindowsSourceSnapshot -ProjectRoot $ProjectRoot -Destination $CompileRoot -Resource $Resource
+    $StagedExe = Join-Path $Staging 'Codexio.exe'
+    Push-Location $CompileRoot
+    try {
+        & go build -mod=readonly -trimpath -tags production -ldflags '-s -w -H windowsgui' -o $StagedExe .
+        if ($LASTEXITCODE -ne 0) { throw 'Go Windows compilation failed.' }
+    } finally { Pop-Location }
+    $Metadata = (Get-Item -LiteralPath $StagedExe).VersionInfo
+    if ($Metadata.ProductVersion -ne $Version -or $Metadata.FileVersion -ne $Version -or $Metadata.ProductName -ne 'Codexio') { throw 'EXE product/file version metadata failed verification.' }
+    $Header = [IO.File]::OpenRead($StagedExe)
+    try { if ($Header.ReadByte() -ne 77 -or $Header.ReadByte() -ne 90) { throw 'EXE MZ header verification failed.' } } finally { $Header.Dispose() }
+    $SmokeOutput = Join-Path $Checks ('smoke-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $SmokeOutput | Out-Null
+    $SmokeArguments = @('--mock', '--smoke-test', ('"' + $SmokeOutput + '"'))
+    $Process = Start-Process -FilePath $StagedExe -ArgumentList $SmokeArguments -WindowStyle Hidden -PassThru -WorkingDirectory $ProjectRoot
+    if (-not $Process.WaitForExit(60000)) { throw "Mock smoke did not exit. Its isolated process/data were preserved at $SmokeOutput; no user application was terminated." }
+    $ResultPath = Join-Path $SmokeOutput 'result.json'
+    if (-not (Test-Path -LiteralPath $ResultPath)) { throw "Mock smoke produced no result: $SmokeOutput" }
+    $Result = Get-Content -LiteralPath $ResultPath -Encoding UTF8 -Raw | ConvertFrom-Json
+    if (-not $Result.ok -or @($Result.checks).Count -ne 3 -or $Process.ExitCode -ne 0) { throw "Original three-item smoke failed: $($Result.error)" }
+    $ExpectedChecks = '["\u7a0b\u5e8f\u542f\u52a8","\u57fa\u672c\u6570\u636e\u663e\u793a","\u4e3b\u7a97\u53e3\u5173\u95ed\u4e0e\u91cd\u5f00"]' | ConvertFrom-Json
+    for ($Index = 0; $Index -lt 3; $Index++) { if ($Result.checks[$Index] -ne $ExpectedChecks[$Index]) { throw 'Smoke check identities differ from the original fixed three checks.' } }
+    $Hash = (Get-FileHash -LiteralPath $StagedExe -Algorithm SHA256).Hash.ToLowerInvariant()
+    $Size = (Get-Item -LiteralPath $StagedExe).Length
+    $StagedManifest = Join-Path $Staging 'latest.json'
+    $Manifest = Get-CodexioBaseManifest -ProjectRoot $ProjectRoot -ExplicitPath $ManifestPath -Version $Version
+    $Manifest.version = $Version; $Manifest.url = 'https://github.com/Wujuhu/Codexio/releases/download/v' + $Version + '/Codexio.exe'; $Manifest.sha256 = $Hash; $Manifest.size = $Size; $Manifest.notes = 'Codexio ' + $Version
+    Write-CodexioJSON -Path $StagedManifest -Value $Manifest
+    $Fingerprint = Get-CodexioWindowsFingerprint -ProjectRoot $ProjectRoot
+    if ($Fingerprint.sha256 -ne $BuildFingerprint.sha256) { throw 'Sources changed during compilation/smoke; the staged build was retained without delivery.' }
+    Write-CodexioJSON -Path (Join-Path $Checks 'source-fingerprint.json') -Value $Fingerprint
+    & (Join-Path $ProjectRoot 'scripts\publish_exe.ps1') -StagedExe $StagedExe -Version $Version
+    $DevelopmentDir = Join-Path $ProjectRoot 'build\dev\windows'
+    Move-Item -LiteralPath $StagedManifest -Destination (Join-Path $DevelopmentDir 'latest.json') -Force
+    $DeliveredExe = Join-Path $DevelopmentDir 'Codexio.exe'
+    if ((Get-FileHash -LiteralPath $DeliveredExe -Algorithm SHA256).Hash.ToLowerInvariant() -ne $Hash) { throw 'Delivered EXE hash changed.' }
+    Write-CodexioJSON -Path (Join-Path $Checks 'delivery.json') -Value ([ordered]@{ version=$Version; platform='windows/amd64'; executable=$DeliveredExe; manifest=(Join-Path $DevelopmentDir 'latest.json'); size=$Size; sha256=$Hash; source_sha256=$Fingerprint.sha256; compile_source=$CompileRoot; smoke_result=$ResultPath; smoke_checks=@($Result.checks); runtime='Wails 3.0.0-beta.26'; go_version='1.26.1'; cgo=$false; signed=$false; built_at=[DateTime]::UtcNow.ToString('o') })
+    Write-Host "Development build verified: $DeliveredExe"
+} finally { Restore-CodexioBuildEnvironment -Values $EnvironmentBefore }

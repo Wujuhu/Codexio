@@ -1,6 +1,6 @@
 # Codexio
 
-当前 Mac 版本：**0.3.2**。Mac 使用 Swift + SwiftUI/AppKit。Windows 保留现有 Python/PySide6 版本；按用户约定，今后默认不再修改或发布 Windows，只有特别明确要求时才恢复该平台工作。
+Mac 使用 Swift + SwiftUI/AppKit，版本由 `macos/VERSION` 独立管理。Windows **v0.3.4** 按用户本次明确要求重构为 Wails + Go；新 EXE 不捆绑 Python/PySide。Windows 后续仍默认冻结，只有特别明确要求时才恢复该平台工作。
 
 开发包、本地提交与正式发布分开管理。正式推送及发布需要用户开发验收后的第二次明确确认。
 
@@ -58,25 +58,19 @@ APP 由用户自行启动。首次从开发目录或下载位置启动时，完�
 
 ## Windows 开发与使用
 
-以下仅保留为历史排障参考；除非用户单独明确要求，不执行 Windows 开发、构建或发布命令。
+Windows v0.3.4 使用 Go 后台、Svelte/TypeScript 界面与系统 WebView2。Wails 固定为 `v3.0.0-beta.26`，后续开发或发布仍需用户明确要求。
 
-运行要求 Windows 10/11 x64，开发使用 Python 3.13 和项目虚拟环境。
+运行要求 Windows 10/11 x64 和 WebView2 Runtime；额度读取需要本机 Codex 登录状态。开发使用现有 Go 1.26.1、Node.js/npm，纯 Go SQLite，不需要安装 Python、Visual Studio 或 C++ SDK。依赖缓存留在 `build/cache`。
 
 ```powershell
 .\run.ps1
 .\run.ps1 --mock
+.\build_exe.ps1 -Version 0.3.4
 ```
 
-也可手动安装：
+`build_exe.ps1` 核对源码指纹、EXE 版本与哈希，并执行隔离模拟数据的三项基本冒烟后，交付 `build/dev/windows/Codexio.exe` 和统一 `latest.json`。文件占用时保留原文件与暂存新版。开发构建不会修改 `release`、推送、创建 Release 或触发 Windows CI。
 
-```powershell
-py -3.13 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-$env:PYTHONPATH = "src"
-.\.venv\Scripts\python.exe -m codexio
-```
-
-Windows 保留悬浮窗、吸附停靠与托盘；托盘可打开主界面、切换悬浮窗、刷新和退出。正式 EXE 在确认发布后的 Windows x64 CI 构建；`.\build_exe.ps1` 保留为 Windows 本地故障排查入口，输出在 `build/dev/windows`。
+Windows 保留六个页面、悬浮窗、吸附停靠与托盘。关闭主窗口后仍可从托盘重新打开；退出回收应用自有服务和子进程。自动审批审查只在明确归属时并入主请求，否则单列“自动审批审查”；实际计量保留，两种情况均不增加用户请求数。Python 源码作为历史实现和规则参考保留。功能与迁移说明见 [v0.3.4 Wails 设计](docs/superpowers/specs/2026-09-30-windows-wails-v0.3.4.md)。
 
 发现方式覆盖设置路径、`CODEX_CLI_PATH`、PATH、常见 Codex／ChatGPT 安装目录、安装登记、MSIX 与当前组件位置。组件通过 CLI 身份和 App Server 能力检查后才用于连接。
 
@@ -109,7 +103,7 @@ Mac 默认使用 `~/Library/Application Support/Codexio`，Windows 使用 `%LOCA
 
 ## 最小验证与交付
 
-固定基础冒烟只检查：**程序启动、基本数据显示、主窗口关闭与重开**，全部使用隔离模拟数据。Mac 构建已包含该入口，不重复运行；Windows 共用 Qt 入口沿用相同三项。本项目不维护 pytest、页面遍历或截图矩阵。版本、签名、归档与哈希核验属于交付校验。
+固定基础冒烟只检查：**程序启动、基本数据显示、主窗口关闭与重开**，全部使用隔离模拟数据。两端的开发打包均包含该入口，不重复运行；Windows Wails 入口沿用同样三项。本项目不维护 pytest、页面遍历或截图矩阵。版本、签名、归档与哈希核验属于交付校验。
 
 中间文件、缓存、结果、日志和临时备份分别位于 `build/staging`、`build/cache`、`build/checks`、`build/logs`、`build/backups`。运行中的 App 原路径保留。
 
