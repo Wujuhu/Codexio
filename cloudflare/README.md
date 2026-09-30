@@ -1,11 +1,11 @@
 # 手机阅读与同步协议
 
-本轮只修改本地源码、迁移文件与开发包。**未执行远程 D1 迁移、Worker 部署或云端凭据更改。** 生产端仍运行原协议时，实时、最近记录和趋势继续工作；手机显示详情能力尚未提供，不会把短摘要当作用户原文或最终回复。
+已于 **2026-09-30 15:12:20（Asia/Shanghai）** 按用户明确授权完成 Codexio 同步服务的 D1 详情迁移和 Worker 部署。生产端启用 `request-details-v1` 与 `request-kinds-v1`，新版本接收 100% 流量。部署源码来自本地提交 `fbb33f0`，已回读远程模块并核对源码一致；没有推送 Git、创建 GitHub Release、修改 App 版本或 Windows。
 
 ## 部署前提与兼容
 
-1. 另行取得用户明确的云部署授权，并恢复可用的 Cloudflare 管理 API 凭据。
-2. 对现有 D1 显式执行 `migrations/0002_request_details.sql`，先建立详情表和清理索引。该文件可重复执行；`schema.sql` 供新库初始化使用。本轮没有运行任何远程命令。
+1. 部署须取得用户明确的云部署授权，并使用可用的 Cloudflare 管理 API 凭据。本次已取得授权，复用已有 OAuth 凭据，凭据未写入源码或核验记录。
+2. 对现有 D1 显式执行 `migrations/0002_request_details.sql`，先建立详情表和清理索引。该文件可重复执行；`schema.sql` 供新库初始化使用。本次已执行迁移，并核对详情表与四个所需索引存在；未改写已有业务表数据。
 3. 再部署本地 `worker.mjs` 与配置。`DETAILS_ENABLED=1` 启用能力；设为 `0` 可只关闭详情。缺少详情表时 `/capabilities` 与 `/sync` 不声明能力，摘要仍可读取。
 4. 发布前由获授权的协调者核对实际 Worker、D1 绑定、索引、能力响应、配对与撤销行为，再使用真实 D1 返回的 `meta.rows_read` / `meta.rows_written` 判断额度。不要从本地 SQL 审计推断已部署或云端验证通过。
 
@@ -19,7 +19,7 @@ Mac 正文来源按请求记录实际日志片段，旧记录复用既有扫描�
 
 ## 数据、范围与容量
 
-- 记录 ID 继续是规范请求 ID 的 SHA-256，不因页面入口、筛选或传输路径改变。只同步真实用户请求；独立上下文压缩与子任务不作为概览最近完成任务。
+- 记录 ID 继续是规范请求 ID 的 SHA-256，不因页面入口、筛选或传输路径改变。概览任务和用户请求统计只采用真实用户请求；记录列表另含未归属自动审批审查，其用量保留但不增加用户请求数。独立上下文压缩与子任务不作为概览最近完成任务。
 - 账本提供原始用户 Markdown、最终 assistant Markdown、完整性、附件元数据及实际内容的 revision/digest。中间 commentary、工具调用和工具结果不进入详情。旧截短内容不能恢复时明确标记 partial/unavailable。
 - `/sync` 只含三个摘要集合，以及最多 64 个详情版本号，不携带详情正文。详情初次打开读取用户约 1,200 字节与最终回复约 5,000 字节的预览；手机界面默认约 5/20 行。
 - 展开按 64 KiB 分块读取。每条记录最多 1 MiB（UTF-8 JSON，含用户正文、最终回复和附件元数据），最多 16 块；所有分块必须同一版本、同一 digest，并在整条 SHA-256 校验通过后入缓存。期间版本变化需重新读取。展开完成显示源记录实际可用的全文；源记录本就不完整时继续明确提示。
@@ -68,3 +68,13 @@ Mac 正文来源按请求记录实际日志片段，旧记录复用既有扫描�
 复用既有 `MobileProtocol.swift` 的证书固定、消息编码、SHA-256 和凭据隔离，`MobileSync.swift` 的串行后台队列/内容签名发布，以及 `MobileStore.swift` 的前台轮询、请求合并、generation 和按主机缓存。账本原文恢复由 `Database.requestMessageDetail` 提供；没有新增采集器或历史重扫。Markdown 采用系统 `AttributedString` 与 SwiftUI 控件，没有第三方渲染执行环境。
 
 本轮仅做源文件 Swift 语法检查、`node --check`、在内存 SQLite 上准备 SQL/迁移以核对语法与字段。统一 Swift 编译、既有最小运行冒烟和 ZIP/IPA 交付校验由本轮主执行者完成；没有增加测试文件或维护性测试套件。
+
+## 生产部署核验 · 2026-09-30
+
+- Worker 版本：`61b085f2-f3d3-41e3-aa27-939affa7d1f0`；部署 ID：`aac32598-6509-4edc-b9c6-065b0d8fa9f1`；流量 100%。
+- 详情表与 `request_details_expires`、`invites_host`、`invites_expires`、`datasets_updated` 索引已核对。D1 绑定、限流绑定、每日 20,000 请求预算和既有 `19 0 * * *` 清理计划保留。
+- 使用临时模拟 host/reader 核对生产端能力、审批类别与零用户请求统计、未变化摘要、原文/最终回复预览、UTF-8 全文两段传输及 SHA-256、reader 撤销后 403 REVOKED。12 次协议请求符合预期，模拟记录已全部清理；没有读取真实用户正文或启动/重启真实 App。
+- 通过 [Cloudflare 官方 Worker 上传接口](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/methods/update/) 部署，保留既有绑定及设置，并开启正文能力。Wrangler 已产出构建文件，但进程没有自行退出，结束本次自有 dry-run 进程后采用管理 API 上传。
+- 本机代理按域名建立连接时返回隧道 503；核验客户端使用该域名公开解析的连接 IP，并继续校验原域名 TLS 证书及 Host，生产健康与协议核验通过。此方式只用于本次核验，未改系统网络或 App 地址，不在 App 中固定 IP。
+- 核验结果与实际 D1 管理查询元数据：`build/checks/v034-work/cloud-deployment.json`；迁移结果：`cloud-migration.json`；源码及设置备份：`build/backups/cloudflare/20260930T070355Z`。
+- 该核验是生产服务协议检查，不等于 iPhone 真机验收。Mac 须保持主程序运行以提供新正文；已有的否定能力缓存最多保留一小时，用户需要立即重新协商时，可自行关闭再开启 Mac 同步，然后在手机刷新/重试，配对凭据可继续使用。
