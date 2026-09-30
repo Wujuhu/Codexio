@@ -86,6 +86,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             updater?.onPresentationNeeded = { [weak self] in self?.presentPendingWindowContent() }
             updater?.onPresentationFinished = { [weak self] in self?.presentPendingWindowContent() }
             updater?.onInstallRequested = { NSApp.terminate(nil) }
+            updater?.onInstallationTimedOut = { [weak self] in
+                guard let self, self.isTerminating else { return }
+                self.cancelPendingQuit()
+            }
             upstream = UpstreamCoordinator(state:state)
             state.onCheckUpdate = { [weak self] in self?.updater?.check(manual:true) }
             state.onInstallUpdate = { [weak self] in self?.updater?.requestUpdate() }
@@ -173,8 +177,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             let ready: (Error?) -> Void = { [weak self] error in
                 guard let self, self.isTerminating, self.terminationGeneration == generation else { return }
                 if error != nil { self.cancelPendingQuit(); return }
-                self.state.finishQuit { error in
+                self.state.finishQuit { [weak self] error in
+                    guard let self, self.isTerminating, self.terminationGeneration == generation else { return }
                     if let error { fputs(error.localizedDescription+"\n",stderr) }
+                    self.updater?.stopInstallationWatchdog()
                     NSApp.reply(toApplicationShouldTerminate:true)
                 }
             }
@@ -185,6 +191,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     }
     private func cancelPendingQuit(_ error: Error? = nil) {
         isTerminating = false; terminationGeneration = UUID(); updater?.cancelTermination(); upstream?.cancelQuit()
+        state.resumeAfterCancelledQuit()
         status = MenuBarController(state)
         if let error { state.errorMessage = error.localizedDescription }
         showWindow(); NSApp.reply(toApplicationShouldTerminate:false)

@@ -28,6 +28,8 @@ private final class NativeUpdateWindow: NSWindow {
     init(model: NativeUpdatePresentation, update: @escaping () -> Void, later: @escaping () -> Void, cancel: @escaping () -> Void) {
         super.init(contentRect:NSRect(x:0,y:0,width:440,height:250),styleMask:[.titled],backing:.buffered,defer:false)
         title = L("Codexio 更新", "Codexio Update"); isReleasedWhenClosed = false
+        // An informational update sheet must not veto the normal quit handshake.
+        preventsApplicationTerminationWhenModal = false
         let hosting = NSHostingView(rootView:NativeUpdateView(model:model,update:update,later:later,cancel:cancel))
         hosting.sizingOptions = [.intrinsicContentSize]
         contentView = hosting

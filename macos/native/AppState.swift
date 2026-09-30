@@ -72,6 +72,7 @@ final class AppState: ObservableObject {
     private var scanning = false
     private var refreshing = false
     private var stopped = false
+    private var quitGeneration = UUID()
     var mainWindowVisible = false
     private var reportGeneration = UUID()
     private var reportLoadedAt: Date?
@@ -146,6 +147,7 @@ final class AppState: ObservableObject {
         reportGeneration = UUID()
     }
     func finishQuit(completion: @escaping (Error?) -> Void) {
+        quitGeneration = UUID()
         stop()
         snapshotQueue.async { [self] in
             client.shutdown()
@@ -154,8 +156,27 @@ final class AppState: ObservableObject {
                     try writeWidget(["schema":1,"updated_at":Date().timeIntervalSince1970,"host_running":false,"host_pid":NSNull(),"request":NSNull(),"quota":["applicable":true],"today":NSNull()])
                     try Installation.retireLegacyWidgetServices(paths:paths)
                 }
-                DispatchQueue.main.async { completion(nil) }
-            } catch { DispatchQueue.main.async { completion(error) } }
+                performQuitCallback { completion(nil) }
+            } catch { performQuitCallback { completion(error) } }
+        }
+    }
+    func resumeAfterCancelledQuit() {
+        guard stopped else { return }
+        let generation = quitGeneration
+        // Resume behind the old shutdown work, so it cannot close a new client
+        // or leave a late offline snapshot after cancellation.
+        let pending = DispatchGroup()
+        for queue in [snapshotQueue,dataQueue,accountQueue,reportQueue] {
+            pending.enter(); queue.async { pending.leave() }
+        }
+        pending.notify(queue:.main) { [self] in
+            guard stopped, quitGeneration == generation else { return }
+            client.resumeAfterCancelledShutdown()
+            stopped = false; scanning = false; refreshing = false; reportInFlight = false
+            loading = false; reportsLoading = false
+            configureTimers()
+            if !paths.mock, UserDefaults.standard.bool(forKey:"codexio.mobile.enabled") { mobileSync.start() }
+            announceWidgetHost()
         }
     }
     func announceWidgetHost() {
