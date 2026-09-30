@@ -7,6 +7,10 @@ enum PricingDisplayOrder {
         return groups.keys.sorted(by:before).flatMap { groups[$0] ?? [] }
     }
     private static func before(_ lhs: String,_ rhs: String) -> Bool {
+        let aName = lhs.lowercased().replacingOccurrences(of:"openai/",with:"")
+        let bName = rhs.lowercased().replacingOccurrences(of:"openai/",with:"")
+        if aName == "gpt-6-astra" && bName != "gpt-6-astra" { return true }
+        if bName == "gpt-6-astra" && aName != "gpt-6-astra" { return false }
         let a = key(lhs), b = key(rhs)
         for index in 0..<max(a.0.count,b.0.count) {
             let x = index < a.0.count ? a.0[index] : 0, y = index < b.0.count ? b.0[index] : 0

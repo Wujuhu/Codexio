@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "verified_at": "2026-09-07",
+  "verified_at": "2026-09-30",
   "unit": "USD per million tokens",
-  "notes": "Standard API base prices only: no long-context, priority/Fast or flex rates. Ordinary Standard uses published rates directly, including cache writes. Fast and long-context conditions retain Codex modifiers and charge cache creation as ordinary input. Missing base prices remain null.",
+  "notes": "Standard API base prices only. GPT-6.1 Sol follows its published Fast, long-context and cache-write rates; older models retain their existing Codex conversion policy. Missing base prices remain null.",
   "rows": [
     {
       "input": 1.5,
@@ -194,6 +194,18 @@
       "threshold": 0,
       "source": "https://developers.openai.com/api/docs/models/gpt-5.6-terra",
       "updated_at": "2026-09-07T00:00:00+00:00",
+      "locked": false
+    },
+    {
+      "input": 2.0,
+      "cache_read": 0.1,
+      "cache_write": 2.5,
+      "output": 10.0,
+      "model": "gpt-6.1-sol",
+      "service_tier": "default",
+      "threshold": 0,
+      "source": "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
+      "updated_at": "2026-09-30T00:00:00+00:00",
       "locked": false
     },
     {

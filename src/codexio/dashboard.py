@@ -53,12 +53,15 @@ PAGE_NAMES = NAVIGATION_PAGES
 PAGE_LABELS = tuple(PAGE_TITLES[name] for name in PAGE_NAMES)
 PERIODS = ((tr("今日"), "today"), (tr("近 7 天"), "week"), (tr("近 30 天"), "month"), (tr("全部"), "all"))
 PRICING_MODELS = (
-    ("gpt-6-astra", "GPT-6 Astra"), ("gpt-6-sol", "GPT-6 Sol"), ("gpt-6-terra", "GPT-6 Terra"), ("gpt-6-luna", "GPT-6 Luna"),
+    ("gpt-6-astra", "GPT-6 Astra"), ("gpt-6.1-sol", "GPT-6.1 Sol"), ("gpt-6-sol", "GPT-6 Sol"), ("gpt-6-terra", "GPT-6 Terra"), ("gpt-6-luna", "GPT-6 Luna"),
     ("gpt-5.6-sol", "GPT-5.6 Sol"), ("gpt-5.6-terra", "GPT-5.6 Terra"),
     ("gpt-5.6-luna", "GPT-5.6 Luna"), ("gpt-5.5", "GPT-5.5"),
 )
 def pricing_display_key(model: str) -> tuple:
-    match = re.match(r"^gpt-(\d+(?:\.\d+)*)(?:-([a-z]+))?", model.removeprefix("openai/").lower())
+    normalized = model.removeprefix("openai/").lower()
+    if normalized == "gpt-6-astra":
+        return (-1, (0, 0, 0), 0, model)
+    match = re.match(r"^gpt-(\d+(?:\.\d+)*)(?:-([a-z]+))?", normalized)
     if not match:
         return (1, (0, 0, 0), 5, model)
     family = tuple(-int(part) for part in (match.group(1).split(".") + ["0", "0"])[:3])

@@ -31,6 +31,9 @@ final class PricingCatalog {
             for key in ["cache_read","cache_write"] where row.number(key) == nil { row[key] = merged[row.string("model")]?[key] }
             merged[row.string("model")] = row
         }
+        if let officialSol = seed.objects("rows").first(where: {$0.string("model") == "gpt-6.1-sol"}) {
+            merged["gpt-6.1-sol"] = officialSol
+        }
         for (model, value) in overrides {
             guard let values = value as? [Object], var row = values.last(where: { ($0.integer("threshold") ?? 0) == 0 && ["default","standard"].contains($0.string("service_tier","default")) }) else { continue }
             row["model"] = model; row["locked"] = true; merged[model] = row
@@ -38,15 +41,15 @@ final class PricingCatalog {
         bases = merged.values.sorted { $0.string("model") < $1.string("model") }
         rows = bases.flatMap { base -> [PriceRow] in
             let model = base.string("model").replacingOccurrences(of:#"-\d{4}-\d{2}-\d{2}$"#,with:"",options:.regularExpression)
-            let modern = ["gpt-6-sol","gpt-6-luna","gpt-5.6","gpt-5.6-sol","gpt-5.6-terra","gpt-5.6-luna","gpt-5.5"].contains(model)
-            let fast: Double? = model == "gpt-5.4" ? 2 : (modern || model == "gpt-6-astra" ? 2.5 : nil)
+            let modern = ["gpt-6.1-sol","gpt-6-sol","gpt-6-luna","gpt-5.6","gpt-5.6-sol","gpt-5.6-terra","gpt-5.6-luna","gpt-5.5"].contains(model)
+            let fast: Double? = model == "gpt-6.1-sol" || model == "gpt-5.4" ? 2 : (modern || model == "gpt-6-astra" ? 2.5 : nil)
             let thresholds = modern || model == "gpt-5.4" ? [0,272000] : [0]
             return ([ ("default",1.0) ] + (fast.map { [("priority",$0)] } ?? [])).flatMap { tier, speed in
                 thresholds.map { threshold in
                     var row = base; row["service_tier"] = tier; row["threshold"] = threshold
                     let inputMultiplier = speed * (threshold > 0 ? 2 : 1), outputMultiplier = speed * (threshold > 0 ? 1.5 : 1)
                     for key in ["input","cache_read","cache_write","output"] {
-                        let baseKey = key == "cache_write" && (tier != "default" || threshold > 0) ? "input" : key
+                        let baseKey = key == "cache_write" && model != "gpt-6.1-sol" && (tier != "default" || threshold > 0) ? "input" : key
                         row[key] = base.number(baseKey).map { $0 * (key == "output" ? outputMultiplier : inputMultiplier) } as Any?
                     }
                     return PriceRow(raw:row)
@@ -54,7 +57,7 @@ final class PricingCatalog {
             }
         }
         ratesByModel = Dictionary(grouping:rows,by: { $0.model })
-        version = identity(["rule":1,"rows":rows.map { row -> Object in
+        version = identity(["rule":2,"rows":rows.map { row -> Object in
             var value = row.raw; value.removeValue(forKey:"updated_at"); return value
         }] as Object)
         updated = parsedDate(cache["updated_at"])

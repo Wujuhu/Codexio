@@ -26,7 +26,7 @@ MODELS_DEV_URL = "https://models.dev/api.json"
 RATE_KEYS = ("input", "cache_read", "cache_write", "output")
 _FIELDS = {"input": "input_cost_per_token", "cache_read": "cache_read_input_token_cost",
            "cache_write": "cache_creation_input_token_cost", "output": "output_cost_per_token"}
-PRICING_RULE_VERSION = "codex-api-base-2026-09-25-v4-third-party-reference"
+PRICING_RULE_VERSION = "codex-api-base-2026-09-30-v5-gpt-6.1-sol"
 PRICING_BASIS = "standard_api_x_codex"
 PRICING_BASIS_LABEL = tr("标准 API 单价 × Codex 倍率")
 LONG_CONTEXT_THRESHOLD = 272000
@@ -39,6 +39,8 @@ RULE_SOURCES = (
 def codex_policy(model):
     """Known Codex modifiers; unsupported Fast modes are not inferred from API tiers."""
     model = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", model.removeprefix("openai/"))
+    if model == "gpt-6.1-sol":
+        return LONG_CONTEXT_THRESHOLD, 2.0
     if model in ("gpt-6-sol", "gpt-6-luna"):
         return LONG_CONTEXT_THRESHOLD, 2.5
     if model in ("gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"):
@@ -61,6 +63,7 @@ def _scaled(value, multiplier):
 
 
 def _codex_rows(base):
+    model = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", base["model"].removeprefix("openai/"))
     threshold, fast = codex_policy(base["model"])
     contexts = (0, threshold) if threshold else (0,)
     tiers = (("default", 1.0), ("priority", fast)) if fast is not None else (("default", 1.0),)
@@ -69,7 +72,8 @@ def _codex_rows(base):
             input_multiplier = speed * (2.0 if context else 1.0)
             output_multiplier = speed * (1.5 if context else 1.0)
             api_standard = tier == "default" and context == 0
-            write_rate = base["cache_write"] if api_standard else base["input"]
+            published_write_rate = api_standard or model == "gpt-6.1-sol"
+            write_rate = base["cache_write"] if published_write_rate else base["input"]
             yield dict(base, service_tier=tier, threshold=context,
                        input=_scaled(base["input"], input_multiplier),
                        cache_read=_scaled(base["cache_read"], input_multiplier),
@@ -77,8 +81,8 @@ def _codex_rows(base):
                        base_rates={key: base[key] for key in RATE_KEYS},
                        multipliers={"input": input_multiplier, "cache_read": input_multiplier,
                                     "cache_write": input_multiplier, "output": output_multiplier},
-                       cache_write_basis="api" if api_standard else "input",
-                       cache_write_surcharge=(None if write_rate is None else max(0, write_rate - base["input"])) if api_standard else 0.0,
+                       cache_write_basis="api" if published_write_rate else "input",
+                       cache_write_surcharge=(None if write_rate is None else max(0, write_rate - base["input"]) * input_multiplier) if published_write_rate else 0.0,
                        fast_multiplier=speed, long_context_threshold=threshold,
                        pricing_basis=PRICING_BASIS, rule_version=PRICING_RULE_VERSION,
                        rule_sources=list(RULE_SOURCES))
@@ -233,6 +237,12 @@ class PricingCatalog:
                     if row[rate] is None and prior.get(rate) is not None:
                         row[rate] = prior[rate]
                 merged[key] = row
+        # The newly published model rate is verified directly against OpenAI.
+        # A persisted third-party feed must not replace it before that feed catches up.
+        official_sol = next((_validate_row(row) for row in self._seed
+                             if isinstance(row, dict) and row.get("model") == "gpt-6.1-sol"), None)
+        if official_sol is not None:
+            merged[_row_key(official_sol)] = official_sol
         self._base_rows = sorted((dict(row) for row in merged.values()), key=_row_key)
         for model, override_rows in self._overrides.items():
             if not isinstance(override_rows, list):
@@ -342,6 +352,8 @@ class PricingCatalog:
         if rates["cache_write_basis"] == "api":
             basis = tr("手工 Standard 基础价") if rates.get("locked") else tr("OpenAI API Standard 标准价")
             reasons = [basis + tr("；缓存创建使用单列价格，缺失时保留未定价")]
+            if rates["service_tier"] != "default" or rates["threshold"]:
+                reasons.append(tr("输入、缓存和输出按该模型公开的 Fast／长上下文倍率折算"))
         else:
             reasons = [PRICING_BASIS_LABEL + tr("；输入/缓存读取 ×%g，输出 ×%g；缓存创建按普通输入价，无写入附加费") %
                        (multipliers["input"], multipliers["output"])]
