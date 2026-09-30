@@ -317,8 +317,7 @@ enum LogFields {
             let raw = row.raw
             switch key {
             case "content":
-                let tier = normalizedTier(raw.string("service_tier"))
-                let metadata = [dateText(row.date,timeOnly:timeOnly),raw.string("reasoning_effort").isEmpty ? "" : logEffortName(raw.string("reasoning_effort")),tier == "priority" ? "Fast" : tier == "default" ? "Standard" : "",raw.number("model_context_window").map {compact($0)} ?? "",raw.flag("is_subagent") ? L("子代理", "Subagent") : raw.string("record_kind") == "unassigned" ? L("未归属调用", "Unassigned call") : ""].filter {!$0.isEmpty}.joined(separator:" · ")
+                let metadata = [dateText(row.date,timeOnly:timeOnly),raw.string("reasoning_effort").isEmpty ? "" : logEffortName(raw.string("reasoning_effort")),logSpeedName(raw.string("service_tier")),raw.number("model_context_window").map {compact($0)} ?? "",raw.flag("is_subagent") ? L("子代理", "Subagent") : raw.string("record_kind") == "unassigned" ? L("未归属调用", "Unassigned call") : ""].filter {!$0.isEmpty}.joined(separator:" · ")
                 return GridText(main:raw.string("prompt_preview").isEmpty ? row.title : raw.string("prompt_preview"),secondary:metadata)
             case "time": return GridText(main:dateText(row.date,timeOnly:timeOnly))
             case "model":

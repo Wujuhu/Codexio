@@ -58,6 +58,8 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
     private var detailStamps: [String:MobileDetailStamp] = [:]
     private var detailDeferred: [String:Date] = [:]
     private var cloudDetails: Bool?
+    private var cloudRequestKinds = false
+    private var cloudRecent: MobileEnvelope?
     private var nextCapabilityCheck = Date.distantPast
     private var host: MobileHostIdentity?
     private var listener: NWListener?
@@ -96,7 +98,8 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
     }
     private var stateURL: URL { paths.data.appendingPathComponent("mobile-projection.json") }
     private var detailStateURL: URL { paths.data.appendingPathComponent("mobile-detail-revisions.json") }
-    private var capabilities: [String] { detailProvider == nil ? [] : [MobileProtocol.detailCapability] }
+    private var cloudRecentURL: URL { paths.data.appendingPathComponent("mobile-cloud-recent.json") }
+    private var capabilities: [String] { [MobileProtocol.requestKindCapability] + (detailProvider == nil ? [] : [MobileProtocol.detailCapability]) }
     private func saveDetailStamps() throws {
         try MobileProtocol.encode(detailStamps).write(to:detailStateURL,options:.atomic)
         try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:detailStateURL.path)
@@ -168,6 +171,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                 let identity = try self.identity()
                 if let data = try? Data(contentsOf:self.stateURL) { self.datasets = try JSONDecoder().decode([String:MobileEnvelope].self,from:data) }
                 if let data = try? Data(contentsOf:self.detailStateURL) { self.detailStamps = (try? JSONDecoder().decode([String:MobileDetailStamp].self,from:data)) ?? [:] }
+                if let data = try? Data(contentsOf:self.cloudRecentURL) { self.cloudRecent = try? JSONDecoder().decode(MobileEnvelope.self,from:data) }
                 self.cloudDetails = nil; self.nextCapabilityCheck = .distantPast
                 self.exportRevision = nil; self.nextHistory = .distantPast
                 if let value = self.datasets["trends"], let trends = try? value.decode(MobileTrends.self) { try self.put("trends",trends.singleModelsOnly()); try self.persist() }
@@ -339,7 +343,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                 self.authenticated[key] = reader.id
                 if message.action == "detail", let id = message.detailID, id.count == 64 {
                     do {
-                        MobileProtocol.send(try self.detailMessage(id,full:message.full == true,part:message.detailPart ?? 0),over:connection)
+                        MobileProtocol.send(try self.detailMessage(id,full:message.full == true,part:message.detailPart ?? 0,force:message.force == true),over:connection)
                     } catch {
                         MobileProtocol.send(MobileMessage(action:"detail",error:"DETAIL_UNAVAILABLE",capabilities:self.capabilities,detailID:id,full:message.full == true),over:connection)
                     }
@@ -430,10 +434,11 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
         if detailStamps.count > 256, let oldest = detailStamps.min(by:{$0.value.revision < $1.value.revision})?.key { detailStamps.removeValue(forKey:oldest) }
         return envelope
     }
-    private func detailMessage(_ id: String, full: Bool, part: Int) throws -> MobileMessage {
+    private func detailMessage(_ id: String, full: Bool, part: Int, force: Bool = false) throws -> MobileMessage {
         let wasCached = details[id] != nil
-        guard let envelope = try details[id] ?? loadDetail(id), let value = try? envelope.decode(MobileRequestDetail.self), value.expires > Date().timeIntervalSince1970 else { return MobileMessage(action:"detail",error:"DETAIL_UNAVAILABLE",detailID:id,full:full) }
-        if !wasCached { try saveDetailStamps() }
+        let refreshed = force && part == 0 ? try loadDetail(id) : nil
+        guard let envelope = try refreshed ?? details[id] ?? loadDetail(id), let value = try? envelope.decode(MobileRequestDetail.self), value.expires > Date().timeIntervalSince1970 else { return MobileMessage(action:"detail",error:"DETAIL_UNAVAILABLE",detailID:id,full:full) }
+        if !wasCached || refreshed != nil { try saveDetailStamps() }
         if full {
             guard value.availability != "capacity" else { return MobileMessage(action:"detail",error:"DETAIL_CAPACITY",detailID:id,full:true) }
             let bytes = Data(envelope.payload.utf8)
@@ -474,7 +479,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                 func request(_ value: UsageRow) -> MobileRequest {
                     var preview = previews ? String(value.raw.string("prompt_preview").prefix(80)) : ""
                     while preview.utf8.count > 240 { preview.removeLast() }
-                    return MobileRequest(id:MobileProtocol.hash(Data(value.id.utf8)),started:value.date?.timeIntervalSince1970 ?? 0,status:value.raw.string("status",value.raw.flag("duration_running") ? "running" : "completed"),preview:preview.isEmpty ? nil : preview,model:modelName(value.raw.string("model")),effort:logEffortName(value.raw.string("reasoning_effort")),speed:value.raw.string("service_tier"),tokens:value.tokens,cost:value.cost,duration:value.raw.number("duration_ms").map {$0/1000})
+                    return MobileRequest(id:MobileProtocol.hash(Data(value.id.utf8)),started:value.date?.timeIntervalSince1970 ?? 0,status:value.raw.string("status",value.raw.flag("duration_running") ? "running" : "completed"),preview:preview.isEmpty ? nil : preview,model:modelName(value.raw.string("model")),effort:logEffortName(value.raw.string("reasoning_effort")),speed:value.raw.string("service_tier"),tokens:value.tokens,cost:value.cost,duration:value.raw.number("duration_ms").map {$0/1000},kind:RequestClassification.isApproval(value.raw) ? RequestClassification.approval : nil)
                 }
                 func window(_ value: QuotaWindow?) -> MobileQuota { MobileQuota(remaining:value?.remaining,reset:value?.reset?.timeIntervalSince1970,observed:quota.updated?.timeIntervalSince1970,retained:quota.retained) }
                 let sample = (observed ?? snapshot.updated).map {floor($0.timeIntervalSince1970/300)*300}
@@ -491,7 +496,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                 let urgent = self.exportPreview != previews || self.exportDay != dayKey || self.lastTaskKey != taskKey
                 if urgent || (self.exportRevision != snapshot.revision && Date() >= self.nextHistory) {
                     let floor = Date().addingTimeInterval(-7*86400)
-                    let recent = main.filter {($0.date ?? .distantPast) >= floor}
+                    let recent = snapshot.requests.filter {$0.local && ($0.date ?? .distantPast) >= floor && ($0.date ?? .distantFuture) <= Date() && (($0.raw.string("record_kind") == "user_request" && !$0.raw.flag("is_subagent")) || RequestClassification.isApproval($0.raw))}
                     try self.put("recent",recent.prefix(200).map(request))
                     try self.updateDetails(recent)
                     let calendar = Calendar.current, today = calendar.startOfDay(for:Date())
@@ -524,11 +529,13 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
     private func upload() {
         if host?.pendingKeyRemoval == true { finishKeyRemoval(); return }
         guard active, let host, host.cloudEnabled, !sending, Date() >= retryAt else { return }
-        let changed = datasets.values.filter {sent[$0.dataset] != $0.revision}
+        var changed = datasets.values.filter {sent[$0.dataset] != $0.revision}
         let readers = host.readers.filter {!cloudReaders.contains($0.id)}
         let detailChanges = details.values.filter { detailStamps[String($0.dataset.dropFirst(7))]?.sent != $0.digest && Date() >= (detailDeferred[String($0.dataset.dropFirst(7))] ?? .distantPast) }.sorted {$0.revision > $1.revision}
         let probe = detailProvider != nil && Date() >= nextCapabilityCheck
         let support = cloudDetails
+        let knownKinds = cloudRequestKinds, previousRecent = cloudRecent
+        if probe, let recent = datasets["recent"], !changed.contains(where:{$0.dataset == "recent"}) { changed.append(recent) }
         guard !changed.isEmpty || !readers.isEmpty || !host.revoked.isEmpty || probe || (support == true && !detailChanges.isEmpty) else { return }
         sending = true; urgentPending = false; let generation = generation, transport = transport
         Task {
@@ -538,17 +545,34 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                     let body = try JSONSerialization.data(withJSONObject:["id":reader.id,"secret":reader.cloudSecret])
                     _ = try await transport.request("/v1/hosts/\(host.id)/readers",method:"PUT",token:host.writer,body:body)
                 }
-                for value in changed { _ = try await transport.request("/v1/hosts/\(host.id)/data/\(value.dataset)",method:"PUT",token:host.writer,body:MobileProtocol.encode(value)) }
-                // Detail negotiation and uploads cannot turn a successful legacy
-                // summary sync into failure. Old Workers return no capability.
                 var supported = support, uploaded: [MobileEnvelope] = [], capacityIDs: [String] = []
-                var detailFailure: String?
+                var detailFailure: String?, kinds = knownKinds, probeFailed = false
                 if probe {
                     do {
                         let response = try await transport.request("/v1/hosts/\(host.id)/capabilities",token:host.writer)
                         let message = try JSONDecoder().decode(MobileMessage.self,from:response)
                         supported = message.capabilities?.contains(MobileProtocol.detailCapability) == true
-                    } catch { supported = false }
+                        kinds = message.capabilities?.contains(MobileProtocol.requestKindCapability) == true
+                    } catch {
+                        if case MobileError.http(let code,_,let reason) = error, code == 404 || reason == "NOT_FOUND" { supported = false; kinds = false }
+                        else { probeFailed = true; detailFailure = error.localizedDescription }
+                    }
+                }
+                // A separate bounded cloud projection preserves old Workers' field
+                // allow-list and revisions while the local link carries review kinds.
+                var sentRecent: MobileEnvelope?
+                for value in changed {
+                    var cloudValue = value
+                    if value.dataset == "recent" {
+                        let requests = try value.decode([MobileRequest].self)
+                        let body = try MobileProtocol.encode(kinds ? requests : requests.filter {!$0.isApproval})
+                        let hash = MobileProtocol.hash(body)
+                        if previousRecent?.digest == hash, let previousRecent { cloudValue = previousRecent }
+                        else { cloudValue = MobileEnvelope(dataset:"recent",revision:max(previousRecent?.revision ?? 0,value.revision,Int64(Date().timeIntervalSince1970*1000))+1,digest:hash,payload:String(decoding:body,as:UTF8.self)) }
+                        sentRecent = cloudValue
+                        if cloudValue == previousRecent { continue }
+                    }
+                    _ = try await transport.request("/v1/hosts/\(host.id)/data/\(value.dataset)",method:"PUT",token:host.writer,body:MobileProtocol.encode(cloudValue))
                 }
                 if supported == true {
                     for value in detailChanges.prefix(4) {
@@ -562,12 +586,27 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                         }
                     }
                 }
-                let resolvedSupport = supported, sentDetails = uploaded, failure = detailFailure, deferred = capacityIDs
+                let resolvedSupport = supported, resolvedKinds = kinds, resolvedRecent = sentRecent, failedProbe = probeFailed, sentDetails = uploaded, failure = detailFailure, deferred = capacityIDs, sentDatasets = changed
                 self.queue.async {
                     guard self.generation == generation else { return }
                     self.cloudDetails = resolvedSupport
-                    if probe { self.nextCapabilityCheck = Date().addingTimeInterval(3_600) }
-                    for value in changed { self.sent[value.dataset] = value.revision }
+                    self.cloudRequestKinds = resolvedKinds
+                    if let resolvedRecent, self.cloudRecent != resolvedRecent {
+                        self.cloudRecent = resolvedRecent
+                        try? MobileProtocol.encode(resolvedRecent).write(to:self.cloudRecentURL,options:.atomic)
+                        try? FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:self.cloudRecentURL.path)
+                    }
+                    if probe { self.nextCapabilityCheck = Date().addingTimeInterval(failedProbe ? 60 : 3_600) }
+                    for value in sentDatasets { self.sent[value.dataset] = value.revision }
+                    if let resolvedRecent, var current = self.datasets["recent"], current.revision <= resolvedRecent.revision {
+                        let submitted = sentDatasets.first {$0.dataset == "recent"}
+                        current.revision = resolvedRecent.revision+1; self.datasets["recent"] = current
+                        if current.digest == submitted?.digest { self.sent["recent"] = current.revision }
+                        try? self.persist()
+                        for (key,connection) in self.connections where self.authenticated[key] != nil {
+                            MobileProtocol.send(MobileMessage(action:"sync",known:self.datasets.mapValues(\.revision),datasets:[current],seen:Date().timeIntervalSince1970,supportsAck:true,capabilities:self.capabilities,detailVersions:self.details.mapValues(\.revision)),over:connection)
+                        }
+                    }
                     for value in sentDetails { self.detailStamps[String(value.dataset.dropFirst(7))]?.sent = value.digest }
                     for id in deferred { self.detailDeferred[id] = Date().addingTimeInterval(3_600) }
                     if !sentDetails.isEmpty { try? self.saveDetailStamps() }
@@ -582,6 +621,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                     let pending = self.datasets.values.contains {self.sent[$0.dataset] != $0.revision}
                     if let failure { self.report("摘要已同步；详情待重试："+failure); self.retryAt = Date().addingTimeInterval(60) }
                     else if !deferred.isEmpty { self.report("局域网优先 · 部分详情达到云端容量，仍可在局域网读取") }
+                    else if resolvedSupport == false { self.report("摘要已同步；云端正文同步尚未启用") }
                     else { self.report(pending ? "局域网优先 · 云端有更新待同步" : "局域网优先 · 云端已同步") }
                     if self.urgentPending || self.host?.pendingKeyRemoval == true { self.upload() }
                 }

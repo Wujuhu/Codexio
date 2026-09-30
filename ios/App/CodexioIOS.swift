@@ -188,7 +188,7 @@ struct RequestSummary: View {
     let item: MobileRequest
     var body: some View {
         VStack(alignment:.leading,spacing:7) {
-            Text(item.preview ?? "请求预览未同步").font(.subheadline.weight(.medium)).lineLimit(2).foregroundStyle(.primary)
+            Text(item.isApproval ? "自动审批审查" : item.preview ?? "请求预览未同步").font(.subheadline.weight(.medium)).lineLimit(2).foregroundStyle(.primary)
             HStack {Text(item.model);Spacer();Text(MobileFormat.money(item.cost))}.font(.caption).foregroundStyle(.secondary)
             HStack {Text(Date(timeIntervalSince1970:item.started),style:.time);Text("·");Text(item.effort ?? "");Spacer();Text(MobileFormat.tokens(item.tokens)+" Token")}.font(.caption2).foregroundStyle(.secondary)
         }.padding(.vertical,3)
@@ -213,33 +213,42 @@ struct RequestDetails: View {
     @State private var expandFinal = false
     private var item: MobileRequest? { store.request(id) }
     private var detail: MobileRequestDetail? { store.detailValues[id] }
+    private var userTitle: String { item?.isApproval == true ? "审查输入" : "用户原文" }
+    private var finalTitle: String { item?.isApproval == true ? "审查结果" : "最终回复" }
+    private var detailNotice: String? { store.detailErrors[id] ?? (detail?.availability == "unavailable" ? "源记录中暂无正文。" : nil) }
     private var loadKey: String { store.selected+id+String(store.supportsDetails)+String(store.detailVersions[id] ?? 0) }
     var body: some View {
         List {
-            Section("用户原文") {
+            if detail?.user.isEmpty == false || store.detailLoading.contains(id) || (item?.preview?.isEmpty == false && item?.isApproval != true) || detailNotice == nil {
+            Section(userTitle) {
                 if let detail, !detail.user.isEmpty {
                     message(detail.user,lines:5,expanded:expandUser)
-                    if expandUser, detail.full, !detail.userComplete { Text("原文超出容量限制或源记录不完整，当前仅保留部分内容。").font(.caption).foregroundStyle(.secondary) }
-                    expandButton("用户原文",expanded:$expandUser)
+                    if expandUser, detail.full, !detail.userComplete { Text("原文不完整").font(.caption).foregroundStyle(.secondary) }
+                    expandButton(userTitle,expanded:$expandUser)
                 } else if store.detailLoading.contains(id) { ProgressView("正在读取原文") }
                 else {
-                    Text("原文暂不可用").foregroundStyle(.secondary)
-                    if let preview = item?.preview { Text(preview).font(.caption).foregroundStyle(.secondary); Text("以上为摘要，不是完整原文。").font(.caption2).foregroundStyle(.secondary) }
+                    if let preview = item?.preview, !preview.isEmpty, item?.isApproval != true {
+                        Text("请求摘要").font(.caption).foregroundStyle(.secondary)
+                        Text(preview)
+                    } else if detailNotice == nil { Text("暂无原文").foregroundStyle(.secondary) }
                 }
             }
-            Section("最终回复") {
+            }
+            if detail?.final.isEmpty == false || store.detailLoading.contains(id) || detailNotice == nil {
+            Section(finalTitle) {
                 if let detail, !detail.final.isEmpty {
                     message(detail.final,lines:20,expanded:expandFinal)
-                    if expandFinal, detail.full, !detail.finalComplete { Text("回复超出容量限制或源记录不完整，当前仅保留部分内容。").font(.caption).foregroundStyle(.secondary) }
-                    expandButton("最终回复",expanded:$expandFinal)
+                    if expandFinal, detail.full, !detail.finalComplete { Text("回复不完整").font(.caption).foregroundStyle(.secondary) }
+                    expandButton(finalTitle,expanded:$expandFinal)
                 } else if store.detailLoading.contains(id) { ProgressView("正在读取回复") }
-                else { Text(item?.status == "running" ? "任务仍在进行，尚无最终回复。" : "最终回复尚未同步或源记录中没有可用正文。").foregroundStyle(.secondary) }
+                else if detailNotice == nil { Text(item?.status == "running" ? "任务进行中" : "暂无最终回复").foregroundStyle(.secondary) }
             }
-            if let error = store.detailErrors[id] {
-                Section { Text(error).font(.caption).foregroundStyle(.secondary); Button("重试详情") { store.loadDetail(id,full:expandUser || expandFinal) } }
             }
-            if detail?.availability == "capacity" {
-                Section { Text("这条原文超过手机单条容量上限，当前仅显示预览；全文保留在电脑端。").font(.caption).foregroundStyle(.secondary) }
+            if let error = detailNotice {
+                Section { Text(error).font(.caption).foregroundStyle(.secondary); Button("重试详情") { store.loadDetail(id,full:expandUser || expandFinal,force:true) } }
+            }
+            if detail?.availability == "capacity", store.detailErrors[id] == nil {
+                Section { Text("内容超出同步容量，仅显示预览。").font(.caption).foregroundStyle(.secondary) }
             }
             if let detail, !detail.attachments.isEmpty {
                 Section("附件") {

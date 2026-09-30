@@ -12321,6 +12321,22 @@
         }
       }
     },
+    "次自动审批审查": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "automatic approval reviews"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "次自动审批审查"
+          }
+        }
+      }
+    },
     "次请求": {
       "localizations": {
         "en": {
@@ -14829,6 +14845,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "自动同步价格"
+          }
+        }
+      }
+    },
+    "自动审批审查": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatic approval review"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动审批审查"
           }
         }
       }

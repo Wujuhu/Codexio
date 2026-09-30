@@ -7,8 +7,9 @@ const requestID = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(va
 const secret = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{43}$/.test(value);
 const datasets = ['live','recent','trends'];
 const capability = 'request-details-v1';
+const requestKindCapability = 'request-kinds-v1';
 const detailLimit = 1048576, chunkBytes = 65536, detailRows = 64, hostBytes = 8 * 1048576, retention = 7 * 86400;
-const fields = new Set(['name','timeZone','observed','task','runningCount','today','five','week','remaining','reset','retained','tokens','cost','requests','costComplete','hitRate','id','started','status','preview','model','effort','speed','duration','daily','periods','start','metric','days','total','models']);
+const fields = new Set(['name','timeZone','observed','task','runningCount','today','five','week','remaining','reset','retained','tokens','cost','requests','costComplete','hitRate','id','started','status','preview','model','effort','speed','duration','kind','daily','periods','start','metric','days','total','models']);
 function validPayload(value, depth = 0) {
   if (depth > 8) return false;
   if (value === null || typeof value === 'boolean') return true;
@@ -129,7 +130,7 @@ export default {
         (request.method==='PUT' && parts.length===5 && ((parts[3]==='data' && datasets.includes(parts[4])) || (parts[3]==='details' && requestID(parts[4]))));
       if(!route)return json({error:'NOT_FOUND'},404);
       if(!(await admit(env)))return json({error:'DAILY_BUDGET'},429);
-      if(parts[3]==='capabilities') return json({action:'capabilities',capabilities:await hasDetails(env)?[capability]:[]});
+      if(parts[3]==='capabilities') return json({action:'capabilities',capabilities:[requestKindCapability,...(await hasDetails(env)?[capability]:[])]});
       if(parts[3]==='key') {
         // Enrollment permits at most one host per invite. Index lookup is bounded;
         // retain the existing identity and reader-revocation behavior.
@@ -208,7 +209,7 @@ export default {
         const rows=await db.prepare('SELECT dataset,revision,digest,payload,updated FROM datasets WHERE host=? AND updated>? LIMIT 3').bind(host,now-retention).all();
         const supported=await hasDetails(env);
         const versions=supported?await db.prepare('SELECT id,revision FROM request_details WHERE host=? AND expires>? LIMIT 64').bind(host,now).all():{results:[]};
-        return json({action:'sync',capabilities:supported?[capability]:[],detailVersions:Object.fromEntries(versions.results.map(row=>[row.id,row.revision])),seen:Math.max(0,...rows.results.map(x=>x.updated)),datasets:rows.results.filter(x=>x.revision>Number(url.searchParams.get(x.dataset)??0)).map(({updated,...x})=>x)});
+        return json({action:'sync',capabilities:[requestKindCapability,...(supported?[capability]:[])],detailVersions:Object.fromEntries(versions.results.map(row=>[row.id,row.revision])),seen:Math.max(0,...rows.results.map(x=>x.updated)),datasets:rows.results.filter(x=>x.revision>Number(url.searchParams.get(x.dataset)??0)).map(({updated,...x})=>x)});
       }
       return json({error:'NOT_FOUND'},404);
     } catch { return json({error:'SYNC_UNAVAILABLE'},503); }

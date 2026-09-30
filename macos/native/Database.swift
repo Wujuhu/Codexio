@@ -5,6 +5,10 @@ final class Database {
     private var handle: OpaquePointer?
     private let lock = NSRecursiveLock()
     private let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+    private let sourceDateFormatter: DateFormatter = {
+        let formatter = DateFormatter(); formatter.locale = Locale(identifier:"en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd'T'HH-mm-ss"; return formatter
+    }()
     let url: URL
 
     init(_ url: URL, readOnly: Bool = false) throws {
@@ -28,6 +32,7 @@ final class Database {
             CREATE TABLE IF NOT EXISTS usage_session_context(session_id TEXT PRIMARY KEY,cwd TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS usage_session_files(path TEXT PRIMARY KEY,session_id TEXT NOT NULL,root TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS usage_session_files_session ON usage_session_files(session_id);
+            CREATE TABLE IF NOT EXISTS usage_request_sources(id TEXT PRIMARY KEY,path TEXT NOT NULL,root TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS usage_request_ids(id TEXT PRIMARY KEY,mobile_id TEXT NOT NULL UNIQUE);
             CREATE TABLE IF NOT EXISTS usage_request_messages(id TEXT PRIMARY KEY,data TEXT NOT NULL,digest TEXT NOT NULL,revision INTEGER NOT NULL,size INTEGER NOT NULL,accessed REAL NOT NULL);
             CREATE INDEX IF NOT EXISTS usage_request_messages_accessed ON usage_request_messages(accessed);
@@ -171,10 +176,11 @@ final class Database {
     func repairRequestMetadata(_ evidence: Object) throws {
         guard var row = try requestTurn(evidence.string("id")) else { return }
         if row.flag("metadata_missing") { row = evidence }
-        for key in ["cwd","session_cwd","prompt_source_turn_id","resume_kind","continuation_of","context_compaction_item_id"] where !evidence.string(key).isEmpty { row[key] = evidence[key] }
-        for key in ["has_user_message","has_final_message","context_compaction_observed","explicit_task_start","context_compaction_completed","model_switch_continuation"] where evidence.flag(key) { row[key] = true }
+        for key in ["cwd","session_cwd","prompt_source_turn_id","resume_kind","continuation_of","context_compaction_item_id","parent_session_id","parent_turn_id"] where !evidence.string(key).isEmpty { row[key] = evidence[key] }
+        for key in ["has_user_message","has_final_message","context_compaction_observed","explicit_task_start","context_compaction_completed","model_switch_continuation","is_approval_review"] where evidence.flag(key) { row[key] = true }
         for key in ["prompt_preview","output_preview"] where row.string(key).isEmpty && !evidence.string(key).isEmpty { row[key] = evidence[key] }
-        if row.flag("has_user_message") || !row.string("continuation_of").isEmpty { row["record_kind"] = "user_request" }
+        if RequestClassification.isApproval(row) { row["record_kind"] = RequestClassification.approval }
+        else if row.flag("has_user_message") || !row.string("continuation_of").isEmpty { row["record_kind"] = "user_request" }
         else if evidence.string("record_kind") == "context_compaction", row.string("prompt_preview").isEmpty, row.string("resume_kind").isEmpty, !row.flag("has_final_message") { row["record_kind"] = "context_compaction" }
         try writeTurn(row)
     }
@@ -193,6 +199,11 @@ final class Database {
     func registerSessionFile(_ file: URL,root: URL,session: String) throws {
         guard !session.isEmpty else { return }
         try run("INSERT INTO usage_session_files VALUES(?,?,?) ON CONFLICT(path) DO UPDATE SET session_id=excluded.session_id,root=excluded.root WHERE session_id<>excluded.session_id OR root<>excluded.root",[file.path,session,root.path])
+    }
+    func registerRequestSource(_ id: String,file: URL,root: URL) throws {
+        // Reuse the indexer's existing cursor identities, without replaying usage.
+        guard !id.isEmpty else { return }
+        try run("INSERT INTO usage_request_sources VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET path=excluded.path,root=excluded.root WHERE path<>excluded.path OR root<>excluded.root",[id,file.path,root.path])
     }
     private func registerRequestID(_ id: String) throws {
         guard !id.isEmpty else { return }
@@ -243,7 +254,14 @@ final class Database {
         try run("DELETE FROM usage_request_messages WHERE id=?",[oldID])
     }
     private func requestTurn(_ id: String) throws -> Object? {
-        if let stored = try query("SELECT data FROM usage_turns WHERE id=?",[id]).first { return jsonObject(Data(stored.string("data").utf8)) }
+        if let stored = try query("SELECT data FROM usage_turns WHERE id=?",[id]).first {
+            var row = jsonObject(Data(stored.string("data").utf8))
+            if ["","unknown"].contains(row.string("model").lowercased()), !RequestClassification.isApproval(row) {
+                let calls = try query("SELECT count(*) AS calls,min(CASE WHEN model='codex-auto-review' OR json_extract(data,'$.is_approval_review')=1 OR json_extract(data,'$.record_kind')='approval_review' THEN 1 ELSE 0 END) AS reviews FROM usage_records WHERE session_id=? AND COALESCE(NULLIF(json_extract(data,'$.request_turn_id'),''),json_extract(data,'$.turn_id')) IN (?,?)",[row.string("session_id"),row.string("turn_id"),id]).first ?? [:]
+                if calls.integer("calls") ?? 0 > 0, calls.integer("reviews") == 1 { row["record_kind"] = RequestClassification.approval; row["is_approval_review"] = true }
+            }
+            return row
+        }
         let parts = id.split(separator:":",maxSplits:2).map(String.init)
         guard parts.count == 3, parts[0] == "turn", let call = try query("SELECT timestamp FROM usage_records WHERE session_id=? AND COALESCE(NULLIF(json_extract(data,'$.request_turn_id'),''),json_extract(data,'$.turn_id')) IN (?,?) ORDER BY timestamp LIMIT 1",[parts[1],parts[2],id]).first else { return nil }
         return ["id":id,"session_id":parts[1],"turn_id":parts[2],"started_at":call.string("timestamp"),"started_inferred":true,"metadata_missing":true,"status":"unknown"]
@@ -260,33 +278,50 @@ final class Database {
             let key = current.string("id"), turn = current.string("turn_id")
             let related = try query("SELECT data FROM usage_turns WHERE json_extract(data,'$.session_id')=? AND (json_extract(data,'$.continuation_of') IN (?,?) OR json_extract(data,'$.root_turn_id') IN (?,?)) LIMIT 65",[session,key,turn,key,turn]).map {jsonObject(Data($0.string("data").utf8))}
             let additions = related.filter { row in
-                !row.flag("is_subagent") && row.string("alias_of").isEmpty && !ids.contains(row.string("id")) &&
+                !row.flag("is_subagent") && !RequestClassification.isApproval(row) && row.string("alias_of").isEmpty && !ids.contains(row.string("id")) &&
                 [row.string("continuation_of"),row.string("root_turn_id")].contains(where:{!$0.isEmpty && ids.contains($0)})
             }
             for row in additions.prefix(max(0,64-result.count)) { result.append(row); ids.insert(row.string("id")); ids.insert(row.string("turn_id")) }
         }
         return result.sorted {$0.string("started_at") < $1.string("started_at")}
     }
-    private func sourceFile(session: String) throws -> (URL,URL)? {
-        let rows = try query("SELECT path,root FROM usage_session_files WHERE session_id=? ORDER BY path LIMIT 8",[session])
+    private func sourceFiles(_ request: Object) throws -> [(URL,URL)] {
+        lock.lock(); defer { lock.unlock() }
+        let known = try query("SELECT path,root FROM usage_request_sources WHERE id=?",[request.string("id")])
+        var rows = known
+        if known.isEmpty || !FileStamp(URL(fileURLWithPath:known[0].string("path"))).exists {
+            rows += try query("SELECT path,root FROM usage_session_files WHERE session_id=? ORDER BY path DESC LIMIT 32",[request.string("session_id")])
+            if let started = parsedDate(request["started_at"]) {
+                sourceDateFormatter.timeZone = .current
+                let boundary = "rollout-"+sourceDateFormatter.string(from:started)+"~"
+                rows.sort {
+                    let left = URL(fileURLWithPath:$0.string("path")).lastPathComponent
+                    let right = URL(fileURLWithPath:$1.string("path")).lastPathComponent
+                    if (left <= boundary) != (right <= boundary) { return left <= boundary }
+                    return left > right
+                }
+            }
+        }
+        var result: [(URL,URL)] = [], seen = Set<String>()
         for row in rows {
             let file = URL(fileURLWithPath:row.string("path")).standardizedFileURL, root = URL(fileURLWithPath:row.string("root")).standardizedFileURL
             let allowed = ["sessions","archived_sessions"].contains { file.path.hasPrefix(root.appendingPathComponent($0).path+"/") }
             guard allowed, file.pathExtension == "jsonl", file.resolvingSymlinksInPath() == file,
-                  root.resolvingSymlinksInPath() == root, FileStamp(file).exists else { continue }
-            return (file,root)
+                  root.resolvingSymlinksInPath() == root, FileStamp(file).exists, seen.insert(file.path).inserted else { continue }
+            result.append((file,root))
+            if result.count == 8 { break }
         }
-        return nil
+        return result
     }
     func recoverRequestMetadata(_ requestID: String) throws {
-        guard let row = try requestTurn(requestID), let (file,root) = try sourceFile(session:row.string("session_id")) else { return }
+        guard let row = try requestTurn(requestID), let (file,root) = try sourceFiles(row).first else { return }
         try UsageIndexer(self).recoverMessageDetails(ids:[requestID],file:file,root:root,metadataOnly:true)
     }
     func recoverRecentRequestMetadata(_ requestIDs: [String],maximumFiles: Int) throws -> (done: [String], unavailable: [String]) {
         var files: [URL:(URL,Set<String>)] = [:]
         var done: [String] = [], unavailable: [String] = []
         for id in requestIDs.prefix(12) {
-            guard let row = try requestTurn(id), let (file,root) = try sourceFile(session:row.string("session_id")) else { done.append(id); unavailable.append(id); continue }
+            guard let row = try requestTurn(id), let (file,root) = try sourceFiles(row).first else { done.append(id); unavailable.append(id); continue }
             guard files[file] != nil || files.count < maximumFiles else { continue }
             var group = files[file] ?? (root,[]); group.1.insert(id); files[file] = group
         }
@@ -318,18 +353,48 @@ final class Database {
         let promptSourceID = root.flag("has_user_message") ? "" : root.string("prompt_source_turn_id")
         let promptSourceKey = promptSourceID.hasPrefix("turn:") ? promptSourceID : "turn:"+root.string("session_id")+":"+promptSourceID
         let promptSource = promptSourceID.isEmpty ? nil : try requestTurn(promptSourceKey)
-        let source = try sourceFile(session:root.string("session_id"))
-        let signature = source.map { value -> String in let stamp = FileStamp(value.0); return identity([value.0.path,stamp.size,stamp.modified?.timeIntervalSince1970 ?? 0,stamp.device,stamp.inode]) } ?? "missing"
         let recoveryMembers = members+(promptSource.map {[$0]} ?? [])
+        var sources: [String:[(URL,URL)]] = [:], signatures: [String:String] = [:]
+        for member in recoveryMembers {
+            let id = member.string("id"), files = try sourceFiles(member)
+            sources[id] = files
+            signatures[id] = identity(files.map { value -> [Any] in
+                let stamp = FileStamp(value.0)
+                return [value.0.path,stamp.size,stamp.modified?.timeIntervalSince1970 ?? 0,stamp.device,stamp.inode]
+            })
+        }
         let missing = try recoveryMembers.filter { member in
             let stored = try query("SELECT data FROM usage_request_messages WHERE id=?",[member.string("id")]).first ?? [:]
             let detail = jsonObject(Data(stored.string("data").utf8))
             let ownsInput = member.string("id") == root.string("id") || member.string("id") == promptSourceKey || member.flag("has_user_message")
-            return ((ownsInput && !detail.flag("user_complete")) || (["completed","aborted"].contains(member.string("status")) && !detail.flag("final_complete"))) && detail.string("recovery_signature") != signature
+            return ((ownsInput && !detail.flag("user_complete")) || (["completed","aborted"].contains(member.string("status")) && !detail.flag("final_complete"))) && detail.string("recovery_signature") != signatures[member.string("id")]
         }
-        if !missing.isEmpty, let (file,rootURL) = source {
-            try UsageIndexer(self).recoverMessageDetails(ids:Set(missing.map {$0.string("id")}),file:file,root:rootURL)
-            for row in missing { try writeRequestMessage(row.string("id"),patch:["recovery_signature":signature]) }
+        if !missing.isEmpty {
+            var batches: [URL:(URL,Set<String>)] = [:], order: [URL] = []
+            for member in missing {
+                let id = member.string("id")
+                for (file,rootURL) in sources[id] ?? [] {
+                    if batches[file] == nil { batches[file] = (rootURL,[]); order.append(file) }
+                    batches[file]?.1.insert(id)
+                }
+            }
+            var pending = Set(missing.map {$0.string("id")})
+            for file in order {
+                guard let (rootURL,targets) = batches[file] else { continue }
+                let ids = targets.intersection(pending)
+                guard !ids.isEmpty else { continue }
+                try UsageIndexer(self).recoverMessageDetails(ids:ids,file:file,root:rootURL)
+                for member in missing where ids.contains(member.string("id")) {
+                    let id = member.string("id")
+                    let detail = jsonObject(Data((try query("SELECT data FROM usage_request_messages WHERE id=?",[id]).first ?? [:]).string("data").utf8))
+                    let ownsInput = id == root.string("id") || id == promptSourceKey || member.flag("has_user_message")
+                    if (!ownsInput || detail.flag("user_complete")) && (!["completed","aborted"].contains(member.string("status")) || detail.flag("final_complete")) { pending.remove(id) }
+                }
+            }
+            for member in missing {
+                let id = member.string("id")
+                try writeRequestMessage(id,patch:["recovery_signature":signatures[id] ?? "missing"])
+            }
             members = try detailMembers(try requestTurn(root.string("id")) ?? root)
         }
         if let promptSource, let stored = try query("SELECT data FROM usage_request_messages WHERE id=?",[promptSource.string("id")]).first {
@@ -343,7 +408,7 @@ final class Database {
         for member in members {
             let id = member.string("id")
             var detail = jsonObject(Data((try query("SELECT data FROM usage_request_messages WHERE id=?",[id]).first ?? [:]).string("data").utf8))
-            let metadata: Object = ["started_at":parsedDate(member["started_at"])?.timeIntervalSince1970 as Any? ?? NSNull(),"completed_at":parsedDate(member["ended_at"])?.timeIntervalSince1970 as Any? ?? NSNull(),"status":member.string("status","unknown"),"recovery_signature":signature]
+            let metadata: Object = ["started_at":parsedDate(member["started_at"])?.timeIntervalSince1970 as Any? ?? NSNull(),"completed_at":parsedDate(member["ended_at"])?.timeIntervalSince1970 as Any? ?? NSNull(),"status":member.string("status","unknown"),"recovery_signature":signatures[id] ?? "missing"]
             for (key,value) in metadata { detail[key] = value }
             try writeRequestMessage(id,patch:detail)
             let stored = try query("SELECT data,digest,revision FROM usage_request_messages WHERE id=?",[id]).first ?? [:]

@@ -29,6 +29,7 @@ struct UsageRow: Identifiable {
         inputTokens = raw.integer("input_tokens"); cachedTokens = raw.integer("cached_input_tokens"); outputTokens = raw.integer("output_tokens")
     }
     var title: String {
+        if RequestClassification.isApproval(raw) { return L("自动审批审查", "Automatic approval review") }
         if raw.string("record_kind") == "context_compaction" { return L("上下文压缩", "Context compaction") }
         if raw.string("record_kind") == "user_request", !raw.string("prompt_preview").isEmpty { return raw.string("prompt_preview") }
         return raw.string("session_title").isEmpty ? raw.string("prompt_preview",raw.string("session_id")) : raw.string("session_title")
@@ -137,10 +138,21 @@ enum Analytics {
         var result = UsageSnapshot()
         var seenCalls = Set<String>()
         result.calls = (preparedCalls ?? records.map { UsageRow(raw:catalog.price($0)) }).filter { seenCalls.insert($0.id).inserted }.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+        func reference(_ value: String,session: String) -> String { value.hasPrefix("turn:") ? value : "turn:"+session+":"+value }
+        func callTurn(_ row: UsageRow) -> String {
+            let requested = row.raw.string("request_turn_id")
+            return requested.isEmpty ? row.raw.string("turn_id") : requested
+        }
+        let approvalOnlyTurns = Set(Dictionary(grouping:result.calls.filter {!$0.raw.string("session_id").isEmpty && !callTurn($0).isEmpty},by:{reference(callTurn($0),session:$0.raw.string("session_id"))})
+            .filter {$0.value.allSatisfy {RequestClassification.isApproval($0.raw)}}.keys)
         let bySession = Dictionary(grouping:inputTurns,by:{$0.string("session_id")}).mapValues {$0.sorted {$0.string("started_at") < $1.string("started_at")}}
         let turns = inputTurns.map { original -> Object in
             var row = original
-            if row.flag("is_subagent") {
+            let missingModel = ["","unknown"].contains(row.string("model").lowercased())
+            if RequestClassification.isApproval(row) || (missingModel && approvalOnlyTurns.contains(row.string("id"))) {
+                row["record_kind"] = RequestClassification.approval; row["is_approval_review"] = true
+            }
+            if row.flag("is_subagent"), !RequestClassification.isApproval(row) {
                 let start = row.string("started_at"), session = row.string("session_id"), turn = row.string("turn_id")
                 let applicable = links.filter { link in
                     let matches = link.string("child_session_id") == session || (!row.string("agent_path").isEmpty && link.string("target") == row.string("agent_path"))
@@ -158,17 +170,20 @@ enum Analytics {
         var turnMap = Dictionary(turns.map { ($0.string("id"),$0) },uniquingKeysWith: { old,new in
             old.merging(new.filter { !($0.value is NSNull) && !($0.value is String && ($0.value as? String) == "") },uniquingKeysWith: { _,new in new })
         })
-        func reference(_ value: String,session: String) -> String { value.hasPrefix("turn:") ? value : "turn:"+session+":"+value }
-        func callTurn(_ row: UsageRow) -> String {
-            let requested = row.raw.string("request_turn_id")
-            return requested.isEmpty ? row.raw.string("turn_id") : requested
-        }
         for call in result.calls {
             let session = call.raw.string("session_id"), turn = callTurn(call)
             guard !session.isEmpty, !turn.isEmpty else { continue }
             let id = reference(turn,session:session)
-            if turnMap[id] == nil { turnMap[id] = ["id":id,"session_id":session,"turn_id":turn,"started_inferred":true,"verified":true] }
+            if turnMap[id] == nil {
+                var inferred: Object = ["id":id,"session_id":session,"turn_id":turn,"started_inferred":true,"verified":true]
+                if approvalOnlyTurns.contains(id) {
+                    inferred["record_kind"] = RequestClassification.approval; inferred["is_approval_review"] = true
+                    for key in ["model","parent_session_id","parent_turn_id"] { inferred[key] = call.raw[key] }
+                }
+                turnMap[id] = inferred
+            }
         }
+        let approvalTurns = Set(turnMap.filter {RequestClassification.isApproval($0.value)}.keys)
         var rootCache: [String:String] = [:]
         func root(_ id: String) -> String {
             if let known = rootCache[id] { return known }
@@ -179,7 +194,7 @@ enum Analytics {
                 if !row.string("alias_of").isEmpty { parent = reference(row.string("alias_of"),session:row.string("session_id")) }
                 else if !row.string("continuation_of").isEmpty { parent = reference(row.string("continuation_of"),session:row.string("session_id")) }
                 else if !row.string("root_turn_id").isEmpty && row.string("root_turn_id") != row.string("turn_id") { parent = reference(row.string("root_turn_id"),session:row.string("session_id")) }
-                else if row.flag("is_subagent"), !row.string("parent_session_id").isEmpty, !row.string("parent_turn_id").isEmpty { parent = reference(row.string("parent_turn_id"),session:row.string("parent_session_id")) }
+                else if row.flag("is_subagent") || RequestClassification.isApproval(row), !row.string("parent_session_id").isEmpty, !row.string("parent_turn_id").isEmpty { parent = reference(row.string("parent_turn_id"),session:row.string("parent_session_id")) }
                 if parent.isEmpty || turnMap[parent] == nil { break }
                 cursor = parent
             }
@@ -191,7 +206,10 @@ enum Analytics {
         for row in result.calls {
             let turn = callTurn(row), session = row.raw.string("session_id")
             guard !session.isEmpty, !turn.isEmpty else {
-                var raw = row.raw; raw["record_kind"] = "unassigned"; result.requests.append(UsageRow(raw:raw)); continue
+                var raw = row.raw
+                raw["record_kind"] = RequestClassification.isApproval(raw) ? RequestClassification.approval : "unassigned"
+                if RequestClassification.isApproval(raw) { raw["prompt_preview"] = L("自动审批审查", "Automatic approval review") }
+                result.requests.append(UsageRow(raw:raw)); continue
             }
             grouped[root(reference(turn,session:session)),default:[]].append(row)
         }
@@ -200,16 +218,19 @@ enum Analytics {
             guard let own = turnMap[id] else { continue }
             guard !calls.isEmpty || !own.string("prompt_preview").isEmpty || members.contains(where: { !$0.string("prompt_preview").isEmpty }) else { continue }
             var row = own
-            let prompt = ([own]+members).map { requestPreview($0.string("prompt_preview")) }.first { !$0.isEmpty }
-                ?? calls.map { $0.raw.string("prompt_preview") }.first { !$0.isEmpty }
+            let approval = RequestClassification.isApproval(own)
+            let displayMembers = members.filter {!RequestClassification.isApproval($0)}
+            let displayCalls = approval ? calls : calls.filter {!RequestClassification.isApproval($0.raw) && !approvalTurns.contains(reference(callTurn($0),session:$0.raw.string("session_id")))}
+            let prompt = ([own]+displayMembers).map { requestPreview($0.string("prompt_preview")) }.first { !$0.isEmpty }
+                ?? displayCalls.map { $0.raw.string("prompt_preview") }.first { !$0.isEmpty }
             let maintenance = own.string("record_kind") == "context_compaction"
-            row["prompt_preview"] = maintenance ? L("上下文压缩", "Context compaction") : prompt ?? L("任务记录", "Task record")
+            row["prompt_preview"] = approval ? L("自动审批审查", "Automatic approval review") : maintenance ? L("上下文压缩", "Context compaction") : prompt ?? L("任务记录", "Task record")
             let summary = UsageSummary(rows:calls)
-            row["id"] = id; row["record_kind"] = maintenance ? "context_compaction" : "user_request"
+            row["id"] = id; row["record_kind"] = approval ? RequestClassification.approval : maintenance ? "context_compaction" : "user_request"
             let ownCalls = calls.filter {$0.raw.string("session_id") == own.string("session_id")}
             if row.string("cwd").isEmpty { row["cwd"] = ownCalls.first(where:{!$0.raw.string("cwd").isEmpty})?.raw["cwd"] }
             if row.string("session_cwd").isEmpty { row["session_cwd"] = ownCalls.first(where:{!$0.raw.string("session_cwd").isEmpty})?.raw["session_cwd"] }
-            let messageMembers = members.filter {!$0.flag("is_subagent")}.sorted {$0.string("id") < $1.string("id")}
+            let messageMembers = members.filter {!$0.flag("is_subagent") && (approval || !RequestClassification.isApproval($0))}.sorted {$0.string("id") < $1.string("id")}
             if messageMembers.contains(where:{!$0.string("message_digest").isEmpty}) {
                 row["message_digest"] = identity(messageMembers.map {[$0.string("id"),$0.string("message_digest")]})
                 row["message_revision"] = messageMembers.reduce(0) {$0+($1.integer("message_revision") ?? 0)}
@@ -222,31 +243,32 @@ enum Analytics {
             row["is_subagent"] = own.flag("is_subagent")
             row["member_ids"] = calls.map(\.id)
             for key in ["input_tokens","cached_input_tokens","cache_write_input_tokens","output_tokens","reasoning_output_tokens"] { row[key] = calls.reduce(0) {$0+($1.raw.integer(key) ?? 0)} }
-            let models = Array(Set(calls.map {$0.raw.string("model")}.filter {!$0.isEmpty})).sorted()
+            let models = Array(Set(displayCalls.map {$0.raw.string("model")}.filter {!$0.isEmpty})).sorted()
             row["model"] = models.count == 1 ? models[0] : models.isEmpty ? own.string("model") : models.joined(separator:" + ")
             for key in ["reasoning_effort","service_tier"] {
-                let values = Set(calls.map {$0.raw.string(key)}.filter {!$0.isEmpty})
+                let values = Set(displayCalls.map {$0.raw.string(key)}.filter {!$0.isEmpty})
                 row[key] = values.count == 1 ? values.first : values.isEmpty ? own[key] : nil
             }
-            row["model_context_window"] = calls.compactMap {$0.raw.integer("model_context_window")}.max() ?? own.integer("model_context_window")
-            let upstreams = Set(calls.map {$0.raw.string("upstream_model")}.filter {!$0.isEmpty})
+            row["model_context_window"] = displayCalls.compactMap {$0.raw.integer("model_context_window")}.max() ?? own.integer("model_context_window")
+            let upstreams = Set(displayCalls.map {$0.raw.string("upstream_model")}.filter {!$0.isEmpty})
             if !upstreams.isEmpty { row["upstream_model"] = upstreams.sorted().joined(separator:" + ") }
-            row["upstream_mismatched"] = calls.contains { !$0.raw.string("upstream_model").isEmpty && !$0.raw.string("model").isEmpty && $0.raw.string("upstream_model") != $0.raw.string("model") }
+            row["upstream_mismatched"] = displayCalls.contains { !$0.raw.string("upstream_model").isEmpty && !$0.raw.string("model").isEmpty && $0.raw.string("upstream_model") != $0.raw.string("model") }
             row["session_title"] = calls.first?.raw["session_title"]
-            row["output_preview"] = members.sorted {$0.string("observed_at") > $1.string("observed_at")}.first(where:{!$0.string("output_preview").isEmpty})? ["output_preview"]
-            let intervals = members.compactMap(interval)
-            let completed = !members.isEmpty && members.allSatisfy {["completed","aborted"].contains($0.string("status"))}
-            let running = members.filter {$0.string("status") == "running" && (parsedDate($0["observed_at"]).map {now.timeIntervalSince($0) < 900} ?? false)}
+            row["output_preview"] = (approval ? members : displayMembers).sorted {$0.string("observed_at") > $1.string("observed_at")}.first(where:{!$0.string("output_preview").isEmpty})? ["output_preview"]
+            let statusMembers = approval ? members : displayMembers
+            let intervals = statusMembers.compactMap(interval)
+            let completed = !statusMembers.isEmpty && statusMembers.allSatisfy {["completed","aborted"].contains($0.string("status"))}
+            let running = statusMembers.filter {$0.string("status") == "running" && (parsedDate($0["observed_at"]).map {now.timeIntervalSince($0) < 900} ?? false)}
             if !running.isEmpty, let start = running.compactMap({parsedDate($0["started_at"])}).min() {
                 row["status"] = "running"; row["duration_running"] = true; row["duration_started_at"] = iso(start)
                 row["duration_base_ms"] = mergedSeconds(intervals.filter {$0.1 <= start}).map {$0*1000}
-            } else if completed && intervals.count == members.count {
+            } else if completed && intervals.count == statusMembers.count {
                 row["duration_running"] = false; row["duration_ms"] = mergedSeconds(intervals).map {$0*1000}
-                let latestContinuation = members.filter {!$0.string("continuation_of").isEmpty && !$0.flag("is_subagent")}
+                let latestContinuation = statusMembers.filter {!$0.string("continuation_of").isEmpty && !$0.flag("is_subagent")}
                     .max { $0.string("ended_at",$0.string("started_at")) < $1.string("ended_at",$1.string("started_at")) }
                 row["status"] = latestContinuation?.string("status") ?? own.string("status")
             } else { row["duration_running"] = false; row["duration_ms"] = nil; row["status"] = "unknown" }
-            if row.string("status") == "completed", let end = members.compactMap({ parsedDate($0["ended_at"]) }).max() {
+            if row.string("status") == "completed", let end = statusMembers.compactMap({ parsedDate($0["ended_at"]) }).max() {
                 row["completed_at"] = end.timeIntervalSince1970
             } else { row["completed_at"] = nil }
             result.requests.append(UsageRow(raw:row))
@@ -271,7 +293,7 @@ enum Analytics {
         result.activity.peak = result.allDays.compactMap(\.tokens).max()
         let localPairs = Set(local.map {$0.raw.string("session_id")+":"+$0.raw.string("turn_id")})
         result.hasRunningTask = turns.contains { turn in
-            guard turn.string("status") == "running", turn.flag("verified",true),
+            guard !RequestClassification.isApproval(turn), turn.string("status") == "running", turn.flag("verified",true),
                   let stamp = parsedDate(turn["observed_at"]), stamp <= now, now.timeIntervalSince(stamp) < 900 else { return false }
             let sources = (turn["source_ids"] as? [String] ?? [])+[turn.string("source_id")]
             return sources.contains {$0 == "local" || $0.hasPrefix("local:")} || localPairs.contains(turn.string("session_id")+":"+turn.string("turn_id"))

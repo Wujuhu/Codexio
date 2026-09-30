@@ -207,6 +207,29 @@ func normalizedTier(_ value: String) -> String {
     if ["standard","default"].contains(value.lowercased()) { return "default" }
     return value.isEmpty || value == "auto" ? "unknown" : value
 }
+func logSpeedName(_ value: String) -> String {
+    switch normalizedTier(value).lowercased() {
+    case "priority": return "Fast"
+    case "ultrafast": return "Ultrafast"
+    default: return ""
+    }
+}
+
+enum RequestClassification {
+    // Extend v0.2.10 user_requests.py's explicit parent edges with a distinct
+    // approval kind; tool-generated input never supplies a human request count.
+    static let approval = "approval_review"
+    static func isApproval(_ value: Object) -> Bool {
+        value.string("record_kind") == approval || value.flag("is_approval_review") || value.string("model").lowercased() == "codex-auto-review"
+    }
+    static func sourceIsApproval(_ source: Any?) -> Bool {
+        if let name = source as? String { return ["guardian","approval_review","auto_review"].contains(name.lowercased()) }
+        guard let source = source as? Object else { return false }
+        if let name = source["subagent"] as? String { return ["guardian","approval_review","auto_review"].contains(name.lowercased()) }
+        let subagent = source.object("subagent")
+        return ["guardian","approval_review","auto_review"].contains { subagent[$0] != nil || source[$0] != nil }
+    }
+}
 
 struct AppFailure: LocalizedError {
     let message: String
