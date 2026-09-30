@@ -93,7 +93,11 @@ func NewService(directory, executable, version string, mock bool, callbacks Desk
 func (s *Service) Config() Row { s.mu.RLock(); defer s.mu.RUnlock(); return PublicConfig(s.config) }
 func (s *Service) notify(scope string) {
 	if s.callbacks.Changed != nil {
-		s.callbacks.Changed("codexio:changed", Row{"scope": scope, "generation": s.store.Generation()})
+		event := Row{"scope": scope, "generation": s.store.Generation()}
+		if scope == "usage" {
+			event["state"] = s.store.Status()
+		}
+		s.callbacks.Changed("codexio:changed", event)
 	}
 }
 func (s *Service) Start() {

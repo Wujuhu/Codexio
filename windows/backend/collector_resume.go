@@ -377,7 +377,7 @@ func (s *Store) recoverSourceMetadata(ctx context.Context, path, source, file, g
 		if e = ctx.Err(); e != nil {
 			return nil, e
 		}
-		line, err := readBoundedLine(reader, 8<<20)
+		line, err := readBoundedLine(reader, rolloutLineLimit)
 		if err == io.EOF {
 			break
 		}

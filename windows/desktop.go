@@ -484,6 +484,19 @@ func (h *desktopHost) endFloatingInteraction(w *application.WebviewWindow) {
 		edge = oldEdge
 	}
 	changes := backend.Row{"window_x": r.X, "window_y": r.Y, "dock_edge": edge}
+	if edge != oldEdge {
+		// Reuse v0.2.10 dock.py:snap_geometry's center anchor. Changing a
+		// horizontal bar to a vertical one must not jump to a screen corner.
+		layout := backend.CloneRow(c)
+		layout["dock_edge"] = edge
+		if backend.ValueString(c["quota_scope"]) == "auto" {
+			q := h.service.GetTrayState()
+			layout["_week_only"] = len(backend.ValueRow(q["primary"])) == 0 && len(backend.ValueRow(q["secondary"])) > 0
+		}
+		width, height := desktopFloatingSize(layout)
+		changes["window_x"] = r.X + (r.Width-width)/2
+		changes["window_y"] = r.Y + (r.Height-height)/2
+	}
 	if edge == "none" {
 		if oldEdge == "none" {
 			changes["window_width"] = r.Width

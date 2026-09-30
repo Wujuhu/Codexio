@@ -240,9 +240,9 @@ func (s *Store) Run(ctx context.Context, changed func()) {
 				s.syncPrices(ctx)
 			}
 		}
-		if e == nil {
-			e = s.project()
-		}
+		// Successful file transactions must be visible even when another file
+		// failed; its retained cursor will be retried on the next collection.
+		e = errors.Join(e, s.project())
 		upstreamPath := filepath.Join(s.options.Directory, "upstream.sqlite")
 		upstreamSignature := fileStamp(upstreamPath) + fileStamp(upstreamPath+"-wal")
 		if upstreamSignature != s.upstreamSignature {

@@ -53,8 +53,17 @@ try {
     $Fingerprint = Get-CodexioWindowsFingerprint -ProjectRoot $ProjectRoot
     if ($Fingerprint.sha256 -ne $BuildFingerprint.sha256) { throw 'Sources changed during compilation/smoke; the staged build was retained without delivery.' }
     Write-CodexioJSON -Path (Join-Path $Checks 'source-fingerprint.json') -Value $Fingerprint
-    & (Join-Path $ProjectRoot 'scripts\publish_exe.ps1') -StagedExe $StagedExe -Version $Version
     $DevelopmentDir = Join-Path $ProjectRoot 'build\dev\windows'
+    $Destination = Join-Path $DevelopmentDir 'Codexio.exe'
+    $RunningDestination = @(Get-CimInstance Win32_Process -Filter "Name='Codexio.exe'" | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.Equals($Destination, [StringComparison]::OrdinalIgnoreCase) })
+    if ($RunningDestination.Count -gt 0) {
+        $DevelopmentDir = Join-Path $DevelopmentDir 'pending'
+        New-Item -ItemType Directory -Path $DevelopmentDir -Force | Out-Null
+        Copy-Item -LiteralPath $StagedExe -Destination (Join-Path $DevelopmentDir 'Codexio.exe') -Force
+        Write-Host 'Running development EXE preserved; verified update delivered to pending.'
+    } else {
+        & (Join-Path $ProjectRoot 'scripts\publish_exe.ps1') -StagedExe $StagedExe -Version $Version
+    }
     Move-Item -LiteralPath $StagedManifest -Destination (Join-Path $DevelopmentDir 'latest.json') -Force
     $DeliveredExe = Join-Path $DevelopmentDir 'Codexio.exe'
     if ((Get-FileHash -LiteralPath $DeliveredExe -Algorithm SHA256).Hash.ToLowerInvariant() -ne $Hash) { throw 'Delivered EXE hash changed.' }

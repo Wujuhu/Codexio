@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -52,6 +53,10 @@ var embeddedImagePattern = regexp.MustCompile(`(?is)<image\b[^>]*>.*?</image\s*>
 
 // Bump input interpretation without invalidating byte cursors or immutable meters.
 const requestMetadataVersion = 2
+
+// Image/tool payloads in real rollouts exceed 8 MiB. Keep a memory bound while
+// accepting the same complete JSONL records as the v0.2.10 readline collector.
+const rolloutLineLimit = 64 << 20
 
 var externalAppInputPattern = regexp.MustCompile(`(?is)<external_codex_apps_([a-z0-9_]+)(?:\s[^>]*)?>.*?</external_codex_apps_([a-z0-9_]+)\s*>`)
 
@@ -138,6 +143,7 @@ func fileStamp(p string) string {
 	return fmt.Sprintf("%d:%d", st.Size(), st.ModTime().UnixNano())
 }
 func (s *Store) collect(ctx context.Context, force bool) error {
+	var scanErrors []error
 	s.metadataRepairRemaining = 4
 	s.metadataRepairPriority = map[string]bool{}
 	// Repair proved control-only rows first while keeping the normal parent-first
@@ -199,7 +205,14 @@ func (s *Store) collect(ctx context.Context, force bool) error {
 			key := rolloutCursorKey(root, path, source)
 			seen[key] = true
 			if e := s.scanFile(ctx, path, key, source, force); e != nil {
-				return fmt.Errorf("scan %s: %w", filepath.Base(path), e)
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				// A failed file retains its cursor/origins for retry. Continue with
+				// other files so one old rollout cannot freeze today's ledger.
+				if len(scanErrors) < 4 {
+					scanErrors = append(scanErrors, fmt.Errorf("scan %s: %w", filepath.Base(path), e))
+				}
 			}
 		}
 		rows, e := s.db.Query("SELECT key FROM usage_cursors WHERE instr(key,?)=1", rolloutCursorPrefix(root, source))
@@ -241,7 +254,7 @@ func (s *Store) collect(ctx context.Context, force bool) error {
 	}
 	// Full-message storage is bounded independently of the immutable usage ledger.
 	_, e = s.db.Exec(`DELETE FROM usage_request_messages WHERE id IN (SELECT id FROM (SELECT id,row_number() OVER(ORDER BY accessed DESC,id) n,sum(size) OVER(ORDER BY accessed DESC,id) bytes FROM usage_request_messages) WHERE n>512 OR bytes>67108864)`)
-	return e
+	return errors.Join(append(scanErrors, e)...)
 }
 func (s *Store) readTitles(root string, force bool) error {
 	paths, _ := filepath.Glob(filepath.Join(root, "state*.sqlite"))
@@ -447,7 +460,7 @@ func (s *Store) scanFile(ctx context.Context, path, key, source string, force bo
 		if e = ctx.Err(); e != nil {
 			return e
 		}
-		line, readErr := readBoundedLine(reader, 8<<20)
+		line, readErr := readBoundedLine(reader, rolloutLineLimit)
 		if readErr == io.EOF {
 			break
 		}

@@ -55,6 +55,12 @@ while ($Pending.Count -gt 0) {
 }
 
 $Destination = Join-Path $DevelopmentDir "Codexio.exe"
+# Windows may allow replacing an image while its process still runs. Preserve
+# the original pathname as well as the process; callers can deliver a pending EXE.
+$RunningDestination = @(Get-CimInstance Win32_Process -Filter "Name='Codexio.exe'" | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.Equals($Destination, [StringComparison]::OrdinalIgnoreCase) })
+if ($RunningDestination.Count -gt 0) {
+    throw "The development EXE is running. Its original path and the staged build were preserved."
+}
 $BackupDir = [IO.Path]::GetFullPath((Join-Path $BuildDir ("backups\windows\" + [Guid]::NewGuid().ToString("N"))))
 if (-not $BackupDir.StartsWith($BuildPrefix, [StringComparison]::OrdinalIgnoreCase)) {
     throw "Unexpected backup directory."
