@@ -9,6 +9,7 @@ enum MobileProtocol {
     static let cloudOrigin = "https://codexio-sync.503948883.workers.dev"
     static let limit = 262_144
     static let detailCapability = "request-details-v1"
+    static let requestKindCapability = "request-kinds-v1"
     static let detailLimit = 1_048_576
     static let detailChunkBytes = 65_536
     static let detailRows = 64
@@ -118,6 +119,8 @@ struct MobileRequest: Codable, Identifiable, Equatable {
     var tokens: Int?
     var cost: Double?
     var duration: Double?
+    var kind: String? = nil
+    var isApproval: Bool { kind == "approval_review" || model.lowercased() == "codex-auto-review" }
 }
 struct MobileQuota: Codable, Equatable {
     var remaining: Double?
@@ -209,6 +212,7 @@ struct MobileMessage: Codable {
     var detailPart: Int? = nil
     var detailManifest: MobileDetailManifest? = nil
     var detailChunk: String? = nil
+    var force: Bool? = nil
 }
 
 struct MobileDetailManifest: Codable, Equatable {

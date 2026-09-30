@@ -12,6 +12,7 @@ final class UsageIndexer {
     private var detailTargets: Set<String>?
     private var metadataOnly = false
     private var recoveryLegacyMessage: (String,Object)?
+    private var activeSource: (URL,URL)?
     private let rolloutPattern = try! NSRegularExpression(pattern:#"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"#)
     private let counters = ["input_tokens","cached_input_tokens","cache_write_input_tokens","output_tokens","reasoning_output_tokens","total_tokens"]
     init(_ database: Database) { self.database = database }
@@ -108,6 +109,7 @@ final class UsageIndexer {
         if complete { titleInputs[root] = signatures }
     }
     private func scanFile(_ file: URL, root: URL) throws {
+        activeSource = (file,root); defer { activeSource = nil }
         let info = try FileManager.default.attributesOfItem(atPath:file.path)
         let size = (info[.size] as? NSNumber)?.intValue ?? 0, modified = (info[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
         let signature = Signature(size:size,modified:modified)
@@ -141,6 +143,11 @@ final class UsageIndexer {
         var offset = cursor.integer("offset") ?? 0
         let registeredSession = cursor.object("state").string("session_id",rollout)
         try database.registerSessionFile(file,root:root,session:registeredSession)
+        for turn in cursor.object("state").object("turns").values {
+            if let row = turn as? Object, !row.string("id").isEmpty {
+                try database.registerRequestSource(row.string("id"),file:file,root:root)
+            }
+        }
         if offset == size && cursor.number("modified") == modified && cursor.integer("resume_metadata_version") == 1 { scannedFiles[file.path] = signature; return }
         let handle = try FileHandle(forReadingFrom:file); defer { try? handle.close() }
         var valid = offset <= size && cursor.integer("parser") == 1
@@ -190,6 +197,7 @@ final class UsageIndexer {
         guard shouldPersist(row.string("id")) else { return }
         if detailTargets == nil { try database.writeTurn(row) }
         else { try database.repairRequestMetadata(row) }
+        if let (file,root) = activeSource { try database.registerRequestSource(row.string("id"),file:file,root:root) }
     }
     private func saveMessage(_ state: Object,patch: Object) throws {
         guard !metadataOnly, !state.string("turn_id").isEmpty else { return }
@@ -203,6 +211,7 @@ final class UsageIndexer {
     }
     func recoverMessageDetails(ids: Set<String>,file: URL,root: URL,metadataOnly: Bool = false) throws {
         guard !ids.isEmpty else { return }
+        activeSource = (file,root); defer { activeSource = nil }
         detailTargets = ids; self.metadataOnly = metadataOnly
         defer { detailTargets = nil; self.metadataOnly = false; recoveryLegacyMessage = nil }
         let rollout = rolloutID(file)
@@ -328,11 +337,14 @@ final class UsageIndexer {
         if row.isEmpty {
             row = ["id":id,"session_id":state.string("session_id"),"turn_id":turn,"started_at":stamp,"started_inferred":true,"status":"unknown","prompt_preview":"","output_preview":"","verified":true,"is_subagent":state.flag("is_subagent"),"parent_session_id":state.string("parent_session_id"),"parent_turn_id":state.string("parent_turn_id"),"agent_path":state.string("agent_path"),"source_ids":["local"]]
         }
-        for key in ["model","reasoning_effort","service_tier","model_context_window","provider","root_turn_id","cwd","session_cwd"] {
+        for key in ["model","reasoning_effort","service_tier","model_context_window","provider","root_turn_id","cwd","session_cwd","is_approval_review","parent_session_id","parent_turn_id"] {
             if let value = state[key], !(value is NSNull) { row[key] = value }
         }
+        if !["","unknown"].contains(state.string("request_model").lowercased()) { row["model"] = state["request_model"] }
         mutate(&row); row["observed_at"] = stamp
-        if row.flag("has_user_message") || !row.string("continuation_of").isEmpty || (!row.string("root_turn_id").isEmpty && row.string("root_turn_id") != turn) {
+        if state.flag("is_approval_review") || row.string("model").lowercased() == "codex-auto-review" {
+            row["record_kind"] = RequestClassification.approval; row["is_approval_review"] = true
+        } else if row.flag("has_user_message") || !row.string("continuation_of").isEmpty || (!row.string("root_turn_id").isEmpty && row.string("root_turn_id") != turn) {
             row["record_kind"] = "user_request"
         } else if row.flag("context_compaction_observed") && row.flag("explicit_task_start") && row.flag("context_compaction_completed") && row.string("prompt_preview").isEmpty && row.string("resume_kind").isEmpty && !row.flag("has_final_message") && !row.flag("is_subagent") {
             row["record_kind"] = "context_compaction"
@@ -361,6 +373,13 @@ final class UsageIndexer {
             }
         }
         state["previous_turn_id"] = previous; state["turn_id"] = id
+        state["request_model"] = state["model"]
+        if state.flag("is_subagent"), !state.flag("is_approval_review"), state["session_parent_session_id"] == nil {
+            state["session_parent_session_id"] = state["parent_session_id"]
+            state["session_parent_turn_id"] = state["parent_turn_id"]
+        }
+        state["parent_session_id"] = state.string("session_parent_session_id")
+        state["parent_turn_id"] = state.string("session_parent_turn_id")
         state["prompt_preview"] = recent.object(id).string("prompt_preview")
         state["root_turn_id"] = nil
         state["modern_candidate"] = nil; state["active_response_id"] = nil; state["preview_pending"] = [Object]()
@@ -390,6 +409,8 @@ final class UsageIndexer {
         let stamp = parsedDate(entry["timestamp"]).map(iso) ?? ""
         if kind == "session_meta" && !state.flag("meta_seen") {
             let spawn = payload.object("source").object("subagent").object("thread_spawn")
+            let approvalSource = RequestClassification.sourceIsApproval(payload["source"])
+            let approval = payload.object("source").object("subagent").object("guardian")
             state["session_id"] = payload.string("id",payload.string("thread_id",state.string("session_id")))
             state["provider"] = payload.string("model_provider","unknown")
             state["history_start"] = payload["subagent_history_start_ordinal"]
@@ -397,8 +418,11 @@ final class UsageIndexer {
             state["parent_id"] = payload.string("forked_from_id",spawn.string("parent_thread_id"))
             state["fork_timestamp"] = stamp; state["meta_seen"] = true
             state["is_subagent"] = !spawn.isEmpty
-            state["parent_session_id"] = spawn.string("parent_thread_id")
-            state["parent_turn_id"] = spawn.string("parent_turn_id",payload.string("parent_turn_id"))
+            state["is_approval_review"] = approvalSource
+            state["parent_session_id"] = spawn.string("parent_thread_id",approval.string("parent_thread_id",payload.string("parent_thread_id")))
+            state["parent_turn_id"] = spawn.string("parent_turn_id",approval.string("parent_turn_id",payload.string("parent_turn_id")))
+            state["session_parent_session_id"] = state["parent_session_id"]
+            state["session_parent_turn_id"] = state["parent_turn_id"]
             state["agent_path"] = spawn.string("agent_path")
             state["session_cwd"] = payload["cwd"]; state["cwd"] = payload["cwd"]
             if detailTargets == nil { try database.updateSessionContexts([state.string("session_id"):payload.string("cwd")]) }
@@ -424,7 +448,12 @@ final class UsageIndexer {
             state["model_context_window"] = payload["model_context_window"] ?? payload.object("info")["model_context_window"]
             let id = payload.string("turn_id",payload.string("id"))
             try activateTurn(id,state:&state,owned:!inherited)
+            if let model = payload["model"] ?? payload.object("info")["model"] { state["request_model"] = model }
             if let root = payload["root_turn_id"] { state["root_turn_id"] = root }
+            if RequestClassification.isApproval(state) {
+                if let parent = payload["parent_thread_id"] ?? payload["parent_session_id"] { state["parent_session_id"] = parent }
+                if let parent = payload["parent_turn_id"] { state["parent_turn_id"] = parent }
+            }
             if !inherited { try saveTurn(&state,stamp:stamp) { _ in } }
         }
         if kind == "event_msg" && ["task_started","turn_started"].contains(subtype) {
@@ -432,7 +461,12 @@ final class UsageIndexer {
             for key in ["model","reasoning_effort","service_tier","model_context_window","cwd"] { if let value = settings[key] ?? payload[key] { state[key] = value } }
             let id = payload.string("turn_id",payload.string("id"))
             try activateTurn(id,state:&state,owned:!inherited)
+            if let model = settings["model"] ?? payload["model"] { state["request_model"] = model }
             if let root = payload["root_turn_id"] { state["root_turn_id"] = root }
+            if RequestClassification.isApproval(state) {
+                if let parent = payload["parent_thread_id"] ?? payload["parent_session_id"] { state["parent_session_id"] = parent }
+                if let parent = payload["parent_turn_id"] { state["parent_turn_id"] = parent }
+            }
             state["output_preview"] = ""
             if !inherited { try saveTurn(&state,stamp:stamp) { $0["started_at"] = payload["started_at"].flatMap(parsedDate).map(iso) ?? stamp; $0["started_inferred"] = false; $0["status"] = "running"; $0["explicit_task_start"] = true } }
         }
@@ -609,7 +643,8 @@ final class UsageIndexer {
         record["context_owner_verified"] = owns
         record["model"] = owns ? state.string("model","unknown") : "unknown"
         if owns {
-            for key in ["reasoning_effort","service_tier","model_context_window","prompt_preview","cwd","session_cwd"] { record[key] = state[key] }
+            for key in ["reasoning_effort","service_tier","model_context_window","prompt_preview","cwd","session_cwd","is_approval_review","parent_session_id","parent_turn_id"] { record[key] = state[key] }
+            if RequestClassification.isApproval(record) { record["record_kind"] = RequestClassification.approval }
         }
         if usage[1]+usage[2] > usage[0] || usage[4] > usage[3] { record["quality"] = quality+":invalid_subsets" }
         return record

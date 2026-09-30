@@ -355,27 +355,31 @@ private struct MobileDetailTransfer {
         let bounded = Dictionary(uniqueKeysWithValues:values.filter {$0.key.count == 64 && $0.value > 0}.prefix(MobileProtocol.detailRows).map {($0.key,$0.value)})
         if detailVersions != bounded { detailVersions = bounded }
     }
-    func loadDetail(_ id: String, full: Bool = false) {
+    func loadDetail(_ id: String, full: Bool = false, force: Bool = false) {
         guard id.count == 64, foreground, let device, device.invalid != true else { return }
-        if let cached = detailValues[id], cached.expires > Date().timeIntervalSince1970,
+        if !force, let cached = detailValues[id], cached.expires > Date().timeIntervalSince1970,
            (detailEnvelopes[id]?.revision ?? 0) >= (detailVersions[id] ?? 0), !full || cached.full {
             detailAccess[id] = Date(); return
         }
         if detailLoading.contains(id) { if full { expandAfterLoad.insert(id) }; return }
         guard detailLoading.count < 2 else { detailErrors[id] = "正在读取其他详情，请稍后重试。"; return }
-        guard supportsDetails else { detailErrors[id] = "当前连接尚未提供原文详情。请更新电脑端与云端同步服务；现有摘要仍可查看。"; return }
+        if !supportsDetails, localReady || !force {
+            detailErrors[id] = localReady ? "电脑暂未提供正文详情。" : "云端正文同步尚未启用。"
+            if force { refresh() }
+            return
+        }
         detailLoading.insert(id); detailErrors.removeValue(forKey:id)
         let stamp = generation
         if localReady, let connection {
             localDetails[id] = full
-            MobileProtocol.send(MobileMessage(action:"detail",reader:device.reader,detailID:id,full:full,detailPart:0),over:connection)
+            MobileProtocol.send(MobileMessage(action:"detail",reader:device.reader,detailID:id,full:full,detailPart:0,force:force ? true : nil),over:connection)
             detailTasks[id] = Task {
                 do { try await Task.sleep(for:.seconds(20)) } catch { return }
                 guard stamp == generation, localDetails.removeValue(forKey:id) != nil else { return }
-                detailErrors[id] = "电脑暂未返回详情，请稍后重试。"; finishDetail(id,full:full)
+                detailErrors[id] = "电脑未返回详情，请重试。"; finishDetail(id,full:full)
             }
         } else {
-            guard device.code.cloud != nil, !cloudDenied else { detailErrors[id] = "当前离线，原文详情尚未缓存。"; finishDetail(id,full:full); return }
+            guard device.code.cloud != nil, !cloudDenied else { detailErrors[id] = "离线，暂无正文缓存。"; finishDetail(id,full:full); return }
             detailTasks[id] = Task {
                 do {
                     for part in 0..<(full ? 16 : 1) {
@@ -398,10 +402,11 @@ private struct MobileDetailTransfer {
     }
     private func detailError(_ code: String?) -> String {
         switch code {
-        case "DETAIL_EXPIRED": return "这条详情已超过 7 天保留期。"
-        case "DETAILS_UNSUPPORTED", "NOT_FOUND": return "云端尚未提供原文详情，现有摘要仍可查看。"
-        case "DETAIL_CAPACITY": return "这条详情超过单条 1 MiB 或云端容量限制，全文保留在电脑端，本机仅显示预览。"
-        default: return "原文详情尚未同步或已过期，不能从摘要恢复全文。"
+        case "DETAIL_EXPIRED": return "详情已超过保留期。"
+        case "DETAILS_UNSUPPORTED", "NOT_FOUND": return "云端正文同步尚未启用。"
+        case "DETAIL_CAPACITY": return "详情超过同步容量，仅显示预览。"
+        case "DETAIL_UNAVAILABLE": return "正文详情暂不可用。"
+        default: return "详情读取失败，请重试。"
         }
     }
     private func finishDetail(_ id: String, full: Bool) {
@@ -447,6 +452,7 @@ private struct MobileDetailTransfer {
         guard let value else { detailErrors[id] = "详情格式不兼容或已过期。"; return }
         if let old = detailEnvelopes[id], old.revision > envelope.revision || (old.revision == envelope.revision && detailValues[id]?.full == true && !value.full) { return }
         detailEnvelopes[id] = envelope; detailValues[id] = value; detailAccess[id] = Date(); detailErrors.removeValue(forKey:id)
+        if detailLoading.contains(id) { supportsDetails = true }
         pruneDetails(); persistDetails()
     }
     private func pruneDetails() {
