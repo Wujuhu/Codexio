@@ -16241,22 +16241,6 @@
         }
       }
     },
-    "输入、缓存和输出按该模型公开的 Fast／长上下文倍率折算": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Input, cache and output use the model's published Fast and long-context multipliers"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "输入、缓存和输出按该模型公开的 Fast／长上下文倍率折算"
-          }
-        }
-      }
-    },
     "输入与输出基础价必须填写，已填写单价必须为有限非负数": {
       "localizations": {
         "en": {

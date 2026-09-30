@@ -2,7 +2,7 @@
   "version": 1,
   "verified_at": "2026-09-30",
   "unit": "USD per million tokens",
-  "notes": "Standard API base prices only. GPT-6.1 Sol follows its published Fast, long-context and cache-write rates; older models retain their existing Codex conversion policy. Missing base prices remain null.",
+  "notes": "Published API Standard prices are only the base. Codex Fast and long-context multipliers apply separately; do not copy API tier multipliers. Codex Fast and long-context cache writes use ordinary input rates. Missing base prices remain null.",
   "rows": [
     {
       "input": 1.5,

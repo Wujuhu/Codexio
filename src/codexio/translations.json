@@ -878,7 +878,6 @@
   "缺少该模型与服务档位的 Codex 换算规则": "No Codex pricing rule for this model and service tier",
   "缺少已使用 Token 类别的明确价格": "Prices for some token categories are unavailable",
   "；缓存创建使用单列价格，缺失时保留未定价": "; cache writes use their listed price; unavailable prices remain unpriced",
-  "输入、缓存和输出按该模型公开的 Fast／长上下文倍率折算": "Input, cache and output use the model's published Fast and long-context multipliers",
   "第三方供应商 %s 按同名 OpenAI 模型价格估算，可能与第三方账单不同": "Provider %s is estimated using the equivalent OpenAI model price; the actual bill may differ",
   "无法保存价格版本: ": "Could not save the price version: ",
   "输入与输出基础价必须填写，已填写单价必须为有限非负数": "Input and output base prices are required. Prices must be finite and nonnegative.",

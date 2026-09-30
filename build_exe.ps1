@@ -32,6 +32,8 @@ if ($LASTEXITCODE -ne 0) {
 $Spec = Join-Path $Root "packaging\codexio.spec"
 $Staging = Join-Path $Root "build\staging\windows"
 $Work = Join-Path $Root "build\cache\pyinstaller\windows"
+& $VenvPython -m py_compile $Spec
+if ($LASTEXITCODE -ne 0) { throw "Windows packaging spec has invalid Python syntax." }
 Write-Host "Building Codexio.exe..."
 & $VenvPython -m PyInstaller --noconfirm --clean --distpath $Staging --workpath $Work $Spec
 if ($LASTEXITCODE -ne 0) {
