@@ -683,6 +683,15 @@ func systemMergeQuota(old, incoming Row) Row {
 	return r
 }
 func (q *QuotaService) ResetCredit(id string) (Row, error) {
+	return q.resetCredit(id, "")
+}
+func (q *QuotaService) ResetCreditForAccount(id, expectedAccount string) (Row, error) {
+	if expectedAccount == "" || len(expectedAccount) > 512 {
+		return nil, errors.New("无法确认已选择的账户")
+	}
+	return q.resetCredit(id, expectedAccount)
+}
+func (q *QuotaService) resetCredit(id, expectedAccount string) (Row, error) {
 	if q.opts.Mock {
 		return Row{"pending": false, "credit_id": id}, errors.New("模拟模式不使用真实重置")
 	}
@@ -695,6 +704,12 @@ func (q *QuotaService) ResetCredit(id string) (Row, error) {
 	q.mu.RUnlock()
 	if ctx == nil || account == "" {
 		return nil, errors.New("无法确认当前账户")
+	}
+	if expectedAccount != "" && account != expectedAccount {
+		return nil, errors.New("账户已变更，请重新选择重置")
+	}
+	if expectedAccount != "" {
+		account = expectedAccount
 	}
 	command := systemResetCommand{id, account, make(chan systemRPCResult, 1)}
 	select {

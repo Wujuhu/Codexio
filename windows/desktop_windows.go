@@ -5,8 +5,8 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/w32"
 	"io/fs"
-	"os/exec"
-	"syscall"
+	"os"
+	"path/filepath"
 	"unsafe"
 )
 
@@ -71,13 +71,16 @@ func desktopPlaceBottom(w *application.WebviewWindow) {
 	})
 }
 func desktopOpenPath(path string) error {
-	c := exec.Command("explorer.exe", path)
-	c.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	if e := c.Start(); e != nil {
+	absolute, e := filepath.Abs(path)
+	if e != nil {
 		return e
 	}
-	go func() { _ = c.Wait() }()
-	return nil
+	if _, e = os.Stat(absolute); e != nil {
+		return e
+	}
+	return application.InvokeSyncWithResult(func() error {
+		return w32.ShellExecute(0, "open", absolute, "", filepath.Dir(absolute), w32.SW_SHOWNORMAL)
+	})
 }
 func desktopError(message string) { w32.MessageBox(0, message, "Codexio", w32.MB_OK|w32.MB_ICONERROR) }
 func desktopWindowVisible(w *application.WebviewWindow) bool {

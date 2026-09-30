@@ -152,7 +152,8 @@ func (s *Service) GetTrends(q Query) (Row, error) {
 	if e != nil {
 		return nil, e
 	}
-	insights, e := s.store.Insights(q)
+	chatQuery := Query{Period: "all", Source: "local", Page: q.Page, PageSize: 25}
+	insights, e := s.store.Insights(chatQuery)
 	if e != nil {
 		return nil, e
 	}
@@ -189,7 +190,7 @@ func (s *Service) subscription(reports bool) Row {
 }
 func (s *Service) GetPrices() Row {
 	st := s.store.Status()
-	return Row{"rows": s.store.Prices(), "basis": "标准 API 单价 × Codex 倍率", "version": st["price_version"], "status": st["pricing"]}
+	return Row{"rows": codexDisplayPrices(s.store.Prices()), "basis": "标准 API 单价 × Codex 倍率", "version": st["price_version"], "status": st["pricing"]}
 }
 func (s *Service) SavePrice(model string, rates Row) (Row, error) {
 	if e := s.store.SetPrice(model, rates); e != nil {
@@ -263,6 +264,9 @@ func (s *Service) CheckUpdate() (Row, error)          { return s.updater.Check(s
 func (s *Service) DeferUpdate() (Row, error)          { e := s.updater.Defer(); return s.updater.Snapshot(), e }
 func (s *Service) InstallUpdate() error               { return s.updater.Install(s.ctx) }
 func (s *Service) ResetCredit(id string) (Row, error) { return s.quota.ResetCredit(id) }
+func (s *Service) ResetCreditForAccount(id, expectedAccount string) (Row, error) {
+	return s.quota.ResetCreditForAccount(id, expectedAccount)
+}
 func (s *Service) DesktopAction(action string) error {
 	if action == "report-seen" {
 		return s.reports.MarkSeen()

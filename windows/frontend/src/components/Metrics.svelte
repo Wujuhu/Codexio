@@ -1,5 +1,5 @@
 <script lang="ts">
- import {numeric,percent,priced,number,type Row} from '../lib/api';
+ import {compact,numeric,percent,priced,number,type Row} from '../lib/api';
  import {tr} from '../lib/i18n';
  export let summary:Row={};
  export let comparison:Row={};
@@ -10,7 +10,7 @@
      const rate=number(summary[key]);
      return percent(rate===null?null:rate*(rate<=1?100:1));
    }
-   return numeric(summary[key]);
+   return key==='tokens'?compact(summary[key]):numeric(summary[key]);
  }
 </script>
 <div class="metrics">{#each fields as [key,label]}{@const change=comparison.changes?.[key]?.percent??comparison[key]}<section class="metric surface"><span class="muted">{tr(label)}</span><strong data-metric={key}>{value(key)}</strong>{#if change!==undefined}<small class:positive={Number(change)>=0}>{Number(change)>0?'+':''}{percent(change)} {tr(comparison.label??'')}</small>{/if}</section>{/each}</div>

@@ -386,7 +386,7 @@ func (s *Store) Insights(q Query) (result Row, err error) {
 	pages := max(1, (total+size-1)/size)
 	page = min(page, pages)
 	params := append(append([]any{}, args...), size, (page-1)*size)
-	rows, e := s.db.Query(`SELECT json_extract(data,'$.session_id'),max(json_extract(data,'$.session_title')),count(*),sum(json_extract(data,'$.total_tokens')),sum(json_extract(data,'$.cost_usd')),sum(CASE WHEN json_extract(data,'$.cost_partial') OR json_extract(data,'$.unpriced_calls')>0 OR json_extract(data,'$.cost_usd') IS NULL THEN 1 ELSE 0 END) FROM usage_request_groups WHERE record_kind='user_request' AND is_subagent=0 AND `+where+` GROUP BY json_extract(data,'$.session_id') ORDER BY count(*) DESC,json_extract(data,'$.session_id') LIMIT ? OFFSET ?`, params...)
+	rows, e := s.db.Query(`SELECT json_extract(data,'$.session_id'),max(json_extract(data,'$.session_title')),count(*),sum(json_extract(data,'$.total_tokens')),sum(json_extract(data,'$.cost_usd')),sum(CASE WHEN json_extract(data,'$.cost_partial') OR json_extract(data,'$.unpriced_calls')>0 OR json_extract(data,'$.cost_usd') IS NULL THEN 1 ELSE 0 END) FROM usage_request_groups WHERE record_kind='user_request' AND is_subagent=0 AND `+where+` GROUP BY json_extract(data,'$.session_id') ORDER BY sum(json_extract(data,'$.total_tokens')) DESC,json_extract(data,'$.session_id') LIMIT ? OFFSET ?`, params...)
 	if e != nil {
 		return nil, e
 	}
@@ -412,7 +412,7 @@ func (s *Store) Insights(q Query) (result Row, err error) {
 		chats = append(chats, r)
 	}
 	rows.Close()
-	local, e := s.localInsights(q)
+	local, e := s.localInsights(Query{Period: "all", Source: "local"})
 	if e != nil {
 		return nil, e
 	}
