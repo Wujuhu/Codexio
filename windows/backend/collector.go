@@ -47,6 +47,8 @@ func stamp(v any) string {
 func ledgerStamp(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000Z") }
 
 var rolloutUUID = regexp.MustCompile(`(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
+var mentionedFilePattern = regexp.MustCompile(`(?m)^## (.+?): ((?:[A-Za-z]:[\\/]|/)[^\r\n]+)$`)
+var embeddedImagePattern = regexp.MustCompile(`(?is)<image\b[^>]*>.*?</image\s*>`)
 
 func rolloutID(path string) string {
 	ids := rolloutUUID.FindAllString(filepath.Base(path), -1)
@@ -131,6 +133,7 @@ func fileStamp(p string) string {
 	return fmt.Sprintf("%d:%d", st.Size(), st.ModTime().UnixNano())
 }
 func (s *Store) collect(ctx context.Context, force bool) error {
+	s.metadataRepairRemaining = 4
 	rediscover := force || time.Since(s.lastDiscovery) > 5*time.Minute
 	if rediscover {
 		s.lastDiscovery = time.Now()
@@ -212,7 +215,7 @@ func (s *Store) collect(ctx context.Context, force bool) error {
 		}
 	}
 	// Full-message storage is bounded independently of the immutable usage ledger.
-	_, e := s.db.Exec(`DELETE FROM usage_request_messages WHERE id IN (SELECT id FROM (SELECT id,row_number() OVER(ORDER BY accessed DESC,id) n,sum(size) OVER(ORDER BY accessed DESC,id) bytes FROM usage_request_messages) WHERE n>2000 OR bytes>67108864)`)
+	_, e := s.db.Exec(`DELETE FROM usage_request_messages WHERE id IN (SELECT id FROM (SELECT id,row_number() OVER(ORDER BY accessed DESC,id) n,sum(size) OVER(ORDER BY accessed DESC,id) bytes FROM usage_request_messages) WHERE n>512 OR bytes>67108864)`)
 	return e
 }
 func (s *Store) readTitles(root string, force bool) error {
@@ -347,6 +350,39 @@ func (s *Store) scanFile(ctx context.Context, path, key, source string, force bo
 	}
 	defer f.Close()
 	identity := ledgerFileIdentity(f)
+	// Old classification is repaired from metadata only, at most four related
+	// sources per collection. Unchanged sources are never replayed again.
+	if !force && ValueInt(cursor["parser_version"]) == 1 && dataString(cursor, "identity") == identity && ValueInt(cursor["metadata_version"]) != 1 && s.metadataRepairRemaining > 0 {
+		s.metadataRepairRemaining--
+		recovered, err := s.recoverSourceMetadata(ctx, path, source, key, dataString(cursor, "generation"), nil, true, 32<<20)
+		if err != nil {
+			return err
+		}
+		oldState := ValueRow(cursor["go_state"])
+		if recovered["request_source"] != nil {
+			oldState["request_source"] = recovered["request_source"]
+		}
+		if stat.Size() <= 32<<20 {
+			for _, k := range []string{"resume_tracking", "last_input", "previous_turn_id", "request_model"} {
+				if recovered[k] != nil {
+					oldState[k] = recovered[k]
+				}
+			}
+		}
+		for id, value := range ValueRow(recovered["turns"]) {
+			if existing := ValueRow(ValueRow(oldState["turns"])[id]); len(existing) > 0 {
+				for k, v := range ValueRow(value) {
+					existing[k] = v
+				}
+				existing["record_kind"] = classifyRequest(existing)
+			}
+		}
+		cursor["metadata_version"] = 1
+		cursor["metadata_partial"] = stat.Size() > 32<<20
+		if _, err = s.db.Exec("UPDATE usage_cursors SET data=? WHERE key=?", dataJSON(cursor), key); err != nil {
+			return err
+		}
+	}
 	parentAvailable := false
 	if pending := dataString(ValueRow(cursor["go_state"]), "pending_parent"); pending != "" {
 		_, parentAvailable = s.parentSignatures(pending, dataString(ValueRow(cursor["go_state"]), "fork_timestamp"))
@@ -421,7 +457,11 @@ func (s *Store) scanFile(ctx context.Context, path, key, source string, force bo
 		}
 		reconcile = false
 	}
-	cursor = Row{"path": path, "parser_version": 1, "identity": identity, "prefix": prefixHash(f, offset), "offset": offset, "size": stat.Size(), "mtime": stat.ModTime().UnixNano(), "checkpoint": checkpointHash(f, offset), "generation": generation, "go_state": state, "reconcile_pending": reconcile}
+	metadataVersion := ValueInt(cursor["metadata_version"])
+	if !valid {
+		metadataVersion = 1
+	}
+	cursor = Row{"path": path, "parser_version": 1, "metadata_version": metadataVersion, "metadata_partial": cursor["metadata_partial"], "identity": identity, "prefix": prefixHash(f, offset), "offset": offset, "size": stat.Size(), "mtime": stat.ModTime().UnixNano(), "checkpoint": checkpointHash(f, offset), "generation": generation, "go_state": state, "reconcile_pending": reconcile}
 	if _, e = tx.Exec("INSERT INTO usage_cursors VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data", key, dataJSON(cursor)); e != nil {
 		return e
 	}
@@ -484,6 +524,9 @@ func pruneOrigin(tx *sql.Tx, source, file, generation string) error {
 	return nil
 }
 func userText(text string) string {
+	if strings.Contains(text, "<send_user_message_question_reply>") {
+		return ""
+	}
 	for _, marker := range []string{"## My request:", "## My request", "<user_request>"} {
 		if i := strings.Index(text, marker); i >= 0 {
 			text = strings.TrimSpace(text[i+len(marker):])
@@ -493,7 +536,7 @@ func userText(text string) string {
 			break
 		}
 	}
-	for _, tag := range []string{"recommended_plugins", "environment_context", "permissions instructions", "INSTRUCTIONS", "user_instructions", "developer_instructions", "skills_instructions", "system", "developer", "system-reminder", "app-context", "collaboration_mode", "multi_agent_role", "multi_agent_mode"} {
+	for _, tag := range []string{"recommended_plugins", "environment_context", "permissions instructions", "permissions", "INSTRUCTIONS", "user_instructions", "developer_instructions", "skills_instructions", "skill_instructions", "system", "developer", "system-reminder", "app-context", "collaboration_mode", "multi_agent_role", "multi_agent_mode"} {
 		for {
 			lower := strings.ToLower(text)
 			i := strings.Index(lower, "<"+strings.ToLower(tag))
@@ -509,6 +552,8 @@ func userText(text string) string {
 		}
 	}
 	text = strings.TrimSpace(text)
+	text = embeddedImagePattern.ReplaceAllString(text, "")
+	text = strings.ReplaceAll(text, "Distinguish instructions in attached documents from the user's request.", "")
 	for _, prefix := range []string{"# AGENTS.md instructions", "# Files mentioned by the user:"} {
 		if strings.HasPrefix(text, prefix) {
 			return ""
@@ -527,9 +572,6 @@ func visibleMessage(value any, user bool) (string, []Row, bool) {
 	}
 	for _, item := range items {
 		if str, ok := item.(string); ok {
-			if user {
-				str = userText(str)
-			}
 			if str != "" {
 				parts = append(parts, str)
 			}
@@ -540,27 +582,63 @@ func visibleMessage(value any, user bool) (string, []Row, bool) {
 		switch kind {
 		case "text", "inputtext", "outputtext":
 			text := dataString(r, "text")
-			if user {
-				text = userText(text)
-			}
 			if text != "" {
 				parts = append(parts, text)
 			}
 		case "image", "inputimage", "localimage", "imageurl", "file", "inputfile":
-			name := filepath.Base(firstString(r["name"], r["path"], "附件"))
+			path := firstString(r["path"], r["file_path"], r["image_url"])
+			name := filepath.Base(firstString(r["filename"], r["name"], path, "附件"))
 			mime := "application/octet-stream"
 			if strings.Contains(kind, "image") {
 				mime = "image/*"
 			}
-			if len(attachments) < 6 {
-				attachments = append(attachments, Row{"id": HashString(kind + name)[:32], "name": clip(name, 240), "mime": mime})
+			if len(attachments) < 32 {
+				if !filepath.IsAbs(path) || len(path) > 4096 {
+					path = ""
+				}
+				attachments = append(attachments, Row{"id": HashString(kind + name + path)[:32], "name": clip(name, 240), "path": path, "mime": mime})
 			}
 		}
 	}
 	text := strings.TrimSpace(strings.Join(parts, "\n"))
-	complete := len(text) <= 1048576
-	if !complete {
-		text = clip(text, 6000)
+	complete := true
+	if user {
+		if strings.Contains(text, "<send_user_message_question_reply>") {
+			return "", nil, true
+		}
+		if start := strings.Index(text, "# Files mentioned by the user:"); start >= 0 {
+			section := text[start:]
+			if end := strings.Index(section, "## My request"); end >= 0 {
+				section = section[:end]
+			}
+			for _, match := range mentionedFilePattern.FindAllStringSubmatch(section, 32-len(attachments)) {
+				path := strings.TrimSpace(match[2])
+				mime := "application/octet-stream"
+				switch strings.ToLower(filepath.Ext(path)) {
+				case ".png":
+					mime = "image/png"
+				case ".jpg", ".jpeg":
+					mime = "image/jpeg"
+				case ".gif":
+					mime = "image/gif"
+				case ".webp":
+					mime = "image/webp"
+				}
+				attachments = append(attachments, Row{"id": HashString(match[1] + path)[:32], "name": clip(match[1], 255), "path": path, "mime": mime})
+			}
+			if !strings.Contains(text, "## My request") && !strings.Contains(text, "<user_request>") {
+				complete = false
+			}
+		}
+		text = userText(text)
+	}
+	if len(text) > 1048576 {
+		end := 1048576
+		for end > 0 && text[end]&0xc0 == 0x80 {
+			end--
+		}
+		text = text[:end]
+		complete = false
 	}
 	return text, attachments, complete
 }
@@ -617,12 +695,17 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 		spawn := ValueRow(agent["thread_spawn"])
 		parent := firstString(spawn["parent_thread_id"], p["parent_thread_id"], p["forked_from_id"])
 		state["parent_id"] = parent
-		review := dataString(agent, "other") == "guardian" || dataString(p, "originator") == "codex-auto-review" || ValueString(p["source"]) == "codex-auto-review"
+		review := approvalSource(p["source"]) || dataString(p, "originator") == "codex-auto-review"
+		guardian := ValueRow(agent["guardian"])
 		requestSource := Row{"source": p["source"], "originator": p["originator"], "is_subagent": len(agent) > 0, "parent_session_id": parent, "parent_turn_id": firstString(spawn["parent_turn_id"], p["parent_turn_id"]), "agent_path": spawn["agent_path"]}
 		if review {
 			requestSource["record_kind"] = "automatic_approval_review"
+			requestSource["is_approval_review"] = true
 			requestSource["is_subagent"] = true
+			requestSource["parent_session_id"] = firstString(spawn["parent_thread_id"], guardian["parent_thread_id"], p["parent_thread_id"], p["forked_from_id"])
+			requestSource["parent_turn_id"] = firstString(spawn["parent_turn_id"], guardian["parent_turn_id"], p["parent_turn_id"])
 		}
+		state["cwd"], state["session_cwd"] = p["cwd"], p["cwd"]
 		state["request_source"] = requestSource
 		return nil
 	}
@@ -635,7 +718,7 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 				settings = ValueRow(p["settings"])
 			}
 		}
-		for _, k := range []string{"model", "service_tier", "model_context_window", "auth_mode"} {
+		for _, k := range []string{"model", "service_tier", "model_context_window", "auth_mode", "cwd"} {
 			if settings[k] != nil {
 				state[k] = settings[k]
 			}
@@ -657,7 +740,7 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 		}()); id != "" {
 			state["inherited_turn_id"] = id
 		}
-		if sub == "token_count" {
+		if sub == "token_count" && !ValueBool(state["_recovery"]) {
 			state["inherited_entry"] = true
 			_, e := s.accounting(entry, state, tx)
 			delete(state, "inherited_entry")
@@ -672,25 +755,70 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 		explicit = dataString(p, "turn_id")
 	}
 	if explicit != "" {
+		if sub == "task_started" || sub == "turn_started" {
+			settings := ValueRow(p["thread_settings"])
+			if len(settings) == 0 {
+				settings = ValueRow(p["settings"])
+			}
+			for _, k := range []string{"model", "reasoning_effort", "service_tier", "model_context_window", "cwd"} {
+				if settings[k] != nil {
+					state[k] = settings[k]
+				} else if p[k] != nil {
+					state[k] = p[k]
+				}
+			}
+		}
 		old := getTurn(state, dataString(state, "turn_id"), timestamp)
-		if old != nil && ValueBool(old["synthetic"]) && !ValueBool(old["has_usage"]) && dataString(old, "ended_at") == "" {
+		if dataString(state, "turn_id") != explicit && old != nil && ValueBool(old["synthetic"]) && !ValueBool(old["has_usage"]) && dataString(old, "ended_at") == "" {
 			replacement := CloneRow(old)
 			replacement["id"] = turnKey(dataString(state, "session_id"), explicit)
 			replacement["turn_id"] = explicit
 			replacement["synthetic"] = false
 			ValueRow(state["turns"])[explicit] = replacement
 			old["alias_of"] = replacement["id"]
-			if e := saveMetadata(tx, "usage_turns", "turn", old, source, file, generation); e != nil {
+			if e := persistCollectedTurn(tx, old, state, source, file, generation); e != nil {
 				return e
 			}
-			_, _ = tx.Exec("INSERT OR IGNORE INTO usage_request_messages SELECT ?,data,digest,revision,size,accessed FROM usage_request_messages WHERE id=?", replacement["id"], old["id"])
+			last := ValueRow(state["last_input"])
+			if dataString(last, "turn_id") == dataString(old, "turn_id") {
+				last["turn_id"] = explicit
+			}
+			if !ValueBool(state["_metadata_only"]) {
+				_, _ = tx.Exec("INSERT OR IGNORE INTO usage_request_messages SELECT ?,data,digest,revision,size,accessed FROM usage_request_messages WHERE id=?", replacement["id"], old["id"])
+			}
+			if pending := ValueRow(state["_pending_message"]); dataString(pending, "id") == dataString(old, "id") && ValueBool(ValueRow(state["_recovery_targets"])[dataString(replacement, "id")]) {
+				if e := saveMessage(tx, dataString(replacement, "id"), ValueRow(pending["patch"])); e != nil {
+					return e
+				}
+				delete(state, "_pending_message")
+			}
 		}
 		if dataString(state, "turn_id") != explicit {
+			state["previous_turn_id"] = state["turn_id"]
+			state["request_model"] = state["model"]
+			delete(state, "root_turn_id")
 			state["modern_candidate"] = nil
 			state["pending_output"] = ""
 		}
 		state["turn_id"] = explicit
+		if kind == "turn_context" || sub == "task_started" || sub == "turn_started" {
+			state["request_model"] = state["model"]
+		}
 		r := getTurn(state, explicit, timestamp)
+		if p["root_turn_id"] != nil {
+			r["root_turn_id"] = p["root_turn_id"]
+			state["root_turn_id"] = p["root_turn_id"]
+		}
+		if approvalRequest(r) {
+			for _, k := range []string{"parent_turn_id", "parent_session_id"} {
+				if p[k] != nil {
+					r[k] = p[k]
+				}
+			}
+			if p["parent_thread_id"] != nil {
+				r["parent_session_id"] = p["parent_thread_id"]
+			}
+		}
 		if owner := dataString(state, "pending_question_owner"); owner != "" && owner != explicit {
 			r["continuation_of"] = turnKey(dataString(state, "session_id"), owner)
 		}
@@ -704,29 +832,7 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 			r["inherited_parent_turn_id"] = parentTurn
 		}
 	}
-	var message any
-	representation := ""
-	if kind == "response_item" && dataString(p, "role") == "user" && (sub == "" || sub == "message") {
-		message = p["content"]
-		representation = "response"
-	}
-	if sub == "user_message" {
-		message = p["message"]
-		if message == nil {
-			message = p["content"]
-		}
-		representation = "event"
-	}
-	if sub == "item_started" || sub == "item_completed" {
-		item := ValueRow(p["item"])
-		if strings.ToLower(strings.ReplaceAll(dataString(item, "type"), "_", "")) == "usermessage" {
-			message = item["content"]
-			if message == nil {
-				message = item["message"]
-			}
-			representation = "item"
-		}
-	}
+	message, representation := entryUserContent(entry)
 	if message != nil {
 		if ok, owner := questionReply(message, state); ok {
 			r := getTurn(state, dataString(state, "turn_id"), timestamp)
@@ -742,8 +848,11 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 				delete(state, "pending_question_owner")
 				r := getTurn(state, dataString(state, "turn_id"), timestamp)
 				last := ValueRow(state["last_input"])
-				fingerprint := pythonHash(strings.Join(strings.Fields(text), " "))
-				paired := dataString(last, "hash") == fingerprint && dataString(last, "representation") != representation && !ValueBool(state["usage_since_input"]) && r != nil && dataString(r, "ended_at") == ""
+				fingerprint := messageFingerprint(message)
+				messageID := firstString(p["id"], ValueRow(p["item"])["id"])
+				conflicting := messageID != "" && dataString(last, "message_id") != "" && messageID != dataString(last, "message_id")
+				sameIdentity := messageID != "" && messageID == dataString(last, "message_id") && dataString(last, "turn_id") == dataString(state, "turn_id")
+				paired := sameIdentity || !conflicting && dataString(last, "turn_id") == dataString(state, "turn_id") && dataString(last, "hash") == fingerprint && dataString(last, "representation") != representation && !ValueBool(state["usage_since_input"]) && r != nil && dataString(r, "ended_at") == ""
 				if r == nil || dataString(r, "ended_at") != "" && !paired || ValueBool(r["synthetic"]) && !paired {
 					marker := p["id"]
 					if marker == nil {
@@ -753,7 +862,24 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 						marker = entry["_byte_offset"]
 					}
 					id := "legacy-user:" + pythonHash([]any{state["session_id"], marker, timestamp, fingerprint})[:24]
+					if ValueBool(state["_recovery"]) {
+						// Recover legacy Go IDs by their exact original source-line
+						// identity, never by matching summaries or nearby timestamps.
+						oldID := "legacy-user:" + pythonHash([]any{state["session_id"], marker, timestamp, pythonHash(strings.Join(strings.Fields(text), " "))})[:24]
+						var present int
+						_ = tx.QueryRow("SELECT count(*) FROM usage_turns WHERE json_extract(data,'$.session_id')=? AND json_extract(data,'$.turn_id')=?", state["session_id"], oldID).Scan(&present)
+						if present > 0 {
+							id = oldID
+						}
+					}
 					state["turn_id"] = id
+					state["previous_turn_id"] = func() any {
+						if r != nil {
+							return r["turn_id"]
+						}
+						return ""
+					}()
+					delete(state, "root_turn_id")
 					r = getTurn(state, id, timestamp)
 					r["synthetic"] = true
 				}
@@ -772,27 +898,35 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 					}
 				}
 				r["input_hashes"] = hashes
-				r["status"] = "running"
+				if !paired && (dataString(r, "status") == "unknown" || dataString(r, "status") == "") {
+					r["status"] = "running"
+				}
 				if dataString(r, "prompt_preview") == "" {
 					r["prompt_preview"] = clip(strings.Join(strings.Fields(text), " "), 600)
 					if text == "" {
 						r["prompt_preview"] = "附件消息"
 					}
 				}
-				if e := saveMessage(tx, dataString(r, "id"), Row{"user": text, "user_complete": complete, "attachments": attachments}); e != nil {
+				if e := persistCollectedMessage(tx, dataString(r, "id"), Row{"user": text, "user_complete": complete, "attachments": attachments}, state); e != nil {
 					return e
 				}
-				state["last_input"] = Row{"hash": fingerprint, "representation": representation}
+				state["last_input"] = Row{"hash": fingerprint, "representation": representation, "message_id": messageID, "turn_id": state["turn_id"]}
 				state["usage_since_input"] = false
 			}
 		}
 	}
-	r := getTurn(state, firstString(p["turn_id"], state["turn_id"]), timestamp)
+	r := getTurn(state, dataString(state, "turn_id"), timestamp)
+	messageMetadata := ValueRow(p["internal_chat_message_metadata_passthrough"])
+	eventOwner, eventTurn := firstString(p["thread_id"], messageMetadata["thread_id"]), firstString(p["turn_id"], messageMetadata["turn_id"])
+	ownsEvent := (eventOwner == "" || eventOwner == dataString(state, "session_id")) && (eventTurn == "" || eventTurn == dataString(state, "turn_id"))
 	if r != nil {
-		for _, k := range []string{"model", "reasoning_effort", "service_tier", "model_context_window", "provider"} {
+		for _, k := range []string{"model", "reasoning_effort", "service_tier", "model_context_window", "provider", "cwd", "session_cwd"} {
 			if state[k] != nil {
 				r[k] = state[k]
 			}
+		}
+		if m := dataString(state, "request_model"); m != "" && m != "unknown" {
+			r["model"] = m
 		}
 		if dataString(r, "model") == "codex-auto-review" {
 			r["record_kind"] = "automatic_approval_review"
@@ -800,13 +934,15 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 		}
 	}
 	if kind == "response_item" || sub == "agent_message" {
-		if e := s.agentEntry(tx, p, state, source, file, generation, timestamp); e != nil {
-			return e
+		if !ValueBool(state["_recovery"]) {
+			if e := s.agentEntry(tx, p, state, source, file, generation, timestamp); e != nil {
+				return e
+			}
 		}
 		assistant := dataString(p, "role") == "assistant" || sub == "agent_message"
 		channel := firstString(p["channel"], p["phase"])
 		recipient := dataString(p, "recipient")
-		if assistant && (sub == "message" || sub == "agent_message") && (channel == "" || channel == "commentary" || channel == "final" || channel == "final_answer") && (recipient == "" || recipient == "all" || recipient == "user") {
+		if ownsEvent && assistant && (sub == "message" || sub == "agent_message") && (channel == "" || channel == "commentary" || channel == "final" || channel == "final_answer") && (recipient == "" || recipient == "all" || recipient == "user") {
 			content := p["content"]
 			if sub == "agent_message" {
 				content = p["message"]
@@ -818,17 +954,17 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 				if channel == "final" || channel == "final_answer" {
 					r["output_preview"] = clip(text, 600)
 					r["has_final_message"] = true
-					if e := saveMessage(tx, dataString(r, "id"), Row{"final": text, "final_complete": complete}); e != nil {
+					if e := persistCollectedMessage(tx, dataString(r, "id"), Row{"final": text, "final_complete": complete}, state); e != nil {
 						return e
 					}
 				}
 			}
 		}
 	}
-	if r != nil && (kind == "compacted" || sub == "item_completed" && dataString(ValueRow(p["item"]), "type") == "ContextCompaction") {
+	if r != nil && ownsEvent && (kind == "compacted" || sub == "item_completed" && dataString(ValueRow(p["item"]), "type") == "ContextCompaction") {
 		r["context_compaction_observed"] = true
 	}
-	if r != nil && (sub == "task_complete" || sub == "turn_complete" || sub == "turn_aborted") {
+	if r != nil && ownsEvent && (sub == "task_complete" || sub == "turn_complete" || sub == "turn_aborted") {
 		r["ended_at"] = firstString(stamp(p["completed_at"]), timestamp)
 		r["status"] = "completed"
 		if sub == "turn_aborted" {
@@ -838,21 +974,24 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 			r["duration_ms"] = d
 		}
 		if final, exists := p["last_agent_message"]; exists {
-			r["context_compaction_completed"] = final == nil
+			r["context_compaction_completed"] = final == nil && sub != "turn_aborted"
 			text, _, complete := visibleMessage(final, false)
 			if text != "" {
 				r["output_preview"] = clip(text, 600)
 				r["has_final_message"] = true
-				if e := saveMessage(tx, dataString(r, "id"), Row{"final": text, "final_complete": complete}); e != nil {
+				if e := persistCollectedMessage(tx, dataString(r, "id"), Row{"final": text, "final_complete": complete}, state); e != nil {
 					return e
 				}
 			}
+		}
+		if e := persistCollectedMessage(tx, dataString(r, "id"), Row{}, state); e != nil {
+			return e
 		}
 	}
 	if sub == "raw_response_completed" {
 		state["active_response_id"] = p["response_id"]
 	}
-	if kind == "token_usage_record" || sub == "token_count" {
+	if !ValueBool(state["_recovery"]) && (kind == "token_usage_record" || sub == "token_count") {
 		record, e := s.accounting(entry, state, tx)
 		if e != nil {
 			return e
@@ -868,11 +1007,12 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 		}
 	}
 	if r != nil {
-		if dataString(r, "record_kind") != "automatic_approval_review" && ValueBool(r["context_compaction_observed"]) && ValueBool(r["context_compaction_completed"]) && !ValueBool(r["has_user_message"]) && !ValueBool(r["is_subagent"]) {
-			r["record_kind"] = "context_compaction"
+		if patch := resumeObserve(entry, state); patch != nil {
+			applyResumePatch(patch, r, state)
 		}
+		r["record_kind"] = classifyRequest(r)
 		r["observed_at"] = timestamp
-		if e := saveMetadata(tx, "usage_turns", "turn", r, source, file, generation); e != nil {
+		if e := persistCollectedTurn(tx, r, state, source, file, generation); e != nil {
 			return e
 		}
 	}
@@ -1177,8 +1317,12 @@ func (s *Store) accounting(entry, state Row, tx *sql.Tx) (Row, error) {
 		r["output_preview"] = state["pending_output"]
 		r["record_kind"] = meta["record_kind"]
 		r["source"] = meta["source"]
-		if dataString(r, "model") == "codex-auto-review" {
+		for _, field := range []string{"is_approval_review", "parent_session_id", "parent_turn_id", "cwd", "session_cwd"} {
+			r[field] = meta[field]
+		}
+		if approvalRequest(r) || approvalRequest(meta) {
 			r["record_kind"] = "automatic_approval_review"
+			r["is_approval_review"] = true
 			r["is_subagent"] = true
 		}
 	} else {

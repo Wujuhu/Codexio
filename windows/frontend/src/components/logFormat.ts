@@ -36,9 +36,16 @@ export function preview(record: Row): string {
   return Array.from(label).length > 100 ? Array.from(label).slice(0,100).join('') + '…' : label;
 }
 
-export function metadata(record: Row): string {
+export function metadata(record: Row, timeOnly=false): string {
   const context = number(record.model_context_window);
-  return [stamp(record.timestamp), effort(record.reasoning_effort), speed(record.service_tier), context !== null ? compact(context) : ''].filter(Boolean).join(' · ');
+  return [logTime(record.timestamp,timeOnly), effort(record.reasoning_effort), speed(record.service_tier), context !== null ? compact(context) : '',record.is_subagent?tr('子代理'):record.record_kind==='unassigned'?tr('未归属调用'):''].filter(Boolean).join(' · ');
+}
+
+export function logTime(value:unknown,timeOnly=false):string {
+  if(!timeOnly)return stamp(value);
+  const n=number(value);if(value==null||value==='')return'—';
+  const date=new Date(n===null?String(value):n<1e12?n*1000:n);
+  return Number.isFinite(date.getTime())?date.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'}):'—';
 }
 
 export function hitRate(record: Row): string {

@@ -861,4 +861,4 @@ func (q *QuotaService) ReadReports(threads []Row, force bool) (Row, error) {
 }
 
 // Source changes invalidate the submitted chat set without switching login roots.
-func (q *QuotaService) InvalidateReports() { q.reports.invalidate() }
+func (q *QuotaService) InvalidateReports() { q.reports.invalidateCandidates() }

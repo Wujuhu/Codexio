@@ -115,13 +115,14 @@ func (s *Store) project() error {
 	s.mu.RUnlock()
 	priceChanged := dataString(state, "prices") != version
 	full := prior == "" || priceChanged
+	groupFull := full || ValueInt(state["request_projection_version"]) != 1
 	// Running status expires without rescanning history. Future rows are filtered by query time.
 	now := time.Now()
 	expired := false
 	var stale int
 	_ = tx.QueryRow(`SELECT count(*) FROM usage_request_groups WHERE json_extract(data,'$.request_status')='running' AND timestamp<?`, ledgerStamp(now.Add(-24*time.Hour))).Scan(&stale)
 	expired = stale > 0
-	if !full && ValueInt(state["revision"]) == revision && !expired {
+	if !groupFull && ValueInt(state["revision"]) == revision && !expired {
 		if s.Generation() == 0 {
 			s.generation.Store(ValueInt(state["generation"]))
 		}
@@ -199,11 +200,11 @@ func (s *Store) project() error {
 	}
 	// Metadata graph is rebuilt only after ledger/price dependencies change. Calls
 	// are streamed per connected session component, bounding historical meter memory.
-	if e = s.rebuildGroups(tx, now, full, dirty); e != nil {
+	if e = s.rebuildGroups(tx, now, groupFull, dirty); e != nil {
 		return e
 	}
 	generation := s.Generation() + 1
-	_, e = tx.Exec("INSERT INTO usage_query_state VALUES('go_projection',?) ON CONFLICT(key) DO UPDATE SET data=excluded.data", dataJSON(Row{"revision": revision, "prices": version, "generation": generation}))
+	_, e = tx.Exec("INSERT INTO usage_query_state VALUES('go_projection',?) ON CONFLICT(key) DO UPDATE SET data=excluded.data", dataJSON(Row{"revision": revision, "prices": version, "generation": generation, "request_projection_version": 1}))
 	if e != nil {
 		return e
 	}
@@ -265,7 +266,7 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 		if resolve(key) != key {
 			continue
 		}
-		if dataString(meta, "prompt_preview") != "" || ValueBool(meta["has_usage"]) || ValueBool(meta["has_user_message"]) {
+		if dataString(meta, "prompt_preview") != "" || ValueBool(meta["has_usage"]) || ValueBool(meta["has_user_message"]) || dataString(meta, "continuation_of") != "" || dataString(meta, "root_turn_id") != "" || classifyRequest(meta) == "context_compaction" {
 			bases[key] = &requestBase{meta: meta}
 		}
 	}
@@ -290,6 +291,9 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 		}
 	}
 	rows.Close()
+	if e = s.rebuildSessionRoots(tx, metadata, links); e != nil {
+		return e
+	}
 	edges := map[string]string{}
 	byChild := map[string][]Row{}
 	byParent := map[string][]Row{}
@@ -300,13 +304,23 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 	}
 	for key, base := range bases {
 		meta := base.meta
-		if continuation := resolve(dataString(meta, "continuation_of")); continuation != "" && continuation != key && bases[continuation] != nil {
+		ownershipKey := func(value string) string {
+			if value != "" && !strings.HasPrefix(value, "turn:") {
+				return turnKey(dataString(meta, "session_id"), value)
+			}
+			return value
+		}
+		if continuation := resolve(ownershipKey(dataString(meta, "continuation_of"))); continuation != "" && continuation != key && bases[continuation] != nil {
 			edges[key] = continuation
+			continue
+		}
+		if root := resolve(ownershipKey(dataString(meta, "root_turn_id"))); root != "" && root != key && bases[root] != nil && !ValueBool(meta["is_subagent"]) && !approvalRequest(meta) {
+			edges[key] = root
 			continue
 		}
 		session, parent := dataString(meta, "session_id"), dataString(meta, "parent_session_id")
 		direct := byChild[session]
-		if len(direct) > 0 {
+		if len(direct) > 0 || approvalRequest(meta) {
 			meta["is_subagent"] = true
 		}
 		if !ValueBool(meta["is_subagent"]) {
@@ -318,7 +332,7 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 		}
 		// Guardian's inherited parent turn is structural evidence only when present
 		// in the parent ledger. A parent thread by itself is deliberately insufficient.
-		if dataString(meta, "record_kind") == "automatic_approval_review" && parent != "" {
+		if approvalRequest(meta) && parent != "" {
 			if turn := dataString(meta, "inherited_parent_turn_id"); turn != "" {
 				candidate := resolve(turnKey(parent, turn))
 				if bases[candidate] != nil {
@@ -374,6 +388,15 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 	for key := range bases {
 		root := rootOf(key)
 		components[root] = append(components[root], key)
+	}
+	for root := range components {
+		sort.Slice(components[root], func(i, j int) bool {
+			a, b := components[root][i], components[root][j]
+			if dataString(bases[a].meta, "started_at") == dataString(bases[b].meta, "started_at") {
+				return a < b
+			}
+			return dataString(bases[a].meta, "started_at") < dataString(bases[b].meta, "started_at")
+		})
 	}
 	affected := map[string]bool{}
 	if !full {
@@ -432,11 +455,12 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 		base := bases[root]
 		group := CloneRow(base.meta)
 		group["id"] = root
+		group["root_id"] = root
 		group["timestamp"] = firstString(group["started_at"], group["timestamp"])
 		if timestamp := stamp(group["timestamp"]); timestamp != "" {
 			group["timestamp"] = timestamp
 		}
-		group["record_kind"] = firstString(group["record_kind"], "user_request")
+		group["record_kind"] = classifyRequest(group)
 		if ValueBool(group["is_subagent"]) && dataString(group, "record_kind") == "user_request" {
 			group["record_kind"] = "subagent_request"
 		}
@@ -449,6 +473,7 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 		composition := []Row{}
 		callCount := 0
 		ownReview, ownNormal := false, false
+		hasHuman := false
 		var earliest Row
 		ownModel := dataString(group, "model")
 		status := firstString(group["status"], "unknown")
@@ -459,6 +484,9 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 		}
 		for _, key := range keys {
 			meta := bases[key].meta
+			if !ValueBool(meta["is_subagent"]) && !approvalRequest(meta) && ValueBool(meta["has_user_message"]) {
+				hasHuman = true
+			}
 			composition = append(composition, Row{"id": key, "record_kind": firstString(meta["record_kind"], func() any {
 				if ValueBool(meta["is_subagent"]) {
 					return "subagent_request"
@@ -489,7 +517,7 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 				}
 				r := dataRow(raw)
 				if key == root {
-					if dataString(r, "record_kind") == "automatic_approval_review" || dataString(r, "model") == "codex-auto-review" {
+					if approvalRequest(r) {
 						ownReview = true
 					} else {
 						ownNormal = true
@@ -530,8 +558,12 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 			group["pricing_status"] = "partial"
 		}
 		group["call_count"] = callCount
+		if dataString(group, "record_kind") == "user_request" && !hasHuman {
+			group["record_kind"] = "context_message"
+		}
 		if ownReview && !ownNormal && (!ValueBool(group["has_user_message"]) || ownModel == "" || ownModel == "unknown" || ownModel == "codex-auto-review") {
 			group["record_kind"] = "automatic_approval_review"
+			group["is_approval_review"] = true
 			group["is_subagent"] = true
 		}
 		group["subagent_count"] = len(subagents)
@@ -580,7 +612,8 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 		segments := 0
 		for _, key := range keys {
 			meta := bases[key].meta
-			if key == root || dataString(meta, "continuation_of") != "" {
+			mainContinuation := !ValueBool(meta["is_subagent"]) && !approvalRequest(meta) && (dataString(meta, "continuation_of") != "" || dataString(meta, "root_turn_id") != "" && key != root)
+			if key == root || mainContinuation {
 				segments++
 				if d, ok := ValueFloat(meta["duration_ms"]); ok && d >= 0 {
 					duration += d
@@ -594,13 +627,19 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 					}
 				}
 			}
-			if dataString(meta, "continuation_of") != "" && !ValueBool(meta["is_subagent"]) && (finalMeta == nil || dataString(meta, "ended_at") > dataString(finalMeta, "ended_at")) {
+			if mainContinuation && (finalMeta == nil || dataString(meta, "ended_at") > dataString(finalMeta, "ended_at")) {
 				finalMeta = meta
 			}
 		}
 		if finalMeta != nil && dataString(finalMeta, "output_preview") != "" {
 			group["output_preview"] = finalMeta["output_preview"]
 		}
+		if finalMeta != nil && status != "running" {
+			status = firstString(finalMeta["status"], status)
+			group["ended_at"] = finalMeta["ended_at"]
+		}
+		group["status"], group["request_status"] = status, status
+		group["status_label"] = map[string]string{"running": "回复中", "completed": "完成", "aborted": "已中断", "unknown": "未知"}[status]
 		if segments > 1 {
 			group["duration_segments"] = segments
 			group["duration_ms"] = nil

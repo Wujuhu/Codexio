@@ -365,8 +365,11 @@ func (s *Store) Models(q Query) (resultRows []Row, err error) {
 }
 func (s *Store) Insights(q Query) (result Row, err error) {
 	size := q.PageSize
-	if size <= 0 || size > 50 {
+	if size <= 0 {
 		size = 5
+	}
+	if size > 25 {
+		size = 25
 	}
 	page := max(1, q.Page)
 	key, cached, ok := s.cachedQuery(fmt.Sprintf("insights:%d:%d", page, size), q)
@@ -378,40 +381,11 @@ func (s *Store) Insights(q Query) (result Row, err error) {
 			s.cacheQuery(key, result)
 		}
 	}()
-	where, args := queryFilter(q, true)
-	var total int
-	if err = s.db.QueryRow(`SELECT count(DISTINCT json_extract(data,'$.session_id')) FROM usage_request_groups WHERE record_kind='user_request' AND is_subagent=0 AND `+where, args...).Scan(&total); err != nil {
-		return nil, err
-	}
-	pages := max(1, (total+size-1)/size)
-	page = min(page, pages)
-	params := append(append([]any{}, args...), size, (page-1)*size)
-	rows, e := s.db.Query(`SELECT json_extract(data,'$.session_id'),max(json_extract(data,'$.session_title')),count(*),sum(json_extract(data,'$.total_tokens')),sum(json_extract(data,'$.cost_usd')),sum(CASE WHEN json_extract(data,'$.cost_partial') OR json_extract(data,'$.unpriced_calls')>0 OR json_extract(data,'$.cost_usd') IS NULL THEN 1 ELSE 0 END) FROM usage_request_groups WHERE record_kind='user_request' AND is_subagent=0 AND `+where+` GROUP BY json_extract(data,'$.session_id') ORDER BY sum(json_extract(data,'$.total_tokens')) DESC,json_extract(data,'$.session_id') LIMIT ? OFFSET ?`, params...)
+	chats, total, page, e := s.localChatRows(q, page, size)
 	if e != nil {
 		return nil, e
 	}
-	chats := []Row{}
-	for rows.Next() {
-		var session string
-		var title sql.NullString
-		var requests int
-		var tokens sql.NullInt64
-		var cost sql.NullFloat64
-		var partial int
-		if e = rows.Scan(&session, &title, &requests, &tokens, &cost, &partial); e != nil {
-			rows.Close()
-			return nil, e
-		}
-		r := Row{"session_id": session, "session_title": title.String, "name": title.String, "user_requests": requests, "tokens": nil, "usd": nil, "cost_partial": partial > 0, "cost_complete": partial == 0}
-		if tokens.Valid {
-			r["tokens"] = tokens.Int64
-		}
-		if cost.Valid {
-			r["usd"] = cost.Float64
-		}
-		chats = append(chats, r)
-	}
-	rows.Close()
+	pages := max(1, (total+size-1)/size)
 	local, e := s.localInsights(Query{Period: "all", Source: "local"})
 	if e != nil {
 		return nil, e
@@ -462,42 +436,18 @@ func (s *Store) Detail(id string, page int) (Row, error) {
 	}
 	request := dataRow(raw)
 	result := Row{"request": request, "user": request["prompt_preview"], "final": request["output_preview"], "attachments": []Row{}, "members": []Row{}, "composition": request["composition"], "page": page, "pages": 1, "user_complete": false, "final_complete": false, "availability": "legacy_preview"}
-	messageID := id
+	var message Row
 	if call {
-		messageID = turnKey(dataString(request, "session_id"), firstString(request["request_turn_id"], request["turn_id"]))
+		message = s.sourceMessage(request)
+	} else {
+		message, e = s.requestMessageDetail(request, true)
+		if e != nil {
+			return nil, e
+		}
 	}
-	var message string
-	if s.db.QueryRow("SELECT data FROM usage_request_messages WHERE id=?", messageID).Scan(&message) == nil {
-		m := dataRow(message)
-		for _, k := range []string{"user", "final", "attachments", "user_complete", "final_complete", "availability"} {
-			if v, ok := m[k]; ok {
-				result[k] = v
-			}
-		}
-		if m["availability"] == nil {
-			result["availability"] = "source"
-		}
-		_, _ = s.db.Exec("UPDATE usage_request_messages SET accessed=? WHERE id=?", float64(time.Now().Unix()), messageID)
-	} else if recovered := s.sourceMessage(request); len(recovered) > 0 {
-		for k, v := range recovered {
+	for _, k := range []string{"user", "final", "attachments", "user_complete", "final_complete", "availability"} {
+		if v, ok := message[k]; ok {
 			result[k] = v
-		}
-		tx, e := s.db.Begin()
-		if e == nil {
-			if e = saveMessage(tx, messageID, recovered); e == nil {
-				_ = tx.Commit()
-			} else {
-				_ = tx.Rollback()
-			}
-		}
-	}
-	if !call {
-		var continued string
-		_ = s.db.QueryRow(`SELECT m.data FROM usage_query_turns t JOIN usage_request_messages m ON t.id=m.id WHERE json_extract(t.data,'$.root_id')=? AND coalesce(json_extract(t.data,'$.continuation_of'),'')<>'' AND coalesce(json_extract(t.data,'$.is_subagent'),0)=0 AND coalesce(json_extract(m.data,'$.final'),'')<>'' ORDER BY json_extract(t.data,'$.ended_at') DESC LIMIT 1`, id).Scan(&continued)
-		if continued != "" {
-			m := dataRow(continued)
-			result["final"] = m["final"]
-			result["final_complete"] = m["final_complete"]
 		}
 	}
 	var count int

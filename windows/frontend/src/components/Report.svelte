@@ -109,6 +109,22 @@
     return (complete ? '' : '≥') + (n / Number(unit)).toFixed(unit === 1 ? 0 : 2).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '') + suffix;
   }
   function sharePercent(amount: any, total: any) { return Number(total) > 0 ? Math.round(Number(amount) / Number(total) * 100) : 0; }
+  // Match ReportArtSmallMetric's one-line 0.65 minimum scale with actual font
+  // glyph widths; character counts are unreliable for Chinese token suffixes.
+  function fitMetric(node: HTMLElement, value: string) {
+    let current = value, active = true;
+    const context = document.createElement('canvas').getContext('2d');
+    const fit = () => {
+      if (!active || !context || !node.isConnected) return;
+      const style = getComputedStyle(node);
+      context.font = `${style.fontWeight} 27px ${style.fontFamily}`;
+      const natural = context.measureText(current).width;
+      node.style.fontSize = `${Math.max(17.55, Math.min(27, natural > 0 ? 27 * Math.max(1, node.clientWidth - 12) / natural : 27))}px`;
+    };
+    const observer = new ResizeObserver(fit); observer.observe(node);
+    queueMicrotask(fit); void document.fonts.ready.then(fit);
+    return { update(value: string) { current = value; queueMicrotask(fit); }, destroy() { active = false; observer.disconnect(); } };
+  }
   function keydown(event: KeyboardEvent) {
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onclose(); }
     if (event.key !== 'Tab') return;
@@ -139,7 +155,7 @@
                 </div><img src={`/ReportCards/cat-${style}.png`} alt=""/>
               </section>
               <div class="mac-report-rule"></div>
-              <div class="mac-report-metrics">{#each metrics as [value, label]}<div><strong style:font-size={`${Math.max(17.55, Math.min(27, 155 / String(value).length))}px`}>{value}</strong><span>{label}</span></div>{/each}</div>
+              <div class="mac-report-metrics">{#each metrics as [value, label]}<div><strong use:fitMetric={String(value)}>{value}</strong><span>{label}</span></div>{/each}</div>
               <div class="mac-report-rule"></div>
               <section class="mac-report-rhythm">
                 <div class="mac-report-heading"><h2>{tr('使用节奏')}</h2><small>{peak ? tr(String(peak.name)) + tr('最活跃') : ''}</small></div>
@@ -201,7 +217,7 @@
   .mac-report-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));padding:18px 0;flex:none}
   .mac-report-metrics>div{position:relative;text-align:center;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0}
   .mac-report-metrics>div+div::before{content:'';position:absolute;left:0;top:50%;height:35px;width:1px;transform:translateY(-50%);background:color-mix(in srgb,var(--mac-secondary) 65%,transparent)}
-  .mac-report-metrics strong{font-family:var(--mac-editorial);font-weight:600;white-space:nowrap;line-height:1.3}
+  .mac-report-metrics strong{width:100%;height:36px;display:flex;align-items:flex-end;justify-content:center;font-family:var(--mac-editorial);font-size:27px;font-weight:600;white-space:nowrap;line-height:1.1}
   .mac-report-metrics span{font-size:11px;color:var(--mac-muted)}
   .mac-report-rhythm{padding-top:20px;flex:none;display:flex;flex-direction:column;gap:10px}
   .mac-report-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}

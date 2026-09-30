@@ -29,13 +29,16 @@ func (s *Service) projectAccountReports(snapshot Row) {
 				models = append(models, Row{"model": m["key"], "used_percent": portion})
 			}
 		}
-		cycles = append(cycles, Row{"start": p["starts_at"], "end": p["ends_at"], "used_percent": percent, "models": models, "data_as_of": plan["data_as_of"], "approximate": plan["approximate"] != false, "accounting_complete": p["accounting_complete"], "coverage_complete": plan["coverage_complete"]})
+		cycles = append(cycles, Row{"id": p["id"], "start": p["starts_at"], "end": p["ends_at"], "used_percent": percent, "models": models, "data_as_of": plan["data_as_of"], "approximate": plan["approximate"] != false, "accounting_complete": p["accounting_complete"], "coverage_complete": plan["coverage_complete"]})
 	}
 	sort.SliceStable(cycles, func(i, j int) bool { return ValueString(cycles[i]["start"]) > ValueString(cycles[j]["start"]) })
 	snapshot["cycles"] = cycles
 	chats := ValueRow(reports["chats"])
 	official := []Row{}
-	for _, thread := range ValueRows(chats["threads"]) {
+	for index, thread := range ValueRows(chats["threads"]) {
+		if index == 25 {
+			break
+		}
 		id := ValueString(thread["thread_id"])
 		var title string
 		_ = s.store.db.QueryRow("SELECT title FROM usage_session_titles WHERE session_id=?", id).Scan(&title)

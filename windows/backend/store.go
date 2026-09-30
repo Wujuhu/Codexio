@@ -17,32 +17,33 @@ import (
 )
 
 type Store struct {
-	db                   *sql.DB
-	path                 string
-	options              DataOptions
-	mu                   sync.RWMutex
-	work                 sync.Mutex
-	config               Row
-	status               Row
-	lastScanAt           string
-	prices               []Row
-	priceVersion         string
-	priceStatus          Row
-	generation           atomic.Int64
-	refresh              chan bool
-	closed               chan struct{}
-	closeOnce            sync.Once
-	directories          map[string]directorySnapshot
-	titleSignatures      map[string]string
-	lastDiscovery        time.Time
-	files                map[string][]string
-	parentSignatureCache map[string]map[string]bool
-	upstreamSignature    string
-	timeSignature        string
-	lastWallTime         time.Time
-	nextFuture           string
-	queryCache           map[string]string
-	queryCacheGeneration int64
+	db                      *sql.DB
+	path                    string
+	options                 DataOptions
+	mu                      sync.RWMutex
+	work                    sync.Mutex
+	config                  Row
+	status                  Row
+	lastScanAt              string
+	prices                  []Row
+	priceVersion            string
+	priceStatus             Row
+	generation              atomic.Int64
+	refresh                 chan bool
+	closed                  chan struct{}
+	closeOnce               sync.Once
+	directories             map[string]directorySnapshot
+	titleSignatures         map[string]string
+	lastDiscovery           time.Time
+	files                   map[string][]string
+	parentSignatureCache    map[string]map[string]bool
+	upstreamSignature       string
+	timeSignature           string
+	lastWallTime            time.Time
+	nextFuture              string
+	queryCache              map[string]string
+	queryCacheGeneration    int64
+	metadataRepairRemaining int
 }
 type directorySnapshot struct {
 	stamp   int64
@@ -143,6 +144,8 @@ func (s *Store) schema() error {
  CREATE TABLE IF NOT EXISTS usage_request_members(request_id TEXT NOT NULL,record_id TEXT NOT NULL,PRIMARY KEY(request_id,record_id));
  CREATE INDEX IF NOT EXISTS request_members_record ON usage_request_members(record_id,request_id);
  CREATE TABLE IF NOT EXISTS usage_query_turns(id TEXT PRIMARY KEY,data TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS usage_query_session_roots(session_id TEXT PRIMARY KEY,root_session_id TEXT NOT NULL);
+ CREATE INDEX IF NOT EXISTS go_query_session_roots_root ON usage_query_session_roots(root_session_id,session_id);
  CREATE INDEX IF NOT EXISTS go_query_turns_alias ON usage_query_turns(json_extract(data,'$.resolved_id'),json_extract(data,'$.session_id'),json_extract(data,'$.turn_id'));
  CREATE INDEX IF NOT EXISTS go_query_turns_root ON usage_query_turns(json_extract(data,'$.root_id'));
  CREATE INDEX IF NOT EXISTS go_turns_owner ON usage_turns(json_extract(data,'$.session_id'),json_extract(data,'$.turn_id'));
@@ -349,6 +352,13 @@ func saveOrigin(tx *sql.Tx, source, file, kind, id, generation string) error {
 	return e
 }
 func saveMetadata(tx *sql.Tx, table, kind string, r Row, source, file, generation string) error {
+	if table == "usage_turns" {
+		var digest string
+		var revision int64
+		if tx.QueryRow("SELECT digest,revision FROM usage_request_messages WHERE id=?", dataString(r, "id")).Scan(&digest, &revision) == nil {
+			r["message_digest"], r["message_revision"] = digest, revision
+		}
+	}
 	r["source_id"] = source
 	r["_generation"] = generation
 	id := source + "|" + file + "|" + dataString(r, "id")
@@ -375,25 +385,57 @@ func saveMessage(tx *sql.Tx, id string, patch Row) error {
 	if id == "" || len(id) > 512 {
 		return nil
 	}
-	var raw string
-	_ = tx.QueryRow("SELECT data FROM usage_request_messages WHERE id=?", id).Scan(&raw)
+	var raw, digest string
+	var revision int64
+	_ = tx.QueryRow("SELECT data,digest,revision FROM usage_request_messages WHERE id=?", id).Scan(&raw, &digest, &revision)
 	v := dataRow(raw)
 	for k, x := range patch {
 		v[k] = x
+	}
+	v["id"] = id
+	for _, field := range []string{"user", "final"} {
+		text := dataString(v, field)
+		if len(text) > 1048576 {
+			end := 1048576
+			for end > 0 && text[end]&0xc0 == 0x80 {
+				end--
+			}
+			v[field] = text[:end]
+			v[field+"_complete"] = false
+		}
+	}
+	attachments := ValueRows(v["attachments"])
+	if len(attachments) > 32 {
+		v["attachments"] = attachments[:32]
+		v["user_complete"] = false
+	}
+	terminal := dataString(v, "status") == "completed" || dataString(v, "status") == "aborted"
+	available := dataString(v, "user") != "" || dataString(v, "final") != "" || len(attachments) > 0
+	v["availability"] = "unavailable"
+	if available {
+		v["availability"] = "partial"
+		if ValueBool(v["user_complete"]) && (!terminal || ValueBool(v["final_complete"])) {
+			v["availability"] = "available"
+		}
 	}
 	payload := dataJSON(v)
 	if payload == raw {
 		return nil
 	}
-	if len(payload) > 1048576 {
-		v["user"] = clip(dataString(v, "user"), 1200)
-		v["final"] = clip(dataString(v, "final"), 5000)
-		v["user_complete"] = false
-		v["final_complete"] = false
-		v["availability"] = "capacity"
-		payload = dataJSON(v)
+	material := CloneRow(v)
+	delete(material, "recovery_signature")
+	hash := HashString(dataJSON(material))
+	changed := hash != digest
+	if changed {
+		revision++
 	}
-	_, e := tx.Exec(`INSERT INTO usage_request_messages VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data,digest=excluded.digest,revision=excluded.revision,size=excluded.size,accessed=excluded.accessed`, id, payload, HashString(payload), time.Now().UnixMilli(), len(payload), float64(time.Now().Unix()))
+	_, e := tx.Exec(`INSERT INTO usage_request_messages VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data,digest=excluded.digest,revision=excluded.revision,size=excluded.size,accessed=excluded.accessed`, id, payload, hash, revision, len(payload), float64(time.Now().Unix()))
+	if e == nil && changed {
+		_, e = tx.Exec("UPDATE usage_turns SET data=json_set(data,'$.message_digest',?,'$.message_revision',?) WHERE json_extract(data,'$.id')=? AND (coalesce(json_extract(data,'$.message_digest'),'')<>? OR coalesce(json_extract(data,'$.message_revision'),0)<>?)", hash, revision, id, hash, revision)
+	}
+	if e == nil {
+		_, e = tx.Exec(`DELETE FROM usage_request_messages WHERE id IN (SELECT id FROM (SELECT id,row_number() OVER(ORDER BY accessed DESC,id) n,sum(size) OVER(ORDER BY accessed DESC,id) bytes FROM usage_request_messages) WHERE n>512 OR bytes>67108864)`)
+	}
 	return e
 }
 func (s *Store) seedMock() error {

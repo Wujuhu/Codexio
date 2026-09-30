@@ -38,6 +38,7 @@ type Service struct {
 	reportGeneration int64
 	reportRead       time.Time
 	reportSignature  string
+	reportAccount    string
 }
 
 func NewService(directory, executable, version string, mock bool, callbacks DesktopCallbacks) (*Service, error) {
@@ -157,7 +158,8 @@ func (s *Service) GetTrends(q Query) (Row, error) {
 	if e != nil {
 		return nil, e
 	}
-	return Row{"summary": summary, "chart": chart, "models": models, "insights": insights, "heatmap": insights["heatmap"], "activity": Row{"rows": insights["activity"]}, "chats": insights["chats"], "chat_page": insights["chat_page"], "chat_pages": insights["chat_pages"], "chat_total": insights["chat_total"], "comparison": s.comparison(q, summary)}, nil
+	s.requestAccountReports(false)
+	return Row{"summary": summary, "chart": chart, "models": models, "insights": insights, "heatmap": insights["heatmap"], "activity": Row{"rows": insights["activity"]}, "chats": insights["chats"], "chat_page": insights["chat_page"], "chat_pages": insights["chat_pages"], "chat_total": insights["chat_total"], "comparison": s.comparison(q, summary), "chat_usage": s.GetChatRanking("weekly_limit_percent", 1)}, nil
 }
 func (s *Service) GetSubscription() Row { return s.subscription(true) }
 func (s *Service) GetTrayState() Row {
@@ -292,6 +294,20 @@ func (s *Service) OpenURL(raw string) error {
 	}
 	return s.callbacks.OpenURL(u.String())
 }
+func (s *Service) OpenChat(id string) error {
+	if len(id) != 36 || id[8] != '-' || id[13] != '-' || id[18] != '-' || id[23] != '-' {
+		return errors.New("无法在本机定位此聊天")
+	}
+	for _, c := range strings.ReplaceAll(id, "-", "") {
+		if !strings.ContainsRune("0123456789abcdefABCDEF", c) {
+			return errors.New("无法在本机定位此聊天")
+		}
+	}
+	if s.callbacks.OpenURL == nil {
+		return errors.New("无法在本机定位此聊天")
+	}
+	return s.callbacks.OpenURL("codex://threads/" + id)
+}
 func (s *Service) SaveReportPNG(data, period string) (Row, error) {
 	if len(data) > 24<<20 {
 		return nil, errors.New("报告图片超过容量限制")
@@ -417,17 +433,29 @@ func (s *Service) comparison(q Query, current Row) Row {
 			}
 		}
 		changes[k] = r
+		if (k == "usd" && (current["cost_complete"] == false || previous["cost_complete"] == false)) || (k == "tokens" && (metricSkipped(current, k) > 0 || metricSkipped(previous, k) > 0)) || (k == "cache_hit_rate" && (ValueInt(current["cache_skipped_records"]) > 0 || ValueInt(previous["cache_skipped_records"]) > 0)) {
+			r["percent"] = nil
+			r["status"] = "incomplete"
+		}
 	}
-	label := map[string]string{"today": "较昨天", "week": "较前 7 天", "month": "较前 30 天"}[q.Period]
-	return Row{"current": current, "previous": previous, "changes": changes, "label": label}
+	label := map[string]string{"today": "较昨天", "week": "较上周", "month": "较上月"}[q.Period]
+	return Row{"current": current, "previous": previous, "changes": changes, "label": label, "previous_range": start.AddDate(0, 0, -days).Format("2006.1.2") + " – " + start.Add(-time.Millisecond).Format("2006.1.2")}
+}
+func metricSkipped(row Row, field string) int64 {
+	if skipped, ok := row["skipped"].(map[string]int); ok {
+		return int64(skipped[field])
+	}
+	return ValueInt(ValueRow(row["skipped"])[field])
 }
 func (s *Service) requestAccountReports(force bool) {
-	if s.mock {
+	quota := s.quota.Snapshot()
+	if s.mock || !ValueBool(quota["applicable"]) {
 		return
 	}
+	account := ValueString(quota["account_key"])
 	gen := s.store.Generation()
 	s.reportMu.Lock()
-	if s.reportBusy || (!force && s.reportGeneration == gen && time.Since(s.reportRead) < time.Minute) {
+	if s.reportBusy || (!force && s.reportAccount == account && s.reportGeneration == gen && time.Since(s.reportRead) < time.Minute) {
 		s.reportMu.Unlock()
 		return
 	}
@@ -438,6 +466,7 @@ func (s *Service) requestAccountReports(force bool) {
 			s.reportMu.Lock()
 			s.reportBusy = false
 			s.reportGeneration = gen
+			s.reportAccount = account
 			s.reportRead = time.Now()
 			s.reportMu.Unlock()
 		}()
@@ -450,15 +479,19 @@ func (s *Service) requestAccountReports(force bool) {
 		if changed {
 			s.quota.InvalidateReports()
 		}
+		before := accountReportContent(ValueRow(s.quota.Snapshot()["reports"]))
 		_, e := s.quota.ReadReports(threads, force)
 		if e != nil {
 			s.notice(e.Error())
 		}
-		s.notify("quota")
+		if before != accountReportContent(ValueRow(s.quota.Snapshot()["reports"])) {
+			s.notify("quota")
+			s.notify("trends")
+		}
 	}()
 }
 func (s *Service) reportThreads() []Row {
-	rows, e := s.store.Database().Query(`SELECT session_id,MIN(timestamp) FROM usage_priced_calls c WHERE session_id<>'' AND EXISTS(SELECT 1 FROM usage_query_sources s WHERE s.record_id=c.id AND (s.source_id='local' OR s.source_id LIKE 'local:%')) GROUP BY session_id ORDER BY MAX(timestamp) DESC LIMIT 1000`)
+	rows, e := s.store.Database().Query(`SELECT session_id,COALESCE((SELECT MIN(json_extract(t.data,'$.started_at')) FROM usage_turns t WHERE json_extract(t.data,'$.session_id')=c.session_id),MIN(timestamp)) FROM usage_priced_calls c WHERE session_id<>'' AND EXISTS(SELECT 1 FROM usage_query_sources s WHERE s.record_id=c.id AND (s.source_id='local' OR s.source_id LIKE 'local:%')) GROUP BY session_id ORDER BY 2 DESC LIMIT 10000`)
 	if e != nil {
 		return []Row{}
 	}
@@ -517,3 +550,8 @@ func (s *Service) reportThreads() []Row {
 	return result
 }
 func rowJSON(v any) string { b, _ := json.Marshal(v); return string(b) }
+
+func (s *Service) RefreshAccountReports() Row {
+	s.requestAccountReports(true)
+	return s.subscription(true)
+}

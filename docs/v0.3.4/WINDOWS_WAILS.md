@@ -71,3 +71,16 @@ build/dev/windows/latest.json
 - 打开报告目录改为官方 Windows ShellExecute 路径动作；报告照 Mac 的左侧纸张／右侧紧凑操作列、原猫耳路径、500px 画布和缩放公式显示，完整 2x PNG 导出保留不完整计量标记。
 
 合并前端检查为 0 errors / 0 warnings；Go/Wails 生产构建及原有三项隔离模拟冒烟通过。只查看一张本轮模拟界面截图。代码审查提出的局部缺失值、账户、字体及筛选问题均已修正；没有执行真实重置或启动／重启用户安装的应用。
+# Mac v0.3.4 migration follow-up
+
+Reference source is remote `main` at `2c944cc`, including `fbb33f0` request-accounting and Mac/iOS synchronization changes. Those upstream commits were imported locally; the Windows follow-up keeps version 0.3.4 and does not modify the Mac/iOS implementation.
+
+Shared UI dimensions are compacted together, without page zoom: sidebar resize/collapse and direct long-press ordering follow `MainViews.swift` and `Interaction.swift`; log field selection/widths follow `CompactTable.swift`, with the user's screenshot defaults. Quota/usage cards retain the reference structure with smaller padding, values and gaps. Rolling 7/30-day comparisons use the user's concise “较上周/较上月” labels; the exact preceding dates are available on hover, and incomplete values do not produce a percentage. Report numbers use actual font glyph widths and the Mac 0.65 minimum scale instead of character-count estimates.
+
+The request collector and detail recovery follow current `UsageIndexer.swift`, `Database.swift`, `RequestResume` and `RequestClassification`: explicit continuations and duplicate message identities are preserved; true user requests exclude context-only and automatic-approval records, while their observed usage remains in accounting. Metadata recovery is bounded and does not replay unchanged meter records. Desktop and mobile share the same source-message state machine.
+
+`CodexClient.swift`'s two WHAM endpoints supply the default chat allowance ranking and weekly plan history. Local Token ranking remains an explicit alternate view. Ranking transfers are bounded to 25 rows, initially showing five, with model/reasoning/speed breakdowns and UTC report times.
+
+The iPhone INVALID bug was the approved-reader pair retry: iOS continues `pair` until its first accepted `sync`. The Windows protocol now follows Mac's transition, request-kind capability, force-first detail chunk, business-content cache dependencies and cloud fallback projections. A transient isolated check verified that transition; actual phone/TLS/Bonjour/cloud connections were not exercised during development.
+
+The floating window uses the existing Python `window.py`, `visuals.py` and `theme.py` appearance and native dimensions. The sidebar footer exposes a persisted switch. Native main-window minimum size follows Mac's 720×480 limit. Routine verification remains the existing three isolated smoke checks plus compilation and artifact/source validation.

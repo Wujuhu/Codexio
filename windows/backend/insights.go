@@ -9,6 +9,122 @@ import (
 	"time"
 )
 
+// Mac Analytics.localChatRows: rank root threads by all local meter tokens,
+// including explicitly known descendant threads, independent of request count.
+func (s *Store) rebuildSessionRoots(tx *sql.Tx, metadata map[string]Row, links []Row) error {
+	seen := map[string]bool{}
+	parents := map[string]map[string]bool{}
+	put := func(child, parent string) {
+		if child != "" && parent != "" && child != parent {
+			if parents[child] == nil {
+				parents[child] = map[string]bool{}
+			}
+			parents[child][parent] = true
+		}
+	}
+	for _, row := range metadata {
+		session := dataString(row, "session_id")
+		seen[session] = true
+		if ValueBool(row["is_subagent"]) {
+			put(session, dataString(row, "parent_session_id"))
+		}
+	}
+	for _, link := range links {
+		put(dataString(link, "child_session_id"), dataString(link, "parent_session_id"))
+	}
+	rows, e := tx.Query("SELECT DISTINCT session_id FROM usage_priced_calls WHERE session_id<>''")
+	if e != nil {
+		return e
+	}
+	for rows.Next() {
+		var session string
+		if e = rows.Scan(&session); e != nil {
+			rows.Close()
+			return e
+		}
+		seen[session] = true
+	}
+	rows.Close()
+	if _, e = tx.Exec("DELETE FROM usage_query_session_roots"); e != nil {
+		return e
+	}
+	for session := range seen {
+		if session == "" {
+			continue
+		}
+		root := session
+		visited := map[string]bool{}
+		for len(parents[root]) == 1 && !visited[root] {
+			visited[root] = true
+			next := ""
+			for parent := range parents[root] {
+				next = parent
+			}
+			if !seen[next] || visited[next] {
+				break
+			}
+			root = next
+		}
+		if _, e = tx.Exec("INSERT INTO usage_query_session_roots VALUES(?,?)", session, root); e != nil {
+			return e
+		}
+	}
+	return nil
+}
+func (s *Store) localChatRows(q Query, page, size int) ([]Row, int, int, error) {
+	q.Source = "local"
+	where, args := queryFilter(q, false)
+	where = strings.ReplaceAll(where, "usage_priced_calls.id", "p.id")
+	var total int
+	countSQL := `SELECT count(DISTINCT coalesce(roots.root_session_id,p.session_id)) FROM usage_priced_calls p LEFT JOIN usage_query_session_roots roots ON roots.session_id=p.session_id WHERE ` + where
+	if e := s.db.QueryRow(countSQL, args...).Scan(&total); e != nil {
+		return nil, 0, 0, e
+	}
+	pages := max(1, (total+size-1)/size)
+	page = min(max(1, page), pages)
+	// The aggregate stays in SQLite; only the requested ranking page is decoded.
+	query := `SELECT coalesce(roots.root_session_id,p.session_id),coalesce(t.title,max(CASE WHEN roots.root_session_id=p.session_id OR roots.root_session_id IS NULL THEN json_extract(p.data,'$.session_title') END),''),sum(json_extract(p.metrics,'$.tokens')),sum(json_extract(p.metrics,'$.usd')),sum(coalesce(json_extract(p.metrics,'$.unpriced_calls'),0)) FROM usage_priced_calls p LEFT JOIN usage_query_session_roots roots ON roots.session_id=p.session_id LEFT JOIN usage_session_titles t ON t.session_id=coalesce(roots.root_session_id,p.session_id) WHERE ` + where + ` GROUP BY coalesce(roots.root_session_id,p.session_id) ORDER BY sum(json_extract(p.metrics,'$.tokens')) DESC,coalesce(roots.root_session_id,p.session_id) LIMIT ? OFFSET ?`
+	params := append(append([]any{}, args...), size, (page-1)*size)
+	rows, e := s.db.Query(query, params...)
+	if e != nil {
+		return nil, 0, 0, e
+	}
+	chats := []Row{}
+	for rows.Next() {
+		var session, title string
+		var tokens sql.NullInt64
+		var usd sql.NullFloat64
+		var unpriced int
+		if e = rows.Scan(&session, &title, &tokens, &usd, &unpriced); e != nil {
+			rows.Close()
+			return nil, 0, 0, e
+		}
+		r := Row{"session_id": session, "thread_id": session, "session_title": title, "name": title, "tokens": nil, "local_tokens": nil, "usd": nil, "cost_partial": unpriced > 0, "cost_complete": unpriced == 0}
+		if tokens.Valid {
+			r["tokens"], r["local_tokens"] = tokens.Int64, tokens.Int64
+		}
+		if usd.Valid {
+			r["usd"] = usd.Float64
+		}
+		chats = append(chats, r)
+	}
+	e = rows.Err()
+	rows.Close()
+	if e != nil {
+		return nil, 0, 0, e
+	}
+	gw, ga := queryFilter(q, true)
+	for _, chat := range chats {
+		var requests int
+		values := append([]any{chat["session_id"]}, ga...)
+		if e = s.db.QueryRow(`SELECT count(*) FROM usage_request_groups WHERE record_kind='user_request' AND is_subagent=0 AND json_extract(data,'$.session_id') IN(SELECT session_id FROM usage_query_session_roots WHERE root_session_id=?) AND `+gw, values...).Scan(&requests); e != nil {
+			return nil, 0, 0, e
+		}
+		chat["user_requests"] = requests
+	}
+	return chats, total, page, nil
+}
+
 func (s *Store) localInsights(q Query) (result Row, err error) {
 	q.Source = "local"
 	key, cached, ok := s.cachedQuery("local-activity", q)

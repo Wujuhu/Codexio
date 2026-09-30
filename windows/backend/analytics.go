@@ -105,6 +105,18 @@ func (a *systemAnalytics) invalidate() {
 	a.cached = Row{"plan": Row{}, "chats": Row{}, "account_key": "", "status": "unavailable", "error": ""}
 	a.lastRead = time.Time{}
 }
+
+// Candidate-set changes invalidate the request dependency, while Mac keeps
+// valid same-account reports visible until their replacement arrives.
+func (a *systemAnalytics) invalidateCandidates() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.generation++
+	a.lastRead = time.Time{}
+	if a.cancel != nil {
+		a.cancel()
+	}
+}
 func (a *systemAnalytics) close() {
 	a.mu.Lock()
 	a.closed = true
@@ -185,6 +197,7 @@ func (a *systemAnalytics) read(parent context.Context, threads []Row, force bool
 		return nil, errors.New("账户统计请求已失效")
 	}
 	key := systemIdentityKey(client.identity)
+	previous := accountReportContent(a.cached)
 	if ValueString(a.cached["account_key"]) != key {
 		a.cached = Row{"plan": Row{}, "chats": Row{}}
 	}
@@ -203,10 +216,15 @@ func (a *systemAnalytics) read(parent context.Context, threads []Row, force bool
 	}
 	r := CloneRow(a.cached)
 	a.mu.Unlock()
-	if a.opts.Changed != nil {
+	if previous != accountReportContent(r) && a.opts.Changed != nil {
 		a.opts.Changed()
 	}
 	return r, nil
+}
+func accountReportContent(row Row) string {
+	content := CloneRow(row)
+	delete(content, "updated_at")
+	return rowJSON(content)
 }
 
 type systemAnalyticsClient struct {
@@ -319,9 +337,7 @@ func (c *systemAnalyticsClient) threadUsage(ctx context.Context, threads []Row) 
 		switch rawThreads.(type) {
 		case []any, []Row:
 		default:
-			if rawThreads != nil {
-				return errors.New("服务返回了无效统计数据")
-			}
+			return errors.New("服务返回了无效统计数据")
 		}
 		rows, e := systemAnalyticsRows(rawThreads, 100)
 		if e != nil {
@@ -339,14 +355,14 @@ func (c *systemAnalyticsClient) threadUsage(ctx context.Context, threads []Row) 
 			}
 			parts := append([]Row{row}, groups...)
 			for _, part := range parts {
-				for _, key := range []string{"weekly_limit_percent", "five_hour_limit_percent"} {
+				for _, key := range []string{"weekly_limit_percent", "five_hour_limit_percent", "balance_usage_credits"} {
 					if v := part[key]; v != nil {
 						switch v.(type) {
-						case json.Number, float64, float32, int, int64:
+						case json.Number, float64, float32, int, int64, string:
 						default:
 							return errors.New("服务返回了无效统计数据")
 						}
-						if _, ok := ValueFloat(v); !ok {
+						if n, ok := ValueFloat(v); !ok || n < 0 {
 							return errors.New("服务返回了无效统计数据")
 						}
 					}

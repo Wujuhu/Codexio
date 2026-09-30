@@ -45,7 +45,22 @@ func mobileRequest(r Row) Row {
 	if status == "" {
 		status = "completed"
 	}
-	return Row{"id": HashString(ValueString(r["id"])), "started": float64(t.UnixMilli()) / 1000, "status": status, "preview": mobilePrefix(ValueString(r["prompt_preview"]), 80), "model": ValueString(r["model"]), "effort": r["reasoning_effort"], "speed": r["service_tier"], "tokens": r["total_tokens"], "cost": r["cost_usd"], "duration": float64(ValueInt(r["duration_ms"])) / 1000}
+	preview := []rune(ValueString(r["prompt_preview"]))
+	if len(preview) > 80 {
+		preview = preview[:80]
+	}
+	var duration any
+	if n, ok := ValueFloat(r["duration_ms"]); ok {
+		duration = n / 1000
+	}
+	result := Row{"id": HashString(ValueString(r["id"])), "started": float64(t.UnixMilli()) / 1000, "status": status, "preview": mobilePrefix(string(preview), 240), "model": ValueString(r["model"]), "effort": r["reasoning_effort"], "speed": r["service_tier"], "tokens": r["total_tokens"], "cost": r["cost_usd"], "duration": duration}
+	if mobileApproval(r) {
+		result["kind"] = "approval_review"
+	}
+	return result
+}
+func mobileApproval(r Row) bool {
+	return ValueBool(r["is_approval_review"]) || ValueString(r["record_kind"]) == "automatic_approval_review" || ValueString(r["record_kind"]) == "approval_review" || strings.EqualFold(ValueString(r["model"]), "codex-auto-review")
 }
 func mobileMetric(r Row) Row {
 	return Row{"tokens": r["tokens"], "cost": r["usd"], "requests": ValueInt(r["user_requests"]), "costComplete": ValueBool(r["cost_complete"]), "hitRate": r["cache_hit_rate"]}
@@ -123,10 +138,7 @@ func (m *MobileHost) project(ctx context.Context) {
 	if len(task) == 0 {
 		task = nil
 	}
-	running := 0
-	if ValueString(task["status"]) == "running" {
-		running = 1
-	}
+	running := m.runningCount
 	sampled := now
 	if t, ok := ParseStamp(quota["updated_at"]); ok {
 		sampled = t
@@ -154,6 +166,9 @@ func (m *MobileHost) project(ctx context.Context) {
 		m.projectionKey = key
 	}
 	changed := before != m.datasetRevisionLocked()
+	if e == nil && changed {
+		e = m.saveProjectionLocked()
+	}
 	m.mu.Unlock()
 	if e != nil {
 		m.failure(e)
@@ -228,7 +243,7 @@ func (m *MobileHost) projectHistory(ctx context.Context, generation int64, key s
 	if e != nil {
 		return e
 	}
-	rows, e = db.QueryContext(ctx, `SELECT g.data,g.timestamp FROM usage_request_groups g WHERE g.timestamp>=? AND g.timestamp<=? AND g.record_kind='user_request' AND g.is_subagent=0 AND `+mobileLocalGroup+` ORDER BY timestamp DESC,id DESC`, ledgerStamp(oldest), ledgerStamp(now))
+	rows, e = db.QueryContext(ctx, `SELECT g.data,g.timestamp FROM usage_request_groups g WHERE g.timestamp>=? AND g.timestamp<=? AND (g.record_kind IN ('automatic_approval_review','approval_review') OR (g.record_kind='user_request' AND g.is_subagent=0)) AND `+mobileLocalGroup+` ORDER BY timestamp DESC,id DESC`, ledgerStamp(oldest), ledgerStamp(now))
 	if e != nil {
 		return e
 	}
@@ -237,6 +252,7 @@ func (m *MobileHost) projectHistory(ctx context.Context, generation int64, key s
 	preload := []string{}
 	var task Row
 	var latestCompleted time.Time
+	running := 0
 	for rows.Next() {
 		var raw, stamp string
 		if e = rows.Scan(&raw, &stamp); e != nil {
@@ -256,9 +272,12 @@ func (m *MobileHost) projectHistory(ctx context.Context, generation int64, key s
 		if d == nil {
 			continue
 		}
-		d.requests++
+		approval := mobileApproval(r)
+		if !approval {
+			d.requests++
+		}
 		for _, n := range []int{7, 30, 90} {
-			if !t.Before(day.AddDate(0, 0, -n+1)) {
+			if !approval && !t.Before(day.AddDate(0, 0, -n+1)) {
 				periods[n].requests++
 				name := ValueString(r["model"])
 				if mobileSingleModel(name) {
@@ -272,9 +291,12 @@ func (m *MobileHost) projectHistory(ctx context.Context, generation int64, key s
 			}
 		}
 		status := ValueString(r["request_status"])
-		if status == "running" && (task == nil || ValueString(task["status"]) != "running") {
+		if !approval && (status == "running" || ValueBool(r["duration_running"])) {
+			running++
+		}
+		if !approval && status == "running" && (task == nil || ValueString(task["status"]) != "running") {
 			task = mobileRequest(r)
-		} else if status == "completed" && (task == nil || ValueString(task["status"]) != "running") {
+		} else if !approval && status == "completed" && (task == nil || ValueString(task["status"]) != "running") {
 			ended, ok := ParseStamp(r["ended_at"])
 			if !ok {
 				ended = t
@@ -284,12 +306,14 @@ func (m *MobileHost) projectHistory(ctx context.Context, generation int64, key s
 				latestCompleted = ended
 			}
 		}
-		if len(recent) < 200 && !t.Before(day.AddDate(0, 0, -7)) {
+		if len(recent) < 200 && !t.Before(now.Add(-7*24*time.Hour)) {
 			public := mobileRequest(r)
 			if public != nil {
 				recent = append(recent, public)
-				ids[ValueString(public["id"])] = ValueString(r["id"])
-				if len(preload) < 16 {
+				if !approval {
+					ids[ValueString(public["id"])] = ValueString(r["id"])
+				}
+				if !approval && len(preload) < 64 {
 					preload = append(preload, ValueString(public["id"]))
 				}
 			}
@@ -330,17 +354,18 @@ func (m *MobileHost) projectHistory(ctx context.Context, generation int64, key s
 		m.requests = ids
 		m.todayMetric = days[day.Format("2006-01-02")].metric()
 		m.currentTask = task
+		m.runningCount = running
 	}
 	m.pruneDetailsLocked()
 	m.mu.Unlock()
 	if e != nil {
 		return e
 	}
-	for _, id := range preload {
+	for i := len(preload) - 1; i >= 0; i-- {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		_, _ = m.getDetail(id, false)
+		_, _ = m.getDetail(preload[i], true)
 	}
 	return nil
 }
@@ -380,21 +405,18 @@ func (m *MobileHost) pruneDetailsLocked() {
 	}
 }
 func (m *MobileHost) getDetail(id string, thumbnails bool) (Row, error) {
+	return m.getDetailWithForce(id, thumbnails, false)
+}
+func mobileDetailSource(request Row) string {
+	raw, _ := mobileJSON(Row{"digest": request["message_digest"], "revision": request["message_revision"], "status": request["request_status"], "preview": request["prompt_preview"], "tokens": request["total_tokens"], "started": request["timestamp"], "completed": request["ended_at"]})
+	return HashString(string(raw))
+}
+func (m *MobileHost) getDetailWithForce(id string, thumbnails, force bool) (Row, error) {
 	m.detailMu.Lock()
 	defer m.detailMu.Unlock()
 	generation := m.store.Generation()
 	m.mu.Lock()
 	canonical := m.requests[id]
-	cached := m.details[id]
-	if cached != nil && cached.Expires > float64(time.Now().Unix()) && cached.Generation == generation {
-		source, _ := DecodeRow([]byte(ValueString(cached.Envelope["payload"])))
-		if (!thumbnails || cached.Thumbnails) && ValueString(source["availability"]) != "partial" && ValueString(source["availability"]) != "unavailable" {
-			cached.Access = time.Now()
-			r := CloneRow(cached.Envelope)
-			m.mu.Unlock()
-			return r, nil
-		}
-	}
 	m.mu.Unlock()
 	if canonical == "" {
 		return nil, errors.New("unknown mobile request")
@@ -407,6 +429,18 @@ func (m *MobileHost) getDetail(id string, thumbnails bool) (Row, error) {
 	if e != nil {
 		return nil, e
 	}
+	// Match Mac's content dependency: ledger scan generation is a consistency
+	// boundary, not a reason to reread an unchanged request's source messages.
+	sourceKey := mobileDetailSource(request)
+	m.mu.Lock()
+	if cached := m.details[id]; !force && cached != nil && cached.Expires > float64(time.Now().Unix()) && cached.Source == sourceKey && (!thumbnails || cached.Thumbnails) {
+		cached.Access = time.Now()
+		cached.Generation = generation
+		r := CloneRow(cached.Envelope)
+		m.mu.Unlock()
+		return r, nil
+	}
+	m.mu.Unlock()
 	start, ok := ParseStamp(request["timestamp"])
 	if !ok {
 		return nil, errors.New("invalid request timestamp")
@@ -422,6 +456,30 @@ func (m *MobileHost) getDetail(id string, thumbnails bool) (Row, error) {
 	detail, e := m.sourceDetail(request, thumbnails)
 	if e != nil {
 		return nil, e
+	}
+	// Source recovery can promote missing metadata/messages and publish a new
+	// ledger generation. Validate against its fresh canonical group, so this
+	// request does not reject the recovery it just performed.
+	generation = m.store.Generation()
+	if e = m.store.Database().QueryRow(`SELECT g.data FROM usage_request_groups g WHERE id=? AND record_kind='user_request' AND is_subagent=0 AND `+mobileLocalGroup, canonical).Scan(&raw); e != nil {
+		return nil, e
+	}
+	request, e = DecodeRow([]byte(raw))
+	if e != nil {
+		return nil, e
+	}
+	sourceKey = mobileDetailSource(request)
+	start, ok = ParseStamp(request["timestamp"])
+	if !ok {
+		return nil, errors.New("invalid request timestamp")
+	}
+	ended, hasEnded = ParseStamp(request["ended_at"])
+	expires = start.Add(7 * 24 * time.Hour)
+	if hasEnded && ended.After(start) {
+		expires = ended.Add(7 * 24 * time.Hour)
+	}
+	if !expires.After(time.Now()) {
+		return nil, errors.New("expired request")
 	}
 	user, final := ValueString(detail["user"]), ValueString(detail["final"])
 	uc, fc := ValueBool(detail["user_complete"]), ValueBool(detail["final_complete"])
@@ -467,11 +525,21 @@ func (m *MobileHost) getDetail(id string, thumbnails bool) (Row, error) {
 		return nil, e
 	}
 	if len(payload) > mobileDetailLimit {
+		for _, a := range attachments {
+			a["thumbnail"] = nil
+		}
+		payload, e = mobileJSON(value)
+		if e != nil {
+			return nil, e
+		}
+	}
+	if len(payload) > mobileDetailLimit {
 		value["user"] = mobilePrefix(user, 1200)
 		value["final"] = mobilePrefix(final, 5000)
 		value["userComplete"] = false
 		value["finalComplete"] = false
 		value["availability"] = "capacity"
+		value["full"] = false
 		for _, a := range attachments {
 			a["thumbnail"] = nil
 		}
@@ -496,7 +564,7 @@ func (m *MobileHost) getDetail(id string, thumbnails bool) (Row, error) {
 		}
 	}
 	envelope := Row{"dataset": "detail-" + id, "revision": revision, "digest": digest, "payload": string(payload)}
-	m.details[id] = &mobileDetail{Envelope: envelope, Expires: float64(expires.Unix()), Access: time.Now(), Generation: generation, Thumbnails: thumbnails}
+	m.details[id] = &mobileDetail{Envelope: envelope, Expires: float64(expires.Unix()), Access: time.Now(), Generation: generation, Thumbnails: thumbnails, Source: sourceKey}
 	m.pruneDetailsLocked()
 	go m.upload()
 	return CloneRow(envelope), nil

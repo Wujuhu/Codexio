@@ -1,136 +1,261 @@
 package backend
 
 import (
-	"bufio"
-	"database/sql"
-	"io"
+	"context"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 )
 
-// Evicted full messages can be recovered only from a verified original source.
-// The lookup is on demand, bounded, and never mistakes a preview for full text.
+// Mac Database.sourceFiles/recoverMessageDetails, backed by the existing Go
+// cursor/origin registry. Recovery is on demand and source-signature gated.
 func (s *Store) sourceMessage(request Row) Row {
-	session, turn := dataString(request, "session_id"), dataString(request, "turn_id")
-	if session == "" || turn == "" || strings.HasPrefix(turn, "legacy-user:") {
+	if err := s.sourceMessageBatch([]Row{request}); err != nil {
 		return nil
 	}
-	rows, e := s.db.Query(`SELECT DISTINCT json_extract(c.data,'$.path') FROM usage_cursors c JOIN usage_origins o ON c.key=o.file_key WHERE o.kind='turn' AND o.item_id IN(SELECT id FROM usage_turns WHERE json_extract(data,'$.session_id')=? AND json_extract(data,'$.turn_id')=?) LIMIT 4`, session, turn)
-	if e != nil {
-		return nil
-	}
-	paths := []string{}
-	for rows.Next() {
-		var path sql.NullString
-		if rows.Scan(&path) == nil && path.Valid {
-			paths = append(paths, path.String)
-		}
-	}
-	rows.Close()
-	for _, path := range paths {
-		if result := readSourceMessage(path, session, turn); len(result) > 0 {
-			return result
-		}
-	}
-	return nil
+	id := turnKey(dataString(request, "session_id"), firstString(request["request_turn_id"], request["turn_id"]))
+	var raw string
+	_ = s.db.QueryRow("SELECT data FROM usage_request_messages WHERE id=?", id).Scan(&raw)
+	return dataRow(raw)
 }
-func readSourceMessage(path, session, target string) Row {
-	f, e := os.Open(path)
-	if e != nil {
+
+// Batch all explicit members and the prompt source before assembling details.
+// Each indexed file is decoded once even when every requested body is partial.
+func (s *Store) sourceMessageBatch(requests []Row) error {
+	s.work.Lock()
+	defer s.work.Unlock()
+	if len(requests) == 0 {
 		return nil
 	}
-	defer f.Close()
-	scan := bufio.NewScanner(io.LimitReader(f, 128<<20))
-	scan.Buffer(make([]byte, 65536), 8<<20)
-	current := ""
-	owner := ""
-	var pending any
-	found := false
-	result := Row{"attachments": []Row{}, "availability": "source", "user_complete": false, "final_complete": false}
-	for scan.Scan() {
-		line := scan.Bytes()
-		if !strings.Contains(string(line), "message") && !strings.Contains(string(line), "turn_context") && !strings.Contains(string(line), "task_started") && !strings.Contains(string(line), "session_meta") && !strings.Contains(string(line), "turn_started") {
+	session := dataString(requests[0], "session_id")
+	if session == "" {
+		return nil
+	}
+	rows, e := s.db.Query(`SELECT DISTINCT c.key,c.data FROM usage_cursors c WHERE json_extract(c.data,'$.go_state.session_id')=? OR EXISTS(SELECT 1 FROM usage_origins o JOIN usage_turns t ON t.id=o.item_id WHERE o.kind='turn' AND o.file_key=c.key AND json_extract(t.data,'$.session_id')=?) ORDER BY c.key LIMIT 8`, session, session)
+	if e != nil {
+		return e
+	}
+	type input struct{ key, path, source, generation, signature string }
+	files := []input{}
+	seenPaths := map[string]bool{}
+	for rows.Next() {
+		var key, raw string
+		if e = rows.Scan(&key, &raw); e != nil {
+			rows.Close()
+			return e
+		}
+		cursor := dataRow(raw)
+		path := dataString(cursor, "path")
+		if seenPaths[path] || !s.verifiedMessagePath(path) {
 			continue
 		}
-		entry, e := DecodeRow(line)
+		f, err := os.Open(path)
+		if err != nil {
+			continue
+		}
+		identity := ledgerFileIdentity(f)
+		f.Close()
+		source := "local"
+		parts := strings.Split(key, ":")
+		if len(parts) == 5 && parts[1] == "local" {
+			source = "local:" + parts[2]
+		}
+		files = append(files, input{key, path, source, dataString(cursor, "generation"), path + ":" + identity + ":" + fileStamp(path)})
+		seenPaths[path] = true
+	}
+	e = rows.Err()
+	rows.Close()
+	if e != nil {
+		return e
+	}
+	parts := []string{}
+	for _, file := range files {
+		parts = append(parts, file.signature)
+	}
+	signature := pythonHash(parts)
+	targets := Row{}
+	for _, request := range requests {
+		if dataString(request, "session_id") != session || approvalRequest(request) || ValueBool(request["is_subagent"]) || dataString(request, "record_kind") == "context_compaction" {
+			continue
+		}
+		turn := firstString(request["request_turn_id"], request["turn_id"])
+		if turn == "" {
+			continue
+		}
+		id := turnKey(session, turn)
+		var raw string
+		_ = s.db.QueryRow("SELECT data FROM usage_request_messages WHERE id=?", id).Scan(&raw)
+		stored := dataRow(raw)
+		terminal := dataString(request, "status") == "completed" || dataString(request, "status") == "aborted" || dataString(request, "request_status") == "completed" || dataString(request, "request_status") == "aborted"
+		root := firstString(request["root_id"], id)
+		ownsInput := ValueBool(request["has_user_message"]) || root == id && dataString(request, "prompt_source_turn_id") == ""
+		complete := len(stored) > 0 && (!ownsInput || ValueBool(stored["user_complete"])) && (!terminal || ValueBool(stored["final_complete"]))
+		if complete || dataString(stored, "recovery_signature") == signature {
+			_, _ = s.db.Exec("UPDATE usage_request_messages SET accessed=? WHERE id=?", float64(time.Now().Unix()), id)
+			continue
+		}
+		targets[id] = true
+		if len(targets) >= 65 {
+			break
+		}
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+	for _, file := range files {
+		if _, err := s.recoverSourceMetadata(context.Background(), file.path, file.source, file.key, file.generation, targets, false, 64<<20); err != nil {
+			continue
+		}
+	}
+	tx, e := s.db.Begin()
+	if e != nil {
+		return e
+	}
+	defer tx.Rollback()
+	for id := range targets {
+		if e = saveMessage(tx, id, Row{"recovery_signature": signature}); e != nil {
+			return e
+		}
+	}
+	if e = tx.Commit(); e != nil {
+		return e
+	}
+	return s.project()
+}
+func (s *Store) verifiedMessagePath(path string) bool {
+	if !filepath.IsAbs(path) || !strings.EqualFold(filepath.Ext(path), ".jsonl") {
+		return false
+	}
+	actual, e := filepath.EvalSymlinks(path)
+	if e != nil || !strings.EqualFold(filepath.Clean(actual), filepath.Clean(path)) {
+		return false
+	}
+	st, e := os.Lstat(path)
+	if e != nil || !st.Mode().IsRegular() || st.Mode()&os.ModeSymlink != 0 {
+		return false
+	}
+	for _, root := range s.roots() {
+		root, e = filepath.Abs(root)
 		if e != nil {
 			continue
 		}
-		p := ValueRow(entry["payload"])
-		kind, sub := dataString(entry, "type"), dataString(p, "type")
-		if kind == "session_meta" {
-			owner = firstString(p["id"], p["thread_id"])
-			if owner != session {
-				return nil
-			}
-		}
-		explicit := ""
-		if kind == "turn_context" {
-			explicit = firstString(p["turn_id"], p["id"])
-		} else if sub == "task_started" || sub == "turn_started" {
-			explicit = dataString(p, "turn_id")
-		}
-		if explicit != "" {
-			if found && explicit != target {
-				break
-			}
-			current = explicit
-			if current == target {
-				found = true
-				if pending != nil {
-					text, attachments, complete := visibleMessage(pending, true)
-					result["user"] = text
-					result["attachments"] = attachments
-					result["user_complete"] = complete
-				}
-			}
-			pending = nil
-		}
-		var input any
-		if kind == "response_item" && dataString(p, "role") == "user" {
-			input = p["content"]
-		} else if sub == "user_message" {
-			input = p["message"]
-			if input == nil {
-				input = p["content"]
-			}
-		}
-		if input != nil {
-			if current != target {
-				pending = input
-			} else {
-				text, attachments, complete := visibleMessage(input, true)
-				if text != "" || len(attachments) > 0 {
-					if dataString(result, "user") == "" {
-						result["user"] = text
-						result["user_complete"] = complete
-						result["attachments"] = attachments
-					}
-				}
-			}
-		}
-		if current != target || owner != session {
+		resolved, err := filepath.EvalSymlinks(root)
+		if err != nil || !strings.EqualFold(filepath.Clean(resolved), filepath.Clean(root)) {
 			continue
 		}
-		var final any
-		if sub == "task_complete" || sub == "turn_complete" {
-			final = p["last_agent_message"]
-		} else if kind == "response_item" && sub == "message" && dataString(p, "role") == "assistant" && (dataString(p, "channel") == "final" || dataString(p, "phase") == "final" || dataString(p, "phase") == "final_answer") {
-			final = p["content"]
-		}
-		if final != nil {
-			text, _, complete := visibleMessage(final, false)
-			if text != "" {
-				result["final"] = text
-				result["final_complete"] = complete
+		for _, folder := range []string{"sessions", "archived_sessions"} {
+			rel, err := filepath.Rel(filepath.Join(root, folder), actual)
+			if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel) {
+				return true
 			}
 		}
 	}
-	if scan.Err() != nil {
-		return nil
+	return false
+}
+
+func (s *Store) requestMessageDetail(request Row, recover bool) (Row, error) {
+	session, turn, canonical := ValueString(request["session_id"]), ValueString(request["turn_id"]), ValueString(request["id"])
+
+	db := s.db
+	root := request
+	var rootRaw string
+	if db.QueryRow("SELECT data FROM usage_query_turns WHERE id=?", canonical).Scan(&rootRaw) == nil {
+		if value, e := DecodeRow([]byte(rootRaw)); e == nil {
+			root = value
+		}
 	}
-	if dataString(result, "user") == "" && dataString(result, "final") == "" {
-		return nil
+	members := []Row{root}
+	seen := map[string]bool{canonical: true, turn: true}
+	for cursor := 0; cursor < len(members) && len(members) < 64; cursor++ {
+		member := members[cursor]
+		key, memberTurn := ValueString(member["id"]), ValueString(member["turn_id"])
+		rows, e := db.Query(`SELECT id,data FROM usage_query_turns WHERE json_extract(data,'$.session_id')=? AND coalesce(json_extract(data,'$.is_subagent'),0)=0 AND coalesce(json_extract(data,'$.record_kind'),'user_request') NOT IN ('automatic_approval_review','approval_review','context_compaction','subagent_request') AND coalesce(json_extract(data,'$.alias_of'),'')='' AND (json_extract(data,'$.root_turn_id') IN (?,?) OR json_extract(data,'$.continuation_of') IN (?,?)) ORDER BY json_extract(data,'$.started_at'),id LIMIT 65`, session, key, memberTurn, key, memberTurn)
+		if e != nil {
+			return nil, e
+		}
+		for rows.Next() {
+			var id, raw string
+			if rows.Scan(&id, &raw) != nil {
+				continue
+			}
+			r, e := DecodeRow([]byte(raw))
+			if e != nil || seen[id] || approvalRequest(r) {
+				continue
+			}
+			if !seen[ValueString(r["continuation_of"])] && !seen[ValueString(r["root_turn_id"])] {
+				continue
+			}
+			if len(members) == 64 {
+				break
+			}
+			members = append(members, r)
+			seen[id] = true
+			if member := ValueString(r["turn_id"]); member != "" {
+				seen[member] = true
+
+			}
+		}
+		e = rows.Err()
+		rows.Close()
+		if e != nil {
+			return nil, e
+		}
 	}
-	return result
+	sort.SliceStable(members, func(i, j int) bool {
+		return ValueString(members[i]["started_at"]) < ValueString(members[j]["started_at"])
+	})
+	promptID := ""
+	if !ValueBool(root["has_user_message"]) {
+		promptID = ValueString(root["prompt_source_turn_id"])
+		if promptID != "" && !strings.HasPrefix(promptID, "turn:") {
+			promptID = "turn:" + session + ":" + promptID
+		}
+	}
+	var prompt Row
+	if promptID != "" {
+		var raw string
+		if db.QueryRow("SELECT data FROM usage_query_turns WHERE id=?", promptID).Scan(&raw) == nil {
+			prompt = dataRow(raw)
+		}
+	}
+	if recover {
+		targets := append([]Row{}, members...)
+		if len(prompt) > 0 {
+			targets = append(targets, prompt)
+		}
+		if e := s.sourceMessageBatch(targets); e != nil {
+			return nil, e
+		}
+	}
+	detail := Row{"user": "", "final": "", "user_complete": false, "final_complete": false, "attachments": []Row{}, "availability": "unavailable"}
+	read := func(member Row) Row {
+		var raw string
+		_ = db.QueryRow("SELECT data FROM usage_request_messages WHERE id=?", dataString(member, "id")).Scan(&raw)
+		return dataRow(raw)
+	}
+	if len(prompt) > 0 {
+		input := read(prompt)
+		if dataString(input, "user") != "" || len(ValueRows(input["attachments"])) > 0 {
+			detail["user"], detail["user_complete"], detail["attachments"] = input["user"], input["user_complete"], input["attachments"]
+		}
+	}
+	for index, member := range members {
+		value := read(member)
+		if ValueString(detail["user"]) == "" && len(ValueRows(detail["attachments"])) == 0 && (ValueString(value["user"]) != "" || len(ValueRows(value["attachments"])) > 0) {
+			detail["user"], detail["user_complete"], detail["attachments"] = value["user"], value["user_complete"], value["attachments"]
+		}
+		if index == len(members)-1 {
+			detail["final"], detail["final_complete"] = value["final"], value["final_complete"]
+		}
+	}
+	if dataString(detail, "user") != "" || dataString(detail, "final") != "" || len(ValueRows(detail["attachments"])) > 0 {
+		detail["availability"] = "partial"
+		terminal := len(members) > 0 && (dataString(members[len(members)-1], "status") == "completed" || dataString(members[len(members)-1], "status") == "aborted")
+		if len(members) < 64 && ValueBool(detail["user_complete"]) && (!terminal || ValueBool(detail["final_complete"])) {
+			detail["availability"] = "available"
+		}
+	}
+	return detail, nil
 }

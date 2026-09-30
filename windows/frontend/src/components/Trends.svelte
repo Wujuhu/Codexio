@@ -6,14 +6,16 @@
  import Filters from './Filters.svelte';
  import Insights from './Insights.svelte';
  import ActivityCalendar from './ActivityCalendar.svelte';
+ import ChatRanking from './ChatRanking.svelte';
  export let data:Row={};
  export let query:Query;
  export let onchange:(q:Query)=>void;
- let tab='activity',share='tokens',visibleChats=5;
+ export let settings:Row={};export let onsave:((r:Row)=>Promise<void>)|undefined;export let onerror:((e:any)=>void)|undefined;
+ let tab='activity',share='tokens';
  $: models=rows(data.models);
  $: total=models.reduce((n,m)=>n+(number(m[share])??0),0);
- $: chatRows=rows(data.chats);
- $: {data.chat_page;visibleChats=5;}
+
+
  function changeTab(next:string){tab=next;}
  function selectRange(row:Row){
    const raw=String(row.date??row.timestamp??'');let start=String(row.from??raw).slice(0,10),end=String(row.through??raw).slice(0,10);
@@ -24,7 +26,7 @@
    if(!/^\d{4}-\d{2}-\d{2}$/.test(start))return;
    tab='trend';onchange({...query,period:'custom',start,end,page:1});
  }
- function pageChat(direction:number){visibleChats=5;onchange({...query,page:Number(data.chat_page??1)+direction,page_size:25});}
+ function pageChat(direction:number){onchange({...query,page:Number(data.chat_page??1)+direction,page_size:25});}
 </script>
 
 <div class="usage-tabs" role="tablist" aria-label={tr('用量')}>
@@ -49,12 +51,9 @@
  </div>
 {:else}
  <div class="usage-section" role="tabpanel" id="usage-panel-chats" aria-labelledby="usage-tab-chats">
-  <h3 class="ranking-title">{tr('本机 Token 排行')}</h3>
-  <div class="ranking-table"><table><thead><tr><th>{tr('聊天')}</th><th>Token</th><th>{tr('费用')}</th><th>{tr('用户请求')}</th></tr></thead><tbody>{#each chatRows.slice(0,visibleChats) as chat}<tr><td title={text(chat.name||chat.session_title||chat.title)}>{text(chat.name||chat.session_title||chat.title)}</td><td>{numeric(chat.tokens??chat.total_tokens)}</td><td>{priced(chat,'usd')}</td><td>{numeric(chat.user_requests)}</td></tr>{/each}</tbody></table>{#if !chatRows.length}<div class="empty small">{tr('暂无数据')}</div>{/if}</div>
-  {#if visibleChats<Math.min(25,chatRows.length)}<button class="show-more" onclick={()=>visibleChats=Math.min(25,visibleChats+5)}>{tr('显示更多')}</button>{/if}
-  {#if Number(data.chat_pages)>1}<div class="ranking-pagination"><button aria-label={tr('上一页')} disabled={Number(data.chat_page??1)<=1} onclick={()=>pageChat(-1)}>{tr('上一页')}</button><span>{data.chat_page??1} / {data.chat_pages}</span><button aria-label={tr('下一页')} disabled={Number(data.chat_page??1)>=Number(data.chat_pages)} onclick={()=>pageChat(1)}>{tr('下一页')}</button></div>{/if}
+  <ChatRanking {data} {settings} {onsave} {onerror} onpage={pageChat}/>
  </div>
 {/if}
 <style>
- .usage-tabs{display:flex;gap:28px;border-bottom:1px solid var(--border);min-width:0}.usage-tabs button{padding:0 0 13px;background:transparent;border:0;border-radius:0;color:var(--muted);font-size:14px;position:relative}.usage-tabs button.selected{color:var(--text);font-weight:500}.usage-tabs button.selected::after{content:'';position:absolute;bottom:-1px;left:0;right:0;height:2px;background:var(--text)}.usage-section{display:flex;flex-direction:column;gap:30px;min-width:0}.trend-section{gap:22px}.ranking-link{display:flex;justify-content:space-between;padding:20px 0 0;border:0;border-top:1px solid var(--border);background:transparent;border-radius:0;font-size:14px}.trend-filter-row{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}.trend-filter-row :global(.filters){flex:1;min-width:0}.trend-filter-row>select{flex-shrink:0}.model-contributions{background:transparent;border:1px solid var(--border);border-radius:18px}.model-contributions h3{margin:0;font-size:16px;font-weight:500}.model-share{margin-top:22px}.model-share>.row{font-size:12px;gap:20px}.model-share>.row>span:first-child{overflow-wrap:anywhere}.model-share>.row>span:last-child{text-align:right}.ranking-title{font-size:18px;font-weight:500;margin:0}.ranking-table{border:1px solid var(--border);border-radius:18px;overflow:hidden}.ranking-table table{border-collapse:collapse;width:100%;table-layout:fixed}.ranking-table th{height:54px;color:var(--muted);font-size:12px;font-weight:400}.ranking-table td{padding:16px 12px;border-top:1px solid var(--border);font-size:12px;overflow-wrap:anywhere}.ranking-table th,.ranking-table td{text-align:center}.ranking-table th:first-child,.ranking-table td:first-child{text-align:left;width:42%;padding-left:24px}.show-more{align-self:flex-start;border-radius:99px}.ranking-pagination{display:flex;align-items:center;justify-content:flex-end;gap:12px;color:var(--muted);font-size:11px}.ranking-pagination button{font-size:11px}
+ .usage-tabs{display:flex;gap:28px;border-bottom:1px solid var(--border);min-width:0}.usage-tabs button{padding:0 0 13px;background:transparent;border:0;border-radius:0;color:var(--muted);font-size:14px;position:relative}.usage-tabs button.selected{color:var(--text);font-weight:500}.usage-tabs button.selected::after{content:'';position:absolute;bottom:-1px;left:0;right:0;height:2px;background:var(--text)}.usage-section{display:flex;flex-direction:column;gap:30px;min-width:0}.trend-section{gap:22px}.ranking-link{display:flex;justify-content:space-between;padding:20px 0 0;border:0;border-top:1px solid var(--border);background:transparent;border-radius:0;font-size:14px}.trend-filter-row{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}.trend-filter-row :global(.filters){flex:1;min-width:0}.trend-filter-row>select{flex-shrink:0}.model-contributions{background:transparent;border:1px solid var(--border);border-radius:18px}.model-contributions h3{margin:0;font-size:16px;font-weight:500}.model-share{margin-top:22px}.model-share>.row{font-size:12px;gap:20px}.model-share>.row>span:first-child{overflow-wrap:anywhere}.model-share>.row>span:last-child{text-align:right}
 </style>

@@ -147,13 +147,18 @@ func (m *MobileHost) serve(ctx context.Context, listener net.Listener) {
 }
 func (m *MobileHost) client(ctx context.Context, c net.Conn) {
 	defer func() { c.Close(); m.mu.Lock(); delete(m.connections, c); m.mu.Unlock(); <-m.clients }()
+	authenticated := false
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
 		}
-		_ = c.SetDeadline(time.Now().Add(10 * time.Second))
+		if authenticated {
+			_ = c.SetReadDeadline(time.Time{})
+		} else {
+			_ = c.SetReadDeadline(time.Now().Add(10 * time.Second))
+		}
 		message, e := mobileReceive(c)
 		if e != nil {
 			return
@@ -162,10 +167,15 @@ func (m *MobileHost) client(ctx context.Context, c net.Conn) {
 		if r == nil {
 			continue
 		}
+		if action := ValueString(r["action"]); action == "sync" || action == "detail" {
+			authenticated = true
+		}
+		_ = c.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		raw, e := mobileJSON(r)
 		if e != nil || mobileFrame(c, 1, raw) != nil {
 			return
 		}
+		_ = c.SetWriteDeadline(time.Time{})
 	}
 }
 func (m *MobileHost) message(message Row) Row {
@@ -200,10 +210,8 @@ func (m *MobileHost) message(message Row) Row {
 			m.mu.Unlock()
 			return m.detailMessage(message)
 		}
-		if action != "sync" {
-			m.mu.Unlock()
-			return Row{"action": "error", "error": "INVALID"}
-		}
+		// iOS keeps sending pair until the first sync response confirms desktop
+		// approval. Mac authenticates this retry and returns the initial datasets.
 		known := ValueRow(message["known"])
 		envelopes := []Row{}
 		revisions := Row{}
@@ -226,7 +234,7 @@ func (m *MobileHost) message(message Row) Row {
 			cloud = mobileOrigin
 		}
 		m.mu.Unlock()
-		return Row{"action": "sync", "known": revisions, "datasets": envelopes, "seen": float64(time.Now().UnixMilli()) / 1000, "supportsAck": true, "cloud": cloud, "capabilities": []string{"request-details-v1"}, "detailVersions": versions}
+		return Row{"action": "sync", "known": revisions, "datasets": envelopes, "seen": float64(time.Now().UnixMilli()) / 1000, "supportsAck": true, "cloud": cloud, "capabilities": []string{"request-kinds-v1", "request-details-v1"}, "detailVersions": versions}
 	}
 	if action == "pair" && readerIDString && readerNameString && localSecretString && cloudSecretString && m.ticket != nil && mobileEqual(ValueString(message["ticket"]), ValueString(m.ticket["ticket"])) && mobileUUID.MatchString(ValueString(reader["id"])) && len([]rune(ValueString(reader["name"]))) <= 40 && mobileSecretPattern.MatchString(ValueString(reader["localSecret"])) && mobileSecretPattern.MatchString(ValueString(reader["cloudSecret"])) && (m.pending == nil || ValueString(m.pending["id"]) == ValueString(reader["id"])) {
 		// Copy only protocol credentials, so a phone cannot add arbitrary fields to
@@ -249,7 +257,7 @@ func (m *MobileHost) detailMessage(message Row) Row {
 		result["error"] = "INVALID"
 		return result
 	}
-	detail, e := m.getDetail(id, true)
+	detail, e := m.getDetailWithForce(id, true, ValueBool(message["force"]) && ValueInt(message["detailPart"]) == 0)
 	if e != nil || detail == nil {
 		result["error"] = "DETAIL_UNAVAILABLE"
 		return result

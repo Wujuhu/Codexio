@@ -3,14 +3,27 @@ package backend
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
+
+type mobileHTTPError struct {
+	status int
+	reason string
+}
+
+func (e *mobileHTTPError) Error() string {
+	if e.reason != "" {
+		return "云端同步 HTTP " + strconv.Itoa(e.status) + "（" + e.reason + "）"
+	}
+	return "云端同步 HTTP " + strconv.Itoa(e.status)
+}
 
 func (m *MobileHost) cloud(ctx context.Context, path, method, token string, value any, detail bool) (Row, error) {
 	if m.mock || ctx == nil || ctx.Err() != nil {
@@ -49,7 +62,8 @@ func (m *MobileHost) cloud(ctx context.Context, path, method, token string, valu
 		return nil, errors.New("云端响应无效或超过容量限制")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, fmt.Errorf("云端同步 HTTP %d", response.StatusCode)
+		failure, _ := DecodeRow(raw)
+		return nil, &mobileHTTPError{status: response.StatusCode, reason: ValueString(failure["error"])}
 	}
 	if len(raw) == 0 {
 		return Row{}, nil
@@ -185,6 +199,7 @@ func (m *MobileHost) uploadWork() {
 	request := func(path, method string, v any, detail bool) error {
 		m.mu.Lock()
 		active := m.enabled && !m.closed && ValueBool(m.host["cloud_enabled"]) && ValueString(m.host["writer"]) == writer
+		active = active && m.workerCtx == ctx && ctx.Err() == nil
 		m.mu.Unlock()
 		if !active {
 			return context.Canceled
@@ -237,39 +252,99 @@ func (m *MobileHost) uploadWork() {
 			m.mu.Unlock()
 		}
 	}
+	m.mu.Lock()
+	probe := time.Now().After(m.nextCapability)
+	supports, kinds := m.cloudDetails, m.cloudRequestKinds
+	m.mu.Unlock()
+	var probeError error
+	if probe {
+		capability, e := m.cloud(ctx, base+"/capabilities", "GET", writer, nil, false)
+		if e == nil {
+			supports, kinds = false, false
+			for _, c := range ValueStrings(capability["capabilities"]) {
+				supports = supports || c == "request-details-v1"
+				kinds = kinds || c == "request-kinds-v1"
+			}
+		} else {
+			var failure *mobileHTTPError
+			if errors.As(e, &failure) && (failure.status == 404 || failure.reason == "NOT_FOUND") {
+				supports, kinds = false, false
+			} else {
+				probeError = e
+			}
+		}
+		m.mu.Lock()
+		m.cloudDetails, m.cloudRequestKinds = supports, kinds
+		m.nextCapability = time.Now().Add(time.Hour)
+		if probeError != nil {
+			m.nextCapability = time.Now().Add(time.Minute)
+		}
+		m.mu.Unlock()
+	}
 	for _, name := range []string{"live", "recent", "trends"} {
 		m.mu.Lock()
 		envelope := CloneRow(m.datasets[name])
 		revision := ValueInt(envelope["revision"])
 		sent := m.sent[name]
 		m.mu.Unlock()
-		if revision > 0 && sent != revision {
+		if revision > 0 && (sent != revision || name == "recent" && probe) {
+			localDigest := ValueString(envelope["digest"])
+			if name == "recent" {
+				// Mac keeps a separate bounded projection for older Workers. Digest
+				// and revision belong to the exact submitted payload, including kinds.
+				var recent []Row
+				if e := json.Unmarshal([]byte(ValueString(envelope["payload"])), &recent); e != nil {
+					m.failure(e)
+					return
+				}
+				if !kinds {
+					filtered := []Row{}
+					for _, r := range recent {
+						if ValueString(r["kind"]) != "approval_review" && !strings.EqualFold(ValueString(r["model"]), "codex-auto-review") {
+							filtered = append(filtered, r)
+						}
+					}
+					recent = filtered
+				}
+				payload, e := mobileJSON(recent)
+				if e != nil {
+					m.failure(e)
+					return
+				}
+				digest := HashString(string(payload))
+				m.mu.Lock()
+				previous := CloneRow(m.cloudRecent)
+				m.mu.Unlock()
+				if ValueString(previous["digest"]) == digest {
+					m.mu.Lock()
+					m.sent[name] = revision
+					m.mu.Unlock()
+					continue
+				}
+				envelope = Row{"dataset": "recent", "revision": max(revision, ValueInt(previous["revision"]), time.Now().UnixMilli()) + 1, "digest": digest, "payload": string(payload)}
+			}
 			if e := request(base+"/data/"+name, "PUT", envelope, false); e != nil {
 				m.failure(e)
 				return
 			}
 			m.mu.Lock()
 			m.sent[name] = revision
-			m.mu.Unlock()
-		}
-	}
-	m.mu.Lock()
-	probe := time.Now().After(m.nextCapability)
-	m.mu.Unlock()
-	if probe {
-		capability, e := m.cloud(ctx, base+"/capabilities", "GET", writer, nil, false)
-		supports := false
-		if e == nil {
-			for _, c := range ValueStrings(capability["capabilities"]) {
-				if c == "request-details-v1" {
-					supports = true
+			if name == "recent" {
+				m.cloudRecent = CloneRow(envelope)
+				if current := m.datasets[name]; current != nil && ValueInt(current["revision"]) <= ValueInt(envelope["revision"]) {
+					current["revision"] = ValueInt(envelope["revision"]) + 1
+					if ValueString(current["digest"]) == localDigest {
+						m.sent[name] = ValueInt(current["revision"])
+					}
 				}
 			}
+			saveError := m.saveProjectionLocked()
+			m.mu.Unlock()
+			if saveError != nil {
+				m.failure(saveError)
+				return
+			}
 		}
-		m.mu.Lock()
-		m.cloudDetails = supports
-		m.nextCapability = time.Now().Add(time.Hour)
-		m.mu.Unlock()
 	}
 	m.mu.Lock()
 	changes := map[string]Row{}
@@ -298,6 +373,10 @@ func (m *MobileHost) uploadWork() {
 		m.sentDetails[detailID] = ValueString(envelope["digest"])
 		m.mu.Unlock()
 		sent++
+	}
+	if probeError != nil {
+		m.failure(probeError)
+		return
 	}
 	m.mu.Lock()
 	changed := m.status != "云端已同步" || m.lastError != ""

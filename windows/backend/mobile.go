@@ -3,6 +3,7 @@ package backend
 // MobileHost is a read-only projection owned by the desktop process. Its local
 // transport is TLS plus raw RFC6455 frames (Network.framework skipHandshake).
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -47,6 +48,7 @@ type mobileDetail struct {
 	Access     time.Time
 	Generation int64
 	Thumbnails bool
+	Source     string
 }
 type MobileHost struct {
 	mu                        sync.Mutex
@@ -80,12 +82,15 @@ type MobileHost struct {
 	sentDetails               map[string]string
 	cloudReaders              map[string]bool
 	cloudDetails              bool
+	cloudRequestKinds         bool
+	cloudRecent               Row
 	nextCapability            time.Time
 	uploading, uploadAgain    bool
 	cloudMu                   sync.Mutex
 	detailMu                  sync.Mutex
 	todayMetric               Row
 	currentTask               Row
+	runningCount              int
 }
 
 func NewMobileHost(directory string, store *Store, quota *QuotaService, config func() Row, mock bool, changed func()) *MobileHost {
@@ -172,7 +177,57 @@ func mobilePrefix(s string, n int) string {
 	}
 	return s
 }
-func mobileJSON(v any) ([]byte, error) { return json.Marshal(v) }
+func mobileJSON(v any) ([]byte, error) {
+	var out bytes.Buffer
+	encoder := json.NewEncoder(&out)
+	encoder.SetEscapeHTML(false)
+	if e := encoder.Encode(v); e != nil {
+		return nil, e
+	}
+	return bytes.TrimSuffix(out.Bytes(), []byte{'\n'}), nil
+}
+func (m *MobileHost) loadProjectionLocked() error {
+	f, e := os.Open(filepath.Join(m.directory, "mobile-projection-win.json"))
+	if errors.Is(e, os.ErrNotExist) {
+		return nil
+	}
+	if e != nil {
+		return errors.New("无法读取移动摘要缓存，原文件已保留")
+	}
+	defer f.Close()
+	data, e := io.ReadAll(io.LimitReader(f, (2<<20)+1))
+	if e != nil || len(data) > 2<<20 {
+		return errors.New("移动摘要缓存超过容量限制，原文件已保留")
+	}
+	value, e := DecodeRow(data)
+	if e != nil {
+		return errors.New("移动摘要缓存格式错误，原文件已保留")
+	}
+	valid := func(envelope Row, dataset string) bool {
+		payload := ValueString(envelope["payload"])
+		_, isString := envelope["payload"].(string)
+		return isString && ValueString(envelope["dataset"]) == dataset && ValueInt(envelope["revision"]) > 0 && len(payload) <= mobileLimit && json.Valid([]byte(payload)) && HashString(payload) == ValueString(envelope["digest"])
+	}
+	for _, dataset := range []string{"live", "recent", "trends"} {
+		if envelope := ValueRow(ValueRow(value["datasets"])[dataset]); valid(envelope, dataset) {
+			m.datasets[dataset] = envelope
+		}
+	}
+	if envelope := ValueRow(value["cloudRecent"]); valid(envelope, "recent") {
+		m.cloudRecent = envelope
+	}
+	return nil
+}
+func (m *MobileHost) saveProjectionLocked() error {
+	if m.mock {
+		return nil
+	}
+	data, e := mobileJSON(Row{"datasets": m.datasets, "cloudRecent": m.cloudRecent})
+	if e != nil {
+		return e
+	}
+	return writePrivateFile(filepath.Join(m.directory, "mobile-projection-win.json"), data)
+}
 func mobileSecret() (string, error) {
 	b := make([]byte, 32)
 	_, e := rand.Read(b)
@@ -341,6 +396,10 @@ func (m *MobileHost) enable() error {
 		m.ctx, m.cancel = context.WithCancel(context.Background())
 	}
 	if e := m.loadIdentityLocked(true); e != nil {
+		m.mu.Unlock()
+		return e
+	}
+	if e := m.loadProjectionLocked(); e != nil {
 		m.mu.Unlock()
 		return e
 	}

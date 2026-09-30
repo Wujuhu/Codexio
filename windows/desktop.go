@@ -112,7 +112,7 @@ func (h *desktopHost) openMain() {
 	h.serial++
 	serial := h.serial
 	h.mu.Unlock()
-	options := application.WebviewWindowOptions{Name: desktopWindowName("main", serial), Title: "Codexio", Width: max(860, min(1800, width)), Height: max(620, min(1400, height)), MinWidth: 860, MinHeight: 620, URL: url, BackgroundColour: application.NewRGB(250, 250, 250), Windows: application.WindowsWindow{Theme: desktopTheme(config)}, DevToolsEnabled: false, DefaultContextMenuDisabled: true}
+	options := application.WebviewWindowOptions{Name: desktopWindowName("main", serial), Title: "Codexio", Width: max(720, min(1800, width)), Height: max(480, min(1400, height)), MinWidth: 720, MinHeight: 480, URL: url, BackgroundColour: application.NewRGB(250, 250, 250), Windows: application.WindowsWindow{Theme: desktopTheme(config)}, DevToolsEnabled: false, DefaultContextMenuDisabled: true}
 	if backend.ValueBool(saved["maximized"]) {
 		options.StartState = application.WindowStateMaximised
 	}
@@ -606,11 +606,13 @@ func (h *desktopHost) action(action string) error {
 			w.Close()
 		}
 	case "toggle-floating":
-		h.mu.Lock()
-		w := h.floating
-		h.mu.Unlock()
-		visible := w == nil || !w.IsVisible()
-		if _, e := h.service.SaveSettings(backend.Row{"widget_visible": visible}); e != nil {
+		config := h.service.Config()
+		visible := !backend.ValueBool(config["widget_visible"]) || backend.ValueString(config["display_mode"]) == "tray"
+		changes := backend.Row{"widget_visible": visible}
+		if visible && backend.ValueString(h.service.Config()["display_mode"]) == "tray" {
+			changes["display_mode"] = "top"
+		}
+		if _, e := h.service.SaveSettings(changes); e != nil {
 			return e
 		}
 	case "hide-floating":

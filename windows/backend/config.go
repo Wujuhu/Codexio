@@ -27,7 +27,7 @@ func systemDefaultConfig() Row {
 		"usage_refresh_interval_seconds": 10, "usage_refresh_interval_user_set": false, "week_estimate_interval_minutes": 30, "week_estimate_interval_version": 2,
 		"codex_roots": []string{systemCodexRoot()}, "account_since": UTCStamp(time.Now()), "main_geometry": nil,
 		"navigation_order": []string{"overview", "logs", "trends", "subscription", "pricing", "settings"}, "navigation_order_version": 1,
-		"sidebar_collapsed": false, "sidebar_width": 180, "log_preview_width": 240, "subscription_profile": Row{"plan": "", "price_usd": nil, "renewal_date": ""}, "language": systemLanguage()}) {
+		"sidebar_collapsed": false, "sidebar_width": 238, "log_preview_width": 240, "native_log_columns": []string{"content", "model", "input", "output", "cost", "duration", "details"}, "subscription_profile": Row{"plan": "", "price_usd": nil, "renewal_date": ""}, "language": systemLanguage()}) {
 		r[k] = v
 	}
 	return r
@@ -201,7 +201,7 @@ func systemNormalizeConfig(r Row) Row {
 			}
 		}
 	}
-	for k, b := range map[string][2]int64{"background_opacity": {0, 100}, "window_width": {200, 1200}, "window_height": {96, 800}, "dock_top_width": {40, 1200}, "dock_top_height": {32, 800}, "dock_side_width": {40, 1200}, "dock_side_height": {32, 800}, "sidebar_width": {120, 180}, "log_preview_width": {220, 480}} {
+	for k, b := range map[string][2]int64{"background_opacity": {0, 100}, "window_width": {200, 1200}, "window_height": {96, 800}, "dock_top_width": {40, 1200}, "dock_top_height": {32, 800}, "dock_side_width": {40, 1200}, "dock_side_height": {32, 800}, "sidebar_width": {140, 320}, "log_preview_width": {220, 480}} {
 		if r[k] == nil {
 			continue
 		}
@@ -230,6 +230,14 @@ func systemNormalizeConfig(r Row) Row {
 		}
 	}
 	r["navigation_order"] = nav
+	columns := []string{"content"}
+	selected := ValueStrings(r["native_log_columns"])
+	for _, field := range []string{"time", "model", "input", "output", "total", "cached", "cache_write", "cache_rate", "cost", "duration", "effort", "speed", "context", "status"} {
+		if systemContains(selected, field) {
+			columns = append(columns, field)
+		}
+	}
+	r["native_log_columns"] = append(columns, "details")
 	roots := []string{}
 	for _, s := range ValueStrings(r["codex_roots"]) {
 		s = strings.TrimSpace(s)
