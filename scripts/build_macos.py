@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
 STAGING = BUILD / "staging/macos"
 DESTINATION = BUILD / "dev/macos"
-WIDGET_VERSION = 22  # v0.3.3 host/update lifecycle and request classification.
+WIDGET_VERSION = 23  # v0.3.4 host bundle, message sync and approval classification.
 
 
 def run(*args, **kwargs):
