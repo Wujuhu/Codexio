@@ -13,7 +13,7 @@ export function effort(value: unknown): string {
 
 export function speed(value: unknown): string {
   const raw = text(value, '').toLowerCase();
-  return ['priority','fast'].includes(raw) ? 'fast' : ['ultrafast','ultra_fast','ultra-fast'].includes(raw) ? 'ultrafast' : '';
+  return ['priority','fast'].includes(raw) ? 'Fast' : ['ultrafast','ultra_fast','ultra-fast'].includes(raw) ? 'Ultrafast' : '';
 }
 
 export function humanPrompt(value: unknown): string {
@@ -33,7 +33,9 @@ export function preview(record: Row): string {
   if (!label && raw) label = /external_codex_apps_open_page|^<(?:environment_context|permissions|INSTRUCTIONS|app-context)|^# AGENTS\.md instructions/i.test(raw) ? (tr('请求详情')==='Request details'?'Context message':'上下文消息') : tr('附件消息');
   if (!label) label = humanPrompt(record.session_title) || kind(record.record_kind ?? 'user_request');
   label = label.replace(/\s+/g, ' ').trim();
-  return Array.from(label).length > 100 ? Array.from(label).slice(0,100).join('') + '…' : label;
+  // The collector owns Mac's bounded 600-character request preview. The cell
+  // truncates only at its measured width, so widening it reveals the text.
+  return label;
 }
 
 export function metadata(record: Row, timeOnly=false): string {

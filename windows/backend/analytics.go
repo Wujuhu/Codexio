@@ -19,6 +19,12 @@ import (
 
 type systemIdentity struct{ Account, Subject string }
 
+var systemAccountTransport = func() *http.Transport {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = systemAccountProxy
+	return transport
+}()
+
 func systemIdentityKey(i systemIdentity) string {
 	b, _ := json.Marshal([]string{"codexio-week-v1", i.Account, i.Subject})
 	return HashString(string(b))
@@ -269,7 +275,7 @@ func (c *systemAnalyticsClient) request(ctx context.Context, route string, paylo
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "Codexio/"+c.version)
-	httpClient := &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(next *http.Request, via []*http.Request) error {
+	httpClient := &http.Client{Transport: systemAccountTransport, Timeout: 15 * time.Second, CheckRedirect: func(next *http.Request, via []*http.Request) error {
 		if len(via) >= 5 || next.URL.Scheme != "https" || next.URL.Host != "chatgpt.com" || next.URL.User != nil {
 			return errors.New("服务重定向被拒绝")
 		}

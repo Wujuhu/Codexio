@@ -75,6 +75,10 @@ func resumeObserve(entry, state Row) Row {
 		current = Row{"id": id}
 	}
 	metadata := ValueRow(p["internal_chat_message_metadata_passthrough"])
+	thread := firstString(p["thread_id"], metadata["thread_id"])
+	if thread != "" && thread != dataString(state, "session_id") {
+		return nil
+	}
 	owner := firstString(p["turn_id"], metadata["turn_id"])
 	if owner != "" && owner != dataString(current, "id") {
 		return nil
@@ -148,6 +152,90 @@ func requestMessagePreview(text string, attachments []Row) string {
 		return "附件消息"
 	}
 	return clip(strings.Join(strings.Fields(text), " "), 600)
+}
+
+// Only disproven control-only input is reversible. Empty/evicted human bodies
+// and explicit continuation/review evidence must retain their existing ownership.
+func completeControlInput(text string) bool {
+	matches := externalAppInputPattern.FindAllStringSubmatchIndex(text, -1)
+	if len(matches) == 0 {
+		return false
+	}
+	end := 0
+	for _, match := range matches {
+		if strings.TrimSpace(text[end:match[0]]) != "" || !strings.EqualFold(text[match[2]:match[3]], text[match[4]:match[5]]) {
+			return false
+		}
+		end = match[1]
+	}
+	return strings.TrimSpace(text[end:]) == ""
+}
+
+func repairInputOwnership(row, detail Row) bool {
+	preview := dataString(row, "prompt_preview")
+	// Ingestion rejects incomplete control prefixes, but a clipped historical
+	// preview cannot prove that genuine input did not follow the envelope.
+	if !completeControlInput(preview) && (!ValueBool(detail["user_complete"]) || !completeControlInput(dataString(detail, "user"))) {
+		return false
+	}
+	text := userText(dataString(detail, "user"))
+	attachments := ValueRows(detail["attachments"])
+	row["prompt_preview"] = requestMessagePreview(text, attachments)
+	row["has_user_message"] = text != "" || len(attachments) > 0
+	row["input_hashes"] = nil
+	row["input_ownership_version"] = requestMetadataVersion
+	row["record_kind"] = classifyRequest(row)
+	return true
+}
+
+func (s *Store) repairRetainedInputs(tx *sql.Tx, session string) error {
+	rows, e := tx.Query(`SELECT id,data FROM usage_turns WHERE json_extract(data,'$.session_id')=? AND instr(lower(COALESCE(json_extract(data,'$.prompt_preview'),'')),'<external_codex_apps_')>0 ORDER BY json_extract(data,'$.started_at') DESC LIMIT 512`, session)
+	if e != nil {
+		return e
+	}
+	type retained struct {
+		id  string
+		row Row
+	}
+	items := []retained{}
+	for rows.Next() {
+		var id, raw string
+		if e = rows.Scan(&id, &raw); e != nil {
+			rows.Close()
+			return e
+		}
+		items = append(items, retained{id, dataRow(raw)})
+	}
+	e = rows.Err()
+	rows.Close()
+	if e != nil {
+		return e
+	}
+	for _, item := range items {
+		messageID := dataString(item.row, "id")
+		var raw string
+		_ = tx.QueryRow("SELECT data FROM usage_request_messages WHERE id=?", messageID).Scan(&raw)
+		detail := dataRow(raw)
+		if !repairInputOwnership(item.row, detail) {
+			continue
+		}
+		if dataString(detail, "user") != "" {
+			text := userText(dataString(detail, "user"))
+			if e = saveMessage(tx, messageID, Row{"user": text, "user_complete": ValueBool(detail["user_complete"]) || text == ""}); e != nil {
+				return e
+			}
+			var digest string
+			var revision int64
+			if tx.QueryRow("SELECT digest,revision FROM usage_request_messages WHERE id=?", messageID).Scan(&digest, &revision) == nil {
+				item.row["message_digest"], item.row["message_revision"] = digest, revision
+			}
+		}
+		payload := dataJSON(item.row)
+		if _, e = tx.Exec("UPDATE usage_turns SET data=? WHERE id=? AND data<>?", payload, item.id, payload); e != nil {
+			return e
+		}
+	}
+	return nil
 }
 func messageFingerprint(content any) string {
 	text := ValueString(content)
@@ -229,6 +317,11 @@ func persistCollectedTurn(tx *sql.Tx, evidence, state Row, source, file, generat
 	rows.Close()
 	for _, item := range items {
 		row := item.row
+		// A repaired preview may be replaced by a later genuine input observed
+		// during this bounded recovery, even when the old preview was nonempty.
+		if ValueInt(row["input_ownership_version"]) == requestMetadataVersion && ValueBool(evidence["has_user_message"]) {
+			row["prompt_preview"] = evidence["prompt_preview"]
+		}
 		for _, k := range []string{"cwd", "session_cwd", "root_turn_id", "parent_session_id", "parent_turn_id", "inherited_parent_turn_id", "alias_of", "model", "reasoning_effort", "service_tier", "model_context_window"} {
 			if evidence[k] != nil && evidence[k] != "" && evidence[k] != "unknown" {
 				row[k] = evidence[k]
@@ -274,6 +367,11 @@ func (s *Store) recoverSourceMetadata(ctx context.Context, path, source, file, g
 		return nil, e
 	}
 	defer tx.Rollback()
+	if metadataOnly {
+		if e = s.repairRetainedInputs(tx, dataString(state, "session_id")); e != nil {
+			return nil, e
+		}
+	}
 	offset := int64(0)
 	for {
 		if e = ctx.Err(); e != nil {

@@ -276,7 +276,7 @@ func (h *desktopHost) openFloating() {
 	}
 	c := h.service.Config()
 	width, height := desktopFloatingSize(c)
-	w := h.app.Window.NewWithOptions(application.WebviewWindowOptions{Name: "Codexio-floating", Title: "Codexio", URL: "/?view=floating", Width: width, Height: height, MinWidth: 40, MinHeight: 32, MaxWidth: 1200, MaxHeight: 800, Frameless: true, AlwaysOnTop: backend.ValueString(c["display_mode"]) != "bottom", BackgroundType: application.BackgroundTypeTransparent, Windows: application.WindowsWindow{HiddenOnTaskbar: true, Theme: desktopTheme(c), NonClientRegionSupport: true}, DevToolsEnabled: false, DefaultContextMenuDisabled: true})
+	w := h.app.Window.NewWithOptions(application.WebviewWindowOptions{Name: "Codexio-floating", Title: "Codexio", URL: "/?view=floating", Width: width, Height: height, MinWidth: 40, MinHeight: 32, MaxWidth: 1200, MaxHeight: 800, Frameless: true, AlwaysOnTop: backend.ValueString(c["display_mode"]) != "bottom", BackgroundType: application.BackgroundTypeTransparent, BackgroundColour: application.NewRGBA(0, 0, 0, 0), Windows: application.WindowsWindow{HiddenOnTaskbar: true, Theme: application.Dark, DisableFramelessWindowDecorations: true, NonClientRegionSupport: true}, DevToolsEnabled: false, DefaultContextMenuDisabled: true})
 	h.mu.Lock()
 	h.floating = w
 	h.mu.Unlock()

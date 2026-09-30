@@ -55,7 +55,11 @@ func NewService(directory, executable, version string, mock bool, callbacks Desk
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Service{config: c, directory: directory, version: version, mock: mock, callbacks: callbacks, ctx: ctx, cancel: cancel}
-	s.store, err = OpenStore(DataOptions{Directory: directory, Roots: ValueStrings(c["codex_roots"]), Mock: mock, Config: CloneRow(c)})
+	s.store, err = OpenStore(DataOptions{Directory: directory, Roots: ValueStrings(c["codex_roots"]), Mock: mock, Config: CloneRow(c), ScanUpdated: func(stamp string) {
+		if callbacks.Changed != nil {
+			callbacks.Changed("codexio:clock", Row{"updated_at": stamp})
+		}
+	}})
 	if err != nil {
 		cancel()
 		return nil, err
@@ -136,9 +140,10 @@ func (s *Service) GetOverview(q Query) (Row, error) {
 	if e != nil {
 		return nil, e
 	}
-	return Row{"summary": summary, "chart": chart, "recent": recent, "models": models, "comparison": s.comparison(q, summary), "quota": s.subscription(false), "state": s.store.Status(), "generation": s.store.Generation()}, nil
+	return Row{"summary": summary, "chart": chart, "recent": recent, "models": models, "quota": s.subscription(false), "state": s.store.Status(), "generation": s.store.Generation()}, nil
 }
 func (s *Service) GetLogs(q Query) (PageResult, error)         { return s.store.Page(q) }
+func (s *Service) GetState() Row                               { return s.store.Status() }
 func (s *Service) GetDetails(id string, page int) (Row, error) { return s.store.Detail(id, page) }
 func (s *Service) GetTrends(q Query) (Row, error) {
 	summary, e := s.store.Summary(q)
@@ -159,7 +164,7 @@ func (s *Service) GetTrends(q Query) (Row, error) {
 		return nil, e
 	}
 	s.requestAccountReports(false)
-	return Row{"summary": summary, "chart": chart, "models": models, "insights": insights, "heatmap": insights["heatmap"], "activity": Row{"rows": insights["activity"]}, "chats": insights["chats"], "chat_page": insights["chat_page"], "chat_pages": insights["chat_pages"], "chat_total": insights["chat_total"], "comparison": s.comparison(q, summary), "chat_usage": s.GetChatRanking("weekly_limit_percent", 1)}, nil
+	return Row{"summary": summary, "chart": chart, "models": models, "insights": insights, "heatmap": insights["heatmap"], "activity": Row{"rows": insights["activity"]}, "chats": insights["chats"], "chat_page": insights["chat_page"], "chat_pages": insights["chat_pages"], "chat_total": insights["chat_total"], "chat_usage": s.GetChatRanking("weekly_limit_percent", 1)}, nil
 }
 func (s *Service) GetSubscription() Row { return s.subscription(true) }
 func (s *Service) GetTrayState() Row {
@@ -491,7 +496,7 @@ func (s *Service) requestAccountReports(force bool) {
 	}()
 }
 func (s *Service) reportThreads() []Row {
-	rows, e := s.store.Database().Query(`SELECT session_id,COALESCE((SELECT MIN(json_extract(t.data,'$.started_at')) FROM usage_turns t WHERE json_extract(t.data,'$.session_id')=c.session_id),MIN(timestamp)) FROM usage_priced_calls c WHERE session_id<>'' AND EXISTS(SELECT 1 FROM usage_query_sources s WHERE s.record_id=c.id AND (s.source_id='local' OR s.source_id LIKE 'local:%')) GROUP BY session_id ORDER BY 2 DESC LIMIT 10000`)
+	rows, e := s.store.Database().Query(`WITH local_threads AS (SELECT session_id,MIN(timestamp) AS first_meter FROM usage_priced_calls c WHERE session_id<>'' AND EXISTS(SELECT 1 FROM usage_query_sources s WHERE s.record_id=c.id AND (s.source_id='local' OR s.source_id LIKE 'local:%')) GROUP BY session_id ORDER BY MIN(timestamp) DESC,session_id LIMIT 10000), turn_starts AS (SELECT json_extract(data,'$.session_id') AS session_id,MIN(NULLIF(json_extract(data,'$.started_at'),'')) AS started_at FROM usage_turns GROUP BY json_extract(data,'$.session_id')) SELECT l.session_id,COALESCE(t.started_at,l.first_meter) FROM local_threads l LEFT JOIN turn_starts t ON t.session_id=l.session_id ORDER BY COALESCE(t.started_at,l.first_meter) DESC,l.session_id`)
 	if e != nil {
 		return []Row{}
 	}

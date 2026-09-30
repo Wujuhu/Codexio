@@ -29,10 +29,11 @@ type PageResult struct {
 }
 
 type DataOptions struct {
-	Directory string
-	Roots     []string
-	Mock      bool
-	Config    Row
+	Directory   string
+	Roots       []string
+	Mock        bool
+	Config      Row
+	ScanUpdated func(string)
 }
 
 type SystemOptions struct {

@@ -46,8 +46,14 @@ func (h *desktopHost) applyWindowAppearance(w *application.WebviewWindow) {
 		} else if backend.ValueString(c["theme"]) == "light" {
 			dark = false
 		}
+		if w.Name() == "Codexio-floating" {
+			dark = true
+		}
 		w32.SetTheme(uintptr(hwnd), dark)
 	})
+	if w.Name() == "Codexio-floating" {
+		w.SetBackgroundColour(application.NewRGBA(0, 0, 0, 0))
+	}
 }
 func (h *desktopHost) releaseIcons() {
 	h.iconMu.Lock()

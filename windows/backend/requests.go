@@ -115,7 +115,7 @@ func (s *Store) project() error {
 	s.mu.RUnlock()
 	priceChanged := dataString(state, "prices") != version
 	full := prior == "" || priceChanged
-	groupFull := full || ValueInt(state["request_projection_version"]) != 1
+	groupFull := full || ValueInt(state["request_projection_version"]) != requestMetadataVersion
 	// Running status expires without rescanning history. Future rows are filtered by query time.
 	now := time.Now()
 	expired := false
@@ -204,7 +204,7 @@ func (s *Store) project() error {
 		return e
 	}
 	generation := s.Generation() + 1
-	_, e = tx.Exec("INSERT INTO usage_query_state VALUES('go_projection',?) ON CONFLICT(key) DO UPDATE SET data=excluded.data", dataJSON(Row{"revision": revision, "prices": version, "generation": generation, "request_projection_version": 1}))
+	_, e = tx.Exec("INSERT INTO usage_query_state VALUES('go_projection',?) ON CONFLICT(key) DO UPDATE SET data=excluded.data", dataJSON(Row{"revision": revision, "prices": version, "generation": generation, "request_projection_version": requestMetadataVersion}))
 	if e != nil {
 		return e
 	}
@@ -227,6 +227,11 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 	}
 	metadata := map[string]Row{}
 	for _, incoming := range turns {
+		if strings.Contains(strings.ToLower(dataString(incoming, "prompt_preview")), "<external_codex_apps_") {
+			var raw string
+			_ = tx.QueryRow("SELECT data FROM usage_request_messages WHERE id=?", dataString(incoming, "id")).Scan(&raw)
+			repairInputOwnership(incoming, dataRow(raw))
+		}
 		if incoming["verified"] == false {
 			continue
 		}

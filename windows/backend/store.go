@@ -25,6 +25,7 @@ type Store struct {
 	config                  Row
 	status                  Row
 	lastScanAt              string
+	lastScanDisplay         string
 	prices                  []Row
 	priceVersion            string
 	priceStatus             Row
@@ -44,6 +45,7 @@ type Store struct {
 	queryCache              map[string]string
 	queryCacheGeneration    int64
 	metadataRepairRemaining int
+	metadataRepairPriority  map[string]bool
 }
 type directorySnapshot struct {
 	stamp   int64
@@ -264,7 +266,16 @@ func (s *Store) Run(ctx context.Context, changed func()) {
 		if e != nil {
 			s.status = Row{"status": "error", "error": e.Error()}
 		} else {
-			s.lastScanAt = ledgerStamp(time.Now())
+			s.lastScanAt = ledgerStamp(now)
+		}
+		// Scan freshness belongs to the header clock, not the ledger generation.
+		scanUpdated := ""
+		if e == nil {
+			display := now.Format("2006-01-02 15:04 -0700")
+			if display != s.lastScanDisplay {
+				s.lastScanDisplay = display
+				scanUpdated = s.lastScanAt
+			}
 		}
 		statusChanged := previous != dataJSON(s.status)
 		interval := ValueInt(s.config["usage_refresh_interval_seconds"])
@@ -273,6 +284,9 @@ func (s *Store) Run(ctx context.Context, changed func()) {
 		}
 		s.mu.Unlock()
 		s.work.Unlock()
+		if scanUpdated != "" && s.options.ScanUpdated != nil {
+			s.options.ScanUpdated(scanUpdated)
+		}
 		if (before != s.Generation() || statusChanged) && changed != nil {
 			changed()
 		}

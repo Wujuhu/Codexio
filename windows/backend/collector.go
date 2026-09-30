@@ -50,6 +50,11 @@ var rolloutUUID = regexp.MustCompile(`(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0
 var mentionedFilePattern = regexp.MustCompile(`(?m)^## (.+?): ((?:[A-Za-z]:[\\/]|/)[^\r\n]+)$`)
 var embeddedImagePattern = regexp.MustCompile(`(?is)<image\b[^>]*>.*?</image\s*>`)
 
+// Bump input interpretation without invalidating byte cursors or immutable meters.
+const requestMetadataVersion = 2
+
+var externalAppInputPattern = regexp.MustCompile(`(?is)<external_codex_apps_([a-z0-9_]+)(?:\s[^>]*)?>.*?</external_codex_apps_([a-z0-9_]+)\s*>`)
+
 func rolloutID(path string) string {
 	ids := rolloutUUID.FindAllString(filepath.Base(path), -1)
 	if len(ids) > 0 {
@@ -134,6 +139,26 @@ func fileStamp(p string) string {
 }
 func (s *Store) collect(ctx context.Context, force bool) error {
 	s.metadataRepairRemaining = 4
+	s.metadataRepairPriority = map[string]bool{}
+	// Repair proved control-only rows first while keeping the normal parent-first
+	// meter scan order. Remaining migration work retains the four-source budget.
+	priority, e := s.db.Query(`SELECT key FROM usage_cursors c WHERE json_extract(c.data,'$.parser_version')=1 AND COALESCE(json_extract(c.data,'$.metadata_version'),0)<>? AND EXISTS(SELECT 1 FROM usage_turns t WHERE json_extract(t.data,'$.session_id')=json_extract(c.data,'$.go_state.session_id') AND instr(lower(COALESCE(json_extract(t.data,'$.prompt_preview'),'')),'<external_codex_apps_')>0) ORDER BY json_extract(c.data,'$.mtime') DESC LIMIT 4`, requestMetadataVersion)
+	if e != nil {
+		return e
+	}
+	for priority.Next() {
+		var key string
+		if e = priority.Scan(&key); e != nil {
+			priority.Close()
+			return e
+		}
+		s.metadataRepairPriority[key] = true
+	}
+	e = priority.Err()
+	priority.Close()
+	if e != nil {
+		return e
+	}
 	rediscover := force || time.Since(s.lastDiscovery) > 5*time.Minute
 	if rediscover {
 		s.lastDiscovery = time.Now()
@@ -215,7 +240,7 @@ func (s *Store) collect(ctx context.Context, force bool) error {
 		}
 	}
 	// Full-message storage is bounded independently of the immutable usage ledger.
-	_, e := s.db.Exec(`DELETE FROM usage_request_messages WHERE id IN (SELECT id FROM (SELECT id,row_number() OVER(ORDER BY accessed DESC,id) n,sum(size) OVER(ORDER BY accessed DESC,id) bytes FROM usage_request_messages) WHERE n>512 OR bytes>67108864)`)
+	_, e = s.db.Exec(`DELETE FROM usage_request_messages WHERE id IN (SELECT id FROM (SELECT id,row_number() OVER(ORDER BY accessed DESC,id) n,sum(size) OVER(ORDER BY accessed DESC,id) bytes FROM usage_request_messages) WHERE n>512 OR bytes>67108864)`)
 	return e
 }
 func (s *Store) readTitles(root string, force bool) error {
@@ -352,9 +377,14 @@ func (s *Store) scanFile(ctx context.Context, path, key, source string, force bo
 	identity := ledgerFileIdentity(f)
 	// Old classification is repaired from metadata only, at most four related
 	// sources per collection. Unchanged sources are never replayed again.
-	if !force && ValueInt(cursor["parser_version"]) == 1 && dataString(cursor, "identity") == identity && ValueInt(cursor["metadata_version"]) != 1 && s.metadataRepairRemaining > 0 {
+	if !force && ValueInt(cursor["parser_version"]) == 1 && dataString(cursor, "identity") == identity && ValueInt(cursor["metadata_version"]) != requestMetadataVersion && s.metadataRepairRemaining > 0 && (len(s.metadataRepairPriority) == 0 || s.metadataRepairPriority[key]) {
 		s.metadataRepairRemaining--
-		recovered, err := s.recoverSourceMetadata(ctx, path, source, key, dataString(cursor, "generation"), nil, true, 32<<20)
+		delete(s.metadataRepairPriority, key)
+		limit := offset
+		if limit > 32<<20 {
+			limit = 32 << 20
+		}
+		recovered, err := s.recoverSourceMetadata(ctx, path, source, key, dataString(cursor, "generation"), nil, true, limit)
 		if err != nil {
 			return err
 		}
@@ -362,11 +392,9 @@ func (s *Store) scanFile(ctx context.Context, path, key, source string, force bo
 		if recovered["request_source"] != nil {
 			oldState["request_source"] = recovered["request_source"]
 		}
-		if stat.Size() <= 32<<20 {
+		if offset <= 32<<20 {
 			for _, k := range []string{"resume_tracking", "last_input", "previous_turn_id", "request_model"} {
-				if recovered[k] != nil {
-					oldState[k] = recovered[k]
-				}
+				oldState[k] = recovered[k]
 			}
 		}
 		for id, value := range ValueRow(recovered["turns"]) {
@@ -377,8 +405,8 @@ func (s *Store) scanFile(ctx context.Context, path, key, source string, force bo
 				existing["record_kind"] = classifyRequest(existing)
 			}
 		}
-		cursor["metadata_version"] = 1
-		cursor["metadata_partial"] = stat.Size() > 32<<20
+		cursor["metadata_version"] = requestMetadataVersion
+		cursor["metadata_partial"] = offset > 32<<20
 		if _, err = s.db.Exec("UPDATE usage_cursors SET data=? WHERE key=?", dataJSON(cursor), key); err != nil {
 			return err
 		}
@@ -459,7 +487,7 @@ func (s *Store) scanFile(ctx context.Context, path, key, source string, force bo
 	}
 	metadataVersion := ValueInt(cursor["metadata_version"])
 	if !valid {
-		metadataVersion = 1
+		metadataVersion = requestMetadataVersion
 	}
 	cursor = Row{"path": path, "parser_version": 1, "metadata_version": metadataVersion, "metadata_partial": cursor["metadata_partial"], "identity": identity, "prefix": prefixHash(f, offset), "offset": offset, "size": stat.Size(), "mtime": stat.ModTime().UnixNano(), "checkpoint": checkpointHash(f, offset), "generation": generation, "go_state": state, "reconcile_pending": reconcile}
 	if _, e = tx.Exec("INSERT INTO usage_cursors VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data", key, dataJSON(cursor)); e != nil {
@@ -525,6 +553,11 @@ func pruneOrigin(tx *sql.Tx, source, file, generation string) error {
 }
 func userText(text string) string {
 	if strings.Contains(text, "<send_user_message_question_reply>") {
+		return ""
+	}
+	text = externalAppInputPattern.ReplaceAllString(text, " ")
+	// A clipped control wrapper is still context, never a recovered human prompt.
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(text)), "<external_codex_apps_") {
 		return ""
 	}
 	for _, marker := range []string{"## My request:", "## My request", "<user_request>"} {
@@ -659,6 +692,8 @@ func getTurn(state Row, id, timestamp string) Row {
 	r["started_inferred"] = true
 	r["status"] = "unknown"
 	r["verified"] = true
+	r["has_user_message"] = false
+	r["prompt_preview"] = ""
 	r["first_turn"] = state["first_turn"] == nil
 	if state["first_turn"] == nil {
 		state["first_turn"] = id
@@ -833,7 +868,9 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 		}
 	}
 	message, representation := entryUserContent(entry)
-	if message != nil {
+	inputMetadata := ValueRow(p["internal_chat_message_metadata_passthrough"])
+	inputThread, inputTurn := firstString(p["thread_id"], inputMetadata["thread_id"]), firstString(p["turn_id"], inputMetadata["turn_id"])
+	if message != nil && (inputThread == "" || inputThread == dataString(state, "session_id")) && (inputTurn == "" || inputTurn == dataString(state, "turn_id")) {
 		if ok, owner := questionReply(message, state); ok {
 			r := getTurn(state, dataString(state, "turn_id"), timestamp)
 			if r != nil && owner != "" && owner != dataString(r, "turn_id") {
