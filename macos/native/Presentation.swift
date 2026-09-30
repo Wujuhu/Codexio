@@ -48,11 +48,13 @@ final class AsyncProjection<Value>: ObservableObject {
         guard key != requested else { return }
         requested = key; generation += 1; let token = generation
         work?.cancel()
+        work = nil
         if let cached = cache[key] { value = cached; return }
         let next = DispatchWorkItem { [weak self] in
             let result = compute()
             DispatchQueue.main.async {
                 guard let self, self.generation == token else { return }
+                self.work = nil
                 self.cache[key] = result; self.order.append(key)
                 while self.order.count > 12 { self.cache.removeValue(forKey:self.order.removeFirst()) }
                 self.value = result

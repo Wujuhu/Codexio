@@ -43,7 +43,9 @@ enum Branding {
         }
     }
     static func dockIcon(_ image: NSImage) -> NSImage {
-        NSImage(size:NSSize(width:1024,height:1024),flipped:false) { rect in
+        // 512 points retain the source's 1024 pixels on a 2x display without
+        // creating oversized original-image and application-icon snapshots.
+        NSImage(size:NSSize(width:512,height:512),flipped:false) { rect in
             image.draw(in:rect.insetBy(dx:rect.width*0.09,dy:rect.height*0.09))
             return true
         }

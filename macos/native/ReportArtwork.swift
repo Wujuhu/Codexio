@@ -473,7 +473,8 @@ enum ReportArtworkResources {
     }
 }
 
-// Static exports show the final values; the live card opts into native number transitions.
+// Live cards retain their fade-in; numbers switch directly to avoid retaining
+// glyph bitmaps for every intermediate numeric-text transition.
 private struct ReportArtNumbersVisibleKey: EnvironmentKey { static let defaultValue = true }
 extension EnvironmentValues {
     var reportArtNumbersVisible: Bool {
@@ -486,7 +487,6 @@ struct ReportArtNumber: View {
     @Environment(\.reportArtNumbersVisible) private var visible
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
-        Text(visible || reduceMotion ? value : "0").monospacedDigit().contentTransition(.numericText())
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.45), value: value)
+        Text(visible || reduceMotion ? value : "0").monospacedDigit().contentTransition(.identity)
     }
 }
