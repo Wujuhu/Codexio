@@ -42,6 +42,9 @@ private struct MobileDetailTransfer {
     @Published private(set) var detailLoading = Set<String>()
     @Published private(set) var detailVersions: [String:Int64] = [:]
     @Published private(set) var supportsDetails = false
+    @Published private(set) var imageValues: [String:Data] = [:]
+    @Published private(set) var imageLoading = Set<String>()
+    @Published private(set) var imageErrors: [String:String] = [:]
     private let queue = DispatchQueue(label:"com.wujuhu.codexio.ios.network",qos:.utility)
     private let files = DispatchQueue(label:"com.wujuhu.codexio.ios.cache",qos:.utility)
     private var envelopes: [String:MobileEnvelope] = [:]
@@ -68,6 +71,22 @@ private struct MobileDetailTransfer {
     private var localDetails: [String:Bool] = [:]
     private var expandAfterLoad = Set<String>()
     private var detailTransfers: [String:MobileDetailTransfer] = [:]
+    private var localImageSupport: Bool?
+    private var cloudImageSupport: Bool?
+    private var imageRequests: [String:MobileImageReference] = [:]
+    private var imageTokens: [String:UUID] = [:]
+    private var imageTasks: [String:Task<Void,Never>] = [:]
+    private var imageTransfers: [String:MobileDetailTransfer] = [:]
+    private var localImages = Set<String>()
+    private var pendingImages: [String] = []
+    private var imageWaitUntil: [String:Date] = [:]
+    private var pausedImages: [MobileImageReference] = []
+    private var imageCacheReferences: [String:MobileImageReference] = [:]
+    private var imageDeadlines: [String:Double] = [:]
+    private var imageAccess: [String:UInt64] = [:]
+    private var imageAccessClock: UInt64 = 0
+    private var failedImages: [String:MobileImageReference] = [:]
+    private var expiredImages = Set<String>()
     init() {
         let savedName = UserDefaults.standard.string(forKey:"phone-name")?.trimmingCharacters(in:.whitespacesAndNewlines) ?? ""
         if !savedName.isEmpty { phoneName = String(savedName.prefix(40)) }
@@ -118,17 +137,27 @@ private struct MobileDetailTransfer {
         browser = nil; connection = nil; localReady = false; localWaiting = nil; task?.cancel(); http.stop(); http = MobileHTTP(); cloudInFlight = false
         syncOperations.removeAll(); localOperation = nil; refreshing = false
         detailTasks.values.forEach {$0.cancel()}; detailTasks.removeAll(); localDetails.removeAll(); expandAfterLoad.removeAll(); detailLoading.removeAll(); detailTransfers.removeAll()
+        for image in imageRequests.values where !pausedImages.contains(where:{$0.id == image.id}) { pausedImages.append(image) }
+        if pausedImages.count > 32 { pausedImages.removeFirst(pausedImages.count-32) }
+        imageTasks.values.forEach {$0.cancel()}; imageTasks.removeAll(); imageRequests.removeAll(); imageTokens.removeAll()
+        localImages.removeAll(); imageTransfers.removeAll(); pendingImages.removeAll(); imageLoading.removeAll()
+        imageWaitUntil.removeAll()
+        localImageSupport = nil
     }
     func select(_ id: String) {
         let resuming = id == selected && (!envelopes.isEmpty || live != nil || !recordPath.isEmpty || !detailValues.isEmpty)
         let active = foreground; deactivate(); foreground = active; selected = id
         UserDefaults.standard.set(id,forKey:"selected-mac"); cloudDenied = false; nextCloud = .distantPast
         if resuming {
+            pruneRetainedContent()
             if foreground, device?.invalid != true { connect(); startTimer() }
+            let resume = pausedImages; pausedImages.removeAll()
+            for image in resume { loadImage(image) }
             return
         }
         live = nil; recent = []; trends = MobileTrends(daily:[],periods:[]); envelopes = [:]; updated = nil
         recordPath = []; detailValues = [:]; detailErrors = [:]; detailEnvelopes = [:]; detailAccess = [:]; detailVersions = [:]; supportsDetails = false
+        clearImages()
         guard device != nil else { status = "扫描电脑上的二维码开始配对"; return }
         let stamp = generation, url = cacheDirectory.appendingPathComponent(id+".json")
         files.async {
@@ -136,7 +165,8 @@ private struct MobileDetailTransfer {
             let cache = data.flatMap {try? JSONDecoder().decode(MobileDiskCache.self,from:$0)}
             Task { @MainActor in
                 guard stamp == self.generation, self.envelopes.isEmpty, let cache else { return }
-                self.live = cache.live; self.recent = cache.recent.filter {$0.started >= Date().timeIntervalSince1970-7*86400}; self.trends = cache.trends.singleModelsOnly()
+                self.live = cache.live; self.recent = cache.recent.filter {$0.started >= Date().timeIntervalSince1970-MobileProtocol.detailRetention}; self.trends = cache.trends.singleModelsOnly()
+                self.pruneRetainedContent()
                 self.envelopes = cache.versions.mapValues {_ in MobileEnvelope(dataset:"",revision:0,digest:"",payload:"")}
                 for (key,revision) in cache.versions { self.envelopes[key] = MobileEnvelope(dataset:key,revision:revision,digest:cache.digests[key] ?? "",payload:"") }
                 self.status = "已显示缓存"; self.persistCache()
@@ -158,6 +188,7 @@ private struct MobileDetailTransfer {
             attempt = PairedMac(code:code,reader:reader); selected = code.host; envelopes = [:]
             live = nil; recent = []; trends = MobileTrends(daily:[],periods:[])
             recordPath = []; detailValues = [:]; detailEnvelopes = [:]; detailVersions = [:]; supportsDetails = false; detailErrors = [:]
+            detailAccess = [:]; clearImages()
             pairing = true; status = "正在寻找电脑，请保持同一局域网"; error = nil
             connect(); startTimer()
         } catch { self.error = error.localizedDescription }
@@ -180,15 +211,17 @@ private struct MobileDetailTransfer {
         devices[index].invalid = true
         let active = foreground, id = selected
         deactivate(); foreground = active; status = "配对已失效"; error = nil; revokedPrompt = id
+        clearImages()
         Task {do {try await saveDevices()} catch {self.error=error.localizedDescription}}
     }
     private func startTimer() {
         timer = Timer.scheduledTimer(withTimeInterval:3,repeats:true) { [weak self] _ in Task { @MainActor in
             guard let self, self.foreground else { return }
-            if self.recent.contains(where:{$0.started < Date().timeIntervalSince1970-7*86400}) { self.recent.removeAll {$0.started < Date().timeIntervalSince1970-7*86400}; self.persistCache() }
-            if self.detailValues.values.contains(where:{$0.expires <= Date().timeIntervalSince1970}) { self.pruneDetails(); self.persistDetails() }
+            self.pruneRetainedContent()
+            if !self.pendingImages.isEmpty { self.drainImages() }
             if let waiting = self.localWaiting, Date().timeIntervalSince(waiting) > 8 {
                 self.connection?.cancel(); self.connection = nil; self.localReady = false; self.finishLocalSync()
+                self.retryLocalImages()
             }
             if let attempt = self.attempt, Date().timeIntervalSince1970 > attempt.code.expires { self.error = "配对超时，请在电脑上重新生成二维码"; self.cancelPair(); return }
             if self.pairing { if self.connection == nil && Date().timeIntervalSince(self.lastProbe) >= 3 { self.connect() } else { self.sendLocal() } }
@@ -201,6 +234,7 @@ private struct MobileDetailTransfer {
         guard foreground, let device, device.invalid != true else { return }
         lastProbe = Date(); browser?.cancel(); connection?.cancel(); connection = nil; localReady = false
         finishLocalSync()
+        retryLocalImages()
         let probe = beginSync()
         let stamp = generation
         let browser = NWBrowser(for:.bonjour(type:MobileProtocol.service,domain:nil),using:.tcp); self.browser = browser
@@ -217,7 +251,7 @@ private struct MobileDetailTransfer {
             guard let self, let value, stamp == self.generation, self.connection === value else { return }
             switch state {
             case .ready: self.receive(value,stamp:stamp); self.sendLocal()
-            case .failed: self.localReady = false; self.connection = nil; value.cancel(); self.finishLocalSync(); self.cloudRefresh()
+            case .failed: self.localReady = false; self.connection = nil; value.cancel(); self.finishLocalSync(); self.retryLocalImages(); self.cloudRefresh()
             default: break
             }
         }}
@@ -229,7 +263,7 @@ private struct MobileDetailTransfer {
         var reader = device.reader; reader.name = String(phoneName.prefix(40))
         let stamp = generation
         MobileProtocol.send(MobileMessage(action:pairing ? "pair" : "sync",ticket:pairing ? device.code.ticket : nil,reader:reader,known:envelopes.mapValues(\.revision)),over:connection) { [weak self] error in
-            if error != nil { Task { @MainActor in guard let self, stamp == self.generation, self.connection === connection else { return }; self.localReady = false; self.finishLocalSync() } }
+            if error != nil { Task { @MainActor in guard let self, stamp == self.generation, self.connection === connection else { return }; self.localReady = false; self.finishLocalSync(); self.retryLocalImages() } }
         }
     }
     private func receive(_ value: NWConnection,stamp: UUID) {
@@ -238,7 +272,18 @@ private struct MobileDetailTransfer {
             Task { @MainActor in
             guard let self, let value, stamp == self.generation, self.connection === value else { return }
             guard failure == nil, let message = parsed else {
-                self.localReady = false; self.connection = nil; value.cancel(); self.finishLocalSync(); self.cloudRefresh(); return
+                self.localReady = false; self.connection = nil; value.cancel(); self.finishLocalSync(); self.retryLocalImages(); self.cloudRefresh(); return
+            }
+            if message.action == "image" {
+                guard let id = message.imageID, self.localImages.contains(id), let token = self.imageTokens[id] else { self.receive(value,stamp:stamp); return }
+                let finished = await self.acceptImageResponse(message,id:id,token:token)
+                guard stamp == self.generation, self.connection === value else { return }
+                guard self.imageTokens[id] == token else { self.receive(value,stamp:stamp); return }
+                if finished { self.finishImage(id,token:token) }
+                else if let next = self.imageTransfers[id]?.next, let reader = self.device?.reader {
+                    MobileProtocol.send(MobileMessage(action:"image",reader:reader,imageID:id,imagePart:next),over:value)
+                }
+                self.receive(value,stamp:stamp); return
             }
             if message.action == "detail", let id = message.detailID {
                 guard let full = self.localDetails[id] else { self.receive(value,stamp:stamp); return }
@@ -265,15 +310,17 @@ private struct MobileDetailTransfer {
                 }
                 if message.cloud == MobileProtocol.cloudOrigin {self.cloudDenied = false}
                 self.supportsDetails = message.capabilities?.contains(MobileProtocol.detailCapability) == true
+                self.localImageSupport = message.capabilities?.contains(MobileProtocol.imageCapability) == true
                 self.setDetailVersions(message.detailVersions ?? [:])
                 await self.apply(message.datasets ?? [])
                 guard stamp == self.generation else { return }
                 let stale = self.envelopes.contains { key,value in (message.known?[key] ?? 0) < value.revision }
                 self.localReady = !stale; self.status = stale ? "电脑数据版本较旧 · 保留较新缓存" : "局域网"
                 if !stale { self.updated = Date() }
+                self.drainImages()
                 if message.supportsAck == true {MobileProtocol.send(MobileMessage(action:"ack",known:self.envelopes.mapValues(\.revision)),over:value)}
             } else if message.action == "revoked" { self.pairingRevoked(); return
-            } else if message.action == "error" { self.error = message.error; self.localReady = false; value.cancel(); self.connection = nil; if self.pairing { self.cancelPair() }; return }
+            } else if message.action == "error" { self.error = message.error; self.localReady = false; value.cancel(); self.connection = nil; self.retryLocalImages(); if self.pairing { self.cancelPair() }; return }
             self.receive(value,stamp:stamp)
         }}
     }
@@ -291,6 +338,7 @@ private struct MobileDetailTransfer {
                 let data = try await http.request("/v1/hosts/\(device.id)/sync?"+query,token:device.reader.cloudSecret)
                 let response = try await Task.detached(priority:.utility) {try JSONDecoder().decode(MobileMessage.self,from:data)}.value
                 guard stamp == generation, !Task.isCancelled else { return }
+                cloudImageSupport = response.capabilities?.contains(MobileProtocol.imageCapability) == true
                 if !localReady {
                     supportsDetails = response.capabilities?.contains(MobileProtocol.detailCapability) == true
                     setDetailVersions(response.detailVersions ?? [:])
@@ -299,6 +347,7 @@ private struct MobileDetailTransfer {
                     if !localReady { status = "云同步"; updated = response.seen.map {Date(timeIntervalSince1970:$0)} }
                 }
                 failures = 0; nextCloud = Date().addingTimeInterval(live?.runningCount ?? 0 > 0 ? 15 : 60)
+                drainImages()
             } catch {
                 guard stamp == generation, !Task.isCancelled else { return }
                 failures += 1; nextCloud = Date().addingTimeInterval(min(900,Double(30 * (1 << min(failures,5)))))
@@ -341,22 +390,230 @@ private struct MobileDetailTransfer {
                     if !liveValue.name.isEmpty, let index = devices.firstIndex(where:{$0.id == selected}), devices[index].code.name != liveValue.name {
                         devices[index].code.name = liveValue.name; renamed = true
                     }
-                case "recent": guard let recentValue else { throw MobileError.message("invalid recent") }; recent = recentValue.filter {$0.started >= Date().timeIntervalSince1970-7*86400}.prefix(200).map {$0}
+                case "recent": guard let recentValue else { throw MobileError.message("invalid recent") }; recent = recentValue.filter {$0.started >= Date().timeIntervalSince1970-MobileProtocol.detailRetention}.prefix(200).map {$0}
                 case "trends": guard let trendsValue else { throw MobileError.message("invalid trends") }; trends = trendsValue
                 default: break
                 }
-                envelopes[value.dataset] = value; changed = true
+                // Only revision/digest participate in subsequent syncs. Keep
+                // message text in the bounded, expiring decoded stores.
+                var version = value; version.payload = ""; envelopes[value.dataset] = version; changed = true
             } catch { self.error = "同步数据格式不兼容，请更新 Codexio" }
         }
         if renamed { do {try await saveDevices()} catch {self.error = error.localizedDescription}; guard stamp == generation else { return } }
+        pruneRetainedContent()
         if changed { persistCache() }
     }
     private func setDetailVersions(_ values: [String:Int64]) {
         let bounded = Dictionary(uniqueKeysWithValues:values.filter {$0.key.count == 64 && $0.value > 0}.prefix(MobileProtocol.detailRows).map {($0.key,$0.value)})
         if detailVersions != bounded { detailVersions = bounded }
     }
+    func loadImage(_ image: MobileImageReference, force: Bool = false) {
+        let id = image.id, now = Date().timeIntervalSince1970
+        guard image.valid, foreground, let device, device.invalid != true else { return }
+        guard detailValues.values.contains(where:{$0.expires > now && ($0.images?.contains(image) ?? false)}) else { return }
+        if image.expires <= now || image.availability == "expired" || expiredImages.contains(id) {
+            imageValues.removeValue(forKey:id); imageCacheReferences.removeValue(forKey:id); imageAccess.removeValue(forKey:id); expiredImages.insert(id)
+            imageErrors[id] = imageError("IMAGE_EXPIRED"); failedImages[id] = image; return
+        }
+        guard image.availability == "available" else { imageErrors[id] = imageError("IMAGE_UNAVAILABLE"); failedImages[id] = image; return }
+        if !force, imageValues[id] != nil, imageCacheReferences[id] == image, (imageDeadlines[id] ?? 0) > now {
+            touchImage(id); return
+        }
+        if let active = imageRequests[id] {
+            if active == image { return }
+            if let token = imageTokens[id] { finishImage(id,token:token,drain:false) }
+        }
+        if !force, failedImages[id] == image { return }
+        guard imageRequests.count < 32 else { imageErrors[id] = "正在读取其他图片，请稍后重试。"; failedImages[id] = image; return }
+        imageRequests[id] = image; imageTokens[id] = UUID(); imageDeadlines[id] = min(imageDeadlines[id] ?? image.expires,image.expires)
+        imageWaitUntil[id] = Date().addingTimeInterval(10); pausedImages.removeAll {$0.id == id}
+        imageLoading.insert(id); imageErrors.removeValue(forKey:id); failedImages.removeValue(forKey:id)
+        pendingImages.append(id); drainImages()
+    }
+    func imageIsExpired(_ image: MobileImageReference) -> Bool {
+        image.availability == "expired" || expiredImages.contains(image.id)
+            || min(image.expires,imageDeadlines[image.id] ?? image.expires) <= Date().timeIntervalSince1970
+    }
+    private func drainImages() {
+        guard foreground, let device, device.invalid != true else { return }
+        while imageTasks.count < 2, !pendingImages.isEmpty {
+            let id = pendingImages.removeFirst()
+            guard let image = imageRequests[id], let token = imageTokens[id] else { continue }
+            if min(image.expires,imageDeadlines[id] ?? image.expires) <= Date().timeIntervalSince1970 {
+                imageErrors[id] = imageError("IMAGE_EXPIRED"); expiredImages.insert(id); failedImages[id] = image
+                finishImage(id,token:token,drain:false); continue
+            }
+            let stamp = generation
+            if localReady, localImageSupport == true, let connection {
+                localImages.insert(id)
+                imageTasks[id] = Task {
+                    do { try await Task.sleep(for:.seconds(30)) } catch { return }
+                    guard stamp == generation, imageTokens[id] == token else { return }
+                    imageErrors[id] = "电脑未返回完整图片，请重试。"; failedImages[id] = image
+                    finishImage(id,token:token)
+                }
+                MobileProtocol.send(MobileMessage(action:"image",reader:device.reader,imageID:id,imagePart:0),over:connection)
+            } else if device.code.cloud != nil, !cloudDenied, cloudImageSupport != false {
+                let client = http
+                imageTasks[id] = Task {
+                    var complete = false
+                    do {
+                        for part in 0..<24 {
+                            guard stamp == generation, imageTokens[id] == token, !Task.isCancelled else { return }
+                            let bytes = try await client.request("/v1/hosts/\(device.id)/images/\(id)?reader=\(device.reader.id)&part=\(part)",token:device.reader.cloudSecret)
+                            let message = try await Task.detached(priority:.utility) { try JSONDecoder().decode(MobileMessage.self,from:bytes) }.value
+                            guard stamp == generation, imageTokens[id] == token, !Task.isCancelled else { return }
+                            if await acceptImageResponse(message,id:id,token:token) { complete = true; break }
+                        }
+                        guard stamp == generation, imageTokens[id] == token, !Task.isCancelled else { return }
+                        if !complete { imageErrors[id] = "图片分片不完整，请重试。" }
+                    } catch {
+                        guard stamp == generation, imageTokens[id] == token, !Task.isCancelled else { return }
+                        if case MobileError.http(let code,_,let reason) = error {
+                            if code == 403 && reason == "REVOKED" { pairingRevoked(); return }
+                            if code == 401 || code == 403 { cloudDenied = true }
+                            imageErrors[id] = (code == 401 || code == 403) ? "云端需重新授权，暂时无法读取图片。" : imageError(reason)
+                            if reason == "IMAGE_EXPIRED" { expiredImages.insert(id) }
+                            if reason == "IMAGES_UNSUPPORTED" { cloudImageSupport = false }
+                        } else { imageErrors[id] = "图片读取失败，请重试。" }
+                    }
+                    guard stamp == generation, imageTokens[id] == token else { return }
+                    if imageErrors[id] != nil { failedImages[id] = image }
+                    finishImage(id,token:token)
+                }
+            } else if !localReady, localImageSupport == nil, Date() < (imageWaitUntil[id] ?? .distantPast) {
+                // Give the existing Bonjour probe/sync time to report its
+                // capabilities. The ordinary store timer expires this wait.
+                pendingImages.insert(id,at:0); return
+            } else {
+                imageErrors[id] = cloudDenied ? "云端需重新授权，暂时无法读取图片。"
+                    : (localReady || cloudImageSupport == false ? imageError("IMAGES_UNSUPPORTED") : "离线，暂无图片缓存。")
+                failedImages[id] = image; finishImage(id,token:token,drain:false)
+            }
+        }
+    }
+    private func acceptImageResponse(_ message: MobileMessage, id: String, token: UUID) async -> Bool {
+        guard imageTokens[id] == token, let image = imageRequests[id] else { return true }
+        if message.error == "REVOKED" { pairingRevoked(); return true }
+        if let error = message.error {
+            imageErrors[id] = imageError(error); failedImages[id] = image
+            if error == "IMAGE_EXPIRED" { expiredImages.insert(id) }
+            if error == "IMAGES_UNSUPPORTED" {
+                if localImages.contains(id) { localImageSupport = false } else { cloudImageSupport = false }
+            }
+            return true
+        }
+        guard message.action == "image", message.imageID == id,
+              let manifest = message.imageManifest, manifest.valid(for:id,limit:MobileProtocol.imageEnvelopeLimit), manifest.parts <= 24,
+              let part = message.imagePart, let encoded = message.imageChunk, encoded.utf8.count <= 90_000 else {
+            imageErrors[id] = "图片响应格式无效，请重试。"; failedImages[id] = image; return true
+        }
+        let stamp = generation
+        let chunk = await Task.detached(priority:.utility) { () -> Data? in
+            guard let value = Data(base64Encoded:encoded), !value.isEmpty, value.count <= MobileProtocol.imageChunkBytes else { return nil }
+            return value
+        }.value
+        guard stamp == generation, imageTokens[id] == token else { return true }
+        var transfer = imageTransfers.removeValue(forKey:id) ?? MobileDetailTransfer(manifest:manifest)
+        guard let chunk, transfer.manifest == manifest, part == transfer.next,
+              chunk.count == min(MobileProtocol.imageChunkBytes,manifest.bytes-transfer.bytes.count) else {
+            imageErrors[id] = "图片在读取期间发生变化，请重试。"; failedImages[id] = image; return true
+        }
+        transfer.bytes.append(chunk); transfer.next += 1; imageTransfers[id] = transfer
+        guard transfer.next == manifest.parts else { return false }
+        let payloadBytes = transfer.bytes
+        let decoded = await Task.detached(priority:.utility) { () -> (Data?,Double?,String?) in
+            guard payloadBytes.count == manifest.bytes, MobileProtocol.hash(payloadBytes) == manifest.digest,
+                  let payload = try? JSONDecoder().decode(MobileImagePayload.self,from:payloadBytes) else { return (nil,nil,nil) }
+            return (payload.decoded(for:image),payload.expires,payload.request)
+        }.value
+        guard stamp == generation, imageTokens[id] == token else { return true }
+        let now = Date().timeIntervalSince1970
+        guard image.expires > now, (decoded.1 ?? image.expires) > now else {
+            imageErrors[id] = imageError("IMAGE_EXPIRED"); expiredImages.insert(id); failedImages[id] = image; return true
+        }
+        guard let bytes = decoded.0, let expires = decoded.1, let request = decoded.2,
+              let detail = detailValues[request], detail.expires > now, detail.images?.contains(image) == true else {
+            imageErrors[id] = "图片完整性校验失败，请重试。"; failedImages[id] = image; return true
+        }
+        imageValues[id] = bytes; imageCacheReferences[id] = image; imageDeadlines[id] = min(image.expires,expires)
+        touchImage(id); imageErrors.removeValue(forKey:id); failedImages.removeValue(forKey:id)
+        pruneImages(); return true
+    }
+    private func imageError(_ code: String?) -> String {
+        switch code {
+        case "IMAGE_EXPIRED": return "图片已超过 3 天保留期。"
+        case "IMAGE_UNAVAILABLE", "NOT_FOUND": return "图片暂不可用。"
+        case "IMAGES_UNSUPPORTED": return "当前连接尚未提供图片同步。"
+        case "IMAGE_CAPACITY": return "图片超出同步容量，暂不可用。"
+        default: return "图片读取失败，请重试。"
+        }
+    }
+    private func touchImage(_ id: String) {
+        imageAccessClock &+= 1; imageAccess[id] = imageAccessClock
+    }
+    private func finishImage(_ id: String, token: UUID, drain: Bool = true) {
+        guard imageTokens[id] == token else { return }
+        imageTasks.removeValue(forKey:id)?.cancel(); imageRequests.removeValue(forKey:id); imageTokens.removeValue(forKey:id)
+        imageTransfers.removeValue(forKey:id); localImages.remove(id); pendingImages.removeAll {$0 == id}; imageLoading.remove(id)
+        imageWaitUntil.removeValue(forKey:id)
+        if drain { drainImages() }
+    }
+    private func retryLocalImages() {
+        for id in localImages {
+            imageTasks.removeValue(forKey:id)?.cancel(); imageTransfers.removeValue(forKey:id); imageTokens[id] = UUID()
+            if !pendingImages.contains(id) { pendingImages.append(id) }
+        }
+        localImages.removeAll(); drainImages()
+    }
+    private func clearImages() {
+        imageTasks.values.forEach {$0.cancel()}; imageTasks.removeAll(); imageRequests.removeAll(); imageTokens.removeAll()
+        imageTransfers.removeAll(); localImages.removeAll(); pendingImages.removeAll(); pausedImages.removeAll()
+        imageWaitUntil.removeAll()
+        imageValues.removeAll(); imageLoading.removeAll(); imageErrors.removeAll(); imageCacheReferences.removeAll()
+        imageDeadlines.removeAll(); imageAccess.removeAll(); imageAccessClock = 0; failedImages.removeAll(); expiredImages.removeAll()
+        localImageSupport = nil; cloudImageSupport = nil
+    }
+    private func pruneImages() {
+        let now = Date().timeIntervalSince1970
+        for id in imageDeadlines.filter({$0.value <= now}).map(\.key) {
+            imageValues.removeValue(forKey:id); imageCacheReferences.removeValue(forKey:id); imageAccess.removeValue(forKey:id)
+            imageDeadlines.removeValue(forKey:id); imageErrors[id] = imageError("IMAGE_EXPIRED"); expiredImages.insert(id)
+            if let image = imageRequests[id] { failedImages[id] = image }
+            if let token = imageTokens[id] { finishImage(id,token:token,drain:false) }
+        }
+        var bytes = 0, count = 0
+        for id in imageValues.keys.sorted(by:{(imageAccess[$0] ?? 0) > (imageAccess[$1] ?? 0)}) {
+            let size = imageValues[id]?.count ?? 0
+            if count < 16, bytes+size <= 8*1_024*1_024 { bytes += size; count += 1 }
+            else { imageValues.removeValue(forKey:id); imageCacheReferences.removeValue(forKey:id); imageAccess.removeValue(forKey:id) }
+        }
+        let retained = Set(detailValues.values.flatMap {$0.images ?? []}.map(\.id)).union(imageRequests.keys).union(imageValues.keys)
+        for id in Set(imageDeadlines.keys).union(imageErrors.keys).union(failedImages.keys).union(expiredImages) where !retained.contains(id) {
+            imageDeadlines.removeValue(forKey:id); imageErrors.removeValue(forKey:id); failedImages.removeValue(forKey:id); expiredImages.remove(id)
+        }
+        pausedImages.removeAll {$0.expires <= now || !retained.contains($0.id)}
+        drainImages()
+    }
+    private func pruneRetainedContent() {
+        let now = Date().timeIntervalSince1970, cutoff = Date().timeIntervalSince1970-MobileProtocol.detailRetention
+        var changed = false
+        if recent.contains(where:{$0.started < cutoff}) {
+            recent.removeAll {$0.started < cutoff}; changed = true
+            if var value = envelopes["recent"] { value.payload = ""; envelopes["recent"] = value }
+        }
+        if let task = live?.task, task.started < cutoff {
+            live?.task = nil; changed = true
+            if var value = envelopes["live"] { value.payload = ""; envelopes["live"] = value }
+        }
+        if changed { persistCache() }
+        if detailValues.values.contains(where:{$0.expires <= now}) { pruneDetails(); persistDetails() }
+        if imageDeadlines.values.contains(where:{$0 <= now}) { pruneImages() }
+    }
     func loadDetail(_ id: String, full: Bool = false, force: Bool = false) {
         guard id.count == 64, foreground, let device, device.invalid != true else { return }
+        let resume = pausedImages.filter { image in detailValues[id]?.images?.contains(image) == true }
+        for image in resume { loadImage(image) }
         if !force, let cached = detailValues[id], cached.expires > Date().timeIntervalSince1970,
            (detailEnvelopes[id]?.revision ?? 0) >= (detailVersions[id] ?? 0), !full || cached.full {
             detailAccess[id] = Date(); return
@@ -413,9 +670,15 @@ private struct MobileDetailTransfer {
         detailLoading.remove(id); detailTasks.removeValue(forKey:id); detailTransfers.removeValue(forKey:id)
         if expandAfterLoad.remove(id) != nil, !full, detailErrors[id] == nil { loadDetail(id,full:true) }
     }
-    func cancelDetail(_ id: String) {
+    func cancelDetail(_ id: String, pauseImages: Bool = true) {
         detailTasks[id]?.cancel(); detailTasks.removeValue(forKey:id); localDetails.removeValue(forKey:id)
         detailLoading.remove(id); detailTransfers.removeValue(forKey:id); expandAfterLoad.remove(id)
+        let ids = Set((detailValues[id]?.images ?? []).map(\.id))
+        for image in Array(imageRequests.values) where ids.contains(image.id) {
+            if pauseImages, !pausedImages.contains(where:{$0.id == image.id}), pausedImages.count < 32 { pausedImages.append(image) }
+            if let token = imageTokens[image.id] { finishImage(image.id,token:token,drain:false) }
+        }
+        if pauseImages { drainImages() }
     }
     private func acceptDetailResponse(_ message: MobileMessage, id: String) async -> Bool {
         if let envelope = message.detail { await applyDetail(envelope,id:id); return true }
@@ -463,8 +726,10 @@ private struct MobileDetailTransfer {
             if keep.count < 16, bytes + size <= 8 * 1_024 * 1_024 { keep.insert(id); bytes += size }
         }
         for id in Array(detailValues.keys) where !keep.contains(id) {
+            cancelDetail(id,pauseImages:false); detailErrors.removeValue(forKey:id)
             detailValues.removeValue(forKey:id); detailEnvelopes.removeValue(forKey:id); detailAccess.removeValue(forKey:id)
         }
+        pruneImages()
     }
     private func loadDetailCache(_ id: String, stamp: UUID) {
         let url = cacheDirectory.appendingPathComponent(id+"-details.json")
@@ -482,7 +747,7 @@ private struct MobileDetailTransfer {
                 for (envelope,value) in decoded where self.detailValues[value.id] == nil {
                     self.detailEnvelopes[value.id] = envelope; self.detailValues[value.id] = value; self.detailAccess[value.id] = .distantPast
                 }
-                self.pruneDetails()
+                self.pruneDetails(); self.persistDetails()
             }
         }
     }

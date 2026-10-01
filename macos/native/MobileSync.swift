@@ -5,8 +5,6 @@ import Network
 import Security
 import CoreImage.CIFilterBuiltins
 import SystemConfiguration
-import ImageIO
-import UniformTypeIdentifiers
 
 private struct MobileHostIdentity: Codable {
     var id: String
@@ -22,12 +20,15 @@ private struct MobileHostIdentity: Codable {
     var lastSync: SyncStamp?
     var localSyncs: [String:SyncStamp]?
     var cloudSync: SyncStamp?
+    var imageCapability: Bool?
 }
 struct SyncStamp: Codable { var time: Date; var route: String }
+private struct MobileImageStamp: Codable { var digest: String; var expires: Double }
 private struct MobileDetailStamp: Codable {
     var revision: Int64
     var digest: String
     var sent: String?
+    var imageIDs: [String]? // Last successfully submitted cloud references.
 }
 
 // Native listener and background export reuse the existing UsageSnapshot. No collector.
@@ -57,6 +58,25 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
     private var detailSources: [String:String] = [:]
     private var detailStamps: [String:MobileDetailStamp] = [:]
     private var detailDeferred: [String:Date] = [:]
+    private var cloudImages = false
+    private var sentImages: [String:MobileImageStamp] = [:]
+    private var imageDeferred: [String:Date] = [:]
+    private lazy var imageCache: MobileImageCache = {
+        let cache = MobileImageCache(queue:queue)
+        cache.onReady = { [weak self] id in
+            guard let self, self.active else { return }
+            let previous = self.details[id]?.digest
+            _ = try? self.loadDetail(id)
+            guard self.details[id]?.digest != previous else { return }
+            self.detailSources.removeValue(forKey:id)
+            for (key,connection) in self.connections where self.authenticated[key] != nil {
+                MobileProtocol.send(MobileMessage(action:"sync",known:self.datasets.mapValues(\.revision),datasets:[],seen:Date().timeIntervalSince1970,capabilities:self.capabilities,detailVersions:self.details.mapValues(\.revision)),over:connection)
+            }
+            self.upload()
+        }
+        return cache
+    }()
+    private var transientErrorRoute: String? // Main queue only.
     private var cloudDetails: Bool?
     private var cloudRequestKinds = false
     private var cloudRecent: MobileEnvelope?
@@ -98,15 +118,26 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
     }
     private var stateURL: URL { paths.data.appendingPathComponent("mobile-projection.json") }
     private var detailStateURL: URL { paths.data.appendingPathComponent("mobile-detail-revisions.json") }
+    private var imageStateURL: URL { paths.data.appendingPathComponent("mobile-image-revisions.json") }
     private var cloudRecentURL: URL { paths.data.appendingPathComponent("mobile-cloud-recent.json") }
-    private var capabilities: [String] { [MobileProtocol.requestKindCapability] + (detailProvider == nil ? [] : [MobileProtocol.detailCapability]) }
+    private var capabilities: [String] { [MobileProtocol.requestKindCapability] + (detailProvider == nil ? [] : [MobileProtocol.detailCapability,MobileProtocol.imageCapability]) }
     private func saveDetailStamps() throws {
         try MobileProtocol.encode(detailStamps).write(to:detailStateURL,options:.atomic)
         try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:detailStateURL.path)
     }
-    private func report(_ text: String) {
+    private func report(_ text: String, transientRoute: String? = nil) {
         let normal = ["尚未开启","局域网服务已开启","云端已启用","同步已停止","局域网优先"].contains {text.hasPrefix($0)}
-        DispatchQueue.main.async { if self.status != text { self.status = text }; self.syncError = normal ? nil : text }
+        let hasRecentLocalSync = !authenticated.isEmpty && (host?.localSyncs?.values.contains { Date().timeIntervalSince($0.time) < 120 } ?? false)
+        DispatchQueue.main.async {
+            if self.status != text { self.status = text }
+            self.transientErrorRoute = normal ? nil : transientRoute
+            self.syncError = normal || (transientRoute == "cloud" && hasRecentLocalSync) ? nil : text
+        }
+    }
+    private static func temporaryNetworkFailure(_ error: Error) -> Bool {
+        if error is URLError { return true }
+        if case MobileError.http(let code,_,_) = error { return code == 429 || code >= 500 }
+        return false
     }
     private func synchronized(_ route: String, reader: String? = nil) {
         let stamp = SyncStamp(time:Date(),route:route)
@@ -114,7 +145,10 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
         if route == "cloud" { self.host?.cloudSync = stamp }
         if let reader { if host?.localSyncs == nil {host?.localSyncs = [:]}; host?.localSyncs?[reader] = stamp }
         let local = host?.localSyncs ?? [:], cloud = host?.cloudSync
-        DispatchQueue.main.async { self.lastSync = stamp; self.localSyncs = local; self.cloudSync = cloud }
+        DispatchQueue.main.async {
+            self.lastSync = stamp; self.localSyncs = local; self.cloudSync = cloud
+            if self.transientErrorRoute != nil { self.syncError = nil; self.transientErrorRoute = nil }
+        }
         if Date().timeIntervalSince(metadataSaved) >= 300 { try? saveHost(); metadataSaved = Date() }
     }
     func setNote(_ id: String,_ value: String) {
@@ -172,7 +206,9 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                 if let data = try? Data(contentsOf:self.stateURL) { self.datasets = try JSONDecoder().decode([String:MobileEnvelope].self,from:data) }
                 if let data = try? Data(contentsOf:self.detailStateURL) { self.detailStamps = (try? JSONDecoder().decode([String:MobileDetailStamp].self,from:data)) ?? [:] }
                 if let data = try? Data(contentsOf:self.cloudRecentURL) { self.cloudRecent = try? JSONDecoder().decode(MobileEnvelope.self,from:data) }
-                self.cloudDetails = nil; self.nextCapabilityCheck = .distantPast
+                self.cloudDetails = nil; self.cloudImages = self.host?.imageCapability == true; self.nextCapabilityCheck = .distantPast
+                if let data = try? Data(contentsOf:self.imageStateURL), data.count <= 64*1024 { self.sentImages = (try? JSONDecoder().decode([String:MobileImageStamp].self,from:data)) ?? [:] }
+                self.sentImages = self.sentImages.filter {$0.value.expires > Date().timeIntervalSince1970}
                 self.exportRevision = nil; self.nextHistory = .distantPast
                 if let value = self.datasets["trends"], let trends = try? value.decode(MobileTrends.self) { try self.put("trends",trends.singleModelsOnly()); try self.persist() }
                 self.active = true; self.generation = UUID(); self.transport = MobileHTTP()
@@ -186,7 +222,9 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                 }
                 self.listener = listener; listener.start(queue:self.queue)
                 let timer = DispatchSource.makeTimerSource(queue:self.queue)
-                timer.schedule(deadline:.now()+2,repeating:30,leeway:.seconds(3)); timer.setEventHandler { [weak self = self] in self?.upload() }; timer.resume(); self.timer = timer
+                timer.schedule(deadline:.now()+2,repeating:30,leeway:.seconds(3)); timer.setEventHandler { [weak self = self] in
+                    self?.imageCache.refreshPending(); self?.upload()
+                }; timer.resume(); self.timer = timer
                 let cloud = self.host?.cloudEnabled ?? false, readers = self.host?.readers ?? [], notes = self.host?.notes ?? [:], last = self.host?.lastSync, local = self.host?.localSyncs ?? [:], removing = self.host?.pendingKeyRemoval == true, cloudStamp = self.host?.cloudSync
                 DispatchQueue.main.async { self.enabled = true; self.cloudEnabled = cloud; self.readers = readers; self.notes = notes; self.lastSync = last; self.localSyncs = local; self.removingKey = removing; self.cloudSync = cloudStamp }
             } catch { self.report(error.localizedDescription); self.active = false }
@@ -197,7 +235,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
         invalidatePairing()
         if disable { UserDefaults.standard.set(false,forKey:"codexio.mobile.enabled") }
         queue.async {
-            self.active = false; self.generation = UUID(); self.timer?.cancel(); self.timer = nil
+            self.active = false; self.imageCache.stop(); self.generation = UUID(); self.timer?.cancel(); self.timer = nil
             self.listener?.cancel(); self.listener = nil
             self.connections.values.forEach {$0.cancel()}; self.connections.removeAll(); self.authenticated.removeAll()
             self.transport.stop(); self.sending = false; self.ticket = nil; self.candidate = nil
@@ -302,7 +340,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                     self.host?.writer = ""; self.host?.pendingKeyRemoval = false
                     do { try self.saveHost() } catch {self.host=pending;self.report(error.localizedDescription);self.sending=false;return}
                     self.sending = false; self.cloudReaders.removeAll(); self.sent.removeAll(); self.failures = 0
-                    self.cloudDetails = nil; self.nextCapabilityCheck = .distantPast
+                    self.cloudDetails = nil; self.cloudImages = false; self.sentImages.removeAll(); self.nextCapabilityCheck = .distantPast
                     for id in self.detailStamps.keys { self.detailStamps[id]?.sent = nil }; try? self.saveDetailStamps()
                     DispatchQueue.main.async {self.removingKey = false; self.syncError = nil; self.notice = "云端密钥已移除。再次启用云同步时，需要添加新的邀请码。局域网配对仍可使用。"}
                 }
@@ -341,6 +379,11 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                     catch { self.report(error.localizedDescription) }
                 }
                 self.authenticated[key] = reader.id
+                if message.action == "image", let id = message.imageID, id.count == 64 {
+                    let response = self.imageCache.message(id,part:message.imagePart ?? 0) { [weak self] request in _ = try? self?.loadDetail(request) }
+                    MobileProtocol.send(response,over:connection)
+                    self.receive(connection); return
+                }
                 if message.action == "detail", let id = message.detailID, id.count == 64 {
                     do {
                         MobileProtocol.send(try self.detailMessage(id,full:message.full == true,part:message.detailPart ?? 0,force:message.force == true),over:connection)
@@ -372,41 +415,21 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
         let revision = max(datasets[dataset]?.revision ?? 0,Int64(Date().timeIntervalSince1970*1000))+1
         datasets[dataset] = MobileEnvelope(dataset:dataset,revision:revision,digest:hash,payload:String(decoding:data,as:UTF8.self))
     }
-    private func thumbnail(_ path: String) -> String? {
-        // Decode only local regular images supplied by the ledger, with bounded
-        // compressed input, decoded dimensions and final output. No URL fetches.
-        guard path.hasPrefix("/"), let attributes = try? FileManager.default.attributesOfItem(atPath:path),
-              attributes[.type] as? FileAttributeType == .typeRegular,
-              let size = attributes[.size] as? NSNumber, size.intValue <= 12 * 1_024 * 1_024,
-              let source = CGImageSourceCreateWithURL(URL(fileURLWithPath:path) as CFURL,[kCGImageSourceShouldCache:false] as CFDictionary),
-              let properties = CGImageSourceCopyPropertiesAtIndex(source,0,nil) as? [CFString:Any],
-              let width = properties[kCGImagePropertyPixelWidth] as? NSNumber,
-              let height = properties[kCGImagePropertyPixelHeight] as? NSNumber,
-              width.intValue > 0, height.intValue > 0, width.intValue <= 16_384, height.intValue <= 16_384,
-              width.intValue * height.intValue <= 40_000_000,
-              let image = CGImageSourceCreateThumbnailAtIndex(source,0,[kCGImageSourceCreateThumbnailFromImageAlways:true,kCGImageSourceThumbnailMaxPixelSize:240,kCGImageSourceCreateThumbnailWithTransform:true] as CFDictionary) else { return nil }
-        let output = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(output,UTType.jpeg.identifier as CFString,1,nil) else { return nil }
-        CGImageDestinationAddImage(destination,image,[kCGImageDestinationLossyCompressionQuality:0.55] as CFDictionary)
-        guard CGImageDestinationFinalize(destination), output.length <= 12_288 else { return nil }
-        return (output as Data).base64EncodedString()
-    }
     private func loadDetail(_ requestID: String) throws -> MobileEnvelope? {
         guard let raw = try detailProvider?(requestID) else { return nil }
         let canonical = raw.string("id"), id = MobileProtocol.hash(Data(canonical.utf8))
         guard !canonical.isEmpty else { return nil }
         let started = raw.number("started_at") ?? 0, completed = raw.number("completed_at")
         guard started > 0, max(started,completed ?? started) >= Date().timeIntervalSince1970-MobileProtocol.detailRetention else { return nil }
-        let sourceUser = raw.string("user"), sourceFinal = raw.string("final")
-        var thumbnails = 0
-        let attachments = (raw["attachments"] as? [Object] ?? []).prefix(6).map { attachment -> MobileAttachment in
-            let name = MobileProtocol.prefix(attachment.string("name",URL(fileURLWithPath:attachment.string("path")).lastPathComponent),bytes:240)
-            let mime = attachment.string("mime")
-            let image = thumbnails < 2 && mime.hasPrefix("image/") ? thumbnail(attachment.string("path")) : nil
-            if image != nil { thumbnails += 1 }
-            return MobileAttachment(id:MobileProtocol.hash(Data((attachment.string("id")+name).utf8)),name:name.isEmpty ? "附件" : name,mime:mime.isEmpty ? nil : mime,thumbnail:image)
+        let prepared = imageCache.prepare(raw,requestID:id,started:started,completed:completed)
+        var attachmentIDs = Set<String>()
+        let attachments = raw.objects("attachments").filter { !$0.string("mime").hasPrefix("image/") }.prefix(6).compactMap { item -> MobileAttachment? in
+            let name = MobileProtocol.prefix(item.string("name","附件"),bytes:240)
+            let key = MobileProtocol.hash(Data((item.string("id")+name).utf8))
+            guard attachmentIDs.insert(key).inserted else { return nil }
+            return MobileAttachment(id:key,name:name,mime:item.string("mime"),thumbnail:nil)
         }
-        var value = MobileRequestDetail(id:id,started:started,completed:completed,status:raw.string("status"),user:sourceUser,final:sourceFinal,userComplete:raw.flag("user_complete"),finalComplete:raw.flag("final_complete"),availability:raw.string("availability","unavailable"),attachments:attachments,full:true)
+        var value = MobileRequestDetail(id:id,started:started,completed:completed,status:raw.string("status"),user:prepared.user,final:prepared.final,userComplete:raw.flag("user_complete"),finalComplete:raw.flag("final_complete"),availability:raw.string("availability","unavailable"),attachments:attachments,full:true,images:prepared.references.isEmpty ? nil : prepared.references)
         var data = try MobileProtocol.encode(value)
         if data.count > MobileProtocol.detailLimit {
             value.attachments = value.attachments.map { var item = $0; item.thumbnail = nil; return item }
@@ -429,7 +452,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
             guard let evicted = detailDates.filter({$0.key != id}).min(by:{$0.value < $1.value})?.key else { break }
             details.removeValue(forKey:evicted); detailSizes.removeValue(forKey:evicted); detailDates.removeValue(forKey:evicted)
         }
-        detailStamps[id] = MobileDetailStamp(revision:revision,digest:digest,sent:old?.sent)
+        detailStamps[id] = MobileDetailStamp(revision:revision,digest:digest,sent:old?.sent,imageIDs:old?.imageIDs)
         if old?.digest != digest { detailDeferred.removeValue(forKey:id) }
         if detailStamps.count > 256, let oldest = detailStamps.min(by:{$0.value.revision < $1.value.revision})?.key { detailStamps.removeValue(forKey:oldest) }
         return envelope
@@ -451,6 +474,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
         return MobileMessage(action:"detail",detailID:id,full:false,detail:MobileEnvelope(dataset:envelope.dataset,revision:envelope.revision,digest:MobileProtocol.hash(data),payload:String(decoding:data,as:UTF8.self)))
     }
     private func updateDetails(_ rows: [UsageRow]) throws {
+        imageCache.prune()
         guard detailProvider != nil else { return }
         let keep = Set(rows.prefix(MobileProtocol.detailRows).map {MobileProtocol.hash(Data($0.id.utf8))})
         var changed = false
@@ -458,8 +482,8 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
             let id = MobileProtocol.hash(Data(row.id.utf8))
             // The ledger's content digest excludes scan/fetch timestamps. Legacy
             // rows use only business fields, and recovery is bounded per request.
-            let source = row.raw.string("message_digest") + "/" + row.raw.string("status") + "/" + String(row.raw.number("message_revision") ?? 0) + "/" + row.raw.string("prompt_preview") + "/" + (row.tokens.map(String.init) ?? "")
-            guard detailSources[id] != source else { continue }
+            let source = "images-v1/" + row.raw.string("message_digest") + "/" + row.raw.string("status") + "/" + String(row.raw.number("message_revision") ?? 0) + "/" + row.raw.string("prompt_preview") + "/" + (row.tokens.map(String.init) ?? "")
+            guard detailSources[id] != source || imageCache.needsRefresh(id) else { continue }
             let old = details[id]
             _ = try loadDetail(row.id); detailSources[id] = source
             if old != details[id] { changed = true }
@@ -533,10 +557,13 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
         let readers = host.readers.filter {!cloudReaders.contains($0.id)}
         let detailChanges = details.values.filter { detailStamps[String($0.dataset.dropFirst(7))]?.sent != $0.digest && Date() >= (detailDeferred[String($0.dataset.dropFirst(7))] ?? .distantPast) }.sorted {$0.revision > $1.revision}
         let probe = detailProvider != nil && Date() >= nextCapabilityCheck
-        let support = cloudDetails
+        let support = cloudDetails, imageSupport = cloudImages
+        let allDetails = Array(details.values)
+        imageCache.prune()
+        let imageChanges = imageCache.envelopes.values.filter { sentImages[String($0.dataset.dropFirst(6))]?.digest != $0.digest && Date() >= (imageDeferred[String($0.dataset.dropFirst(6))] ?? .distantPast) }
         let knownKinds = cloudRequestKinds, previousRecent = cloudRecent
         if probe, let recent = datasets["recent"], !changed.contains(where:{$0.dataset == "recent"}) { changed.append(recent) }
-        guard !changed.isEmpty || !readers.isEmpty || !host.revoked.isEmpty || probe || (support == true && !detailChanges.isEmpty) else { return }
+        guard !changed.isEmpty || !readers.isEmpty || !host.revoked.isEmpty || probe || (support == true && !detailChanges.isEmpty) || (imageSupport && !imageChanges.isEmpty) else { return }
         sending = true; urgentPending = false; let generation = generation, transport = transport
         Task {
             do {
@@ -546,16 +573,20 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                     _ = try await transport.request("/v1/hosts/\(host.id)/readers",method:"PUT",token:host.writer,body:body)
                 }
                 var supported = support, uploaded: [MobileEnvelope] = [], capacityIDs: [String] = []
-                var detailFailure: String?, kinds = knownKinds, probeFailed = false
+                var detailFailure: String?, kinds = knownKinds, imagesSupported = imageSupport, probeFailed = false
+                var cloudSucceeded = !readers.isEmpty || !host.revoked.isEmpty, transientDetailFailure = false
+                var uploadedImages: [MobileEnvelope] = [], deferredImages: [String] = []
                 if probe {
                     do {
                         let response = try await transport.request("/v1/hosts/\(host.id)/capabilities",token:host.writer)
                         let message = try JSONDecoder().decode(MobileMessage.self,from:response)
                         supported = message.capabilities?.contains(MobileProtocol.detailCapability) == true
                         kinds = message.capabilities?.contains(MobileProtocol.requestKindCapability) == true
+                        imagesSupported = message.capabilities?.contains(MobileProtocol.imageCapability) == true
+                        cloudSucceeded = true
                     } catch {
-                        if case MobileError.http(let code,_,let reason) = error, code == 404 || reason == "NOT_FOUND" { supported = false; kinds = false }
-                        else { probeFailed = true; detailFailure = error.localizedDescription }
+                        if case MobileError.http(let code,_,let reason) = error, code == 404 || reason == "NOT_FOUND" { supported = false; kinds = false; imagesSupported = false }
+                        else { probeFailed = true; detailFailure = error.localizedDescription; transientDetailFailure = Self.temporaryNetworkFailure(error) }
                     }
                 }
                 // A separate bounded cloud projection preserves old Workers' field
@@ -573,24 +604,63 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                         if cloudValue == previousRecent { continue }
                     }
                     _ = try await transport.request("/v1/hosts/\(host.id)/data/\(value.dataset)",method:"PUT",token:host.writer,body:MobileProtocol.encode(cloudValue))
+                    cloudSucceeded = true
                 }
+                let imageCapabilityChanged = imagesSupported != imageSupport
+                var detailBatch = detailChanges
+                if imageCapabilityChanged {
+                    let existing = Set(detailBatch.map(\.dataset))
+                    detailBatch += allDetails.filter {!existing.contains($0.dataset)}
+                }
+                var submittedDetailRevisions: [String:Int64] = [:]
                 if supported == true {
-                    for value in detailChanges.prefix(4) {
+                    for value in detailBatch.prefix(4) {
                         do {
                             let id = String(value.dataset.dropFirst(7))
-                            _ = try await transport.request("/v1/hosts/\(host.id)/details/\(id)",method:"PUT",token:host.writer,body:MobileProtocol.encode(value))
+                            var submitted = value
+                            if imageCapabilityChanged { submitted.revision = max(value.revision,Int64(Date().timeIntervalSince1970*1000))+1 }
+                            if !imagesSupported, var detail = try? value.decode(MobileRequestDetail.self) {
+                                detail.images = nil
+                                let bytes = try MobileProtocol.encode(detail)
+                                submitted.payload = String(decoding:bytes,as:UTF8.self); submitted.digest = MobileProtocol.hash(bytes)
+                            }
+                            _ = try await transport.request("/v1/hosts/\(host.id)/details/\(id)",method:"PUT",token:host.writer,body:MobileProtocol.encode(submitted))
+                            cloudSucceeded = true
+                            submittedDetailRevisions[id] = submitted.revision
                             uploaded.append(value)
                         } catch {
                             if case MobileError.http(_,_,let code) = error, code == "DETAIL_CAPACITY" { capacityIDs.append(String(value.dataset.dropFirst(7))); continue }
-                            detailFailure = error.localizedDescription; break
+                            detailFailure = error.localizedDescription; transientDetailFailure = Self.temporaryNetworkFailure(error); break
                         }
                     }
                 }
+                if imagesSupported {
+                    for image in imageChanges.prefix(2) {
+                        let id = String(image.dataset.dropFirst(6))
+                        do {
+                            _ = try await transport.request("/v1/hosts/\(host.id)/images/\(id)",method:"PUT",token:host.writer,body:MobileProtocol.encode(image))
+                            cloudSucceeded = true; uploadedImages.append(image)
+                        } catch {
+                            if case MobileError.http(_,_,let reason) = error, ["IMAGE_CAPACITY","IMAGE_EXPIRED"].contains(reason ?? "") { deferredImages.append(id); continue }
+                            detailFailure = error.localizedDescription; transientDetailFailure = Self.temporaryNetworkFailure(error); break
+                        }
+                    }
+                }
+                let resolvedImages = imagesSupported, sentImageValues = uploadedImages, delayedImages = deferredImages, newDetailRevisions = submittedDetailRevisions
+                let resetCloudDetails = imageCapabilityChanged, didSynchronizeCloud = cloudSucceeded, temporaryDetailFailure = transientDetailFailure
                 let resolvedSupport = supported, resolvedKinds = kinds, resolvedRecent = sentRecent, failedProbe = probeFailed, sentDetails = uploaded, failure = detailFailure, deferred = capacityIDs, sentDatasets = changed
                 self.queue.async {
                     guard self.generation == generation else { return }
                     self.cloudDetails = resolvedSupport
-                    self.cloudRequestKinds = resolvedKinds
+                    self.cloudRequestKinds = resolvedKinds; self.cloudImages = resolvedImages; self.host?.imageCapability = resolvedImages
+                    for image in sentImageValues {
+                        let id = String(image.dataset.dropFirst(6))
+                        if let expires = self.imageCache.deadline(id) { self.sentImages[id] = MobileImageStamp(digest:image.digest,expires:expires) }
+                    }
+                    for id in delayedImages { self.imageDeferred[id] = Date().addingTimeInterval(3600) }
+                    self.sentImages = self.sentImages.filter {$0.value.expires > Date().timeIntervalSince1970}
+                    if self.sentImages.count > 128 { self.sentImages = Dictionary(uniqueKeysWithValues:self.sentImages.sorted {$0.value.expires > $1.value.expires}.prefix(128).map {($0.key,$0.value)}) }
+                    self.imageDeferred = self.imageDeferred.filter {self.imageCache.envelopes[$0.key] != nil}
                     if let resolvedRecent, self.cloudRecent != resolvedRecent {
                         self.cloudRecent = resolvedRecent
                         try? MobileProtocol.encode(resolvedRecent).write(to:self.cloudRecentURL,options:.atomic)
@@ -607,20 +677,44 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                             MobileProtocol.send(MobileMessage(action:"sync",known:self.datasets.mapValues(\.revision),datasets:[current],seen:Date().timeIntervalSince1970,supportsAck:true,capabilities:self.capabilities,detailVersions:self.details.mapValues(\.revision)),over:connection)
                         }
                     }
-                    for value in sentDetails { self.detailStamps[String(value.dataset.dropFirst(7))]?.sent = value.digest }
+                    if resetCloudDetails {
+                        for id in Array(self.detailStamps.keys) { self.detailStamps[id]?.sent = nil }
+                        for id in Array(self.details.keys) where newDetailRevisions[id] == nil {
+                            let revision = max(self.details[id]?.revision ?? 0,Int64(Date().timeIntervalSince1970*1000))+1
+                            self.details[id]?.revision = revision; self.detailStamps[id]?.revision = revision
+                        }
+                    }
+                    var imageStateChanged = !sentImageValues.isEmpty
+                    let justUploadedImages = Set(sentImageValues.map {String($0.dataset.dropFirst(6))})
+                    for value in sentDetails {
+                        let id = String(value.dataset.dropFirst(7))
+                        if let revision = newDetailRevisions[id], self.details[id]?.digest == value.digest {
+                            self.details[id]?.revision = revision; self.detailStamps[id]?.revision = revision
+                        }
+                        self.detailStamps[id]?.sent = value.digest
+                        let references = resolvedImages ? ((try? value.decode(MobileRequestDetail.self))?.images ?? []).filter {$0.availability == "available"}.map(\.id) : []
+                        let previous = Set(self.detailStamps[id]?.imageIDs ?? [])
+                        // Removing a cloud reference also deletes its image. If
+                        // that source later recovers, upload the bytes again.
+                        for image in Set(references).subtracting(previous) where !justUploadedImages.contains(image) {
+                            if self.sentImages.removeValue(forKey:image) != nil { imageStateChanged = true }
+                        }
+                        self.detailStamps[id]?.imageIDs = references
+                    }
+                    if imageStateChanged, let data = try? MobileProtocol.encode(self.sentImages) { try? data.write(to:self.imageStateURL,options:.atomic); try? FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:self.imageStateURL.path) }
                     for id in deferred { self.detailDeferred[id] = Date().addingTimeInterval(3_600) }
-                    if !sentDetails.isEmpty { try? self.saveDetailStamps() }
+                    if resetCloudDetails || !sentDetails.isEmpty { try? self.saveDetailStamps() }
                     readers.forEach {self.cloudReaders.insert($0.id)}
                     let granted = Set(readers.map(\.id))
                     for (key,connection) in self.connections where granted.contains(self.authenticated[key] ?? "") {
                         MobileProtocol.send(MobileMessage(action:"sync",known:self.datasets.mapValues(\.revision),datasets:[],seen:Date().timeIntervalSince1970,cloud:MobileProtocol.cloudOrigin,supportsAck:true,capabilities:self.capabilities,detailVersions:self.details.mapValues(\.revision)),over:connection)
                     }
                     self.host?.revoked.removeAll {host.revoked.contains($0)}
-                    self.synchronized("cloud")
+                    if didSynchronizeCloud { self.synchronized("cloud") }
                     try? self.saveHost(); self.sending = false; self.failures = 0
                     let pending = self.datasets.values.contains {self.sent[$0.dataset] != $0.revision}
-                    if let failure { self.report("摘要已同步；详情待重试："+failure); self.retryAt = Date().addingTimeInterval(60) }
-                    else if !deferred.isEmpty { self.report("局域网优先 · 部分详情达到云端容量，仍可在局域网读取") }
+                    if let failure { self.report("云端详情待重试："+failure,transientRoute:temporaryDetailFailure ? "cloud" : nil); self.retryAt = Date().addingTimeInterval(60) }
+                    else if !deferred.isEmpty || !delayedImages.isEmpty { self.report("局域网优先 · 部分正文或图片延后上传，仍可在局域网读取") }
                     else if resolvedSupport == false { self.report("摘要已同步；云端正文同步尚未启用") }
                     else { self.report(pending ? "局域网优先 · 云端有更新待同步" : "局域网优先 · 云端已同步") }
                     if self.urgentPending || self.host?.pendingKeyRemoval == true { self.upload() }
@@ -630,7 +724,8 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                     guard self.generation == generation else { return }
                     self.sending = false; self.failures += 1
                     self.retryAt = Date().addingTimeInterval(min(900,pow(2,Double(min(6,self.failures)))*15)+Double.random(in:0...10))
-                    self.report(error.localizedDescription)
+                    let transient = Self.temporaryNetworkFailure(error)
+                    self.report("云同步暂不可用："+error.localizedDescription,transientRoute:transient ? "cloud" : nil)
                 }
             }
         }

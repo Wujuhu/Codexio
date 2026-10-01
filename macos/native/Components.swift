@@ -201,29 +201,58 @@ struct DetailsLink: NSViewRepresentable {
         return view
     }
     func updateNSView(_ view: HoverLinkView, context: Context) { context.coordinator.row = row; context.coordinator.members = members }
-    static func dismantleNSView(_ view: HoverLinkView, coordinator: Coordinator) { coordinator.popover.close() }
-    final class Coordinator: NSObject {
+    static func dismantleNSView(_ view: HoverLinkView, coordinator: Coordinator) {
+        view.entered = nil; view.exited = nil; view.target = nil; view.action = nil
+        coordinator.anchor = nil; coordinator.close()
+    }
+    final class Coordinator: NSObject,NSPopoverDelegate {
         var row: UsageRow
         var members: [UsageRow]
         var loadMembers: (() -> [UsageRow])?
         weak var anchor: HoverLinkView?
-        let popover = NSPopover()
+        private var popover: NSPopover?
         var anchorInside = false
         var popupInside = false
         var work: DispatchWorkItem?
-        init(row: UsageRow,members: [UsageRow]) { self.row = row; self.members = members; super.init(); popover.behavior = .transient; popover.animates = false }
-        @objc func clicked() { if popover.isShown { popover.close() } else { show() } }
+        init(row: UsageRow,members: [UsageRow]) { self.row = row; self.members = members; super.init() }
+        deinit { close() }
+        @objc func clicked() { if popover?.isShown == true { close() } else { show() } }
         func show() {
-            work?.cancel(); guard let anchor, !popover.isShown else { return }
-            let content = LogDetail(row:row,members:loadMembers?() ?? members).onHover { [weak self] inside in self?.popupInside = inside; if !inside { self?.scheduleClose() } }
+            work?.cancel(); work = nil
+            guard let anchor, anchor.window != nil, popover?.isShown != true else { return }
+            close()
+            let popover = NSPopover()
+            popover.behavior = .transient; popover.animates = false; popover.delegate = self
+            self.popover = popover
+            let content = LogDetail(row:row,members:loadMembers?() ?? members).onHover { [weak self,weak popover] inside in
+                guard let self, let popover, self.popover === popover else { return }
+                self.popupInside = inside
+                if inside { self.work?.cancel(); self.work = nil } else { self.scheduleClose() }
+            }
             popover.contentViewController = NSHostingController(rootView:content)
             popover.contentSize = NSSize(width:360,height:500)
             popover.show(relativeTo:anchor.bounds,of:anchor,preferredEdge:.minX)
+            if !popover.isShown, self.popover === popover { close() }
         }
         func scheduleClose() {
-            work?.cancel()
-            let next = DispatchWorkItem { [weak self] in if let self, !self.anchorInside, !self.popupInside { self.popover.close() } }
+            work?.cancel(); work = nil
+            guard let popover else { return }
+            let next = DispatchWorkItem { [weak self,weak popover] in
+                guard let self, let popover, self.popover === popover, !self.anchorInside, !self.popupInside else { return }
+                self.close()
+            }
             work = next; DispatchQueue.main.asyncAfter(deadline:.now()+0.25,execute:next)
+        }
+        func close() {
+            work?.cancel(); work = nil; popupInside = false
+            guard let popover else { return }
+            // AppKit keeps the closed drawing window while the popover is retained.
+            self.popover = nil
+            popover.delegate = nil; popover.close(); popover.contentViewController = nil
+        }
+        func popoverDidClose(_ notification: Notification) {
+            guard let closed = notification.object as? NSPopover, popover === closed else { return }
+            close()
         }
     }
 }
