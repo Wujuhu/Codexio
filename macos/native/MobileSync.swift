@@ -52,6 +52,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
     private let queue = DispatchQueue(label:"com.wujuhu.codexio.mobile",qos:.utility)
     private let paths: AppPaths
     private let detailProvider: ((String) throws -> Object?)?
+    private let detailPreparer: (([String]) throws -> Void)?
     private var details: [String:MobileEnvelope] = [:]
     private var detailSizes: [String:Int] = [:]
     private var detailDates: [String:Double] = [:]
@@ -107,9 +108,10 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
     private var urgentPending = false
     private var transport = MobileHTTP()
     private var metadataSaved = Date.distantPast
-    init(paths: AppPaths, detailProvider: ((String) throws -> Object?)? = nil) {
+    init(paths: AppPaths, detailProvider: ((String) throws -> Object?)? = nil, detailPreparer: (([String]) throws -> Void)? = nil) {
         self.paths = paths
         self.detailProvider = detailProvider
+        self.detailPreparer = detailPreparer
         if !paths.mock {
             let saved = UserDefaults.standard.string(forKey:"codexio.mobile.name")?.trimmingCharacters(in:.whitespacesAndNewlines) ?? ""
             let system = SCDynamicStoreCopyComputerName(nil,nil) as String? ?? "Mac"
@@ -478,15 +480,22 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
         guard detailProvider != nil else { return }
         let keep = Set(rows.prefix(MobileProtocol.detailRows).map {MobileProtocol.hash(Data($0.id.utf8))})
         var changed = false
+        var pending: [(UsageRow,String,String)] = []
         for row in rows.prefix(MobileProtocol.detailRows).reversed() {
             let id = MobileProtocol.hash(Data(row.id.utf8))
             // The ledger's content digest excludes scan/fetch timestamps. Legacy
             // rows use only business fields, and recovery is bounded per request.
             let source = "images-v1/" + row.raw.string("message_digest") + "/" + row.raw.string("status") + "/" + String(row.raw.number("message_revision") ?? 0) + "/" + row.raw.string("prompt_preview") + "/" + (row.tokens.map(String.init) ?? "")
             guard detailSources[id] != source || imageCache.needsRefresh(id) else { continue }
-            let old = details[id]
-            _ = try loadDetail(row.id); detailSources[id] = source
-            if old != details[id] { changed = true }
+            pending.append((row,id,source))
+        }
+        if !pending.isEmpty { try detailPreparer?(pending.map {$0.0.id}) }
+        for (row,id,source) in pending {
+            try autoreleasepool {
+                let old = details[id]
+                _ = try loadDetail(row.id); detailSources[id] = source
+                if old != details[id] { changed = true }
+            }
         }
         if details.keys.contains(where:{!keep.contains($0)}) || detailStamps.keys.contains(where:{!keep.contains($0)}) { changed = true }
         details = details.filter {keep.contains($0.key)}; detailSources = detailSources.filter {keep.contains($0.key)}; detailStamps = detailStamps.filter {keep.contains($0.key)}

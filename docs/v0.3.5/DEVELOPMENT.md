@@ -97,3 +97,36 @@
 - 当前 Mac ZIP：6,398,772 字节，SHA-256 `63dc6926ba651dddb130b6c864a7672bda079a3b31e3bb4014fe60ae19c97b27`。
 - 构建日志：`build/logs/v0.3.5-request-ownership-build.log`；交付记录：`build/checks/request-ownership-20261001/delivery.json`。
 - 本轮仅本地提交，不推送或发布；前一轮云端图片保留规则仍待单独部署授权。
+
+## 2026-10-01 日志恢复内存修复
+
+用户在完成底层定位后明确授权修复当前约 250 MB 的内存回退。沿用 Mac 0.3.5；本轮不改 iOS/Windows、Widget UI/版本或发布流程。
+
+### 根因与实现
+
+- 主扫描、请求正文恢复、历史归属补修的长循环中，FileHandle 读取缓冲及 JSON/Foundation 临时对象原先会滞留到整个后台任务结束。现分别在读取返回及单条解析处设置原生 `autoreleasepool`，让保留的 Swift 数据正常跨作用域存活，让已用完的临时对象尽早释放。
+- 复用既有 `detailMembers` / `sourceFiles` 的有界查找及 `recoverMessageDetails(ids:)` 批量入口。手机同步先收集本批有依赖变化的最多 64 个请求，将同一候选优先级中的共同日志合并读取，再逐条生成有界 envelope；保留单条按需恢复。未改变候选源优先级、会话/续接归属、32/64 MiB 读取上限、正文/图片缓存容量及图片清晰度。
+- 恢复签名明确包含算法版本、输入归属需求、终止状态、图片 schema、文件路径/大小/修改时间/device/inode 及缺失的自有图片。保留读取前的文件指纹，因此恢复期间追加的内容仍可使结果失效；文件和需求不变时复用已知结果。
+- 批次中的后续写入可能触发正文或图片 LRU。新增轻量淘汰代数；若本批发生淘汰且某成员已变为不完整，则清除旧失败签名、不为已删除的行重建失败记录，使消费前仍可按需补回。没有淘汰的实际失败仍有负缓存，避免重复工作。
+- 参考 v0.2.10 / 当前 `usage_collector.py` 的分批读取与变化检测原则，以及当前 `Database.recoverRecentRequestMetadata` 的按文件归组机制。临时对象寿命依据 Apple 的 [Using Autorelease Pool Blocks](https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/MemoryMgmt/Articles/mmAutoreleasePools.html)；不加入定时强制清理堆内存或额外采集服务。
+
+### 同条件单项验证
+
+复用上一轮冻结的 4,828 条调用、381 个请求组及 101 个相关日志文件，模拟旧元数据标记升级，关闭网络、不创建 UI 窗口。诊断副本使用最终产品的读取、解析和批处理代码，仅增加计数与测量入口；测量结果不等同于完整 App 的活动监视器占用。
+
+| 阶段 | 原实现 | 修复后 |
+| --- | ---: | ---: |
+| 历史归属补修瞬时物理峰值 | 875.7 MiB | 196.7 MiB |
+| 消息正文恢复结束后 | 491.2 MiB | 83.3 MiB |
+| 图片准备完成及后续复用时 | 487.0 MiB | 90.5 MiB |
+| 缺失正文回读 | 4 次，共 256 MiB | 1 次，共 64 MiB |
+
+4,828 条原始调用 ID/内容 SHA-256 完全一致；64 条手机消息 payload 的 digest 完全一致；43 张图片的传输 payload 总量仍为 16,969,578 字节。重复导出不再读取日志。以上下降在诊断中的 allocator-relief 阶段之前已发生，产品没有调用强制堆清理接口。
+
+既有超出恢复范围的历史正文仍保留原完整性状态；本轮优化不通过扩大读取预算或伪造正文解决缺失内容。真实运行中的 App 包含界面、网络与其他缓存，不能承诺固定为 90 MiB，也不能用本次阶段峰值精确还原此前 1.6 GiB 历史峰值。
+
+独立代码审阅发现的批次淘汰误负缓存问题已修正并复核；没有新增测试文件、测试项或维护套件。Mac 开发打包完成既有三项隔离冒烟、签名、架构、Widget 版本、ZIP 完整性与清单哈希校验，编译无 warning/error；本轮未启动或重启用户安装的 App。
+
+- 当前 Mac ZIP：6,403,198 字节，SHA-256 `48c57d87ff3002c0b86d65967852f90ab18fcc8c0b76ef2519b5afbe6a4b43f1`。
+- 构建日志：`build/logs/v0.3.5-memory-fix-build.log`；数据对照及交付校验：`build/checks/memory-growth-fix-20261001/findings.json`。
+- 开发 APP、ZIP 与共享清单在 `build/dev/macos/`。本轮仅本地提交，没有推送或远程部署。

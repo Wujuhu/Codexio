@@ -6,6 +6,8 @@ final class RequestMediaStore {
     let directory: URL
     private let lock = NSLock()
     private var entries: [String:(bytes: Int,used: Date)]?
+    private var evictionRevision: UInt64 = 0
+    var evictionGeneration: UInt64 { lock.lock(); defer { lock.unlock() }; return evictionRevision }
     private let maximumBytes = 134_217_728
     private let maximumFiles = 256
     init(database: URL) { directory = database.deletingLastPathComponent().appendingPathComponent("request-media",isDirectory:true) }
@@ -37,6 +39,7 @@ final class RequestMediaStore {
                 if (entries?.count ?? 0) <= maximumFiles && total <= maximumBytes { break }
                 guard old != name else { continue }
                 try? manager.removeItem(at:directory.appendingPathComponent(old))
+                evictionRevision &+= 1
                 total -= entry.bytes; entries?.removeValue(forKey:old)
             }
             return file

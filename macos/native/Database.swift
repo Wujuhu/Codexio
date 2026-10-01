@@ -4,6 +4,7 @@ import SQLite3
 final class Database {
     private var handle: OpaquePointer?
     private let lock = NSRecursiveLock()
+    private var messageEvictionGeneration: UInt64 = 0
     private let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
     private let sourceDateFormatter: DateFormatter = {
         let formatter = DateFormatter(); formatter.locale = Locale(identifier:"en_US_POSIX")
@@ -279,6 +280,7 @@ final class Database {
             bytes += row.integer("size") ?? 0
             if index >= 512 || bytes > 67_108_864 {
                 try run("DELETE FROM usage_request_messages WHERE id=?",[row.string("id")])
+                if sqlite3_changes(handle) > 0 { messageEvictionGeneration &+= 1 }
             }
         }
     }
@@ -373,8 +375,7 @@ final class Database {
         }
         return (done, unavailable)
     }
-    func requestMessageDetail(_ requestID: String) throws -> Object? {
-        lock.lock(); defer { lock.unlock() }
+    private func messageRoot(_ requestID: String) throws -> Object? {
         guard !requestID.isEmpty, requestID.utf8.count <= 512,
               let lookup = try query("SELECT id FROM usage_request_ids WHERE id=? OR mobile_id=? LIMIT 1",[requestID,requestID]).first,
               var root = try requestTurn(lookup.string("id")) else { return nil }
@@ -382,59 +383,99 @@ final class Database {
         while !root.string("alias_of").isEmpty, seen.insert(root.string("id")).inserted, seen.count <= 64 {
             guard let parent = try requestTurn(root.string("alias_of")) else { break }; root = parent
         }
-        guard root.string("record_kind") != "context_compaction" else { return nil }
-        var members = try detailMembers(root)
-        let promptSourceID = root.flag("has_user_message") ? "" : root.string("prompt_source_turn_id")
-        let promptSourceKey = promptSourceID.hasPrefix("turn:") ? promptSourceID : "turn:"+root.string("session_id")+":"+promptSourceID
-        let promptSource = promptSourceID.isEmpty ? nil : try requestTurn(promptSourceKey)
-        let recoveryMembers = members+(promptSource.map {[$0]} ?? [])
-        var sources: [String:[(URL,URL)]] = [:], signatures: [String:String] = [:], storedDetails: [String:Object] = [:]
-        for member in recoveryMembers {
-            let id = member.string("id"), files = try sourceFiles(member)
-            sources[id] = files
-            let stored = try query("SELECT data FROM usage_request_messages WHERE id=?",[id]).first ?? [:]
-            let detail = jsonObject(Data(stored.string("data").utf8)); storedDetails[id] = detail
-            let filesSignature = files.map { value -> [Any] in
-                let stamp = FileStamp(value.0)
-                return [value.0.path,stamp.size,stamp.modified?.timeIntervalSince1970 ?? 0,stamp.device,stamp.inode]
+        return root.string("record_kind") == "context_compaction" ? nil : root
+    }
+    private func messagePromptSource(_ root: Object) throws -> Object? {
+        let source = root.flag("has_user_message") ? "" : root.string("prompt_source_turn_id")
+        guard !source.isEmpty else { return nil }
+        let key = source.hasPrefix("turn:") ? source : "turn:"+root.string("session_id")+":"+source
+        return try requestTurn(key)
+    }
+    private struct MessageRecoveryNeed {
+        let files: [(URL,URL)]
+        let fileSignature: [[Any]]
+        let ownsInput: Bool
+        let terminal: Bool
+        func signature(_ detail: Object,store: RequestMediaStore) -> String {
+            identity(["message-recovery-v2",RequestMedia.schema,ownsInput,terminal,fileSignature,store.missingIDs(detail)])
+        }
+        func incomplete(_ detail: Object,store: RequestMediaStore) -> Bool {
+            (ownsInput && (!detail.flag("user_complete") || detail.integer("user_media_schema") != RequestMedia.schema))
+                || (terminal && (!detail.flag("final_complete") || detail.integer("final_media_schema") != RequestMedia.schema))
+                || !store.missingIDs(detail).isEmpty
+        }
+    }
+    func prepareRequestMessageDetails(_ requestIDs: [String]) throws {
+        lock.lock(); defer { lock.unlock() }
+        let messageGeneration = messageEvictionGeneration, mediaGeneration = requestMedia.evictionGeneration
+        var members: [String:Object] = [:], inputs = Set<String>(), roots = Set<String>()
+        // Reuse the existing bounded continuation/source lookup, collecting only
+        // metadata. Bodies remain per-request instead of accumulating a batch.
+        for requestID in requestIDs.prefix(64) {
+            try autoreleasepool {
+                guard let root = try messageRoot(requestID), roots.insert(root.string("id")).inserted else { return }
+                inputs.insert(root.string("id"))
+                for member in try detailMembers(root) { members[member.string("id")] = member }
+                if let source = try messagePromptSource(root) { inputs.insert(source.string("id")); members[source.string("id")] = source }
             }
-            signatures[id] = identity([RequestMedia.schema,filesSignature,requestMedia.missingIDs(detail)])
         }
-        let missing = recoveryMembers.filter { member in
-            let detail = storedDetails[member.string("id")] ?? [:]
-            let ownsInput = member.string("id") == root.string("id") || member.string("id") == promptSourceKey || member.flag("has_user_message")
-            let userMissing = ownsInput && (!detail.flag("user_complete") || detail.integer("user_media_schema") != RequestMedia.schema)
-            let finalMissing = ["completed","aborted"].contains(member.string("status")) && (!detail.flag("final_complete") || detail.integer("final_media_schema") != RequestMedia.schema)
-            return (userMissing || finalMissing || !requestMedia.missingIDs(detail).isEmpty) && detail.string("recovery_signature") != signatures[member.string("id")]
+        var missing: [String:MessageRecoveryNeed] = [:]
+        for (id,member) in members {
+            try autoreleasepool {
+                let stored = try query("SELECT data FROM usage_request_messages WHERE id=?",[id]).first ?? [:]
+                let detail = jsonObject(Data(stored.string("data").utf8))
+                let files = try sourceFiles(member)
+                let signature = files.map { value -> [Any] in
+                    let stamp = FileStamp(value.0)
+                    return [value.0.path,stamp.size,stamp.modified?.timeIntervalSince1970 ?? 0,stamp.device,stamp.inode]
+                }
+                let need = MessageRecoveryNeed(files:files,fileSignature:signature,ownsInput:inputs.contains(id) || member.flag("has_user_message"),terminal:["completed","aborted"].contains(member.string("status")))
+                if need.incomplete(detail,store:requestMedia), detail.string("recovery_signature") != need.signature(detail,store:requestMedia) { missing[id] = need }
+            }
         }
-        if !missing.isEmpty {
-            var batches: [URL:(URL,Set<String>)] = [:], order: [URL] = []
-            for member in missing {
-                let id = member.string("id")
-                for (file,rootURL) in sources[id] ?? [] {
-                    if batches[file] == nil { batches[file] = (rootURL,[]); order.append(file) }
-                    batches[file]?.1.insert(id)
+        var pending = Set(missing.keys)
+        // Keep each request's preferred source ahead of its archive/fork
+        // fallbacks while coalescing requests at the same source priority.
+        for priority in 0..<(missing.values.map { $0.files.count }.max() ?? 0) {
+            var batches: [URL:(URL,Set<String>)] = [:]
+            for id in pending.sorted() {
+                guard let need = missing[id], need.files.indices.contains(priority) else { continue }
+                let (file,root) = need.files[priority]
+                if batches[file] == nil { batches[file] = (root,[]) }
+                batches[file]?.1.insert(id)
+            }
+            for file in batches.keys.sorted(by:{$0.path < $1.path}) {
+                guard let (root,ids) = batches[file] else { continue }
+                try autoreleasepool {
+                    try UsageIndexer(self).recoverMessageDetails(ids:ids,file:file,root:root)
+                    for id in ids {
+                        let detail = jsonObject(Data((try query("SELECT data FROM usage_request_messages WHERE id=?",[id]).first ?? [:]).string("data").utf8))
+                        if let need = missing[id], !need.incomplete(detail,store:requestMedia) { pending.remove(id) }
+                    }
                 }
             }
-            var pending = Set(missing.map {$0.string("id")})
-            for file in order {
-                guard let (rootURL,targets) = batches[file] else { continue }
-                let ids = targets.intersection(pending)
-                guard !ids.isEmpty else { continue }
-                try UsageIndexer(self).recoverMessageDetails(ids:ids,file:file,root:rootURL)
-                for member in missing where ids.contains(member.string("id")) {
-                    let id = member.string("id")
-                    let detail = jsonObject(Data((try query("SELECT data FROM usage_request_messages WHERE id=?",[id]).first ?? [:]).string("data").utf8))
-                    let ownsInput = id == root.string("id") || id == promptSourceKey || member.flag("has_user_message")
-                    if (!ownsInput || (detail.flag("user_complete") && detail.integer("user_media_schema") == RequestMedia.schema)) && (!["completed","aborted"].contains(member.string("status")) || (detail.flag("final_complete") && detail.integer("final_media_schema") == RequestMedia.schema)), requestMedia.missingIDs(detail).isEmpty { pending.remove(id) }
-                }
-            }
-            for member in missing {
-                let id = member.string("id")
-                try writeRequestMessage(id,patch:["recovery_signature":signatures[id] ?? "missing"])
-            }
-            members = try detailMembers(try requestTurn(root.string("id")) ?? root)
         }
+        for (id,need) in missing {
+            try autoreleasepool {
+                let detail = jsonObject(Data((try query("SELECT data FROM usage_request_messages WHERE id=?",[id]).first ?? [:]).string("data").utf8))
+                if (messageEvictionGeneration != messageGeneration || requestMedia.evictionGeneration != mediaGeneration), need.incomplete(detail,store:requestMedia) {
+                    // A later member may evict an earlier recovered body/image.
+                    // Allow the consumer to recover it immediately; do not turn
+                    // cache pressure into a persistent source-failure result.
+                    if detail["recovery_signature"] != nil { try writeRequestMessage(id,patch:["recovery_signature":NSNull()]) }
+                    return
+                }
+                // Keep the pre-read file stamp: an append during recovery must
+                // invalidate this attempt. Refreshed media may now exist on disk.
+                try writeRequestMessage(id,patch:["recovery_signature":need.signature(detail,store:requestMedia)])
+            }
+        }
+    }
+    func requestMessageDetail(_ requestID: String) throws -> Object? {
+        lock.lock(); defer { lock.unlock() }
+        try prepareRequestMessageDetails([requestID])
+        guard let root = try messageRoot(requestID) else { return nil }
+        let members = try detailMembers(root), promptSource = try messagePromptSource(root)
         if let promptSource, let stored = try query("SELECT data FROM usage_request_messages WHERE id=?",[promptSource.string("id")]).first {
             let input = jsonObject(Data(stored.string("data").utf8))
             if input.flag("user_complete") || !input.string("user").isEmpty || !input.objects("attachments").isEmpty {
@@ -446,7 +487,7 @@ final class Database {
         for member in members {
             let id = member.string("id")
             var detail = jsonObject(Data((try query("SELECT data FROM usage_request_messages WHERE id=?",[id]).first ?? [:]).string("data").utf8))
-            let metadata: Object = ["started_at":parsedDate(member["started_at"])?.timeIntervalSince1970 as Any? ?? NSNull(),"completed_at":parsedDate(member["ended_at"])?.timeIntervalSince1970 as Any? ?? NSNull(),"status":member.string("status","unknown"),"recovery_signature":signatures[id] ?? "missing"]
+            let metadata: Object = ["started_at":parsedDate(member["started_at"])?.timeIntervalSince1970 as Any? ?? NSNull(),"completed_at":parsedDate(member["ended_at"])?.timeIntervalSince1970 as Any? ?? NSNull(),"status":member.string("status","unknown")]
             for (key,value) in metadata { detail[key] = value }
             try writeRequestMessage(id,patch:detail)
             let stored = try query("SELECT data,digest,revision FROM usage_request_messages WHERE id=?",[id]).first ?? [:]

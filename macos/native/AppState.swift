@@ -15,7 +15,7 @@ final class AppState: ObservableObject {
     let fetchActivity = FetchActivity()
     let quotaClock = ScanClock()
     let menuQuotaClock = ScanClock()
-    lazy var mobileSync = MobileSync(paths: paths, detailProvider: { [weak self] id in try self?.database.requestMessageDetail(id) })
+    lazy var mobileSync = MobileSync(paths: paths, detailProvider: { [weak self] id in try self?.database.requestMessageDetail(id) }, detailPreparer: { [weak self] ids in try self?.database.prepareRequestMessageDetails(ids) })
     var usageReportDirectory: URL { paths.data.appendingPathComponent("Reports", isDirectory: true) }
     private lazy var usageReportStore = UsageReportStore(directory: usageReportDirectory)
     private let brandingQueue = DispatchQueue(label:"com.wujuhu.codexio.branding",qos:.utility)

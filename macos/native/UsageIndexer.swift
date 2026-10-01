@@ -164,16 +164,20 @@ final class UsageIndexer {
         }
         try handle.seek(toOffset:UInt64(offset))
         var pending = Data(), oversized = false
+        // FileHandle and JSON bridging create autoreleased buffers/objects.
+        // Bound their lifetime to each read and record, not the entire scan.
         while !cancelled {
-            let chunk = try handle.read(upToCount:1_048_576) ?? Data()
+            let chunk = try autoreleasepool { try handle.read(upToCount:1_048_576) } ?? Data()
             if chunk.isEmpty { break }
             pending.append(chunk)
             try database.transaction {
                 while let newline = pending.firstIndex(of:10) {
                     let length = newline+1
                     if !oversized {
-                        let record = jsonObject(pending.subdata(in:0..<newline))
-                        if !record.isEmpty { try process(record,state:&state) }
+                        try autoreleasepool {
+                            let record = jsonObject(pending.subdata(in:0..<newline))
+                            if !record.isEmpty { try process(record,state:&state) }
+                        }
                     }
                     oversized = false; pending.removeSubrange(0...newline); offset += length
                 }
@@ -237,15 +241,17 @@ final class UsageIndexer {
         let limit = metadataOnly ? 33_554_432 : 67_108_864
         var pending = Data(), read = 0, oversized = false, complete = Set<String>()
         while read < limit && !cancelled {
-            let chunk = try reader.read(upToCount:min(1_048_576,limit-read)) ?? Data()
+            let chunk = try autoreleasepool { try reader.read(upToCount:min(1_048_576,limit-read)) } ?? Data()
             if chunk.isEmpty { break }; read += chunk.count; pending.append(chunk)
             try database.transaction {
                 while let newline = pending.firstIndex(of:10) {
                     if !oversized {
-                        let entry = jsonObject(pending.subdata(in:0..<newline))
-                        if !entry.isEmpty { try process(entry,state:&state) }
-                        let row = state.object("turns").object(state.string("turn_id"))
-                        if ids.contains(row.string("id")), !row.string("ended_at").isEmpty { complete.insert(row.string("id")) }
+                        try autoreleasepool {
+                            let entry = jsonObject(pending.subdata(in:0..<newline))
+                            if !entry.isEmpty { try process(entry,state:&state) }
+                            let row = state.object("turns").object(state.string("turn_id"))
+                            if ids.contains(row.string("id")), !row.string("ended_at").isEmpty { complete.insert(row.string("id")) }
+                        }
                     }
                     oversized = false; pending.removeSubrange(0...newline)
                 }
@@ -302,13 +308,15 @@ final class UsageIndexer {
         let reader = try FileHandle(forReadingFrom:file); defer { try? reader.close() }
         var context: Object = [:], patches: [String:Object] = [:], pending = Data(), read = 0, oversized = false
         while read < limit && !cancelled {
-            let chunk = try reader.read(upToCount:min(1_048_576,limit-read)) ?? Data()
+            let chunk = try autoreleasepool { try reader.read(upToCount:min(1_048_576,limit-read)) } ?? Data()
             if chunk.isEmpty { break }; read += chunk.count; pending.append(chunk)
             while let newline = pending.firstIndex(of:10) {
                 if !oversized {
-                    let entry = jsonObject(pending.subdata(in:0..<newline))
-                    if let patch = RequestResume.observe(entry,context:&context,preview:{self.plain($0,user:true)}) {
-                        patches[patch.string("turn")] = patch
+                    autoreleasepool {
+                        let entry = jsonObject(pending.subdata(in:0..<newline))
+                        if let patch = RequestResume.observe(entry,context:&context,preview:{self.plain($0,user:true)}) {
+                            patches[patch.string("turn")] = patch
+                        }
                     }
                 }
                 oversized = false; pending.removeSubrange(0...newline)
