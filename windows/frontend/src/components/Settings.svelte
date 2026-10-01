@@ -1,6 +1,6 @@
 <script lang="ts">
  import{api,text,iconPath,numeric,type Row}from'../lib/api';import{tr}from'../lib/i18n';import Floating from './Floating.svelte';import Mobile from './Mobile.svelte';
- export let settings:Row={};export let quota:Row={};export let onsave:(r:Row)=>Promise<void>;export let onerror:(e:any)=>void;export let onreload:()=>void;export let onreport:()=>void;let section='appearance';let selectedIcon='';let roots='';let codexPath='';let update:Row={};let upstream:Row={};let busy=false;let restart=false;
+ export let settings:Row={};export let quota:Row={};export let onsave:(r:Row)=>Promise<void>;export let onerror:(e:any)=>void;export let onreload:()=>void;export let onreport:()=>void;let section='appearance';let selectedIcon='';let roots='';let codexPath='';let update:Row={};let upstream:Row={};let busy=false;let restart=false;let upstreamConfirmation:boolean|null=null;
  const icons=['main','01-teal-blue-gradient','02-violet-gradient-tile','03-graphite-relief','04-honey-orange','05-mint-ceramic','06-deep-ocean-aurora','07-ice-blue-glass','08-champagne-metal','09-cream-deboss','10-burgundy-enamel','11-obsidian-copper','12-moonlight-pearl'];
  $: if(!selectedIcon)selectedIcon=settings.app_icon??'main';
  $: roots=(settings.codex_roots??[]).join('\n');
@@ -9,7 +9,9 @@
  $: upstream=settings.upstream??upstream;
  async function act(name:string){busy=true;try{if(name==='CheckUpdate')update=await api(name);else await api(name);onreload()}catch(e){onerror(e)}finally{busy=false}}
  async function desktop(action:string){try{await api('DesktopAction',action)}catch(e){onerror(e)}}
- async function detect(enabled:boolean){busy=true;try{upstream=await api('UpstreamAction',enabled)}catch(e){onerror(e)}finally{busy=false}}
+ function confirmDetection(enabled:boolean,event:Event){(event.currentTarget as HTMLInputElement).checked=!enabled;upstreamConfirmation=enabled}
+ async function detect(){if(upstreamConfirmation===null)return;const enabled=upstreamConfirmation;upstreamConfirmation=null;busy=true;try{upstream=await api('UpstreamAction',enabled);restart=upstream.restart_required===true;onreload()}catch(e){onerror(e)}finally{busy=false}}
+ async function restartClient(){busy=true;try{await api('DesktopAction','restart-client');restart=false;onreload()}catch(e){onerror(e)}finally{busy=false}}
  function change(key:string,value:any){void onsave({[key]:value,...(key==='usage_refresh_interval_seconds'?{usage_refresh_interval_user_set:true}:{})})}
 </script>
 <div class="settings-layout"><nav class="settings-sections" aria-label={tr('设置')}>{#each [['appearance','外观'],['data','数据'],['app','应用'],['sync','同步'],['floating','悬浮窗']] as [key,label]}<button class:active={section===key} onclick={()=>section=key}>{tr(label)}</button>{/each}</nav><div class="settings-content">
@@ -21,8 +23,8 @@
 {#if update.status&&!['idle',''].includes(update.status)}<p class="muted">{text(update.status)}{update.error?' · '+update.error:''}</p>{/if}
 {#if update.status==='downloading'}<progress max="100" value={Number(update.progress??0)}></progress>{/if}
 <label class="field"><span>{tr('自动检查更新')}</span><input type="checkbox" checked={settings.auto_update!==false} onchange={event=>change('auto_update',event.currentTarget.checked)}/></label>
-<label class="field"><span>{tr('上游检测')}</span><input type="checkbox" checked={upstream.enabled??settings.upstream_detection_enabled??false} disabled={busy} onchange={event=>detect(event.currentTarget.checked)}/></label>
-{#if upstream.status||upstream.error}<p class="muted">{text(upstream.status,'')}{upstream.error?' · '+upstream.error:''}</p>{/if}{#if upstream.restart_required}<button onclick={()=>restart=true}>{tr('重启 Codex 客户端')}</button>{/if}
+<label class="field"><span>{tr('上游检测')}</span><input type="checkbox" checked={upstream.enabled??settings.upstream_detection_enabled??false} disabled={busy} onchange={event=>confirmDetection(event.currentTarget.checked,event)}/></label>
+{#if upstream.status||upstream.error}<p class="muted">{text(upstream.status==='running'?tr('上游检测已开启'):upstream.status==='disabled'?tr('上游检测已关闭'):upstream.status,'')}{upstream.error?' · '+upstream.error:''}</p>{/if}{#if upstream.restart_required}<button onclick={()=>restart=true}>{tr('选择重启时间')}</button>{/if}
 <label class="field"><span>{tr('自动同步价格')}</span><input type="checkbox" checked={settings.auto_sync_prices!==false} onchange={event=>change('auto_sync_prices',event.currentTarget.checked)}/></label>
 {#each [['refresh_interval_seconds','额度刷新',[30,60,300]],['usage_refresh_interval_seconds','日志刷新',[5,10,30,60]],['week_estimate_interval_minutes','额度估算间隔',[10,30,60]]] as field}<label class="field"><span>{tr(String(field[1]))}</span><select value={settings[String(field[0])]} onchange={event=>change(String(field[0]),Number(event.currentTarget.value))}>{#each field[2] as value}<option value={value}>{value} {field[0]==='week_estimate_interval_minutes'?'min':'s'}</option>{/each}</select></label>{/each}
-{/if}</div></div>{#if restart}<div class="modal-backdrop"><div class="modal"><h2>{tr('重启 Codex 客户端')}</h2><p>{tr('重启会关闭当前 Codex 窗口，请先保存工作。')}</p><div class="row"><button onclick={()=>{restart=false;void desktop('restart-client')}}>{tr('重启 Codex 客户端')}</button><button onclick={()=>restart=false}>{tr('稍后')}</button></div></div></div>{/if}
+{/if}</div></div>{#if upstreamConfirmation!==null}<div class="modal-backdrop"><div class="modal"><h2>{tr(upstreamConfirmation?'开启上游检测？':'关闭上游检测？')}</h2><p>{tr(upstreamConfirmation?'Codexio 将检查 ChatGPT/Codex 当前配置，并仅在需要时接管模型路由。':'Codexio 将恢复接管前的模型路由，并停止上游观测。')}</p><div class="row modal-actions"><button disabled={busy} onclick={()=>upstreamConfirmation=null}>{tr('取消')}</button><button class="primary" disabled={busy} onclick={detect}>{tr('确认')}</button></div></div></div>{/if}{#if restart}<div class="modal-backdrop"><div class="modal"><h2>{tr('重新打开 ChatGPT/Codex？')}</h2><p>{tr('路由配置已更新。可以等待当前任务结束后自行重启；现在重启会先请求客户端正常退出。')}</p><div class="row modal-actions"><button disabled={busy} onclick={()=>restart=false}>{tr('稍后自行重启')}</button><button class="primary" disabled={busy} onclick={restartClient}>{tr('现在重启')}</button></div></div></div>{/if}

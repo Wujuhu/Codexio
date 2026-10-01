@@ -274,6 +274,15 @@ func (s *Service) SaveSettings(changes Row) (Row, error) {
 		return nil, errors.New("模拟模式不会修改真实服务或 Codex 配置")
 	}
 	old := s.Config()
+	if desired, present := changes["upstream_detection_enabled"]; present {
+		delete(changes, "upstream_detection_enabled")
+		if ValueBool(desired) != ValueBool(old["upstream_detection_enabled"]) {
+			if _, e := s.UpstreamAction(ValueBool(desired)); e != nil {
+				return nil, e
+			}
+			old = s.Config()
+		}
+	}
 	changes = normalizeFloatingChanges(old, changes)
 	if e := SaveConfig(s.directory, changes); e != nil {
 		return nil, e
@@ -295,11 +304,6 @@ func (s *Service) SaveSettings(changes Row) (Row, error) {
 	s.store.Configure(c)
 	if ValueBool(old["mobile_sync_enabled"]) != ValueBool(c["mobile_sync_enabled"]) {
 		if _, e = s.mobile.Action("enable", Row{"enabled": ValueBool(c["mobile_sync_enabled"])}); e != nil {
-			s.notice(e.Error())
-		}
-	}
-	if ValueBool(old["upstream_detection_enabled"]) != ValueBool(c["upstream_detection_enabled"]) {
-		if _, e = s.upstream.Toggle(ValueBool(c["upstream_detection_enabled"])); e != nil {
 			s.notice(e.Error())
 		}
 	}
@@ -404,12 +408,15 @@ func (s *Service) MobileAction(action string, values Row) (Row, error) {
 	return r, nil
 }
 func (s *Service) UpstreamAction(enabled bool) (Row, error) {
+	previous := s.upstream.Public()
+	oldEnabled := ValueBool(s.Config()["upstream_detection_enabled"])
 	r, e := s.upstream.Toggle(enabled)
 	if e != nil {
-		return r, e
+		return previous, e
 	}
 	if e = SaveConfig(s.directory, Row{"upstream_detection_enabled": enabled}); e != nil {
-		return r, e
+		_, _ = s.upstream.Toggle(oldEnabled)
+		return previous, e
 	}
 	s.mu.Lock()
 	s.config["upstream_detection_enabled"] = enabled

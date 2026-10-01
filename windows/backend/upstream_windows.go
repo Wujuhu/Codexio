@@ -123,6 +123,10 @@ func upstreamDesktopClients() ([]upstreamProcess, error) {
 	}
 	return result, nil
 }
+func upstreamDesktopClientRunning() (bool, error) {
+	clients, err := upstreamDesktopClients()
+	return len(clients) > 0, err
+}
 func upstreamReadRemote(h windows.Handle, address uintptr, buffer unsafe.Pointer, size uintptr) error {
 	var read uintptr
 	err := windows.ReadProcessMemory(h, address, (*byte)(buffer), size, &read)

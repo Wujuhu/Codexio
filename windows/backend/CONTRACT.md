@@ -21,7 +21,7 @@ Binding prefix: `codexio/windows/backend.Service`. Use `@wailsio/runtime` `Call.
 - `OpenURL(url: string) -> void`: explicitly clicked HTTP(S) link in default browser.
 - `SaveReportPNG(data: string, period: string) -> Row`: bounded base64PNG, `{path}`; frontend generates the full card, root saves/shares.
 - `GetMobile() -> Row`, `MobileAction(action: string, values: Row) -> Row`: `enable`,`disable`,`pair`,`approve`,`deny`,`revoke`,`rename`,`note`,`enroll`,`remove-cloud`,`upload`. Public fields pairing QR/pending/readers/status; no secrets. Pairing up to3readers, ticket5min. Existing read-only protocol.
-- `UpstreamAction(enabled: boolean) -> Row`: user-controlled toggle, `{enabled,status,error,restart_required}`; mock cannot modify real route.
+- `UpstreamAction(enabled: boolean) -> Row`: confirmed user-controlled toggle, `{enabled,desired_enabled,status,error,route_changed,client_running,already_targeted,restart_required}`. Preference persistence follows a successful route transition; mock cannot modify a real route. `restart_required` is true only after an effective route change while a verified desktop client is running.
 
 ## Common field meanings
 

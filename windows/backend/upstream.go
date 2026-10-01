@@ -40,29 +40,41 @@ type UpstreamProxy struct {
 	status          string
 	lastError       string
 	restartRequired bool
+	desiredEnabled  bool
+	routeChanged    bool
+	clientRunning   bool
+	alreadyTargeted bool
 	websockets      map[*upstreamDuplex]bool
 	observations    chan Row
 	cancel          context.CancelFunc
 }
 
 func NewUpstreamProxy(dir string, config func() Row, mock bool, changed func()) *UpstreamProxy {
-	return &UpstreamProxy{directory: dir, config: config, mock: mock, changed: changed, status: "disabled", observations: make(chan Row, 64), websockets: map[*upstreamDuplex]bool{}}
+	return &UpstreamProxy{directory: dir, config: config, mock: mock, changed: changed, status: "disabled", desiredEnabled: ValueBool(config()["upstream_detection_enabled"]), observations: make(chan Row, 64), websockets: map[*upstreamDuplex]bool{}}
 }
 func (p *UpstreamProxy) Public() Row {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return Row{"enabled": p.server != nil, "status": p.status, "error": p.lastError, "restart_required": p.restartRequired}
+	return Row{"enabled": p.server != nil, "desired_enabled": p.desiredEnabled, "status": p.status, "error": p.lastError, "route_changed": p.routeChanged, "client_running": p.clientRunning, "already_targeted": p.alreadyTargeted, "restart_required": p.restartRequired}
 }
 func (p *UpstreamProxy) Toggle(enabled bool) (Row, error) {
 	if p.mock {
 		return p.Public(), errors.New("模拟模式不会修改 Codex 配置")
 	}
+	clientRunning, e := upstreamDesktopClientRunning()
+	if e != nil {
+		return p.Public(), e
+	}
 	if !enabled {
-		e := p.Stop()
+		e := p.stop(clientRunning)
 		return p.Public(), e
 	}
 	p.mu.Lock()
 	if p.server != nil {
+		p.desiredEnabled = true
+		p.routeChanged = false
+		p.clientRunning = clientRunning
+		p.alreadyTargeted = true
 		p.mu.Unlock()
 		return p.Public(), nil
 	}
@@ -200,16 +212,27 @@ func (p *UpstreamProxy) Toggle(enabled bool) (Row, error) {
 	p.journal = j
 	p.cancel = cancel
 	p.status = "running"
-	p.restartRequired = true
+	p.desiredEnabled = true
+	p.routeChanged = true
+	p.clientRunning = clientRunning
+	p.alreadyTargeted = false
+	p.restartRequired = clientRunning
 	p.lastError = ""
 	go p.writeObservations(ctx)
 	go func() { _ = server.Serve(ln) }()
 	if p.changed != nil {
 		go p.changed()
 	}
-	return Row{"enabled": true, "status": "running", "restart_required": true}, nil
+	return Row{"enabled": true, "desired_enabled": true, "status": "running", "route_changed": true, "client_running": clientRunning, "already_targeted": false, "restart_required": clientRunning}, nil
 }
 func (p *UpstreamProxy) Stop() error {
+	if p.mock {
+		return nil
+	}
+	clientRunning, _ := upstreamDesktopClientRunning()
+	return p.stop(clientRunning)
+}
+func (p *UpstreamProxy) stop(clientRunning bool) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.mock {
@@ -223,12 +246,13 @@ func (p *UpstreamProxy) Stop() error {
 		return e
 	}
 	defer unlock()
+	_, journalError := os.Stat(p.journalPath())
+	hadRoute := journalError == nil || p.server != nil
 	if e := p.restoreJournal(); e != nil {
 		p.lastError = e.Error()
 		return e
 	}
 	if p.server != nil {
-		p.restartRequired = true
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		_ = p.server.Shutdown(ctx)
 		cancel()
@@ -250,6 +274,11 @@ func (p *UpstreamProxy) Stop() error {
 	p.listener = nil
 	p.status = "disabled"
 	p.lastError = ""
+	p.desiredEnabled = false
+	p.routeChanged = hadRoute
+	p.clientRunning = clientRunning
+	p.alreadyTargeted = false
+	p.restartRequired = hadRoute && clientRunning
 	if p.changed != nil {
 		go p.changed()
 	}
@@ -341,6 +370,7 @@ func (p *UpstreamProxy) RestartClient() error {
 	}
 	p.mu.Lock()
 	p.restartRequired = false
+	p.routeChanged = false
 	p.mu.Unlock()
 	if p.changed != nil {
 		p.changed()
