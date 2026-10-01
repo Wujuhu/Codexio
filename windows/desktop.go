@@ -64,7 +64,11 @@ func (h *desktopHost) brandIcon(id string) []byte {
 }
 func (h *desktopHost) setupTray() {
 	h.tray = h.app.SystemTray.New()
-	h.tray.SetIcon(h.brandIcon("main"))
+	// ICO carries pre-rendered small sizes; scaling the app PNG loses tray detail.
+	light, _ := fs.ReadFile(h.assets, "brand/tray-light.ico")
+	dark, _ := fs.ReadFile(h.assets, "brand/tray-dark.ico")
+	h.tray.SetIcon(light)
+	h.tray.SetDarkModeIcon(dark)
 	h.tray.SetTooltip("Codexio")
 	menu := h.app.NewMenu()
 	menu.Add(h.label("打开主窗口", "Open Codexio")).OnClick(func(*application.Context) { h.openMain() })

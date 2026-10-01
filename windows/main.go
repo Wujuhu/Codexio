@@ -100,6 +100,17 @@ func desktopRun(args desktopArguments) error {
 	if e != nil {
 		return e
 	}
+	// Version-scoped native guard runs before opening stores or starting services.
+	// Mock runs have their own temporary directory and cannot wake a real app.
+	key := "com.wujuhu.codexio.windows.wails." + backend.HashString(strings.ToLower(filepath.Clean(directory)) + "\x00" + version)[:24]
+	release, secondary, e := desktopSingleInstance(key)
+	if e != nil {
+		return e
+	}
+	if secondary {
+		return nil
+	}
+	defer release()
 	assets, e := fs.Sub(desktopAssets, "frontend/dist")
 	if e != nil {
 		return e
@@ -108,7 +119,6 @@ func desktopRun(args desktopArguments) error {
 	if args.smoke != "" {
 		h.smoke = &SmokeService{host: h, output: args.smoke}
 	}
-	key := "com.wujuhu.codexio.windows.wails." + backend.HashString(strings.ToLower(filepath.Clean(directory)))[:24]
 	h.app = application.New(application.Options{Name: "Codexio", Description: "Codex usage and quota", Icon: h.brandIcon("main"), LogLevel: slog.LevelWarn,
 		Assets:         application.AssetOptions{Handler: application.BundledAssetFileServer(assets), DisableLogging: true},
 		Windows:        application.WindowsOptions{WndClass: "CodexioWailsWindow", DisableQuitOnLastWindowClosed: true, WebviewUserDataPath: filepath.Join(directory, "WebView2")},

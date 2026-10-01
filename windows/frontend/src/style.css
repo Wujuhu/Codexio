@@ -34,3 +34,4 @@ html.floating-document,html.floating-document body,html.floating-document #app,.
 @font-face{font-family:"Codexio Inter";src:url('/fonts/InterVariable.woff2') format('woff2');font-style:normal;font-weight:100 900;font-display:swap}
 body,button,input,select,textarea{font-family:"Codexio Inter","Microsoft YaHei UI",system-ui,sans-serif}
 .report-card,.report-card *{font-family:"Codexio Inter","Microsoft YaHei UI",system-ui,sans-serif!important}
+.default-brand{display:block;background:#000;mask:url("/brand/brand-mark.svg") center/contain no-repeat;-webkit-mask:url("/brand/brand-mark.svg") center/contain no-repeat}.theme-dark .default-brand{background:#FFF}

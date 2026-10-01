@@ -4,6 +4,14 @@
 
 本次仅交付 Windows 本地开发包。Mac/iOS 源码与版本不变，统一清单保留另一平台字段。没有推送、Tag、GitHub Release、Windows CI 或云端部署。
 
+## 托盘、默认侧栏图标与重复启动
+
+2026-10-01：托盘使用从现有 `src/codexio/icons/brand-mark.svg` 派生的黑／白透明 ICO，包含 16、20、24、28、32、40、48、64 像素，避免把完整应用 PNG 直接缩至托盘尺寸。生成脚本复用 `scripts/render_brand_assets.cjs` 的 sharp 与 PNG-in-ICO 机制，不调整品牌参考画布中心；Wails 根据系统托盘主题选用黑／白资源。收起侧栏时，仅默认图标使用同一透明 SVG 蒙版并随应用主题切换黑白，自选应用图标保持原图片背景。
+
+单实例标识包含数据目录与实际 `windows/VERSION`，与 EXE 所在路径无关；同一版本再次启动时恢复／重建并聚焦已有主窗口，不同版本各自持有实例锁。沿用 Wails `v3.0.0-beta.26` 的接收窗口及 `OnSecondInstanceLaunch`，在打开数据库或启动服务之前增加 Windows 命名互斥体，关闭同时启动的竞态。发送端使用 `FindWindowExW(HWND_MESSAGE)` 定位框架的消息窗口，按目标 PID 转交前台权限，再通过有超时的 `WM_COPYDATA` 通知；原框架的 `FindWindowW` 无法找到该消息窗口。退出时释放自有句柄，模拟运行使用临时目录，不能激活真实应用。
+
+参考：Wails 本地 `pkg/application/single_instance_windows.go`、`pkg/w32/icon.go`；[Microsoft FindWindowExW](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-findwindowexw)、[AllowSetForegroundWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-allowsetforegroundwindow)。仅执行现有三项隔离冒烟，不新增测试项。
+
 ## 自动审批审查
 
 - 保留 `source.subagent.other=guardian`、父聊天、父轮次与原始来源；明确的 `codex-auto-review` 计量可作分类回退，正文和标题不能单独触发分类。
