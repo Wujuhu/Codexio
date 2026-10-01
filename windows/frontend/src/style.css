@@ -28,3 +28,6 @@ button,input,select,textarea{font-family:inherit} svg text{font-family:inherit}
 .recent-columns>span,.recent-item>span,.recent-item>.recent-prompt{min-width:0;padding-inline:8px}.sidebar-account{padding:0}.sidebar-account .sidebar-foot:first-child{padding:16px;min-height:64px}.sidebar.collapsed .sidebar-account .sidebar-foot:first-child{padding:0;min-height:48px}
 
 .settings-content>*{flex-shrink:0}
+
+@font-face{font-family:"Codexio Inter";src:url('/fonts/InterVariable.woff2') format('woff2');font-style:normal;font-weight:100 900;font-display:swap}
+body,button,input,select,textarea{font-family:"Codexio Inter","Microsoft YaHei UI",system-ui,sans-serif}

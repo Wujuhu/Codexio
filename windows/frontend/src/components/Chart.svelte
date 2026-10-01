@@ -16,23 +16,8 @@
    const d=new Date(/^\d{4}-\d{2}$/.test(raw)?raw+'-01T00:00:00':/^\d{4}-\d{2}-\d{2}$/.test(raw)?raw+'T00:00:00':raw);
    return Number.isFinite(d.getTime())?d:null;
  }
- // Sparse buckets get explicit unknown gaps; the display never invents zero usage.
- function project(source:Row[]):Row[]{
-   const input=rows(source).slice(-800);
-   if(input.length<2)return input;
-   const unit=input[0].granularity??(String(input[0].timestamp??input[0].date).includes('T')?'hour':'day');
-   const output:Row[]=[];
-   for(let i=0;i<input.length;i++){
-     if(i){const previous=dateOf(input[i-1]),current=dateOf(input[i]);
-       if(previous&&current){const next=new Date(previous);if(unit==='hour')next.setHours(next.getHours()+1);else if(unit==='month')next.setMonth(next.getMonth()+1);else next.setDate(next.getDate()+(unit==='week'?7:1));
-         if(next.getTime()<current.getTime())output.push({date:next.toISOString(),tokens:null,usd:null,user_requests:null,missing:true});
-       }
-     }
-     output.push(input[i]);
-   }
-   return output;
- }
- $: items=project(data);
+ // Go owns empty-bucket versus unknown-value meaning; rendering never infers it.
+ $: items=rows(data).slice(-800);
  $: {data;hover=null;}
  function value(r:Row,k:string){return number(k==='usd'?(r.usd??r.cost_usd):r[k]);}
  $: maxima=Object.fromEntries(series.map(([k])=>[k,Math.max(k==='usd'?.01:1,...items.map(r=>Math.max(0,value(r,k)??0)))]));
@@ -57,7 +42,7 @@
   <path d="M3.1 3.1H766.9 M3.1 57.7H766.9 M3.1 112.3H766.9 M3.1 166.9H766.9" stroke="var(--grid)" fill="none" stroke-width="0.5" vector-effect="non-scaling-stroke"/>
   {#each plots as plot}<path d={plot.d} fill="none" stroke={colors[plot.key]} stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>{#each plot.points as point}<circle cx={point.x} cy={point.y} r={plot.key==='tokens'?3.5:2.5} fill={colors[plot.key]}/>{/each}{/each}
   {#if hover}<line x1={positions[hover.index]} x2={positions[hover.index]} y1="3.1" y2="166.9" stroke="var(--muted)" stroke-opacity=".4" pointer-events="none"/>{/if}
-  {#each items as r,i}{#if !r.missing}<rect x={i===0?0:(positions[i-1]+positions[i])/2} y="0" width={(i===items.length-1?770:(positions[i]+positions[i+1])/2)-(i===0?0:(positions[i-1]+positions[i])/2)} height="170" fill="transparent" role="button" tabindex="0" aria-label={label(r)} onmousemove={event=>selectPoint(event,r,i)} onmouseenter={event=>selectPoint(event,r,i)} onmouseleave={()=>hover=null} onfocus={event=>selectPoint(event,r,i)} onblur={()=>hover=null} onclick={()=>onselect(r)} onkeydown={event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();onselect(r);}if(event.key==='Escape')hover=null;}}/>{/if}{/each}
+  {#each items as r,i}<rect x={i===0?0:(positions[i-1]+positions[i])/2} y="0" width={(i===items.length-1?770:(positions[i]+positions[i+1])/2)-(i===0?0:(positions[i-1]+positions[i])/2)} height="170" fill="transparent" role="button" tabindex="0" aria-label={label(r)} onmousemove={event=>selectPoint(event,r,i)} onmouseenter={event=>selectPoint(event,r,i)} onmouseleave={()=>hover=null} onfocus={event=>selectPoint(event,r,i)} onblur={()=>hover=null} onclick={()=>onselect(r)} onkeydown={event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();onselect(r);}if(event.key==='Escape')hover=null;}}/>{/each}
  </svg>
  <div class="plot-dates"><span>{items.length?label(items[0],true):'—'}</span><span>{items.length>1?label(items[items.length-1],true):'—'}</span></div>
  {#if hover}<GlassHover row={hover.row} title={label(hover.row)} x={hover.x} y={hover.y} onclose={()=>hover=null}/>{/if}

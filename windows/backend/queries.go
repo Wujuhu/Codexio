@@ -252,6 +252,55 @@ func chartKey(t time.Time, granularity string) string {
 		return t.Format("2006-01-02")
 	}
 }
+
+func chartBucketKeys(start, end time.Time, granularity string) []string {
+	if start.IsZero() || !end.After(start) || end.Sub(start) > 730*24*time.Hour {
+		return nil
+	}
+	location := time.Local
+	start = start.In(location)
+	switch granularity {
+	case "hour":
+		start = time.Date(start.Year(), start.Month(), start.Day(), start.Hour(), 0, 0, 0, location)
+	case "week":
+		start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, location)
+		start = start.AddDate(0, 0, -(int(start.Weekday())+6)%7)
+	case "month":
+		start = time.Date(start.Year(), start.Month(), 1, 0, 0, 0, 0, location)
+	default:
+		start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, location)
+	}
+	result := []string{}
+	seen := map[string]bool{}
+	for cursor := start; cursor.Before(end); {
+		key := chartKey(cursor, granularity)
+		if !seen[key] {
+			result = append(result, key)
+			seen[key] = true
+		}
+		switch granularity {
+		case "hour":
+			cursor = cursor.Add(time.Hour)
+		case "week":
+			cursor = cursor.AddDate(0, 0, 7)
+		case "month":
+			cursor = cursor.AddDate(0, 1, 0)
+		default:
+			cursor = cursor.AddDate(0, 0, 1)
+		}
+	}
+	return result
+}
+
+func emptyChartMetric() Row {
+	r := newMetricSum().row()
+	for _, key := range append([]string{"tokens", "requests"}, tokenFields...) {
+		r[key] = int64(0)
+	}
+	r["usd"] = float64(0)
+	return r
+}
+
 func (s *Store) Chart(q Query) (resultRows []Row, err error) {
 	key, cached, ok := s.cachedQuery("chart", q)
 	if ok {
@@ -309,14 +358,23 @@ func (s *Store) Chart(q Query) (resultRows []Row, err error) {
 		}
 	}
 	rows.Close()
-	keys := make([]string, 0, len(buckets))
+	keys := chartBucketKeys(start, end, granularity)
+	known := map[string]bool{}
+	for _, key := range keys {
+		known[key] = true
+	}
 	for key := range buckets {
-		keys = append(keys, key)
+		if !known[key] {
+			keys = append(keys, key)
+		}
 	}
 	sort.Strings(keys)
 	result := make([]Row, 0, len(keys))
 	for _, key := range keys {
-		r := buckets[key].row()
+		r := emptyChartMetric()
+		if buckets[key] != nil && buckets[key].records > 0 {
+			r = buckets[key].row()
+		}
 		r["timestamp"] = key
 		r["date"] = key
 		r["label"] = key

@@ -12,4 +12,4 @@
    return key==='tokens'?compact(summary[key]):numeric(summary[key]);
  }
 </script>
-<div class="metrics">{#each fields as [key,label]}<section class="metric surface"><span class="muted metric-heading">{tr(label)}</span><strong data-metric={key} title={value(key)}>{value(key)}</strong>{#if key==='usd'&&(summary.cost_complete===false||Number(summary.unpriced_calls)>0||summary.pricing_status==='partial')}<small class="pricing-note muted">{tr('部分定价')}</small>{/if}</section>{/each}</div>
+<div class="metrics">{#each fields as [key,label]}<section class="metric surface"><span class="muted metric-heading">{tr(label)}</span><strong data-metric={key} title={value(key)}>{value(key)}</strong></section>{/each}</div>

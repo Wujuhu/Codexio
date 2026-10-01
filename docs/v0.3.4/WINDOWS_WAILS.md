@@ -101,3 +101,9 @@ A read-only audit and an isolated SQLite backup reproduced the stalled collector
 The same isolated ledger recovered today's real user requests and current records, with a successful scan timestamp. The real database and running EXE were left untouched. Floating content is display-only: no buttons, click/double-click actions or context menu. Browser image/text dragging is disabled while the native window drag region remains. Edge changes reuse `v0.2.10:src/codexio/dock.py:snap_geometry`'s center anchor instead of preserving the resized bar's corner. Settings children cannot shrink along their vertical scroll axis, so the preview keeps its full height.
 
 Verification uses the existing three mock smoke checks, production compilation and delivery hashes. No new test suite, Computer Use, screenshot matrix or version bump is introduced.
+
+# 2026-10-01 visual and data parity
+
+Windows bundles `InterVariable.woff2` from the user-supplied Inter 4.1 archive together with `Inter-OFL-1.1.txt` (SIL Open Font License 1.1). Latin text and numerals use the bundled variable font; Chinese falls back to the Windows interface font without a system installation. Application compact numbers are locale-independent K/M/B values, while AI report cards keep their established report-specific Chinese notation.
+
+Trend queries now materialize bounded local-time buckets. A bucket with no calls is a known zero and stays connected on the baseline; a bucket with known Token but incomplete pricing retains Token and leaves only cost unknown. The Svelte chart renders that backend contract without synthesizing null gaps.
