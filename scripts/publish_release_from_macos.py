@@ -63,6 +63,17 @@ def remote_ref(ref):
     return line[0].split()[0] if line else None
 
 
+def validate_notes(release, notes=""):
+    if str(release.get("body") or "").strip() != notes.strip():
+        raise UpdateError("Release 正文与本次确认的内容不一致")
+
+
+def write_notes(staging, notes):
+    path = staging / "release-notes.txt"
+    path.write_text(notes, encoding="utf-8")
+    return path
+
+
 def validate_mac(version, staging):
     mac = ROOT / "build/dev/macos"
     app = mac / "Codexio.app"
@@ -130,12 +141,11 @@ def ensure_remote_main(commit):
         raise UpdateError("远程 main 未指向本次确认的提交")
 
 
-def validate_draft(release, tag, commit, staging, mac_stage, include_windows=False):
+def validate_draft(release, tag, commit, staging, mac_stage, include_windows=False, notes=""):
     if (not release or release.get("isDraft") is not True or release.get("tagName") != tag
             or release.get("name") != tag or release.get("targetCommitish") != commit):
         raise UpdateError("现有同版本 Release 不是可继续的草稿")
-    if str(release.get("body") or "").strip():
-        raise UpdateError("草稿 Release 正文不是空白")
+    validate_notes(release, notes)
     names = sorted(str(item.get("name") or "") for item in release.get("assets") or [])
     allowed = APPLE_ASSETS + (("Codexio.exe",) if include_windows else ())
     if any(name not in allowed for name in names):
@@ -152,20 +162,20 @@ def validate_draft(release, tag, commit, staging, mac_stage, include_windows=Fal
             raise UpdateError("草稿中的 Mac 附件与本机已验证开发包不一致：" + name)
 
 
-def create_draft(tag, commit, mac_stage, staging):
+def create_draft(tag, commit, mac_stage, staging, notes=""):
     if gh_release(tag) is not None or remote_ref("refs/tags/" + tag) is not None:
         raise UpdateError("同版本 Tag 或 Release 已存在，不自动覆盖")
     local_tag = run("git", "show-ref", "--verify", "--quiet", "refs/tags/" + tag, check=False)
     if local_tag.returncode == 0:
         raise UpdateError("本地同版本 Tag 已存在，不自动覆盖")
-    empty = staging / "empty-release-notes.txt"
-    empty.write_bytes(b"")
+    notes_path = write_notes(staging, notes)
     run("gh", "release", "create", tag, "--repo", REPOSITORY, "--target", commit,
-        "--title", tag, "--draft", "--notes-file", empty,
+        "--title", tag, "--draft", "--notes-file", notes_path,
         *(mac_stage / name for name in APPLE_ASSETS))
     release = gh_release(tag)
     if not release or release.get("isDraft") is not True or release.get("targetCommitish") != commit:
         raise UpdateError("未能确认 GitHub 草稿 Release")
+    validate_notes(release, notes)
     return release
 
 
@@ -194,12 +204,11 @@ def dispatch_and_wait(version, commit):
     run("gh", "run", "watch", str(selected["databaseId"]), "--repo", REPOSITORY, "--exit-status")
 
 
-def verify_published(tag, commit=None, include_windows=False, include_ios=True):
+def verify_published(tag, commit=None, include_windows=False, include_ios=True, notes=""):
     release = gh_release(tag)
     if not release or release.get("isDraft") is not False or release.get("tagName") != tag or release.get("name") != tag:
         raise UpdateError("未得到有效的正式 Release")
-    if str(release.get("body") or "").strip():
-        raise UpdateError("正式 Release 正文不是空白")
+    validate_notes(release, notes)
     names = sorted(str(item.get("name") or "") for item in release.get("assets") or [])
     expected = (APP_ARCHIVE_NAME, "latest.json") + ((IPA_NAME,) if include_ios else ()) + (("Codexio.exe",) if include_windows else ())
     if names != sorted(expected):
@@ -209,12 +218,12 @@ def verify_published(tag, commit=None, include_windows=False, include_ios=True):
     return release
 
 
-def finalize_mac_draft(tag, commit, staging, mac_stage):
+def finalize_mac_draft(tag, commit, staging, mac_stage, notes=""):
     release = gh_release(tag)
     if (not release or release.get("isDraft") is not True or release.get("tagName") != tag
-            or release.get("name") != tag or release.get("targetCommitish") != commit
-            or str(release.get("body") or "").strip()):
+            or release.get("name") != tag or release.get("targetCommitish") != commit):
         raise UpdateError("Mac 草稿状态不符合发布条件")
+    validate_notes(release, notes)
     if sorted(item.get("name") for item in release.get("assets") or []) != sorted(APPLE_ASSETS):
         raise UpdateError("草稿必须且只能有 Mac ZIP、iOS IPA 与 latest.json")
     downloaded = staging / "verified-mac-draft"
@@ -244,7 +253,7 @@ def sync_local_release(version, tag, staging, include_windows=False, include_ios
     return destination
 
 
-def publish(version, *, resume_draft=False, sync_only=False, include_windows=False):
+def publish(version, *, resume_draft=False, sync_only=False, include_windows=False, notes=""):
     version = ".".join(map(str, version_tuple(version)))
     tag = "v" + version
     if (ROOT / "release" / version).exists():
@@ -256,7 +265,7 @@ def publish(version, *, resume_draft=False, sync_only=False, include_windows=Fal
         if sync_only:
             previous = gh_release(tag)
             has_ios = any(asset.get("name") == IPA_NAME for asset in (previous or {}).get("assets") or [])
-            verify_published(tag, commit, include_windows, include_ios=has_ios)
+            verify_published(tag, commit, include_windows, include_ios=has_ios, notes=notes)
             return sync_local_release(version, tag, staging, include_windows, include_ios=has_ios)
         mac_stage = validate_mac(version, staging)
         prepare_ios(version, mac_stage)
@@ -265,8 +274,9 @@ def publish(version, *, resume_draft=False, sync_only=False, include_windows=Fal
             if not resume_draft:
                 raise UpdateError("同版本 Release 已存在；仅可显式使用 --resume-draft 继续匹配的草稿")
             if (existing.get("isDraft") is not True or existing.get("tagName") != tag
-                    or existing.get("name") != tag or str(existing.get("body") or "").strip()):
-                raise UpdateError("现有同版本 Release 不是可继续的空正文草稿")
+                    or existing.get("name") != tag):
+                raise UpdateError("现有同版本 Release 不是可继续的草稿")
+            validate_notes(existing, notes)
             old_target = str(existing.get("targetCommitish") or "")
             if old_target != commit:
                 if (len(old_target) != 40 or any(character not in "0123456789abcdef" for character in old_target.lower())
@@ -279,19 +289,18 @@ def publish(version, *, resume_draft=False, sync_only=False, include_windows=Fal
         ensure_remote_main(commit)
         if existing is not None:
             if existing.get("targetCommitish") != commit:
-                empty = staging / "empty-release-notes.txt"
-                empty.write_bytes(b"")
+                notes_path = write_notes(staging, notes)
                 run("gh", "release", "edit", tag, "--repo", REPOSITORY, "--target", commit,
-                    "--title", tag, "--notes-file", empty, "--draft=true")
+                    "--title", tag, "--notes-file", notes_path, "--draft=true")
                 existing = gh_release(tag)
-            validate_draft(existing, tag, commit, staging, mac_stage, include_windows)
+            validate_draft(existing, tag, commit, staging, mac_stage, include_windows, notes=notes)
         else:
-            create_draft(tag, commit, mac_stage, staging)
+            create_draft(tag, commit, mac_stage, staging, notes=notes)
         if include_windows:
             dispatch_and_wait(version, commit)
         else:
-            finalize_mac_draft(tag, commit, staging, mac_stage)
-        release = verify_published(tag, commit, include_windows)
+            finalize_mac_draft(tag, commit, staging, mac_stage, notes=notes)
+        release = verify_published(tag, commit, include_windows, notes=notes)
         destination = sync_local_release(version, tag, staging, include_windows)
         print("已发布：" + str(release.get("url") or tag))
         return destination
@@ -311,11 +320,15 @@ def main():
                         help="只下载并核验本平台已发布附件，补齐本地 release 归档")
     parser.add_argument("--include-windows", action="store_true",
                         help="仅在用户明确要求本次也发布 Windows 时使用；默认不触发 Windows CI")
+    parser.add_argument("--notes-file", type=Path,
+                        help="仅在用户明确要求正文时读取 UTF-8 说明文件；默认仍为空正文")
     args = parser.parse_args()
     if not args.confirm_publish and not args.sync_only:
         parser.error("发布必须显式提供 --confirm-publish")
     try:
-        print(publish(args.version, resume_draft=args.resume_draft, sync_only=args.sync_only, include_windows=args.include_windows))
+        notes = args.notes_file.read_text(encoding="utf-8") if args.notes_file else ""
+        print(publish(args.version, resume_draft=args.resume_draft, sync_only=args.sync_only,
+                      include_windows=args.include_windows, notes=notes))
     except (OSError, ValueError, UpdateError, subprocess.SubprocessError) as exc:
         parser.exit(1, "发布未完成：%s\n" % exc)
 
