@@ -166,7 +166,7 @@ func (p *UpstreamProxy) Toggle(enabled bool) (Row, error) {
 		r.Header.Del("X-Codexio-Route")
 		r.Header.Set("Accept-Encoding", "identity")
 	}
-	proxy.Transport = &http.Transport{Proxy: http.ProxyFromEnvironment, ForceAttemptHTTP2: false, TLSHandshakeTimeout: 15 * time.Second, ResponseHeaderTimeout: 60 * time.Second, IdleConnTimeout: 90 * time.Second, MaxIdleConns: 16}
+	proxy.Transport = &http.Transport{Proxy: systemAccountProxy, ForceAttemptHTTP2: false, TLSHandshakeTimeout: 15 * time.Second, ResponseHeaderTimeout: 60 * time.Second, IdleConnTimeout: 90 * time.Second, MaxIdleConns: 16}
 	proxy.ModifyResponse = func(r *http.Response) error {
 		if r.StatusCode == 101 {
 			if rw, ok := r.Body.(io.ReadWriteCloser); ok {

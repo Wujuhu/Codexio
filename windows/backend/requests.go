@@ -261,7 +261,7 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 			if alias == "" {
 				return key
 			}
-			if seen[key] {
+			if seen[key] || len(seen) >= 64 {
 				return original
 			}
 			seen[key] = true
@@ -304,52 +304,140 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 	edges := map[string]string{}
 	byChild := map[string][]Row{}
 	byParent := map[string][]Row{}
+	sessionParents := map[string]map[string]bool{}
+	firstTurns := map[string]string{}
+	addParent := func(child, parent string) {
+		if child == "" || parent == "" || child == parent {
+			return
+		}
+		if sessionParents[child] == nil {
+			sessionParents[child] = map[string]bool{}
+		}
+		sessionParents[child][parent] = true
+	}
+	for key, base := range bases {
+		meta := base.meta
+		session := dataString(meta, "session_id")
+		first := firstTurns[session]
+		if first == "" || dataString(meta, "started_at") < dataString(bases[first].meta, "started_at") || dataString(meta, "started_at") == dataString(bases[first].meta, "started_at") && key < first {
+			firstTurns[session] = key
+		}
+	}
+	for _, meta := range metadata {
+		if ValueBool(meta["is_subagent"]) {
+			addParent(dataString(meta, "session_id"), dataString(meta, "parent_session_id"))
+		}
+	}
 	for _, link := range links {
 		child, parent := dataString(link, "child_session_id"), dataString(link, "parent_session_id")
 		byChild[child] = append(byChild[child], link)
 		byParent[parent] = append(byParent[parent], link)
+		addParent(child, parent)
+	}
+	reference := func(value, session string) string {
+		if value != "" && !strings.HasPrefix(value, "turn:") {
+			return turnKey(session, value)
+		}
+		return value
+	}
+	// Mac v0.3.5 Analytics.scopedRoot: an ancestor turn ID is scoped only by
+	// recorded ancestry, with a unique candidate and a bounded, acyclic walk.
+	scopedRoot := func(meta Row) (string, bool) {
+		value, session := dataString(meta, "root_turn_id"), dataString(meta, "session_id")
+		if value == "" || value == dataString(meta, "turn_id") {
+			return "", false
+		}
+		local := resolve(reference(value, session))
+		if base := bases[local]; base != nil && dataString(base.meta, "session_id") == session {
+			return local, false
+		}
+		if !ValueBool(meta["is_subagent"]) {
+			return "", false
+		}
+		visited, candidates := map[string]int{session: 1}, map[string]bool{}
+		var visit func(string) bool
+		visit = func(parent string) bool {
+			if visited[parent] == 1 {
+				return false
+			}
+			if visited[parent] == 2 {
+				return true
+			}
+			if len(visited) >= 64 {
+				return false
+			}
+			visited[parent] = 1
+			candidate := resolve(reference(value, parent))
+			if base := bases[candidate]; base != nil && dataString(base.meta, "session_id") == parent {
+				candidates[candidate] = true
+			}
+			for ancestor := range sessionParents[parent] {
+				if !visit(ancestor) {
+					return false
+				}
+			}
+			visited[parent] = 2
+			return true
+		}
+		for parent := range sessionParents[session] {
+			if !visit(parent) {
+				return "", true
+			}
+		}
+		if len(candidates) == 1 {
+			for candidate := range candidates {
+				return candidate, false
+			}
+		}
+		return "", len(candidates) > 1
 	}
 	for key, base := range bases {
 		meta := base.meta
-		ownershipKey := func(value string) string {
-			if value != "" && !strings.HasPrefix(value, "turn:") {
-				return turnKey(dataString(meta, "session_id"), value)
-			}
-			return value
-		}
-		if continuation := resolve(ownershipKey(dataString(meta, "continuation_of"))); continuation != "" && continuation != key && bases[continuation] != nil {
-			edges[key] = continuation
-			continue
-		}
-		if root := resolve(ownershipKey(dataString(meta, "root_turn_id"))); root != "" && root != key && bases[root] != nil && !ValueBool(meta["is_subagent"]) && !approvalRequest(meta) {
-			edges[key] = root
-			continue
-		}
 		session, parent := dataString(meta, "session_id"), dataString(meta, "parent_session_id")
 		direct := byChild[session]
 		if len(direct) > 0 || approvalRequest(meta) {
 			meta["is_subagent"] = true
 		}
+		// An actual human message is a new request even if an execution context
+		// still carries the preceding segment's root or provisional resume edge.
+		newHuman := ValueBool(meta["has_user_message"]) && !ValueBool(meta["is_subagent"])
+		if continuation := resolve(reference(dataString(meta, "continuation_of"), session)); continuation != "" && continuation != key && bases[continuation] != nil && !newHuman {
+			edges[key] = continuation
+			continue
+		}
+		if !newHuman && !approvalRequest(meta) {
+			root, ambiguous := scopedRoot(meta)
+			if ambiguous {
+				base.note = "根轮次的祖先关系不明确，未合并费用"
+				continue
+			}
+			if root != "" && root != key {
+				edges[key] = root
+				continue
+			}
+		}
 		if !ValueBool(meta["is_subagent"]) {
 			continue
 		}
 		candidates := map[string]bool{}
-		if turn := dataString(meta, "parent_turn_id"); parent != "" && turn != "" {
-			candidates[resolve(turnKey(parent, turn))] = true
+		firstTurn := firstTurns[session] == key
+		if turn := dataString(meta, "parent_turn_id"); parent != "" && turn != "" && (firstTurn || ValueBool(meta["parent_turn_explicit"]) || approvalRequest(meta)) {
+			candidates[resolve(reference(turn, parent))] = true
 		}
 		// Guardian's inherited parent turn is structural evidence only when present
 		// in the parent ledger. A parent thread by itself is deliberately insufficient.
 		if approvalRequest(meta) && parent != "" {
 			if turn := dataString(meta, "inherited_parent_turn_id"); turn != "" {
-				candidate := resolve(turnKey(parent, turn))
+				candidate := resolve(reference(turn, parent))
 				if bases[candidate] != nil {
 					candidates[candidate] = true
 				}
 			}
 		}
 		for _, link := range append(append([]Row{}, direct...), byParent[parent]...) {
-			exact := dataString(link, "child_session_id") == session
-			path := parent != "" && dataString(meta, "agent_path") != "" && dataString(link, "target") == dataString(meta, "agent_path")
+			child := dataString(link, "child_session_id")
+			exact := child != "" && child == session
+			path := child == "" && parent != "" && dataString(link, "parent_session_id") == parent && dataString(meta, "agent_path") != "" && dataString(link, "target") == dataString(meta, "agent_path")
 			if !exact && !path {
 				continue
 			}
@@ -357,7 +445,9 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 			if childTurn := dataString(link, "child_turn_id"); childTurn != "" {
 				matches = childTurn == dataString(meta, "turn_id")
 			} else if dataString(link, "kind") == "spawn" {
-				matches = ValueBool(meta["first_turn"])
+				spawned, spawnOK := ParseStamp(link["timestamp"])
+				started, startOK := ParseStamp(meta["started_at"])
+				matches = firstTurn && spawnOK && startOK && spawned.Unix() <= started.Unix()
 			} else {
 				for _, hash := range ValueStrings(meta["input_hashes"]) {
 					if hash == dataString(link, "message_hash") {
@@ -366,7 +456,7 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 				}
 			}
 			if matches && dataString(link, "parent_turn_id") != "" {
-				candidates[resolve(turnKey(dataString(link, "parent_session_id"), dataString(link, "parent_turn_id")))] = true
+				candidates[resolve(reference(dataString(link, "parent_turn_id"), dataString(link, "parent_session_id")))] = true
 			}
 		}
 		if len(candidates) == 1 {
@@ -383,7 +473,7 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 		original := key
 		seen := map[string]bool{}
 		for edges[key] != "" {
-			if seen[key] {
+			if seen[key] || len(seen) >= 64 {
 				return original
 			}
 			seen[key] = true
@@ -405,6 +495,14 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 			return dataString(bases[a].meta, "started_at") < dataString(bases[b].meta, "started_at")
 		})
 	}
+	// Remember ownership even for a call whose turn metadata has not arrived.
+	// A later explicit agent link must invalidate its former standalone group.
+	for key, base := range bases {
+		if metadata[key] == nil {
+			metadata[key] = CloneRow(base.meta)
+			metadata[key]["id"] = key
+		}
+	}
 	affected := map[string]bool{}
 	if !full {
 		old, e := queryJSON(tx, "SELECT data FROM usage_query_turns")
@@ -412,8 +510,13 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 			return e
 		}
 		for _, meta := range old {
-			if dirty[dataString(meta, "session_id")] {
-				affected[dataString(meta, "root_id")] = true
+			oldRoot := dataString(meta, "root_id")
+			newRoot := rootOf(resolve(turnKey(dataString(meta, "session_id"), dataString(meta, "turn_id"))))
+			if dirty[dataString(meta, "session_id")] || oldRoot != newRoot {
+				affected[oldRoot] = true
+				if bases[newRoot] != nil {
+					affected[newRoot] = true
+				}
 			}
 		}
 	}

@@ -46,6 +46,7 @@ type Store struct {
 	queryCacheGeneration    int64
 	metadataRepairRemaining int
 	metadataRepairPriority  map[string]bool
+	media                   *requestMediaCache
 }
 type directorySnapshot struct {
 	stamp   int64
@@ -95,9 +96,14 @@ func OpenStore(o DataOptions) (*Store, error) {
 	db.SetMaxOpenConns(1)
 	s := &Store{db: db, options: o, config: CloneRow(o.Config), status: Row{"status": "starting"}, refresh: make(chan bool, 1), closed: make(chan struct{}), directories: map[string]directorySnapshot{}, titleSignatures: map[string]string{}, files: map[string][]string{}}
 	s.path = filepath.Join(o.Directory, name)
+	s.media = newRequestMediaCache(filepath.Dir(s.path), o.Mock)
 	s.queryCache = map[string]string{}
 	s.parentSignatureCache = map[string]map[string]bool{}
 	if e = s.schema(); e != nil {
+		db.Close()
+		return nil, e
+	}
+	if e = s.mobileImageSchema(); e != nil {
 		db.Close()
 		return nil, e
 	}
@@ -215,7 +221,7 @@ func (s *Store) Rescan() {
 }
 func (s *Store) Close() error {
 	var e error
-	s.closeOnce.Do(func() { close(s.closed); s.work.Lock(); defer s.work.Unlock(); e = s.db.Close() })
+	s.closeOnce.Do(func() { close(s.closed); s.media.close(); s.work.Lock(); defer s.work.Unlock(); e = s.db.Close() })
 	return e
 }
 func (s *Store) Run(ctx context.Context, changed func()) {
@@ -403,6 +409,7 @@ func saveMessage(tx *sql.Tx, id string, patch Row) error {
 	var revision int64
 	_ = tx.QueryRow("SELECT data,digest,revision FROM usage_request_messages WHERE id=?", id).Scan(&raw, &digest, &revision)
 	v := dataRow(raw)
+	patch = mergeRequestMediaPatch(v, patch)
 	for k, x := range patch {
 		v[k] = x
 	}
@@ -418,13 +425,18 @@ func saveMessage(tx *sql.Tx, id string, patch Row) error {
 			v[field+"_complete"] = false
 		}
 	}
-	attachments := ValueRows(v["attachments"])
-	if len(attachments) > 32 {
-		v["attachments"] = attachments[:32]
-		v["user_complete"] = false
+	attachmentCount := 0
+	for _, field := range []string{"attachments", "final_attachments", "generated_attachments"} {
+		attachments := deduplicatedRequestMedia(ValueRows(v[field]))
+		v[field] = attachments[:min(requestMediaLimit, len(attachments))]
+		attachmentCount += len(attachments)
+		if len(attachments) > requestMediaLimit {
+			complete := map[string]string{"attachments": "user_complete", "final_attachments": "final_complete", "generated_attachments": "generated_complete"}[field]
+			v[complete] = false
+		}
 	}
 	terminal := dataString(v, "status") == "completed" || dataString(v, "status") == "aborted"
-	available := dataString(v, "user") != "" || dataString(v, "final") != "" || len(attachments) > 0
+	available := dataString(v, "user") != "" || dataString(v, "final") != "" || attachmentCount > 0
 	v["availability"] = "unavailable"
 	if available {
 		v["availability"] = "partial"

@@ -82,6 +82,8 @@ func (s *mobileSum) metric() Row {
 	return mobileMetric(r)
 }
 func (m *MobileHost) putLocked(dataset string, value any) error {
+	value, _, deadline := mobileRetainValue(dataset, value, time.Now().Unix())
+	m.noteContentExpiryLocked(deadline)
 	raw, e := mobileJSON(value)
 	if e != nil {
 		return e
@@ -105,6 +107,7 @@ func (m *MobileHost) project(ctx context.Context) {
 		m.mu.Unlock()
 		return
 	}
+	retained := m.retainContentLocked()
 	name := m.name
 	before := m.datasetRevisionLocked()
 	m.mu.Unlock()
@@ -117,6 +120,10 @@ func (m *MobileHost) project(ctx context.Context) {
 	m.mu.Lock()
 	if m.projectionKey == key {
 		m.mu.Unlock()
+		if retained {
+			m.notify()
+			m.upload()
+		}
 		return
 	}
 	rebuild := m.historyKey != historyKey
@@ -378,10 +385,16 @@ func mobileSingleModel(name string) bool {
 }
 func (m *MobileHost) pruneDetailsLocked() {
 	now := float64(time.Now().Unix())
+	for id, until := range m.detailDeferred {
+		if float64(until) <= now {
+			delete(m.detailDeferred, id)
+		}
+	}
 	for id, d := range m.details {
 		if d.Expires <= now {
 			delete(m.details, id)
 			delete(m.sentDetails, id)
+			delete(m.detailDeferred, id)
 		}
 	}
 	for {
@@ -402,6 +415,7 @@ func (m *MobileHost) pruneDetailsLocked() {
 		}
 		delete(m.details, oldest)
 		delete(m.sentDetails, oldest)
+		delete(m.detailDeferred, oldest)
 	}
 }
 func (m *MobileHost) getDetail(id string, thumbnails bool) (Row, error) {
@@ -415,9 +429,7 @@ func (m *MobileHost) getDetailWithForce(id string, thumbnails, force bool) (Row,
 	m.detailMu.Lock()
 	defer m.detailMu.Unlock()
 	generation := m.store.Generation()
-	m.mu.Lock()
-	canonical := m.requests[id]
-	m.mu.Unlock()
+	canonical := m.canonicalMobileRequest(id)
 	if canonical == "" {
 		return nil, errors.New("unknown mobile request")
 	}
@@ -433,6 +445,7 @@ func (m *MobileHost) getDetailWithForce(id string, thumbnails, force bool) (Row,
 	// boundary, not a reason to reread an unchanged request's source messages.
 	sourceKey := mobileDetailSource(request)
 	m.mu.Lock()
+	m.retainContentLocked()
 	if cached := m.details[id]; !force && cached != nil && cached.Expires > float64(time.Now().Unix()) && cached.Source == sourceKey && (!thumbnails || cached.Thumbnails) {
 		cached.Access = time.Now()
 		cached.Generation = generation
@@ -489,9 +502,25 @@ func (m *MobileHost) getDetailWithForce(id string, thumbnails, force bool) (Row,
 		uc = false
 		fc = false
 	}
+	mediaSource := Row{}
+	for key, value := range detail {
+		mediaSource[key] = value
+	}
+	mediaSource["user"], mediaSource["final"] = user, final
+	prepared, e := m.store.prepareRequestImages(m.workerCtx, mediaSource, id, float64(start.UnixMilli())/1000, true)
+	if e != nil {
+		return nil, e
+	}
+	imageRefs, retryImages, e := m.queuePreparedImages(m.workerCtx, prepared)
+	if e != nil {
+		return nil, e
+	}
+	user, final = ValueString(prepared["user"]), ValueString(prepared["final"])
 	attachments := []Row{}
-	images := 0
 	for _, a := range ValueRows(detail["attachments"]) {
+		if strings.HasPrefix(ValueString(a["mime"]), "image/") {
+			continue
+		}
 		if len(attachments) >= 6 {
 			break
 		}
@@ -500,14 +529,7 @@ func (m *MobileHost) getDetailWithForce(id string, thumbnails, force bool) (Row,
 			name = "附件"
 		}
 		mime := mobilePrefix(ValueString(a["mime"]), 80)
-		var thumb any
-		if thumbnails && images < 2 && strings.HasPrefix(mime, "image/") {
-			if v := mobileThumbnail(ValueString(a["path"])); v != "" {
-				thumb = v
-				images++
-			}
-		}
-		attachments = append(attachments, Row{"id": HashString(ValueString(a["id"]) + name), "name": name, "mime": mime, "thumbnail": thumb})
+		attachments = append(attachments, Row{"id": HashString(ValueString(a["id"]) + name), "name": name, "mime": mime, "thumbnail": nil})
 	}
 	availability := "unavailable"
 	if uc && (final == "" || fc) {
@@ -519,7 +541,7 @@ func (m *MobileHost) getDetailWithForce(id string, thumbnails, force bool) (Row,
 	if hasEnded {
 		completed = float64(ended.UnixMilli()) / 1000
 	}
-	value := Row{"id": id, "started": float64(start.UnixMilli()) / 1000, "completed": completed, "status": ValueString(request["request_status"]), "user": user, "final": final, "userComplete": uc, "finalComplete": fc, "availability": availability, "attachments": attachments, "full": true}
+	value := Row{"id": id, "started": float64(start.UnixMilli()) / 1000, "completed": completed, "status": ValueString(request["request_status"]), "user": user, "final": final, "userComplete": uc, "finalComplete": fc, "availability": availability, "attachments": attachments, "images": imageRefs, "full": true}
 	payload, e := mobileJSON(value)
 	if e != nil {
 		return nil, e
@@ -551,7 +573,7 @@ func (m *MobileHost) getDetailWithForce(id string, thumbnails, force bool) (Row,
 	digest := HashString(string(payload))
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if !m.enabled || m.store.Generation() != generation || m.requests[id] != canonical {
+	if !m.enabled || m.store.Generation() != generation || m.requests[id] != "" && m.requests[id] != canonical {
 		return nil, errors.New("request changed")
 	}
 	old := m.details[id]
@@ -564,7 +586,18 @@ func (m *MobileHost) getDetailWithForce(id string, thumbnails, force bool) (Row,
 		}
 	}
 	envelope := Row{"dataset": "detail-" + id, "revision": revision, "digest": digest, "payload": string(payload)}
-	m.details[id] = &mobileDetail{Envelope: envelope, Expires: float64(expires.Unix()), Access: time.Now(), Generation: generation, Thumbnails: thumbnails, Source: sourceKey}
+	imageRetry := int64(0)
+	if retryImages {
+		imageRetry = time.Now().Add(time.Minute).Unix()
+	}
+	if e := m.queueImageDetail(m.workerCtx, id, canonical, sourceKey, envelope, expires.Unix(), imageRetry, imageRefs); e != nil {
+		return nil, e
+	}
+	m.parentsPending = true
+	m.details[id] = &mobileDetail{Envelope: envelope, Expires: float64(expires.Unix()), Access: time.Now(), Generation: generation, Thumbnails: thumbnails, Source: sourceKey, ImageRetry: imageRetry}
+	_, _, deadline := mobileRetainValue("detail", value, time.Now().Unix())
+	m.noteContentExpiryLocked(deadline)
+	m.imagesPending = m.imagesPending || len(imageRefs) > 0
 	m.pruneDetailsLocked()
 	go m.upload()
 	return CloneRow(envelope), nil

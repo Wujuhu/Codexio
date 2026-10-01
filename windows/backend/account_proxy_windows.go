@@ -12,14 +12,11 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// Match the Mac URLSession and Python urllib system-proxy fallback when the
-// application was started from Explorer without proxy environment variables.
-// Explicit environment proxies and NO_PROXY retain their normal precedence.
+// Explorer-launched apps must use the same configured proxy as Windows.
+// User system settings are authoritative; environment settings are a fallback
+// only when Windows has no manual proxy configured.
 func systemAccountProxy(request *http.Request) (*url.URL, error) {
 	config := httpproxy.FromEnvironment()
-	if config.HTTPProxy != "" || config.HTTPSProxy != "" {
-		return config.ProxyFunc()(request.URL)
-	}
 	var settings struct {
 		AutoDetect                   int32
 		AutoConfigURL, Proxy, Bypass *uint16
@@ -63,7 +60,7 @@ func systemAccountProxy(request *http.Request) (*url.URL, error) {
 		proxy = selected
 	}
 	if proxy == "" {
-		return config.ProxyFunc()(request.URL)
+		return nil, nil
 	}
 	if !strings.Contains(proxy, "://") {
 		proxy = "http://" + proxy
@@ -73,6 +70,7 @@ func systemAccountProxy(request *http.Request) (*url.URL, error) {
 		(parsed.Scheme != "http" && parsed.Scheme != "https" && parsed.Scheme != "socks5" && parsed.Scheme != "socks5h") {
 		return nil, errors.New("无法读取系统代理配置")
 	}
-	config.HTTPProxy, config.HTTPSProxy = proxy, proxy
-	return config.ProxyFunc()(request.URL)
+	// The Windows bypass list above is authoritative, not inherited NO_PROXY.
+	system := httpproxy.Config{HTTPProxy: proxy, HTTPSProxy: proxy}
+	return system.ProxyFunc()(request.URL)
 }

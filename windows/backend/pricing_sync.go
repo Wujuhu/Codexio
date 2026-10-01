@@ -22,7 +22,7 @@ func fetchPriceFeed(ctx context.Context, url string) (Row, error) {
 	}
 	req.Header.Set("User-Agent", "Codexio/0.3.4")
 	req.Header.Set("Accept", "application/json")
-	client := http.Client{Timeout: 15 * time.Second}
+	client := http.Client{Timeout: 15 * time.Second, Transport: systemAccountTransport}
 	response, e := client.Do(req)
 	if e != nil {
 		return nil, e

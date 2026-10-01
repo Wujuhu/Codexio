@@ -146,9 +146,22 @@ func (s *Service) GetOverview(q Query) (Row, error) {
 	}
 	return Row{"summary": summary, "chart": chart, "recent": recent, "models": models, "quota": s.subscription(false), "state": s.store.Status(), "generation": s.store.Generation()}, nil
 }
-func (s *Service) GetLogs(q Query) (PageResult, error)         { return s.store.Page(q) }
-func (s *Service) GetState() Row                               { return s.store.Status() }
-func (s *Service) GetDetails(id string, page int) (Row, error) { return s.store.Detail(id, page) }
+func (s *Service) GetLogs(q Query) (PageResult, error) { return s.store.Page(q) }
+func (s *Service) GetState() Row                       { return s.store.Status() }
+func (s *Service) GetDetails(id string, page int) (Row, error) {
+	raw, err := s.store.Detail(id, page)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.desktopRequestImages(raw, id), nil
+}
+func (s *Service) GetRequestImage(ctx context.Context, requestID, imageID string) (Row, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stop := context.AfterFunc(s.ctx, cancel)
+	defer stop()
+	return s.store.requestImage(ctx, requestID, imageID)
+}
 func (s *Service) GetTrends(q Query) (Row, error) {
 	summary, e := s.store.Summary(q)
 	if e != nil {

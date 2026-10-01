@@ -5,6 +5,7 @@
  export let data:Row[]=[];
  export let onselect:(r:Row)=>void=()=>{};
  let aggregation='day',availableWidth=650;
+ let monthWidths:Record<string,number>={};
  let hover:{row:Row,x:number,y:number}|null=null;
  const dateKey=(d:Date)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
  const localDate=(key:string)=>new Date(key.slice(0,10)+'T00:00:00');
@@ -36,6 +37,17 @@
  $: side=Math.min(16,Math.max(0,(availableWidth-(columns-1)*gap)/columns));
  $: maximum=Math.max(1,...buckets.map(r=>number(r.tokens)??0));
  $: months=buckets.map((r,i)=>({i,date:localDate(String(r.date))})).filter(({i,date})=>(i===0&&date.getDate()<=20)||(i>0&&date.getMonth()!==localDate(String(buckets[i-1].date)).getMonth()));
+ $: monthLabels=fitMonths(months,monthWidths,rowCount,offset,side,gap,availableWidth);
+ function fitMonths(values:{i:number,date:Date}[],widths:Record<string,number>,rows:number,offset:number,side:number,gap:number,width:number){
+   // clientWidth is rounded; reserve one pixel for fractional font and container sizes.
+   const labels=values.map(month=>{const title=month.date.toLocaleDateString(undefined,{month:'short'}),labelWidth=(widths[title]??0)+1;return{...month,title,width:labelWidth,x:Math.max(0,Math.min(Math.floor((month.i+offset)/rows)*(side+gap),width-labelWidth)),visible:true};});
+   if(labels.length>2){
+     const last=labels[labels.length-1];let previous=labels[0];
+     // Preserve both edge labels and hide only intermediate months that would overlap.
+     for(const label of labels.slice(1,-1)){label.visible=label.x>=previous.x+previous.width+4&&label.x+label.width+4<=last.x;if(label.visible)previous=label;}
+   }
+   return labels;
+ }
  function measure(node:HTMLElement){const observer=new ResizeObserver(entries=>{const width=entries[0].contentRect.width;if(Math.abs(width-availableWidth)>.5)availableWidth=width;});observer.observe(node);return{destroy:()=>observer.disconnect()};}
  function color(row:Row,max:number){const value=number(row.tokens);return value===null?'transparent':value>0?`color-mix(in srgb, var(--tokens, #007aff) ${(20+80*Math.pow(value/max,.45)).toFixed(2)}%, transparent)`:'color-mix(in srgb, var(--muted) 14%, transparent)';}
  function label(row:Row){const end=localDate(String(row.through??row.date)).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'});return row.weekly||row.cumulative?`${localDate(String(row.from)).toLocaleDateString(undefined,{month:'short',day:'numeric'})} – ${end}`:end;}
@@ -50,12 +62,12 @@
    {#each Array(offset) as _}<span aria-hidden="true"></span>{/each}
    {#each buckets as row}<button class="day" class:unknown={number(row.tokens)===null} aria-label={`${label(row)} · ${compact(row.tokens)} Token`} style:background={color(row,maximum)} onmouseenter={event=>show(event,row)} onmousemove={event=>show(event,row)} onmouseleave={()=>hover=null} onfocus={event=>show(event,row)} onblur={()=>hover=null} onkeydown={event=>{if(event.key==='Escape')hover=null;}} onclick={()=>{hover=null;onselect(row);}}></button>{/each}
   </div>
-  <div class="month-axis">{#each months as month}<span style:left={`${Math.min(Math.floor((month.i+offset)/rowCount)*(side+gap),Math.max(0,availableWidth-28))}px`}>{month.date.toLocaleDateString(undefined,{month:'short'})}</span>{/each}</div>
+  <div class="month-axis">{#each monthLabels as month}<span bind:clientWidth={monthWidths[month.title]} style:left={`${month.x}px`} style:visibility={month.visible&&monthWidths[month.title]!==undefined?'visible':'hidden'}>{month.title}</span>{/each}</div>
   {/if}
  </div>
  {#if hover}<GlassHover row={hover.row} title={label(hover.row)} x={hover.x} y={hover.y} onclose={()=>hover=null}/>{/if}
 </section>
 
 <style>
- .activity-calendar{min-width:0}.activity-heading{margin:10px 0 20px;gap:14px;flex-wrap:wrap}.activity-heading h3{font-size:16px;font-weight:600;margin:0}.aggregation{display:flex;border-radius:8px;padding:2px;background:var(--surface);border:1px solid var(--border);width:210px}.aggregation button{flex:1;border:0;background:transparent;padding:4px 8px;border-radius:6px;font-size:12px}.aggregation button.selected{background:var(--bg);box-shadow:0 1px 3px #0002}.calendar-fit{width:100%;min-width:0}.calendar-grid{display:grid;grid-auto-flow:column;width:max-content;max-width:100%}.calendar-grid .day{padding:0;border:0;border-radius:3px;min-width:0;min-height:0;width:100%;height:100%}.calendar-grid .day:hover{outline:1px solid var(--text);outline-offset:1px}.calendar-grid .day.unknown{border:1px dashed var(--control)}.month-axis{height:16px;position:relative;margin-top:10px}.month-axis span{position:absolute;top:0;font-size:11px;color:var(--muted);white-space:nowrap}
+ .activity-calendar{min-width:0}.activity-heading{margin:10px 0 20px;gap:14px;flex-wrap:wrap}.activity-heading h3{font-size:16px;font-weight:600;margin:0}.aggregation{display:flex;border-radius:8px;padding:2px;background:var(--surface);border:1px solid var(--border);width:210px}.aggregation button{flex:1;border:0;background:transparent;padding:4px 8px;border-radius:6px;font-size:12px}.aggregation button.selected{background:var(--bg);box-shadow:0 1px 3px #0002}.calendar-fit{width:100%;min-width:0}.calendar-grid{display:grid;grid-auto-flow:column;width:max-content;max-width:100%}.calendar-grid .day{padding:0;border:0;border-radius:3px;min-width:0;min-height:0;width:100%;height:100%}.calendar-grid .day:hover{outline:1px solid var(--text);outline-offset:1px}.calendar-grid .day.unknown{border:1px dashed var(--control)}.month-axis{height:16px;position:relative;margin-top:10px}.month-axis span{position:absolute;top:0;width:max-content;font-size:11px;color:var(--muted);white-space:nowrap}
 </style>

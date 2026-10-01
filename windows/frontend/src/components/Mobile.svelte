@@ -3,18 +3,18 @@
  import{api,rows,text,updatedStamp,type Row}from'../lib/api';
  import{tr}from'../lib/i18n';
  import DOMPurify from'dompurify';
- export let initial:Row={};export let onerror:(e:any)=>void;
- let data:Row={};let lastInitial:Row;let busy=false;let hostName='';let hostDirty=false;let cloudKey='';
+ export let initial:Row={};
+ let data:Row={};let lastInitial:Row;let busy=false;let hostName='';let hostDirty=false;let cloudKey='';let actionError='';
  let drafts:Record<string,string>={};let dirty=new Set<string>();let confirm:Row|null=null;let removeCloud=false;let alive=true;
  let queue=Promise.resolve();
  $: if(initial!==lastInitial){lastInitial=initial;if(!busy)adopt(initial)}
  onDestroy(()=>{alive=false});
- function adopt(value:Row){data=value;if(!hostDirty)hostName=value.name??'';for(const reader of rows(value.readers)){const id=String(reader.id);if(!dirty.has(id))drafts[id]=String(reader.note??'')}drafts={...drafts}}
+ function adopt(value:Row){data=value;actionError='';if(!hostDirty)hostName=value.name??'';for(const reader of rows(value.readers)){const id=String(reader.id);if(!dirty.has(id))drafts[id]=String(reader.note??'')}drafts={...drafts}}
  function syncLabel(value:Row|undefined){return value?.time?tr('上次同步：')+updatedStamp(value.time):tr('尚未同步')}
  function noteChanged(id:string,value:string){drafts={...drafts,[id]:value};dirty=new Set([...dirty,id])}
  function act(action:string,values:Row={}):Promise<boolean>{
   let success=false;
-  queue=queue.catch(()=>{}).then(async()=>{busy=true;try{const next=await api('MobileAction',action,values);if(alive)adopt(next);success=true}catch(e){if(alive)onerror(e)}finally{busy=false}});
+  queue=queue.catch(()=>{}).then(async()=>{busy=true;actionError='';try{const next=await api('MobileAction',action,values);if(alive)adopt(next);success=true}catch(e){const current=await api('GetSettings').catch(()=>null);if(alive){if(current?.mobile)adopt(current.mobile);if(!data.error&&!data.cloud_error)actionError=e instanceof Error?e.message:String(e)}}finally{busy=false}});
   return queue.then(()=>success);
  }
  async function saveNote(id:string){const value=(drafts[id]??'').trim();if(!dirty.has(id))return;const ok=await act('note',{id,note:value});if(ok&&(drafts[id]??'').trim()===value){dirty=new Set([...dirty].filter(item=>item!==id));drafts={...drafts,[id]:String(rows(data.readers).find(reader=>String(reader.id)===id)?.note??value)}}}
@@ -32,6 +32,7 @@
   <div class="cloud-sync">
    <div class="cloud-heading"><span class="cloud-title"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M7 19h11a4 4 0 0 0 .4-8A6.5 6.5 0 0 0 6 9a5 5 0 0 0 1 10Z"/></svg>{tr('云端同步')}</span>{#if data.cloud_enabled}<button disabled={busy} onclick={()=>removeCloud=true}>{tr('移除密钥')}</button>{/if}</div>
    {#if !data.cloud_enabled}<form class="cloud-enroll-row" onsubmit={event=>{event.preventDefault();void enroll()}}><input type="password" autocomplete="off" bind:value={cloudKey} placeholder={tr('云端密钥')} aria-label={tr('云端密钥')}/><button disabled={busy||!cloudKey.trim()}>{tr('启用云同步')}</button></form>{/if}
+   {#if data.cloud_error}<p class:error={!data.cloud_error_temporary} class="sync-help" role="status">{text(data.cloud_error)}</p>{/if}
   </div>
   <div><button disabled={busy||rows(data.readers).length>=3} onclick={()=>act('pair')}>{tr('生成二维码')}</button></div>
   {#if data.qr_url}<div class="pairing">{#if /^data:image\/(png|svg\+xml);base64,/.test(data.qr_url)}<img class="qr" src={data.qr_url} alt={tr('配对手机')}/>{/if}</div>
@@ -40,6 +41,7 @@
   <div class="reader-list">{#each rows(data.readers) as reader (reader.id)}<article class="reader-card"><div class="reader-heading"><strong>{text(reader.name??reader.id)}</strong><button disabled={busy} onclick={()=>confirm=reader}>{tr('撤销')}</button></div><div class="reader-note"><input maxlength="80" aria-label={tr('备注')+' · '+text(reader.name??reader.id)} placeholder={tr('备注')} value={drafts[String(reader.id)]??reader.note??''} oninput={event=>noteChanged(String(reader.id),event.currentTarget.value)} onblur={()=>saveNote(String(reader.id))} onkeydown={event=>{if(event.key==='Enter')event.currentTarget.blur()}}/><small class="sync-stamp">{syncLabel(reader.last_sync)}</small></div></article>{/each}</div>
  {/if}
  {#if data.error}<p class="error" role="status">{text(data.error)}</p>{/if}
+ {#if actionError}<p class="error" role="status">{actionError}</p>{/if}
 </section>
 {#if confirm||removeCloud}<div class="modal-backdrop"><div class="modal" role="alertdialog" aria-modal="true" aria-label={tr(removeCloud?'移除云端密钥？':'撤销')}><h2>{removeCloud?tr('移除云端密钥？'):tr('撤销')+' '+text(confirm?.name)}</h2>{#if removeCloud}<p>{tr('云端同步将停止，局域网配对保留。')}</p>{/if}<div class="sync-actions"><button disabled={busy} onclick={()=>{confirm=null;removeCloud=false}}>{tr('取消')}</button><button disabled={busy} onclick={()=>removeCloud?remove():revoke()}>{tr(removeCloud?'移除密钥':'撤销')}</button></div></div></div>{/if}
 <style>

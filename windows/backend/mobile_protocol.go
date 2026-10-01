@@ -181,7 +181,7 @@ func (m *MobileHost) client(ctx context.Context, c net.Conn) {
 		if r == nil {
 			continue
 		}
-		if action := ValueString(r["action"]); action == "sync" || action == "detail" {
+		if action := ValueString(r["action"]); action == "sync" || action == "detail" || action == "image" {
 			authenticated = true
 			readerID = ValueString(ValueRow(message["reader"])["id"])
 		}
@@ -213,6 +213,7 @@ func (m *MobileHost) message(message Row) Row {
 		}
 	}
 	if knownReader != nil {
+		m.retainContentLocked()
 		name := ValueString(reader["name"])
 		if readerNameString && name != "" && len([]rune(name)) <= 40 && name != ValueString(knownReader["name"]) {
 			knownReader["name"] = name
@@ -224,6 +225,11 @@ func (m *MobileHost) message(message Row) Row {
 		if action == "detail" {
 			m.mu.Unlock()
 			return m.detailMessage(message)
+		}
+		if action == "image" {
+			ctx := m.workerCtx
+			m.mu.Unlock()
+			return m.imageMessage(ctx, message)
 		}
 		// iOS keeps sending pair until the first sync response confirms desktop
 		// approval. Mac authenticates this retry and returns the initial datasets.
@@ -249,7 +255,7 @@ func (m *MobileHost) message(message Row) Row {
 			cloud = mobileOrigin
 		}
 		m.mu.Unlock()
-		return Row{"action": "sync", "known": revisions, "datasets": envelopes, "seen": float64(time.Now().UnixMilli()) / 1000, "supportsAck": true, "cloud": cloud, "capabilities": []string{"request-kinds-v1", "request-details-v1"}, "detailVersions": versions}
+		return Row{"action": "sync", "known": revisions, "datasets": envelopes, "seen": float64(time.Now().UnixMilli()) / 1000, "supportsAck": true, "cloud": cloud, "capabilities": []string{"request-kinds-v1", "request-details-v1", "request-images-v1"}, "detailVersions": versions}
 	}
 	if action == "pair" && readerIDString && readerNameString && localSecretString && cloudSecretString && m.ticket != nil && mobileEqual(ValueString(message["ticket"]), ValueString(m.ticket["ticket"])) && mobileUUID.MatchString(ValueString(reader["id"])) && len([]rune(ValueString(reader["name"]))) <= 40 && mobileSecretPattern.MatchString(ValueString(reader["localSecret"])) && mobileSecretPattern.MatchString(ValueString(reader["cloudSecret"])) && (m.pending == nil || ValueString(m.pending["id"]) == ValueString(reader["id"])) {
 		// Copy only protocol credentials, so a phone cannot add arbitrary fields to
@@ -260,7 +266,7 @@ func (m *MobileHost) message(message Row) Row {
 		return Row{"action": "pending"}
 	}
 	m.mu.Unlock()
-	if action == "sync" {
+	if action == "sync" || action == "detail" || action == "image" {
 		return Row{"action": "revoked", "error": "REVOKED"}
 	}
 	return Row{"action": "error", "error": "配对已过期或被拒绝"}

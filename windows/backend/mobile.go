@@ -49,6 +49,7 @@ type mobileDetail struct {
 	Generation int64
 	Thumbnails bool
 	Source     string
+	ImageRetry int64
 }
 type MobileHost struct {
 	mu                        sync.Mutex
@@ -62,6 +63,12 @@ type MobileHost struct {
 	host                      Row
 	lastSaved                 Row
 	name, status, lastError   string
+	lastErrorAction           string
+	lastErrorTemporary        bool
+	cloudError                string
+	cloudErrorTemporary       bool
+	uploadRetry               time.Time
+	uploadFailures            int
 	enabled, closed           bool
 	ticket, pending           Row
 	qrData, qrURL             string
@@ -83,7 +90,14 @@ type MobileHost struct {
 	cloudReaders              map[string]bool
 	cloudDetails              bool
 	cloudRequestKinds         bool
+	cloudImages               bool
+	imagesPending             bool
+	parentsPending            bool
+	detailDeferred            map[string]int64
+	nextContentExpiry         int64
 	cloudRecent               Row
+	cloudRecentNeedsUpload    bool
+	cloudDetailStamps         map[string]Row
 	nextCapability            time.Time
 	uploading, uploadAgain    bool
 	cloudMu                   sync.Mutex
@@ -98,7 +112,7 @@ func NewMobileHost(directory string, store *Store, quota *QuotaService, config f
 	if name == "" {
 		name = "Windows PC"
 	}
-	return &MobileHost{directory: directory, store: store, quota: quota, config: config, mock: mock, changed: changed, name: mobilePrefix(name, 40), status: "尚未开启", connections: map[net.Conn]bool{}, wake: make(chan struct{}, 1), clients: make(chan struct{}, 8), datasets: map[string]Row{}, requests: map[string]string{}, details: map[string]*mobileDetail{}, sent: map[string]int64{}, sentDetails: map[string]string{}, cloudReaders: map[string]bool{}}
+	return &MobileHost{directory: directory, store: store, quota: quota, config: config, mock: mock, changed: changed, name: mobilePrefix(name, 40), status: "尚未开启", connections: map[net.Conn]bool{}, wake: make(chan struct{}, 1), clients: make(chan struct{}, 8), datasets: map[string]Row{}, requests: map[string]string{}, details: map[string]*mobileDetail{}, sent: map[string]int64{}, sentDetails: map[string]string{}, cloudReaders: map[string]bool{}, cloudDetailStamps: map[string]Row{}, detailDeferred: map[string]int64{}}
 }
 func (m *MobileHost) notify() {
 	if m.changed != nil {
@@ -109,6 +123,7 @@ func (m *MobileHost) failure(e error) {
 	m.mu.Lock()
 	changed := m.lastError != e.Error()
 	m.lastError = e.Error()
+	m.lastErrorTemporary = mobileTemporaryError(e)
 	m.mu.Unlock()
 	if changed {
 		m.notify()
@@ -164,20 +179,31 @@ func (m *MobileHost) Public() Row {
 	if m.pending != nil {
 		pending = Row{"id": m.pending["id"], "name": m.pending["name"]}
 	}
-	return Row{"enabled": m.enabled, "status": m.status, "error": m.lastError, "name": m.name, "readers": readers, "pending": pending, "qr_data": m.qrData, "qr_url": m.qrURL, "cloud_enabled": ValueBool(m.host["cloud_enabled"]), "last_sync": CloneRow(ValueRow(m.host["last_sync"]))}
+	return Row{"enabled": m.enabled, "status": m.status, "error": m.lastError, "cloud_error": m.cloudError, "cloud_error_temporary": m.cloudErrorTemporary, "name": m.name, "readers": readers, "pending": pending, "qr_data": m.qrData, "qr_url": m.qrURL, "cloud_enabled": ValueBool(m.host["cloud_enabled"]), "last_sync": CloneRow(ValueRow(m.host["last_sync"]))}
 }
 
 // Match Mac SyncStamp: LAN means an authenticated receiver acknowledged;
 // cloud means a completed upload. Coalesce persistence to the displayed minute.
 func (m *MobileHost) recordSyncLocked(route, reader string) bool {
 	now := time.Now()
+	recovered := false
+	if route == "lan" && m.lastErrorTemporary {
+		m.lastError, m.lastErrorAction = "", ""
+		m.lastErrorTemporary = false
+		recovered = true
+	}
+	if route == "cloud" && m.cloudErrorTemporary {
+		m.cloudError = ""
+		m.cloudErrorTemporary = false
+		recovered = true
+	}
 	previous := ValueRow(m.host["cloud_sync"])
 	local := ValueRow(m.host["local_syncs"])
 	if reader != "" {
 		previous = ValueRow(local[reader])
 	}
 	if at, ok := ParseStamp(previous["time"]); ok && at.Truncate(time.Minute).Equal(now.Truncate(time.Minute)) {
-		return false
+		return recovered
 	}
 	stamp := Row{"time": UTCStamp(now), "route": route}
 	m.host["last_sync"] = stamp
@@ -249,13 +275,24 @@ func (m *MobileHost) loadProjectionLocked() error {
 	if envelope := ValueRow(value["cloudRecent"]); valid(envelope, "recent") {
 		m.cloudRecent = envelope
 	}
+	m.cloudRecentNeedsUpload = ValueBool(value["cloudRecentNeedsUpload"])
+	m.nextContentExpiry = 1
+	for id, item := range ValueRow(value["cloudDetailStamps"]) {
+		stamp := ValueRow(item)
+		if len(m.cloudDetailStamps) >= 64 {
+			break
+		}
+		if mobileIDPattern.MatchString(id) && ValueInt(stamp["revision"]) > 0 && ValueInt(stamp["expires"]) > time.Now().Unix() {
+			m.cloudDetailStamps[id] = CloneRow(stamp)
+		}
+	}
 	return nil
 }
 func (m *MobileHost) saveProjectionLocked() error {
 	if m.mock {
 		return nil
 	}
-	data, e := mobileJSON(Row{"datasets": m.datasets, "cloudRecent": m.cloudRecent})
+	data, e := mobileJSON(Row{"datasets": m.datasets, "cloudRecent": m.cloudRecent, "cloudRecentNeedsUpload": m.cloudRecentNeedsUpload, "cloudDetailStamps": m.cloudDetailStamps})
 	if e != nil {
 		return e
 	}
@@ -464,6 +501,9 @@ func (m *MobileHost) enable() error {
 	m.enabled = true
 	m.status = "局域网服务已开启"
 	m.lastError = ""
+	m.lastErrorTemporary = false
+	m.lastErrorAction = ""
+	m.nextCapability = time.Time{}
 	m.projectionKey = ""
 	m.historyKey = ""
 	m.mu.Unlock()
@@ -488,6 +528,7 @@ func (m *MobileHost) stop() {
 	m.qrData = ""
 	m.qrURL = ""
 	m.details = map[string]*mobileDetail{}
+	m.cloudImages, m.cloudDetails, m.cloudRequestKinds = false, false, false
 	m.status = "同步已停止"
 	for c := range m.connections {
 		c.Close()
@@ -499,6 +540,7 @@ func (m *MobileHost) stop() {
 	if bonjour != nil {
 		bonjour.Shutdown()
 	}
+	mobileCloudClient.CloseIdleConnections()
 	m.notify()
 }
 func (m *MobileHost) Close() error {
@@ -536,6 +578,7 @@ func (m *MobileHost) run(ctx context.Context) {
 				m.notify()
 			}
 			m.project(ctx)
+			m.refreshImages(ctx)
 			m.upload()
 		}
 	}
@@ -696,8 +739,21 @@ func (m *MobileHost) Action(action string, v Row) (Row, error) {
 		e = errors.New("不支持的移动同步操作")
 	}
 	if e != nil {
-		m.failure(e)
+		if action == "enroll" || action == "remove-cloud" {
+			m.cloudFailure(e)
+		} else {
+			m.mu.Lock()
+			m.lastErrorAction = action
+			m.mu.Unlock()
+			m.failure(e)
+		}
 	} else {
+		m.mu.Lock()
+		if m.lastErrorAction == action {
+			m.lastError, m.lastErrorAction = "", ""
+			m.lastErrorTemporary = false
+		}
+		m.mu.Unlock()
 		m.notify()
 	}
 	return m.Public(), e

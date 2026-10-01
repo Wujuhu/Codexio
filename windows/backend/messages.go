@@ -18,7 +18,13 @@ func (s *Store) sourceMessage(request Row) Row {
 	id := turnKey(dataString(request, "session_id"), firstString(request["request_turn_id"], request["turn_id"]))
 	var raw string
 	_ = s.db.QueryRow("SELECT data FROM usage_request_messages WHERE id=?", id).Scan(&raw)
-	return dataRow(raw)
+	value := dataRow(raw)
+	final := ValueRows(value["final_attachments"])
+	if dataString(value, "final") == "" && len(final) == 0 && (dataString(value, "status") == "completed" || dataString(value, "status") == "aborted") {
+		final = ValueRows(value["generated_attachments"])
+	}
+	value["attachments"] = deduplicatedRequestMedia(append(append([]Row{}, ValueRows(value["attachments"])...), final...))
+	return value
 }
 
 // Batch all explicit members and the prompt source before assembling details.
@@ -74,8 +80,9 @@ func (s *Store) sourceMessageBatch(requests []Row) error {
 	for _, file := range files {
 		parts = append(parts, file.signature)
 	}
-	signature := pythonHash(parts)
+	fileSignature := pythonHash(parts)
 	targets := Row{}
+	signatures := map[string][]any{}
 	for _, request := range requests {
 		if dataString(request, "session_id") != session || approvalRequest(request) || ValueBool(request["is_subagent"]) || dataString(request, "record_kind") == "context_compaction" {
 			continue
@@ -91,12 +98,20 @@ func (s *Store) sourceMessageBatch(requests []Row) error {
 		terminal := dataString(request, "status") == "completed" || dataString(request, "status") == "aborted" || dataString(request, "request_status") == "completed" || dataString(request, "request_status") == "aborted"
 		root := firstString(request["root_id"], id)
 		ownsInput := ValueBool(request["has_user_message"]) || root == id && dataString(request, "prompt_source_turn_id") == ""
-		complete := len(stored) > 0 && (!ownsInput || ValueBool(stored["user_complete"])) && (!terminal || ValueBool(stored["final_complete"]))
+		missingMedia := s.media.missingSources(stored)
+		var eviction uint64
+		if missingMedia {
+			eviction = s.media.recoveryGeneration()
+		}
+		signatureParts := []any{"request-media", requestMediaSchema, fileSignature, ownsInput, terminal, missingMedia, eviction}
+		signature := pythonHash(signatureParts)
+		complete := len(stored) > 0 && !missingMedia && (!ownsInput || ValueBool(stored["user_complete"]) && ValueInt(stored["user_media_schema"]) == requestMediaSchema) && (!terminal || ValueBool(stored["final_complete"]) && ValueInt(stored["final_media_schema"]) == requestMediaSchema)
 		if complete || dataString(stored, "recovery_signature") == signature {
 			_, _ = s.db.Exec("UPDATE usage_request_messages SET accessed=? WHERE id=?", float64(time.Now().Unix()), id)
 			continue
 		}
 		targets[id] = true
+		signatures[id] = signatureParts
 		if len(targets) >= 65 {
 			break
 		}
@@ -115,7 +130,17 @@ func (s *Store) sourceMessageBatch(requests []Row) error {
 	}
 	defer tx.Rollback()
 	for id := range targets {
-		if e = saveMessage(tx, id, Row{"recovery_signature": signature}); e != nil {
+		var raw string
+		_ = tx.QueryRow("SELECT data FROM usage_request_messages WHERE id=?", id).Scan(&raw)
+		parts := signatures[id]
+		missing := s.media.missingSources(dataRow(raw))
+		parts[5], parts[6] = missing, uint64(0)
+		if missing {
+			parts[6] = s.media.recoveryGeneration()
+		}
+		// Keep the pre-read source signature so appends still invalidate it,
+		// but don't mistake a later cache eviction for an old failed recovery.
+		if e = saveMessage(tx, id, Row{"recovery_signature": pythonHash(parts)}); e != nil {
 			return e
 		}
 	}
@@ -171,7 +196,9 @@ func (s *Store) requestMessageDetail(request Row, recover bool) (Row, error) {
 	for cursor := 0; cursor < len(members) && len(members) < 64; cursor++ {
 		member := members[cursor]
 		key, memberTurn := ValueString(member["id"]), ValueString(member["turn_id"])
-		rows, e := db.Query(`SELECT id,data FROM usage_query_turns WHERE json_extract(data,'$.session_id')=? AND coalesce(json_extract(data,'$.is_subagent'),0)=0 AND coalesce(json_extract(data,'$.record_kind'),'user_request') NOT IN ('automatic_approval_review','approval_review','context_compaction','subagent_request') AND coalesce(json_extract(data,'$.alias_of'),'')='' AND (json_extract(data,'$.root_turn_id') IN (?,?) OR json_extract(data,'$.continuation_of') IN (?,?)) ORDER BY json_extract(data,'$.started_at'),id LIMIT 65`, session, key, memberTurn, key, memberTurn)
+		// Raw continuation fields can survive a new human input. Only the
+		// resolved projection proves membership; legacy rows without it stay out.
+		rows, e := db.Query(`SELECT id,data FROM usage_query_turns WHERE json_extract(data,'$.session_id')=? AND json_extract(data,'$.root_id')=? AND json_extract(data,'$.resolved_id')=id AND coalesce(json_extract(data,'$.has_user_message'),0)=0 AND coalesce(json_extract(data,'$.is_subagent'),0)=0 AND coalesce(json_extract(data,'$.record_kind'),'user_request') NOT IN ('automatic_approval_review','approval_review','context_compaction','subagent_request') AND coalesce(json_extract(data,'$.alias_of'),'')='' AND (json_extract(data,'$.root_turn_id') IN (?,?) OR json_extract(data,'$.continuation_of') IN (?,?)) ORDER BY json_extract(data,'$.started_at'),id LIMIT 65`, session, canonical, key, memberTurn, key, memberTurn)
 		if e != nil {
 			return nil, e
 		}
@@ -181,7 +208,7 @@ func (s *Store) requestMessageDetail(request Row, recover bool) (Row, error) {
 				continue
 			}
 			r, e := DecodeRow([]byte(raw))
-			if e != nil || seen[id] || approvalRequest(r) {
+			if e != nil || seen[id] || dataString(r, "id") != id || approvalRequest(r) {
 				continue
 			}
 			if !seen[ValueString(r["continuation_of"])] && !seen[ValueString(r["root_turn_id"])] {
@@ -216,8 +243,11 @@ func (s *Store) requestMessageDetail(request Row, recover bool) (Row, error) {
 	var prompt Row
 	if promptID != "" {
 		var raw string
-		if db.QueryRow("SELECT data FROM usage_query_turns WHERE id=?", promptID).Scan(&raw) == nil {
+		if db.QueryRow(`SELECT data FROM usage_query_turns WHERE id=? AND json_extract(data,'$.session_id')=? AND json_extract(data,'$.root_id')=? AND json_extract(data,'$.resolved_id')=id AND coalesce(json_extract(data,'$.is_subagent'),0)=0 AND coalesce(json_extract(data,'$.record_kind'),'user_request') NOT IN ('automatic_approval_review','approval_review','context_compaction','subagent_request') AND coalesce(json_extract(data,'$.alias_of'),'')=''`, promptID, session, canonical).Scan(&raw) == nil {
 			prompt = dataRow(raw)
+			if approvalRequest(prompt) || dataString(prompt, "id") != promptID {
+				prompt = nil
+			}
 		}
 	}
 	if recover {
@@ -228,6 +258,9 @@ func (s *Store) requestMessageDetail(request Row, recover bool) (Row, error) {
 		if e := s.sourceMessageBatch(targets); e != nil {
 			return nil, e
 		}
+		// Recovery can repair ownership and rebuild the projection. Read its
+		// current members before assembling any user body, final text or media.
+		return s.requestMessageDetail(request, false)
 	}
 	detail := Row{"user": "", "final": "", "user_complete": false, "final_complete": false, "attachments": []Row{}, "availability": "unavailable"}
 	read := func(member Row) Row {
@@ -235,21 +268,47 @@ func (s *Store) requestMessageDetail(request Row, recover bool) (Row, error) {
 		_ = db.QueryRow("SELECT data FROM usage_request_messages WHERE id=?", dataString(member, "id")).Scan(&raw)
 		return dataRow(raw)
 	}
+	inputs, attachments := []string{}, []Row{}
+	userComplete := len(members) < 64
 	if len(prompt) > 0 {
 		input := read(prompt)
 		if dataString(input, "user") != "" || len(ValueRows(input["attachments"])) > 0 {
-			detail["user"], detail["user_complete"], detail["attachments"] = input["user"], input["user_complete"], input["attachments"]
+			inputs = append(inputs, dataString(input, "user"))
+			attachments = append(attachments, ValueRows(input["attachments"])...)
+			userComplete = userComplete && ValueBool(input["user_complete"]) && ValueInt(input["user_media_schema"]) == requestMediaSchema
 		}
 	}
 	for index, member := range members {
 		value := read(member)
-		if ValueString(detail["user"]) == "" && len(ValueRows(detail["attachments"])) == 0 && (ValueString(value["user"]) != "" || len(ValueRows(value["attachments"])) > 0) {
-			detail["user"], detail["user_complete"], detail["attachments"] = value["user"], value["user_complete"], value["attachments"]
+		hasInput := dataString(value, "user") != "" || len(ValueRows(value["attachments"])) > 0
+		if hasInput {
+			if text := dataString(value, "user"); text != "" {
+				inputs = append(inputs, text)
+			}
+			attachments = append(attachments, ValueRows(value["attachments"])...)
+		}
+		if hasInput || index == 0 && len(prompt) == 0 {
+			userComplete = userComplete && ValueBool(value["user_complete"]) && ValueInt(value["user_media_schema"]) == requestMediaSchema
 		}
 		if index == len(members)-1 {
-			detail["final"], detail["final_complete"] = value["final"], value["final_complete"]
+			finalAttachments := ValueRows(value["final_attachments"])
+			terminal := dataString(member, "status") == "completed" || dataString(member, "status") == "aborted"
+			generated := dataString(value, "final") == "" && len(finalAttachments) == 0 && terminal
+			if generated {
+				finalAttachments = ValueRows(value["generated_attachments"])
+			}
+			attachments = append(attachments, finalAttachments...)
+			detail["final"], detail["final_complete"] = value["final"], len(members) < 64 && ValueBool(value["final_complete"]) && ValueInt(value["final_media_schema"]) == requestMediaSchema && (!generated || len(finalAttachments) == 0 || ValueBool(value["generated_complete"]))
 		}
 	}
+	user, fits := requestBoundedText(strings.Join(inputs, "\n\n"), 1<<20)
+	attachments = deduplicatedRequestMedia(attachments)
+	detail["user"], detail["user_complete"] = user, userComplete && fits && len(attachments) <= requestMediaLimit
+	if len(attachments) > requestMediaLimit {
+		attachments = attachments[:requestMediaLimit]
+		detail["final_complete"] = false
+	}
+	detail["attachments"] = attachments
 	if dataString(detail, "user") != "" || dataString(detail, "final") != "" || len(ValueRows(detail["attachments"])) > 0 {
 		detail["availability"] = "partial"
 		terminal := len(members) > 0 && (dataString(members[len(members)-1], "status") == "completed" || dataString(members[len(members)-1], "status") == "aborted")

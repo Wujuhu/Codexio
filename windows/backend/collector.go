@@ -52,7 +52,7 @@ var mentionedFilePattern = regexp.MustCompile(`(?m)^## (.+?): ((?:[A-Za-z]:[\\/]
 var embeddedImagePattern = regexp.MustCompile(`(?is)<image\b[^>]*>.*?</image\s*>`)
 
 // Bump input interpretation without invalidating byte cursors or immutable meters.
-const requestMetadataVersion = 2
+const requestMetadataVersion = 3
 
 // Image/tool payloads in real rollouts exceed 8 MiB. Keep a memory bound while
 // accepting the same complete JSONL records as the v0.2.10 readline collector.
@@ -146,9 +146,9 @@ func (s *Store) collect(ctx context.Context, force bool) error {
 	var scanErrors []error
 	s.metadataRepairRemaining = 4
 	s.metadataRepairPriority = map[string]bool{}
-	// Repair proved control-only rows first while keeping the normal parent-first
-	// meter scan order. Remaining migration work retains the four-source budget.
-	priority, e := s.db.Query(`SELECT key FROM usage_cursors c WHERE json_extract(c.data,'$.parser_version')=1 AND COALESCE(json_extract(c.data,'$.metadata_version'),0)<>? AND EXISTS(SELECT 1 FROM usage_turns t WHERE json_extract(t.data,'$.session_id')=json_extract(c.data,'$.go_state.session_id') AND instr(lower(COALESCE(json_extract(t.data,'$.prompt_preview'),'')),'<external_codex_apps_')>0) ORDER BY json_extract(c.data,'$.mtime') DESC LIMIT 4`, requestMetadataVersion)
+	// Prioritize related missing/resumed inputs without changing parent-first
+	// meter scans. At most four metadata chunks are recovered per collection.
+	priority, e := s.db.Query(`SELECT key FROM usage_cursors c WHERE json_extract(c.data,'$.parser_version')=1 AND COALESCE(json_extract(c.data,'$.metadata_version'),0)<>? AND (json_extract(c.data,'$.metadata_repair') IS NOT NULL OR EXISTS(SELECT 1 FROM usage_turns t WHERE json_extract(t.data,'$.session_id')=json_extract(c.data,'$.go_state.session_id') AND (COALESCE(json_extract(t.data,'$.prompt_preview'),'')='' OR COALESCE(json_extract(t.data,'$.resume_kind'),'')<>'' OR instr(lower(COALESCE(json_extract(t.data,'$.prompt_preview'),'')),'<external_codex_apps_')>0))) ORDER BY json_extract(c.data,'$.mtime') DESC LIMIT 4`, requestMetadataVersion)
 	if e != nil {
 		return e
 	}
@@ -388,39 +388,12 @@ func (s *Store) scanFile(ctx context.Context, path, key, source string, force bo
 	}
 	defer f.Close()
 	identity := ledgerFileIdentity(f)
-	// Old classification is repaired from metadata only, at most four related
-	// sources per collection. Unchanged sources are never replayed again.
-	if !force && ValueInt(cursor["parser_version"]) == 1 && dataString(cursor, "identity") == identity && ValueInt(cursor["metadata_version"]) != requestMetadataVersion && s.metadataRepairRemaining > 0 && (len(s.metadataRepairPriority) == 0 || s.metadataRepairPriority[key]) {
+	// Validate the original cursor before repairing metadata from its log. File
+	// replacement/truncation belongs to the existing meter reconciliation path.
+	if !force && ValueInt(cursor["parser_version"]) == 1 && ValueInt(cursor["metadata_version"]) != requestMetadataVersion && s.metadataRepairRemaining > 0 && (len(s.metadataRepairPriority) == 0 || s.metadataRepairPriority[key]) && dataString(cursor, "identity") == identity && offset > 0 && offset <= stat.Size() && dataString(cursor, "checkpoint") == checkpointHash(f, offset) && dataString(cursor, "prefix") == prefixHash(f, offset) {
 		s.metadataRepairRemaining--
 		delete(s.metadataRepairPriority, key)
-		limit := offset
-		if limit > 32<<20 {
-			limit = 32 << 20
-		}
-		recovered, err := s.recoverSourceMetadata(ctx, path, source, key, dataString(cursor, "generation"), nil, true, limit)
-		if err != nil {
-			return err
-		}
-		oldState := ValueRow(cursor["go_state"])
-		if recovered["request_source"] != nil {
-			oldState["request_source"] = recovered["request_source"]
-		}
-		if offset <= 32<<20 {
-			for _, k := range []string{"resume_tracking", "last_input", "previous_turn_id", "request_model"} {
-				oldState[k] = recovered[k]
-			}
-		}
-		for id, value := range ValueRow(recovered["turns"]) {
-			if existing := ValueRow(ValueRow(oldState["turns"])[id]); len(existing) > 0 {
-				for k, v := range ValueRow(value) {
-					existing[k] = v
-				}
-				existing["record_kind"] = classifyRequest(existing)
-			}
-		}
-		cursor["metadata_version"] = requestMetadataVersion
-		cursor["metadata_partial"] = offset > 32<<20
-		if _, err = s.db.Exec("UPDATE usage_cursors SET data=? WHERE key=?", dataJSON(cursor), key); err != nil {
+		if err := s.repairSourceMetadataCursor(ctx, path, source, key, cursor); err != nil {
 			return err
 		}
 	}
@@ -502,7 +475,12 @@ func (s *Store) scanFile(ctx context.Context, path, key, source string, force bo
 	if !valid {
 		metadataVersion = requestMetadataVersion
 	}
-	cursor = Row{"path": path, "parser_version": 1, "metadata_version": metadataVersion, "metadata_partial": cursor["metadata_partial"], "identity": identity, "prefix": prefixHash(f, offset), "offset": offset, "size": stat.Size(), "mtime": stat.ModTime().UnixNano(), "checkpoint": checkpointHash(f, offset), "generation": generation, "go_state": state, "reconcile_pending": reconcile}
+	metadataRepair := cursor["metadata_repair"]
+	metadataPartial := cursor["metadata_partial"]
+	if !valid {
+		metadataRepair, metadataPartial = nil, false
+	}
+	cursor = Row{"path": path, "parser_version": 1, "metadata_version": metadataVersion, "metadata_partial": metadataPartial, "metadata_repair": metadataRepair, "identity": identity, "prefix": prefixHash(f, offset), "offset": offset, "size": stat.Size(), "mtime": stat.ModTime().UnixNano(), "checkpoint": checkpointHash(f, offset), "generation": generation, "go_state": state, "reconcile_pending": reconcile}
 	if _, e = tx.Exec("INSERT INTO usage_cursors VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data", key, dataJSON(cursor)); e != nil {
 		return e
 	}
@@ -582,7 +560,7 @@ func userText(text string) string {
 			break
 		}
 	}
-	for _, tag := range []string{"recommended_plugins", "environment_context", "permissions instructions", "permissions", "INSTRUCTIONS", "user_instructions", "developer_instructions", "skills_instructions", "skill_instructions", "system", "developer", "system-reminder", "app-context", "collaboration_mode", "multi_agent_role", "multi_agent_mode"} {
+	for _, tag := range requestUserContextTags {
 		for {
 			lower := strings.ToLower(text)
 			i := strings.Index(lower, "<"+strings.ToLower(tag))
@@ -831,6 +809,7 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 			if dataString(last, "turn_id") == dataString(old, "turn_id") {
 				last["turn_id"] = explicit
 			}
+			remapResumeTurn(state, dataString(old, "turn_id"), explicit)
 			if !ValueBool(state["_metadata_only"]) {
 				_, _ = tx.Exec("INSERT OR IGNORE INTO usage_request_messages SELECT ?,data,digest,revision,size,accessed FROM usage_request_messages WHERE id=?", replacement["id"], old["id"])
 			}
@@ -857,10 +836,13 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 			r["root_turn_id"] = p["root_turn_id"]
 			state["root_turn_id"] = p["root_turn_id"]
 		}
-		if approvalRequest(r) {
+		if ValueBool(r["is_subagent"]) || approvalRequest(r) {
 			for _, k := range []string{"parent_turn_id", "parent_session_id"} {
 				if p[k] != nil {
 					r[k] = p[k]
+					if k == "parent_turn_id" {
+						r["parent_turn_explicit"] = true
+					}
 				}
 			}
 			if p["parent_thread_id"] != nil {
@@ -883,6 +865,18 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 	message, representation := entryUserContent(entry)
 	inputMetadata := ValueRow(p["internal_chat_message_metadata_passthrough"])
 	inputThread, inputTurn := firstString(p["thread_id"], inputMetadata["thread_id"]), firstString(p["turn_id"], inputMetadata["turn_id"])
+	if contextOnlyUser(entry) && (inputThread == "" || inputThread == dataString(state, "session_id")) && (inputTurn == "" || inputTurn == dataString(state, "turn_id")) {
+		if row := getTurn(state, dataString(state, "turn_id"), timestamp); row != nil {
+			// Exact source-input identity can disprove an old wrapper-only prompt;
+			// unrelated retained human messages must survive metadata recovery.
+			hashes := ValueStrings(row["context_input_hashes"])
+			hashes = append(hashes, messageFingerprint(p["content"]))
+			if len(hashes) > 32 {
+				hashes = hashes[len(hashes)-32:]
+			}
+			row["context_input_hashes"] = hashes
+		}
+	}
 	if message != nil && (inputThread == "" || inputThread == dataString(state, "session_id")) && (inputTurn == "" || inputTurn == dataString(state, "turn_id")) {
 		if ok, owner := questionReply(message, state); ok {
 			r := getTurn(state, dataString(state, "turn_id"), timestamp)
@@ -893,7 +887,7 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 				state["pending_question_owner"] = owner
 			}
 		} else {
-			text, attachments, complete := visibleMessage(message, true)
+			text, attachments, complete := requestUserInput(message)
 			if text != "" || len(attachments) > 0 {
 				delete(state, "pending_question_owner")
 				r := getTurn(state, dataString(state, "turn_id"), timestamp)
@@ -902,7 +896,9 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 				messageID := firstString(p["id"], ValueRow(p["item"])["id"])
 				conflicting := messageID != "" && dataString(last, "message_id") != "" && messageID != dataString(last, "message_id")
 				sameIdentity := messageID != "" && messageID == dataString(last, "message_id") && dataString(last, "turn_id") == dataString(state, "turn_id")
-				paired := sameIdentity || !conflicting && dataString(last, "turn_id") == dataString(state, "turn_id") && dataString(last, "hash") == fingerprint && dataString(last, "representation") != representation && !ValueBool(state["usage_since_input"]) && r != nil && dataString(r, "ended_at") == ""
+				legacyFingerprint := messageLegacyFingerprint(message)
+				sameFingerprint := dataString(last, "hash") == fingerprint || last["fingerprint_schema"] == nil && dataString(last, "hash") == legacyFingerprint
+				paired := sameIdentity || !conflicting && dataString(last, "turn_id") == dataString(state, "turn_id") && sameFingerprint && dataString(last, "representation") != representation && !ValueBool(state["usage_since_input"]) && r != nil && dataString(r, "ended_at") == ""
 				if r == nil || dataString(r, "ended_at") != "" && !paired || ValueBool(r["synthetic"]) && !paired {
 					marker := p["id"]
 					if marker == nil {
@@ -951,16 +947,18 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 				if !paired && (dataString(r, "status") == "unknown" || dataString(r, "status") == "") {
 					r["status"] = "running"
 				}
-				if dataString(r, "prompt_preview") == "" {
-					r["prompt_preview"] = clip(strings.Join(strings.Fields(text), " "), 600)
-					if text == "" {
-						r["prompt_preview"] = "附件消息"
-					}
+				text, attachments, complete = s.collectedRequestMessage(message, true, state, timestamp)
+				if dataString(r, "prompt_preview") == "" || automaticResume(r) && !paired {
+					r["prompt_preview"] = requestMessagePreview(text, attachments)
 				}
-				if e := persistCollectedMessage(tx, dataString(r, "id"), Row{"user": text, "user_complete": complete, "attachments": attachments}, state); e != nil {
+				messageKey := dataString(last, "message_key")
+				if !paired || messageKey == "" {
+					messageKey = pythonHash([]any{state["turn_id"], messageID, timestamp, fingerprint})
+				}
+				if e := persistCollectedMessage(tx, dataString(r, "id"), Row{"user": text, "user_complete": complete, "attachments": attachments, "user_media_schema": requestMediaSchema, "user_message_key": messageKey}, state); e != nil {
 					return e
 				}
-				state["last_input"] = Row{"hash": fingerprint, "representation": representation, "message_id": messageID, "turn_id": state["turn_id"]}
+				state["last_input"] = Row{"hash": fingerprint, "legacy_hash": legacyFingerprint, "fingerprint_schema": 1, "representation": representation, "message_id": messageID, "message_key": messageKey, "turn_id": state["turn_id"]}
 				state["usage_since_input"] = false
 			}
 		}
@@ -983,6 +981,11 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 			r["is_subagent"] = true
 		}
 	}
+	if r != nil && ownsEvent && kind == "response_item" && !ValueBool(state["_metadata_only"]) {
+		if e := s.collectRequestImageTool(tx, p, state, timestamp); e != nil {
+			return e
+		}
+	}
 	if kind == "response_item" || sub == "agent_message" {
 		if !ValueBool(state["_recovery"]) {
 			if e := s.agentEntry(tx, p, state, source, file, generation, timestamp); e != nil {
@@ -997,14 +1000,28 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 			if sub == "agent_message" {
 				content = p["message"]
 			}
-			text, _, complete := visibleMessage(content, false)
-			if r != nil && text != "" {
+			text, attachments, complete := visibleMessage(content, false)
+			isFinal := channel == "final" || channel == "final_answer"
+			if isFinal {
+				text, attachments, complete = s.collectedRequestMessage(content, false, state, timestamp)
+			}
+			if r != nil && (text != "" || len(attachments) > 0) {
 				r["latest_output_preview"] = clip(text, 600)
 				state["pending_output"] = clip(text, 600)
-				if channel == "final" || channel == "final_answer" {
+				if isFinal {
 					r["output_preview"] = clip(text, 600)
 					r["has_final_message"] = true
-					if e := persistCollectedMessage(tx, dataString(r, "id"), Row{"final": text, "final_complete": complete}, state); e != nil {
+					last := ValueRow(state["request_last_final"])
+					messageID := dataString(p, "id")
+					fingerprint := requestFinalFingerprint(text, attachments)
+					conflicting := messageID != "" && dataString(last, "message_id") != "" && messageID != dataString(last, "message_id")
+					paired := dataString(last, "turn_id") == dataString(state, "turn_id") && (messageID != "" && messageID == dataString(last, "message_id") || !conflicting && fingerprint == dataString(last, "fingerprint") && dataString(last, "representation") != kind)
+					key := dataString(last, "message_key")
+					if !paired || key == "" {
+						key = pythonHash([]any{state["turn_id"], messageID, timestamp, fingerprint})
+					}
+					state["request_last_final"] = Row{"turn_id": state["turn_id"], "message_id": messageID, "fingerprint": fingerprint, "representation": kind, "message_key": key}
+					if e := persistCollectedMessage(tx, dataString(r, "id"), Row{"final": text, "final_complete": complete, "final_attachments": attachments, "final_source": "message", "final_message_key": key, "final_media_schema": requestMediaSchema}, state); e != nil {
 						return e
 					}
 				}
@@ -1023,16 +1040,19 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 		if d, ok := ValueFloat(p["duration_ms"]); ok && d >= 0 {
 			r["duration_ms"] = d
 		}
-		if final, exists := p["last_agent_message"]; exists {
+		final, exists := p["last_agent_message"]
+		if exists {
 			r["context_compaction_completed"] = final == nil && sub != "turn_aborted"
-			text, _, complete := visibleMessage(final, false)
-			if text != "" {
-				r["output_preview"] = clip(text, 600)
-				r["has_final_message"] = true
-				if e := persistCollectedMessage(tx, dataString(r, "id"), Row{"final": text, "final_complete": complete}, state); e != nil {
-					return e
-				}
-			}
+		}
+		text, attachments, complete := s.collectedRequestMessage(final, false, state, timestamp)
+		if text != "" {
+			r["output_preview"] = clip(text, 600)
+		}
+		if text != "" || len(attachments) > 0 || ValueBool(r["has_generated_image"]) {
+			r["has_final_message"] = true
+		}
+		if e := persistCollectedMessage(tx, dataString(r, "id"), Row{"final": text, "final_complete": complete, "final_attachments": attachments, "final_source": "completion", "final_message_key": pythonHash([]any{state["turn_id"], text}), "final_fallback": true, "final_media_schema": requestMediaSchema}, state); e != nil {
+			return e
 		}
 		if e := persistCollectedMessage(tx, dataString(r, "id"), Row{}, state); e != nil {
 			return e
