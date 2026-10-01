@@ -178,8 +178,12 @@ final class Database {
     func repairRequestMetadata(_ evidence: Object) throws {
         guard var row = try requestTurn(evidence.string("id")) else { return }
         if row.flag("metadata_missing") { row = evidence }
+        if evidence["resume_kind"] is NSNull, ["model_switch","interrupted"].contains(row.string("resume_kind")) {
+            if row.flag("model_switch_continuation") || row.flag("request_resume_continuation") { row["continuation_of"] = NSNull() }
+            row["resume_kind"] = NSNull(); row["prompt_source_turn_id"] = NSNull(); row["model_switch_continuation"] = false; row["request_resume_continuation"] = false
+        }
         for key in ["cwd","session_cwd","prompt_source_turn_id","resume_kind","continuation_of","context_compaction_item_id","parent_session_id","parent_turn_id"] where !evidence.string(key).isEmpty { row[key] = evidence[key] }
-        for key in ["has_user_message","has_final_message","context_compaction_observed","explicit_task_start","context_compaction_completed","model_switch_continuation","is_approval_review"] where evidence.flag(key) { row[key] = true }
+        for key in ["has_user_message","has_final_message","context_compaction_observed","explicit_task_start","context_compaction_completed","model_switch_continuation","request_resume_continuation","is_approval_review"] where evidence.flag(key) { row[key] = true }
         for key in ["prompt_preview","output_preview"] where row.string(key).isEmpty && !evidence.string(key).isEmpty { row[key] = evidence[key] }
         if RequestClassification.isApproval(row) { row["record_kind"] = RequestClassification.approval }
         else if row.flag("has_user_message") || !row.string("continuation_of").isEmpty { row["record_kind"] = "user_request" }

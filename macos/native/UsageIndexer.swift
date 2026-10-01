@@ -148,7 +148,7 @@ final class UsageIndexer {
                 try database.registerRequestSource(row.string("id"),file:file,root:root)
             }
         }
-        if offset == size && cursor.number("modified") == modified && cursor.integer("resume_metadata_version") == 1 { scannedFiles[file.path] = signature; return }
+        if offset == size && cursor.number("modified") == modified && cursor.integer("resume_metadata_version") == RequestResume.metadataVersion { scannedFiles[file.path] = signature; return }
         let handle = try FileHandle(forReadingFrom:file); defer { try? handle.close() }
         var valid = offset <= size && cursor.integer("parser") == 1
         if valid && offset > 0 {
@@ -158,7 +158,7 @@ final class UsageIndexer {
         }
         if !valid { offset = 0 }
         var state: Object = offset > 0 ? cursor.object("state") : ["rollout_id":rollout,"session_id":rollout,"model":"unknown","provider":"unknown","turn_id":"","prompt_preview":"","turns":Object(),"last_by_source":Object(),"last_totals":Object()]
-        if offset > 0, cursor.integer("resume_metadata_version") != 1,
+        if offset > 0, cursor.integer("resume_metadata_version") != RequestResume.metadataVersion,
            resumeRepairSessions?.contains(state.string("session_id")) == true {
             try repairResumeMetadata(file,through:offset,state:&state)
         }
@@ -190,7 +190,7 @@ final class UsageIndexer {
         try handle.seek(toOffset:UInt64(offset-length))
         let hash = digest(try handle.read(upToCount:length) ?? Data())
         try handle.seek(toOffset:current)
-        try database.put("usage_cursors",key:key,value:["parser":1,"resume_metadata_version":1,"offset":offset,"modified":modified,"tail_hash":hash,"state":state])
+        try database.put("usage_cursors",key:key,value:["parser":1,"resume_metadata_version":RequestResume.metadataVersion,"offset":offset,"modified":modified,"tail_hash":hash,"state":state])
     }
     private func shouldPersist(_ id: String) -> Bool { detailTargets?.contains(id) ?? true }
     private func persistTurn(_ row: Object) throws {
@@ -281,15 +281,15 @@ final class UsageIndexer {
         }
         guard !row.isEmpty else { return }
         if patch.flag("clear") {
-            guard row.string("resume_kind") == "model_switch" else { return }
-            if row.flag("model_switch_continuation") { row["continuation_of"] = NSNull() }
-            row["resume_kind"] = NSNull(); row["prompt_source_turn_id"] = NSNull(); row["model_switch_continuation"] = false
+            guard ["model_switch","interrupted"].contains(row.string("resume_kind")) else { return }
+            if row.flag("model_switch_continuation") || row.flag("request_resume_continuation") { row["continuation_of"] = NSNull() }
+            row["resume_kind"] = NSNull(); row["prompt_source_turn_id"] = NSNull(); row["model_switch_continuation"] = false; row["request_resume_continuation"] = false
         } else {
-            guard row.string("prompt_preview").isEmpty || row.string("resume_kind") == "model_switch" else { return }
+            guard row.string("prompt_preview").isEmpty || ["model_switch","interrupted"].contains(row.string("resume_kind")) else { return }
             row["prompt_preview"] = patch.string("preview"); row["prompt_source_turn_id"] = patch.string("source")
-            row["resume_kind"] = "model_switch"
+            row["resume_kind"] = patch.string("kind","model_switch")
             if !patch.string("continuation").isEmpty, row.string("continuation_of").isEmpty {
-                row["continuation_of"] = patch.string("continuation"); row["model_switch_continuation"] = true
+                row["continuation_of"] = patch.string("continuation"); row["request_resume_continuation"] = true
             }
         }
         try persistTurn(row)
@@ -308,8 +308,7 @@ final class UsageIndexer {
                 if !oversized {
                     let entry = jsonObject(pending.subdata(in:0..<newline))
                     if let patch = RequestResume.observe(entry,context:&context,preview:{self.plain($0,user:true)}) {
-                        if patch.flag("clear") { patches.removeValue(forKey:patch.string("turn")) }
-                        else { patches[patch.string("turn")] = patch }
+                        patches[patch.string("turn")] = patch
                     }
                 }
                 oversized = false; pending.removeSubrange(0...newline)
@@ -494,7 +493,7 @@ final class UsageIndexer {
             }
         }
         let userContent: Any? = kind == "event_msg" && subtype == "user_message" ? payload["message"] ?? payload["content"] ?? "" : kind == "response_item" && payload.string("role") == "user" ? payload["content"] : kind == "event_msg" && ["user_message","userMessage","UserMessage"].contains(item.string("type")) ? item["content"] ?? item["message"] ?? "" : nil
-        if let rawContent = userContent, !inherited {
+        if let rawContent = userContent, !inherited, !RequestResume.isContextOnlyUser(entry) {
             let content = RequestMedia.content(rawContent,metadata:item.isEmpty ? payload : item)
             let text = plain(content,user:true)
             var detail = messageDetail(content,user:true,state:state,stamp:stamp)

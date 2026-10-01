@@ -74,3 +74,26 @@
 - iOS IPA：621,038 字节，SHA-256 `0e291adda662a02772016a06601c6498836090021ac230392e83a3491c6a0d06`。
 - 日志：`build/logs/v0.3.5-preview-media-build.log`、`build/logs/v0.3.5-ios-inline-images-build.log`。
 - 交付记录：`build/checks/v0.3.5/preview-media-delivery.json`；开发包分别在 `build/dev/macos/` 与 `build/dev/ios/`。Mac 开发清单保留 Windows/iOS 的历史发布字段；新 IPA 的当前指纹在 `build/dev/ios/build-info.json`，正式发布时再由协调脚本组装并核验三附件清单。
+
+## 2026-10-01 中断续接与子代理请求归属
+
+用户指出日志里的两条无摘要任务（12:44、12:48）和多条子代理任务，应当归入实际用户请求。通过真实 SQLite 的一致性副本及相应 JSONL 确认：它们属于 12:44:12 开始的“可以允许修改。还有 token 活动……”这条需求。
+
+- 12:44:36—12:48:09 的执行段被明确以 `reason=interrupted` 中止；12:48:11 再次开始继续执行，最终在 13:53:29 完成。两段之间没有新用户消息。此前还存在 12:44:27—12:44:31 的无计量中断重试。旧 `RequestResume` 仅识别 `model_switch.instructions`，因此丢失普通中断重试链。
+- 子代理 `root_turn_id` 指向父线程的执行段，旧 `Analytics` 却按子代理线程拼接查找 ID，导致父关系失效。另有 task_started 整秒与 spawn 毫秒时间比较，排除了同秒的有效创建记录。
+- 沿用 v0.2.10 `user_requests.py::_parent_edges` 的显式父关系、路径作用域与首轮 spawn 机制；`root_turn_id` 仅在记录的祖先线程链中解析，最多 64 层且要求唯一候选，不按相似摘要、费用或时间接近合并用户消息。
+- 中断续接需要上一段明确被 interrupted、输入所有权连续，且当前没有新用户正文，并出现实际助手输出/工具执行或明确中断结束；纯 reasoning 和压缩维护标记不能独立触发续接。新用户消息清除自动续接，页面上下文/环境包装不冒充用户消息。原有模型切换语义保留。
+- 明确 child ID 优先且排他；无 child ID 的路径回退限定父线程、完整代理路径和首轮身份，整秒边界仅用于排除未来 spawn。多个父候选保持未确定，不随意选择最近一条。
+- 增量游标保持 parser=1，只提升 resume metadata 标记至 2；已有缺摘要的相关会话复用既有元数据恢复入口，一次读取并修复关联。计量记录不重放，原始日志和用户配置不改写；文件未变及标记已更新时复用结果。
+
+### 本题单项核对与交付
+
+使用 4,772 条调用的一致性 SQLite 副本，冻结相关会话文件和旧游标，在隔离目录执行元数据升级及分组。取样晚于截图，前一条需求此时已经完成：该需求的 14 个独立展示组归为 1 组，包含 231 次模型调用；本轮新用户请求保持另一组。相关范围展示由 15 组变为 2 组。
+
+核对得到：原始 usage_records 的 ID/内容指纹完全不变；调用 ID 集合、输入 Token 合计不变；合并组内调用 ID 无重复，两个主执行段的调用都在正确用户请求中。最终代码再次计算的结果与首次分组结果一致。此次一次性问题诊断不加入日常冒烟或维护性测试套件。证据保留在 `build/checks/request-ownership-20261001/findings.json`，隔离输入与诊断工具在 `build/staging/request-ownership-20261001/`。
+
+已完成 Mac 0.3.5 开发打包；原有三项隔离冒烟、签名、设备架构、Widget 版本、ZIP 完整性及清单哈希校验通过，编译无 warning/error。Widget 保持 1.23 / 24；本轮未修改 iOS/Windows，也未运行或重启已安装 App。用户启动新版后由正常增量流程修正历史归属，无需手动修改真实数据库。
+
+- 当前 Mac ZIP：6,398,772 字节，SHA-256 `63dc6926ba651dddb130b6c864a7672bda079a3b31e3bb4014fe60ae19c97b27`。
+- 构建日志：`build/logs/v0.3.5-request-ownership-build.log`；交付记录：`build/checks/request-ownership-20261001/delivery.json`。
+- 本轮仅本地提交，不推送或发布；前一轮云端图片保留规则仍待单独部署授权。
