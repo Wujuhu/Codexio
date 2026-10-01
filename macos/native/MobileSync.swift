@@ -783,7 +783,6 @@ struct MobileSyncSettings: View {
                     HStack { Button("拒绝") { sync.approve(false) }; Button("确认配对") { sync.approve(true) } }
                 }
                 ForEach(sync.readers) { reader in SyncReaderRow(sync:sync,reader:reader) }
-                if let error = sync.syncError {Text(error).foregroundStyle(.red)}
             }
         }
         .onDisappear {sync.invalidatePairing()}

@@ -25,7 +25,7 @@ enum MobileFormat {
         return String(value)
     }
     static func money(_ value: Double?) -> String { value.map {String(format:"$%.2f",$0)} ?? "—" }
-    static let update: DateFormatter = {let f=DateFormatter(); f.dateFormat="M.d HH:mm"; return f}()
+    static let update: DateFormatter = {let f=DateFormatter(); f.dateFormat="M.d HH:mm"; f.timeZone = .autoupdatingCurrent; return f}()
     static func date(_ value: Double) -> String { Date(timeIntervalSince1970:value).formatted(.dateTime.month().day()) }
 }
 struct MobileCard<Content: View>: View {

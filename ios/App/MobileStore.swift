@@ -29,6 +29,7 @@ private struct MobileDetailTransfer {
     @Published var recent: [MobileRequest] = []
     @Published var trends = MobileTrends(daily:[],periods:[])
     @Published var status = "尚未配对"
+    // Time this iPhone last completed a summary sync, independent of host upload time.
     @Published var updated: Date?
     @Published private(set) var refreshing = false
     @Published private(set) var phoneName = UIDevice.current.name
@@ -186,7 +187,7 @@ private struct MobileDetailTransfer {
             let reader = MobileReader(id:UUID().uuidString,name:String(phoneName.prefix(40)),localSecret:try MobileProtocol.secret(),cloudSecret:try MobileProtocol.secret())
             deactivate(); foreground = true
             attempt = PairedMac(code:code,reader:reader); selected = code.host; envelopes = [:]
-            live = nil; recent = []; trends = MobileTrends(daily:[],periods:[])
+            live = nil; recent = []; trends = MobileTrends(daily:[],periods:[]); updated = nil
             recordPath = []; detailValues = [:]; detailEnvelopes = [:]; detailVersions = [:]; supportsDetails = false; detailErrors = [:]
             detailAccess = [:]; clearImages()
             pairing = true; status = "正在寻找电脑，请保持同一局域网"; error = nil
@@ -344,7 +345,7 @@ private struct MobileDetailTransfer {
                     setDetailVersions(response.detailVersions ?? [:])
                     await apply(response.datasets ?? [])
                     guard stamp == generation else { return }
-                    if !localReady { status = "云同步"; updated = response.seen.map {Date(timeIntervalSince1970:$0)} }
+                    if !localReady { status = "云同步"; updated = Date() }
                 }
                 failures = 0; nextCloud = Date().addingTimeInterval(live?.runningCount ?? 0 > 0 ? 15 : 60)
                 drainImages()
