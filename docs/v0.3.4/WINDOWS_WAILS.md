@@ -12,6 +12,8 @@
 
 参考：Wails 本地 `pkg/application/single_instance_windows.go`、`pkg/w32/icon.go`；[Microsoft FindWindowExW](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-findwindowexw)、[AllowSetForegroundWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-allowsetforegroundwindow)。仅执行现有三项隔离冒烟，不新增测试项。
 
+同日补充：侧栏默认 Logo 改为直接嵌入 SVG，以 `currentColor` 切换黑白，取消 CSS 图像蒙版。标题栏改用含 16–256 像素的应用 ICO；按 `GetDpiForWindow` / `GetSystemMetricsForDpi` 取得当前窗口实际图标尺寸，适配 Wails 的 PNG-in-ICO 读取机制后直接创建对应尺寸的 HICON。窗口跨屏或缩放变化时重新匹配，缓存按两种窗口及 13 个图标限定为最多 26 项，替换后释放旧 DPI 句柄。保留原 SVG 画布中心、大小和备选图标背景。参考 [Microsoft GetSystemMetricsForDpi](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getsystemmetricsfordpi)。
+
 ## 自动审批审查
 
 - 保留 `source.subagent.other=guardian`、父聊天、父轮次与原始来源；明确的 `codex-auto-review` 计量可作分类回退，正文和标题不能单独触发分类。

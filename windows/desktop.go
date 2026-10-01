@@ -52,13 +52,13 @@ func (h *desktopHost) label(zh, en string) string {
 	return zh
 }
 func (h *desktopHost) brandIcon(id string) []byte {
-	path := "brand/app.png"
+	path := "brand/app.ico"
 	if id != "" && id != "main" && filepath.Base(id) == id && !strings.ContainsAny(id, `/\`) {
 		path = "brand/app-icons/" + id + ".png"
 	}
 	b, e := fs.ReadFile(h.assets, path)
 	if e != nil {
-		b, _ = fs.ReadFile(h.assets, "brand/app.png")
+		b, _ = fs.ReadFile(h.assets, "brand/app.ico")
 	}
 	return b
 }
@@ -156,6 +156,7 @@ func (h *desktopHost) openMain() {
 	})
 	w.OnWindowEvent(events.Windows.WindowEndMove, func(*application.WindowEvent) { h.persistMain(w) })
 	w.OnWindowEvent(events.Windows.WindowEndResize, func(*application.WindowEvent) { h.persistMain(w) })
+	w.OnWindowEvent(events.Common.WindowDPIChanged, func(*application.WindowEvent) { h.applyWindowAppearance(w) })
 	w.OnWindowEvent(events.Common.WindowRuntimeReady, func(*application.WindowEvent) {
 		h.mu.Lock()
 		current := h.main == w && !h.quitting
@@ -311,6 +312,7 @@ func (h *desktopHost) openFloating() {
 	w.OnWindowEvent(events.Windows.WindowStartResize, begin)
 	w.OnWindowEvent(events.Windows.WindowEndMove, end)
 	w.OnWindowEvent(events.Windows.WindowEndResize, end)
+	w.OnWindowEvent(events.Common.WindowDPIChanged, func(*application.WindowEvent) { h.applyWindowAppearance(w) })
 	w.OnWindowEvent(events.Common.WindowRuntimeReady, func(*application.WindowEvent) {
 		h.mu.Lock()
 		current := h.floating == w && !h.quitting
