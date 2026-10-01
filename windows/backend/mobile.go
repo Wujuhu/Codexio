@@ -150,14 +150,47 @@ func (m *MobileHost) Public() Row {
 	m.expireTicketLocked()
 	readers := []Row{}
 	notes := ValueRow(m.host["notes"])
+	localSyncs := ValueRow(m.host["local_syncs"])
+	cloudSync := ValueRow(m.host["cloud_sync"])
 	for _, r := range ValueRows(m.host["readers"]) {
-		readers = append(readers, Row{"id": r["id"], "name": r["name"], "note": ValueString(notes[ValueString(r["id"])])})
+		id := ValueString(r["id"])
+		last := ValueRow(localSyncs[id])
+		if m.cloudReaders[id] && ValueString(cloudSync["time"]) > ValueString(last["time"]) {
+			last = cloudSync
+		}
+		readers = append(readers, Row{"id": id, "name": r["name"], "note": ValueString(notes[id]), "last_sync": CloneRow(last)})
 	}
 	var pending any
 	if m.pending != nil {
 		pending = Row{"id": m.pending["id"], "name": m.pending["name"]}
 	}
-	return Row{"enabled": m.enabled, "status": m.status, "error": m.lastError, "name": m.name, "readers": readers, "pending": pending, "qr_data": m.qrData, "qr_url": m.qrURL, "cloud_enabled": ValueBool(m.host["cloud_enabled"])}
+	return Row{"enabled": m.enabled, "status": m.status, "error": m.lastError, "name": m.name, "readers": readers, "pending": pending, "qr_data": m.qrData, "qr_url": m.qrURL, "cloud_enabled": ValueBool(m.host["cloud_enabled"]), "last_sync": CloneRow(ValueRow(m.host["last_sync"]))}
+}
+
+// Match Mac SyncStamp: LAN means an authenticated receiver acknowledged;
+// cloud means a completed upload. Coalesce persistence to the displayed minute.
+func (m *MobileHost) recordSyncLocked(route, reader string) bool {
+	now := time.Now()
+	previous := ValueRow(m.host["cloud_sync"])
+	local := ValueRow(m.host["local_syncs"])
+	if reader != "" {
+		previous = ValueRow(local[reader])
+	}
+	if at, ok := ParseStamp(previous["time"]); ok && at.Truncate(time.Minute).Equal(now.Truncate(time.Minute)) {
+		return false
+	}
+	stamp := Row{"time": UTCStamp(now), "route": route}
+	m.host["last_sync"] = stamp
+	if reader == "" {
+		m.host["cloud_sync"] = stamp
+	} else {
+		local[reader] = stamp
+		m.host["local_syncs"] = local
+	}
+	if e := m.saveLocked(); e != nil {
+		m.lastError = e.Error()
+	}
+	return true
 }
 func (m *MobileHost) expireTicketLocked() {
 	if m.ticket != nil && ValueInt(m.ticket["expires"]) <= time.Now().Unix() {
@@ -613,6 +646,7 @@ func (m *MobileHost) Action(action string, v Row) (Row, error) {
 			m.host["revoked"] = append(ValueStrings(m.host["revoked"]), id)
 			delete(m.cloudReaders, id)
 			delete(ValueRow(m.host["notes"]), id)
+			delete(ValueRow(m.host["local_syncs"]), id)
 			e = m.saveLocked()
 		}
 		m.mu.Unlock()

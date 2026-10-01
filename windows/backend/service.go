@@ -234,6 +234,7 @@ func (s *Service) GetSettings() Row {
 }
 func normalizeFloatingChanges(old, changes Row) Row {
 	next := CloneRow(changes)
+	next["floating_layout_version"] = 1
 	changed := func(key string) bool {
 		value, present := changes[key]
 		return present && dataJSON(value) != dataJSON(old[key])

@@ -302,7 +302,7 @@ func systemUpdateRequest(ctx context.Context, raw, version string) (*http.Respon
 	request.Header.Set("User-Agent", "Codexio/"+version)
 	request.Header.Set("Cache-Control", "no-cache")
 	request.Header.Set("Accept", "application/octet-stream")
-	client := &http.Client{Timeout: 20 * time.Minute, Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, ResponseHeaderTimeout: 20 * time.Second, TLSHandshakeTimeout: 15 * time.Second, IdleConnTimeout: 30 * time.Second}, CheckRedirect: func(next *http.Request, via []*http.Request) error {
+	client := &http.Client{Timeout: 20 * time.Minute, Transport: &http.Transport{Proxy: systemAccountProxy, ResponseHeaderTimeout: 20 * time.Second, TLSHandshakeTimeout: 15 * time.Second, IdleConnTimeout: 30 * time.Second}, CheckRedirect: func(next *http.Request, via []*http.Request) error {
 		v := next.URL
 		if len(via) >= 5 || v.Scheme != "https" || v.User != nil {
 			return errors.New("更新重定向无效")

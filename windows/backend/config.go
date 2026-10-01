@@ -18,6 +18,8 @@ var systemSettingDefaults = Row{
 	"refresh_interval_seconds": 60, "display_mode": "top", "window_x": nil, "window_y": nil, "window_width": nil, "window_height": nil,
 	"visual_style": "classic", "background_transparent": true, "background_opacity": 70, "show_border": true, "border_color": "#8AB4F8",
 	"dock_edge": "none", "dock_top_width": nil, "dock_top_height": nil, "dock_side_width": nil, "dock_side_height": nil, "quota_scope": "auto", "codex_path": nil,
+	"floating_layout_version": 0,
+	"floating_geometry_key":   "",
 }
 
 func systemDefaultConfig() Row {
@@ -169,6 +171,13 @@ func PublicConfig(r Row) Row {
 	return CloneRow(out)
 }
 func systemNormalizeConfig(r Row) Row {
+	// Discard dimensions saved by the old overlapping layouts once; keep position.
+	if ValueInt(r["floating_layout_version"]) < 1 {
+		for _, key := range []string{"window_width", "window_height", "dock_top_width", "dock_top_height", "dock_side_width", "dock_side_height"} {
+			r[key] = nil
+		}
+		r["floating_layout_version"] = 1
+	}
 	// These are the persisted palette identities from usage_report_ui.py.
 	if v := ValueString(r["usage_report_style"]); v == "cream" {
 		r["usage_report_style"] = "bookmark"
@@ -201,7 +210,7 @@ func systemNormalizeConfig(r Row) Row {
 			}
 		}
 	}
-	for k, b := range map[string][2]int64{"background_opacity": {0, 100}, "window_width": {200, 1200}, "window_height": {96, 800}, "dock_top_width": {40, 1200}, "dock_top_height": {32, 800}, "dock_side_width": {40, 1200}, "dock_side_height": {32, 800}, "sidebar_width": {140, 320}, "log_preview_width": {220, 480}} {
+	for k, b := range map[string][2]int64{"background_opacity": {0, 100}, "window_width": {100, 1200}, "window_height": {80, 800}, "dock_top_width": {40, 1200}, "dock_top_height": {32, 800}, "dock_side_width": {36, 1200}, "dock_side_height": {32, 800}, "sidebar_width": {140, 320}, "log_preview_width": {220, 480}} {
 		if r[k] == nil {
 			continue
 		}

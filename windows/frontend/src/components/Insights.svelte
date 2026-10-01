@@ -4,8 +4,8 @@
  export let stats:Row={};
  export let section:'metrics'|'insights'|'all'='all';
  const activityFields=[['total_tokens','累计 Token 数'],['peak_daily_tokens','单日峰值 Token'],['longest_chat_seconds','最长聊天时长'],['current_streak_days','当前连续天数'],['longest_streak_days','最长连续天数']];
- function activityValue(key:string){
-   const value=number(stats[key]);
+ function activityValue(source:Row,key:string){
+   const value=number(source[key]);
    if(value===null)return '—';
    if(key.endsWith('tokens'))return compact(value);
    if(key==='longest_chat_seconds')return value<60?numeric(value)+'s':value<3600?numeric(value/60)+'m':(value/3600).toFixed(1)+'h';
@@ -14,7 +14,7 @@
 </script>
 {#if section!=='insights'}
  <section class="activity-metrics" aria-label={tr('活动')}>
-  {#each activityFields as [key,label]}<div><strong>{activityValue(key)}</strong><span>{tr(label)}</span></div>{/each}
+  {#each activityFields as [key,label]}<div><strong>{activityValue(stats,key)}</strong><span>{tr(label)}</span></div>{/each}
  </section>
 {/if}
 {#if section!=='metrics'}

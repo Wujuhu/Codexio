@@ -36,6 +36,7 @@ type desktopHost struct {
 	quitBusy                 bool
 	floatingOrigin           application.Rect
 	floatingInteracting      bool
+	floatingLayout           string
 }
 
 func (h *desktopHost) language() string {
@@ -274,7 +275,7 @@ func (h *desktopHost) openFloating() {
 		h.positionFloating(existing, h.service.Config())
 		return
 	}
-	c := h.service.Config()
+	c := h.floatingConfig(h.service.Config())
 	width, height := desktopFloatingSize(c)
 	w := h.app.Window.NewWithOptions(application.WebviewWindowOptions{Name: "Codexio-floating", Title: "Codexio", URL: "/?view=floating", Width: width, Height: height, MinWidth: 40, MinHeight: 32, MaxWidth: 1200, MaxHeight: 800, Frameless: true, AlwaysOnTop: backend.ValueString(c["display_mode"]) != "bottom", BackgroundType: application.BackgroundTypeTransparent, BackgroundColour: application.NewRGBA(0, 0, 0, 0), Windows: application.WindowsWindow{HiddenOnTaskbar: true, Theme: application.Dark, DisableFramelessWindowDecorations: true, NonClientRegionSupport: true}, DevToolsEnabled: false, DefaultContextMenuDisabled: true})
 	h.mu.Lock()
@@ -285,6 +286,7 @@ func (h *desktopHost) openFloating() {
 		h.mu.Lock()
 		if h.floating == w {
 			h.floating = nil
+			h.floatingLayout = ""
 		}
 		quitting := h.quitting
 		h.mu.Unlock()
@@ -317,6 +319,7 @@ func (h *desktopHost) openFloating() {
 			w.Show()
 		}
 		h.applyWindowAppearance(w)
+		w.SetResizable(true)
 		h.positionFloating(w, h.service.Config())
 	})
 	w.OnWindowEvent(events.Common.WindowFocus, func(*application.WindowEvent) {
@@ -331,8 +334,8 @@ func (h *desktopHost) openFloating() {
 }
 func desktopFloatingSize(c backend.Row) (int, int) {
 	week := backend.ValueString(c["quota_scope"]) == "week" || backend.ValueBool(c["_week_only"])
-	sizes := map[string][2]int{"classic": {320, 172}, "rings": {340, 216}, "tiles": {360, 184}, "compact": {340, 116}, "minimal": {280, 128}, "orb": {148, 148}}
-	weekSizes := map[string][2]int{"classic": {286, 112}, "rings": {196, 196}, "tiles": {248, 136}, "compact": {228, 92}, "minimal": {176, 96}, "orb": {148, 148}}
+	sizes := map[string][2]int{"classic": {304, 208}, "rings": {328, 212}, "tiles": {336, 160}, "compact": {320, 132}, "minimal": {276, 96}, "orb": {148, 148}}
+	weekSizes := map[string][2]int{"classic": {272, 136}, "rings": {196, 204}, "tiles": {240, 160}, "compact": {228, 132}, "minimal": {160, 88}, "orb": {148, 148}}
 	if week {
 		sizes = weekSizes
 	}
@@ -373,9 +376,9 @@ func desktopFloatingSize(c backend.Row) (int, int) {
 		width = max(minimum, min(960, width))
 		height = max(44, min(96, height))
 	case "left", "right":
-		width, height = 62, 236
+		width, height = 44, 256
 		if week {
-			height = 142
+			height = 160
 		}
 		if n := backend.ValueInt(c["dock_side_width"]); n > 0 {
 			width = int(n)
@@ -387,10 +390,11 @@ func desktopFloatingSize(c backend.Row) (int, int) {
 		if week {
 			minimum = 124
 		}
-		width = max(58, min(120, width))
+		width = max(36, min(120, width))
 		height = max(minimum, min(720, height))
 	}
-	return width, height
+	minWidth, minHeight, maxWidth, maxHeight := desktopFloatingLimits(c)
+	return max(minWidth, min(maxWidth, width)), max(minHeight, min(maxHeight, height))
 }
 func desktopFloatingLimits(c backend.Row) (int, int, int, int) {
 	week := backend.ValueString(c["quota_scope"]) == "week" || backend.ValueBool(c["_week_only"])
@@ -406,21 +410,52 @@ func desktopFloatingLimits(c backend.Row) (int, int, int, int) {
 		if week {
 			minimum = 124
 		}
-		return 58, minimum, 120, 720
+		return 36, minimum, 120, 720
 	}
 	if backend.ValueString(c["visual_style"]) == "orb" {
-		return 72, 72, 400, 400
+		return 100, 100, 400, 400
 	}
+	minimum := map[string][2]int{"classic": {240, 196}, "rings": {288, 182}, "tiles": {288, 160}, "compact": {280, 132}, "minimal": {240, 88}}
 	if week {
-		return 160, 80, 720, 500
+		minimum = map[string][2]int{"classic": {228, 124}, "rings": {164, 182}, "tiles": {180, 160}, "compact": {180, 132}, "minimal": {130, 88}}
 	}
-	return 200, 96, 1200, 800
+	size, ok := minimum[backend.ValueString(c["visual_style"])]
+	if !ok {
+		size = minimum["classic"]
+	}
+	return size[0], size[1], 1200, 800
 }
-func (h *desktopHost) positionFloating(w *application.WebviewWindow, c backend.Row) {
+
+func desktopFloatingLayoutKey(c backend.Row) string {
+	return backend.ValueString(c["visual_style"]) + ":" + backend.ValueString(c["dock_edge"]) + ":" + backend.ValueString(c["_week_only"]) + ":" + backend.ValueString(c["quota_scope"])
+}
+func (h *desktopHost) floatingConfig(c backend.Row) backend.Row {
 	c = backend.CloneRow(c)
 	if backend.ValueString(c["quota_scope"]) == "auto" {
-		q := h.service.GetTrayState()
-		c["_week_only"] = len(backend.ValueRow(q["primary"])) == 0 && len(backend.ValueRow(q["secondary"])) > 0
+		primary := backend.ValueRow(h.service.GetTrayState()["primary"])
+		_, remaining := backend.ValueFloat(primary["remaining_percent"])
+		_, used := backend.ValueFloat(primary["used_percent"])
+		c["_week_only"] = !remaining && !used
+	}
+	// Saved dimensions belong to a layout, including the automatic quota count.
+	if backend.ValueString(c["floating_geometry_key"]) != desktopFloatingLayoutKey(c) {
+		for _, key := range []string{"window_width", "window_height", "dock_top_width", "dock_top_height", "dock_side_width", "dock_side_height"} {
+			c[key] = nil
+		}
+	}
+	return c
+}
+func (h *desktopHost) positionFloating(w *application.WebviewWindow, c backend.Row) {
+	c = h.floatingConfig(c)
+	layout := desktopFloatingLayoutKey(c)
+	h.mu.Lock()
+	layoutChanged := h.floatingLayout != "" && h.floatingLayout != layout
+	h.floatingLayout = layout
+	h.mu.Unlock()
+	if layoutChanged {
+		for _, key := range []string{"window_width", "window_height", "dock_top_width", "dock_top_height", "dock_side_width", "dock_side_height"} {
+			c[key] = nil
+		}
 	}
 	width, height := desktopFloatingSize(c)
 	minWidth, minHeight, maxWidth, maxHeight := desktopFloatingLimits(c)
@@ -461,7 +496,7 @@ func (h *desktopHost) endFloatingInteraction(w *application.WebviewWindow) {
 	if !valid {
 		return
 	}
-	c := h.service.Config()
+	c := h.floatingConfig(h.service.Config())
 	r := w.Bounds()
 	h.mu.Lock()
 	origin := h.floatingOrigin
@@ -492,15 +527,18 @@ func (h *desktopHost) endFloatingInteraction(w *application.WebviewWindow) {
 		edge = oldEdge
 	}
 	changes := backend.Row{"window_x": r.X, "window_y": r.Y, "dock_edge": edge}
+	savedLayout := backend.CloneRow(c)
+	savedLayout["dock_edge"] = edge
+	changes["floating_geometry_key"] = desktopFloatingLayoutKey(savedLayout)
 	if edge != oldEdge {
 		// Reuse v0.2.10 dock.py:snap_geometry's center anchor. Changing a
 		// horizontal bar to a vertical one must not jump to a screen corner.
 		layout := backend.CloneRow(c)
 		layout["dock_edge"] = edge
-		if backend.ValueString(c["quota_scope"]) == "auto" {
-			q := h.service.GetTrayState()
-			layout["_week_only"] = len(backend.ValueRow(q["primary"])) == 0 && len(backend.ValueRow(q["secondary"])) > 0
+		for _, key := range []string{"window_width", "window_height", "dock_top_width", "dock_top_height", "dock_side_width", "dock_side_height"} {
+			layout[key] = nil
 		}
+		layout = h.floatingConfig(layout)
 		width, height := desktopFloatingSize(layout)
 		changes["window_x"] = r.X + (r.Width-width)/2
 		changes["window_y"] = r.Y + (r.Height-height)/2
@@ -570,13 +608,15 @@ func (h *desktopHost) changed(name string, row backend.Row) {
 		dragging := h.floatingInteracting
 		h.mu.Unlock()
 		if floating != nil && !dragging {
-			config := h.service.Config()
-			if backend.ValueString(config["quota_scope"]) == "auto" && backend.ValueString(config["dock_edge"]) != "none" {
-				q := h.service.GetTrayState()
-				config["_week_only"] = len(backend.ValueRow(q["primary"])) == 0 && len(backend.ValueRow(q["secondary"])) > 0
+			config := h.floatingConfig(h.service.Config())
+			if backend.ValueString(config["quota_scope"]) == "auto" {
 				width, height := desktopFloatingSize(config)
 				actualW, actualH := floating.Size()
-				if width != actualW || height != actualH {
+				layout := desktopFloatingLayoutKey(config)
+				h.mu.Lock()
+				changed := h.floatingLayout != layout
+				h.mu.Unlock()
+				if changed || width != actualW || height != actualH {
 					h.positionFloating(floating, config)
 				}
 			}

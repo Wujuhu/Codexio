@@ -382,8 +382,9 @@ func (m *MobileHost) uploadWork() {
 	changed := m.status != "云端已同步" || m.lastError != ""
 	m.status = "云端已同步"
 	m.lastError = ""
+	stampChanged := m.recordSyncLocked("cloud", "")
 	m.mu.Unlock()
-	if changed {
+	if changed || stampChanged {
 		m.notify()
 	}
 }

@@ -148,6 +148,7 @@ func (m *MobileHost) serve(ctx context.Context, listener net.Listener) {
 func (m *MobileHost) client(ctx context.Context, c net.Conn) {
 	defer func() { c.Close(); m.mu.Lock(); delete(m.connections, c); m.mu.Unlock(); <-m.clients }()
 	authenticated := false
+	readerID := ""
 	for {
 		select {
 		case <-ctx.Done():
@@ -163,12 +164,26 @@ func (m *MobileHost) client(ctx context.Context, c net.Conn) {
 		if e != nil {
 			return
 		}
+		if ValueString(message["action"]) == "ack" && authenticated && readerID != "" {
+			m.mu.Lock()
+			known := false
+			for _, reader := range ValueRows(m.host["readers"]) {
+				known = known || ValueString(reader["id"]) == readerID
+			}
+			changed := known && m.recordSyncLocked("lan", readerID)
+			m.mu.Unlock()
+			if changed {
+				m.notify()
+			}
+			continue
+		}
 		r := m.message(message)
 		if r == nil {
 			continue
 		}
 		if action := ValueString(r["action"]); action == "sync" || action == "detail" {
 			authenticated = true
+			readerID = ValueString(ValueRow(message["reader"])["id"])
 		}
 		_ = c.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		raw, e := mobileJSON(r)
