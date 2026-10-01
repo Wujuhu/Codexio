@@ -50,14 +50,6 @@ enum MenuBarMetrics {
 
 final class TaskStatusImageView: NSView {
     private let glyph = CALayer()
-    private static let ring: NSImage = {
-        let image = Bundle.main.url(forResource:"c-dot-ring-static",withExtension:"png").flatMap {NSImage(contentsOf:$0)} ?? Branding.menuIcon()
-        image.size = NSSize(width:MenuBarMetrics.taskSize,height:MenuBarMetrics.taskSize); image.isTemplate = true; return image
-    }()
-    private static let completed: NSImage = {
-        let image = Bundle.main.url(forResource:"completed",withExtension:"png").flatMap {NSImage(contentsOf:$0)} ?? Branding.menuIcon()
-        image.size = NSSize(width:MenuBarMetrics.taskSize,height:MenuBarMetrics.taskSize); image.isTemplate = true; return image
-    }()
     private var running = false
     private var configured = false
     private var observer: NSObjectProtocol?
@@ -71,7 +63,7 @@ final class TaskStatusImageView: NSView {
     required init?(coder: NSCoder) { fatalError() }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     func setRunning(_ value: Bool) {
-        guard !configured || running != value else { return }
+        guard !configured || running != value || glyph.contents == nil else { return }
         configured = true; running = value; updateGlyph(); updateAnimation()
     }
     private func updateAnimation() {
@@ -93,17 +85,21 @@ final class TaskStatusImageView: NSView {
         CATransaction.commit()
     }
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); updateGlyph() }
+    override func viewDidChangeBackingProperties() { super.viewDidChangeBackingProperties(); updateGlyph() }
+    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); updateGlyph() }
     private func updateGlyph() {
+        guard configured, let source = Branding.taskStatusIcon(running:running) else { return }
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            let source = running ? Self.ring : Self.completed
-            let tinted = NSImage(size:self.intrinsicContentSize,flipped:false) { rect in
-                source.draw(in:rect)
-                NSColor.labelColor.setFill(); rect.fill(using:.sourceIn)
-                return true
-            }
+            let scale = window?.backingScaleFactor ?? 2, pixels = Int(ceil(MenuBarMetrics.taskSize*scale))
+            guard let bitmap = NSBitmapImageRep(bitmapDataPlanes:nil,pixelsWide:pixels,pixelsHigh:pixels,bitsPerSample:8,samplesPerPixel:4,hasAlpha:true,isPlanar:false,colorSpaceName:.deviceRGB,bytesPerRow:0,bitsPerPixel:0), let context = NSGraphicsContext(bitmapImageRep:bitmap) else { return }
+            let rect = NSRect(x:0,y:0,width:pixels,height:pixels)
+            NSGraphicsContext.saveGraphicsState(); NSGraphicsContext.current = context; context.imageInterpolation = .high
+            source.draw(in:rect,from:.zero,operation:.copy,fraction:1)
+            NSColor.labelColor.setFill(); rect.fill(using:.sourceIn)
+            NSGraphicsContext.restoreGraphicsState()
             CATransaction.begin(); CATransaction.setDisableActions(true)
-            glyph.contents = tinted.cgImage(forProposedRect:nil,context:nil,hints:nil)
-            glyph.contentsScale = window?.backingScaleFactor ?? 2
+            glyph.contents = bitmap.cgImage
+            glyph.contentsScale = scale
             CATransaction.commit()
         }
     }

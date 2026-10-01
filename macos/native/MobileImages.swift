@@ -1,16 +1,30 @@
 import AppKit
+import CryptoKit
 import ImageIO
 import UniformTypeIdentifiers
 
-// Owned by MobileSync.queue. Images are separate bounded, expiring payloads;
-// normal snapshot publication never decodes image pixels.
+// Owned by MobileSync.queue. Reuse RequestMediaStore's owned-file, atomic-write
+// and bounded-cache policy; keep transport bytes on disk, not in UI snapshots.
 final class MobileImageCache {
     struct Prepared { var user: String; var final: String; var references: [MobileImageReference] }
-    private struct Cached { let stamp: String; let content: String?; let image: MobileImageReference; let envelope: MobileEnvelope? }
+    struct Stored: Equatable {
+        let id: String
+        let digest: String
+        let bytes: Int
+        let expires: Double
+        var fileName: String { id+"."+digest+"."+String(Int64(expires))+".json" }
+    }
+    private struct Cached { let stamp: String; let content: String?; let image: MobileImageReference }
     private let queue: DispatchQueue
+    private let directory: URL
+    private var loaded = false
     private var cached: [String:Cached] = [:]
-    private(set) var envelopes: [String:MobileEnvelope] = [:]
-    private var expiry: [String:Double] = [:]
+    private var stored: [String:Stored] = [:]
+    private var verified: [String:FileStamp] = [:]
+    // Only this session's prepared references are upload candidates. Other
+    // unexpired disk entries can still answer an authenticated LAN read.
+    var uploadRecords: [Stored] { stored.values.filter { owners[$0.id] != nil } }
+    func contains(_ id: String) -> Bool { stored[id] != nil }
     private var owners: [String:(request: String,expires: Double)] = [:]
     private var pinned: String?
     private var access: [String:Double] = [:]
@@ -23,31 +37,117 @@ final class MobileImageCache {
     private var generation = UUID()
     private lazy var downloader = MobileImageDownloader()
     var onReady: ((String) -> Void)?
-    init(queue: DispatchQueue) { self.queue = queue }
-    func stop() { generation = UUID(); downloader.cancel(); pending.removeAll(); cached.removeAll(); envelopes.removeAll(); expiry.removeAll(); owners.removeAll(); access.removeAll(); remote.removeAll(); localSources.removeAll(); remoteSources.removeAll(); sourceRequests.removeAll(); retry.removeAll() }
+    init(queue: DispatchQueue,directory: URL) { self.queue = queue; self.directory = directory.standardizedFileURL }
+    func stop() { generation = UUID(); downloader.cancel(); pending.removeAll(); cached.removeAll(); stored.removeAll(); verified.removeAll(); loaded = false; owners.removeAll(); access.removeAll(); remote.removeAll(); localSources.removeAll(); remoteSources.removeAll(); sourceRequests.removeAll(); retry.removeAll() }
+    private func loadFiles() {
+        guard !loaded else { return }
+        let manager = FileManager.default
+        do {
+            try manager.createDirectory(at:directory,withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
+            guard directory.resolvingSymlinksInPath() == directory else { return }
+            let files = try manager.contentsOfDirectory(at:directory,includingPropertiesForKeys:[.isRegularFileKey,.isSymbolicLinkKey,.fileSizeKey,.contentModificationDateKey])
+            loaded = true
+            for file in files {
+                let parts = file.lastPathComponent.split(separator:".")
+                guard parts.count == 4, parts[3] == "json", [parts[0],parts[1]].allSatisfy({$0.count == 64 && $0.allSatisfy({"0123456789abcdef".contains($0)})}),
+                      let deadline = Int64(parts[2]), deadline > 0, Double(deadline) < Double(Int64.max),
+                      let info = try? file.resourceValues(forKeys:[.isRegularFileKey,.isSymbolicLinkKey,.fileSizeKey,.contentModificationDateKey]),
+                      info.isRegularFile == true, info.isSymbolicLink != true else { continue }
+                let bytes = info.fileSize ?? 0, id = String(parts[0])
+                guard Double(deadline) > Date().timeIntervalSince1970, bytes > 0, bytes <= MobileProtocol.imageEnvelopeLimit, stored[id] == nil else { try? manager.removeItem(at:file); continue }
+                stored[id] = Stored(id:id,digest:String(parts[1]),bytes:bytes,expires:Double(deadline))
+                access[id] = info.contentModificationDate?.timeIntervalSince1970 ?? 0
+            }
+        } catch { }
+    }
+    private func file(_ value: Stored) -> URL { directory.appendingPathComponent(value.fileName) }
+    private func available(_ value: Stored) -> Bool {
+        guard value.expires > Date().timeIntervalSince1970, directory.resolvingSymlinksInPath() == directory,
+              let info = try? file(value).resourceValues(forKeys:[.isRegularFileKey,.isSymbolicLinkKey,.fileSizeKey]) else { return false }
+        return info.isRegularFile == true && info.isSymbolicLink != true && info.fileSize == value.bytes
+    }
+    private func discard(_ id: String) {
+        if let value = stored.removeValue(forKey:id), directory.resolvingSymlinksInPath() == directory { try? FileManager.default.removeItem(at:file(value)) }
+        verified.removeValue(forKey:id)
+        access.removeValue(forKey:id)
+        cached = cached.filter {$0.value.image.id != id}
+    }
+    private func save(_ data: Data,id: String,expires: Double) -> Stored? {
+        guard loaded, expires.isFinite, expires > 0, expires < Double(Int64.max), !data.isEmpty, data.count <= MobileProtocol.imageEnvelopeLimit, directory.resolvingSymlinksInPath() == directory else { return nil }
+        if let old = stored[id], available(old) { return old }
+        let value = Stored(id:id,digest:MobileProtocol.hash(data),bytes:data.count,expires:expires)
+        do {
+            let target = file(value)
+            guard target.resolvingSymlinksInPath() == target else { return nil }
+            try data.write(to:target,options:.atomic)
+            try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:target.path)
+            stored[id] = value; access[id] = Date().timeIntervalSince1970
+            verified[id] = FileStamp(target)
+            return value
+        } catch { return nil }
+    }
+    private func validPayload(_ value: Stored) -> Bool {
+        guard available(value) else { return false }
+        let target = file(value), stamp = FileStamp(file(value))
+        if verified[value.id] == stamp { return true }
+        // Reopened or changed files are checked once, using bounded buffers.
+        // Remember file identity so each LAN chunk doesn't hash the full image.
+        do {
+            let reader = try FileHandle(forReadingFrom:target); defer {try? reader.close()}
+            var hasher = SHA256(), count = 0
+            while let chunk = try autoreleasepool(invoking:{try reader.read(upToCount:MobileProtocol.imageChunkBytes)}), !chunk.isEmpty {
+                count += chunk.count; guard count <= value.bytes else { return false }; hasher.update(data:chunk)
+            }
+            guard count == value.bytes, hasher.finalize().map({String(format:"%02x",$0)}).joined() == value.digest, FileStamp(target) == stamp else { return false }
+            verified[value.id] = stamp; return true
+        } catch { return false }
+    }
+    // The upload task captures only Stored metadata; load one body immediately
+    // before sending it, so acknowledgements never retain the whole outbox.
+    func envelope(_ value: Stored) -> MobileEnvelope? {
+        guard stored[value.id] == value else { return nil }
+        guard available(value) else { retryFile(value.id); return nil }
+        return autoreleasepool {
+            guard let data = try? Data(contentsOf:file(value)), data.count == value.bytes, MobileProtocol.hash(data) == value.digest else {
+                retryFile(value.id); return nil
+            }
+            access[value.id] = Date().timeIntervalSince1970
+            return MobileEnvelope(dataset:"image-"+value.id,revision:1,digest:value.digest,payload:String(decoding:data,as:UTF8.self))
+        }
+    }
+    private func retryFile(_ id: String) {
+        let affected = cached.filter {$0.value.image.id == id}
+        discard(id)
+        for (key,value) in affected {
+            var image = value.image; image.availability = "unavailable"
+            cached[key] = Cached(stamp:value.stamp,content:value.content,image:image)
+            retry[key] = Date().addingTimeInterval(60)
+        }
+    }
     func needsRefresh(_ request: String) -> Bool {
         for (key,entry) in cached where sourceRequests[key] == request && entry.image.expires > Date().timeIntervalSince1970 {
             if let file=localSources[key] {
                 let stamp=FileStamp(file)
                 if !entry.stamp.hasPrefix("\(file.path)|\(stamp.size)|\(stamp.modified?.timeIntervalSince1970 ?? 0)|\(stamp.inode)|") { return true }
+                if entry.image.availability != "available", let next = retry[key], Date() >= next { return true }
             } else if remoteSources[key] != nil, entry.image.availability != "available", !pending.contains(key), pending.count < 2, Date() >= (retry[key] ?? .distantPast) { return true }
         }
         return false
     }
     func refreshPending() {
-        let requests = Set(remoteSources.keys.compactMap { key -> String? in
+        let requests = Set(sourceRequests.keys.compactMap { key -> String? in
             guard let entry=cached[key],entry.image.expires > Date().timeIntervalSince1970,entry.image.availability != "available",
-                  !pending.contains(key),Date() >= (retry[key] ?? .distantPast) else { return nil }
+                  !pending.contains(key),Date() >= (retry[key] ?? .distantPast), remoteSources[key] != nil || retry[key] != nil else { return nil }
             return sourceRequests[key]
         })
         for request in requests.prefix(max(0,2-pending.count)) { onReady?(request) }
     }
     func prune(now: Double = Date().timeIntervalSince1970) {
-        for id in Array(envelopes.keys) where (expiry[id] ?? 0) <= now { envelopes.removeValue(forKey:id); expiry.removeValue(forKey:id); access.removeValue(forKey:id) }
-        while envelopes.count > 128 || envelopes.values.reduce(0,{$0+$1.payload.utf8.count}) > 32*1_024*1_024 {
+        loadFiles()
+        for (id,value) in stored where value.expires <= now { discard(id) }
+        while stored.count > 128 || stored.values.reduce(0,{$0+$1.bytes}) > 32*1_024*1_024 {
             guard let id = access.filter({$0.key != pinned}).min(by:{$0.value < $1.value})?.key else { break }
-            envelopes.removeValue(forKey:id); access.removeValue(forKey:id); expiry.removeValue(forKey:id)
-            cached = cached.filter {$0.value.image.id != id}
+            discard(id)
         }
         owners = owners.filter {$0.value.expires > now}
         if owners.count > 2048 { owners = Dictionary(uniqueKeysWithValues:owners.sorted {$0.value.expires > $1.value.expires}.prefix(2048).map {($0.key,$0.value)}) }
@@ -66,11 +166,11 @@ final class MobileImageCache {
             let content = candidate.content ?? candidate.image.id
             let chosen = canonical[content] ?? candidate
             canonical[content] = chosen
-            let entry = Cached(stamp:candidate.stamp,content:candidate.content,image:chosen.image,envelope:chosen.envelope)
+            let entry = Cached(stamp:candidate.stamp,content:candidate.content,image:chosen.image)
             cached[key] = entry
-            if let envelope = entry.envelope {
+            if stored[entry.image.id] != nil {
                 let id=entry.image.id
-                envelopes[id]=envelope;expiry[id]=entry.image.expires;access[id]=Date().timeIntervalSince1970
+                access[id]=Date().timeIntervalSince1970
                 owners[id]=(requestID,entry.image.expires)
             }
             return entry
@@ -102,7 +202,8 @@ final class MobileImageCache {
                         let file = url.resolvingSymlinksInPath(), value = FileStamp(file)
                         localSources[key] = file
                         stamp = "\(file.path)|\(value.size)|\(value.modified?.timeIntervalSince1970 ?? 0)|\(value.inode)|\(expires)"
-                        if let old = cached[key], old.stamp == stamp {
+                        if let old = cached[key], old.stamp == stamp,
+                           (old.image.availability == "available" && stored[old.image.id].map(available) == true) || (old.image.availability != "available" && Date() < (retry[key] ?? .distantFuture)) {
                             image = retain(old,key:key).image
                             append(image,item:item,to:&result); continue
                         }
@@ -110,7 +211,7 @@ final class MobileImageCache {
                     } else {
                         stamp = source+"|\(expires)"
                         if MobileImageDownloader.allowed(url) { remoteSources[key] = url }
-                        if let old=cached[key],old.stamp==stamp,old.image.availability=="available" {
+                        if let old=cached[key],old.stamp==stamp,old.image.availability=="available",stored[old.image.id].map(available) == true {
                             image=retain(old,key:key).image
                             append(image,item:item,to:&result);continue
                         }
@@ -127,18 +228,20 @@ final class MobileImageCache {
                             }
                         }
                     }
-                    var envelope: MobileEnvelope?
                     var content: String?
-                    if let bytes,let encoded=Self.raster(bytes) {
-                        let key=requestID+"|"+placement+"|"+MobileProtocol.hash(encoded.data)
-                        content=key
-                        image.id=MobileProtocol.hash(Data((key+"|"+String(created)).utf8));image.mime=encoded.mime;image.width=encoded.width;image.height=encoded.height;image.availability="available"
-                        let payload=MobileImagePayload(id:image.id,request:requestID,mime:image.mime,width:image.width,height:image.height,created:created,expires:expires,data:encoded.data.base64EncodedString())
-                        if let data=try? MobileProtocol.encode(payload),data.count <= MobileProtocol.imageEnvelopeLimit {
-                            envelope=envelopes[image.id] ?? MobileEnvelope(dataset:"image-"+image.id,revision:1,digest:MobileProtocol.hash(data),payload:String(decoding:data,as:UTF8.self))
-                        } else {image.availability="unavailable"}
+                    if let bytes,let encoded=autoreleasepool(invoking:{Self.raster(bytes)}) {
+                        let identity=requestID+"|"+placement+"|"+MobileProtocol.hash(encoded.data)
+                        content=identity
+                        image.id=MobileProtocol.hash(Data((identity+"|"+String(created)).utf8));image.mime=encoded.mime;image.width=encoded.width;image.height=encoded.height;image.availability="available"
+                        if let previous = canonical[identity], previous.image.availability == "available", stored[previous.image.id].map(available) == true {
+                            image = previous.image
+                        } else if stored[image.id].map(available) != true {
+                            let payload=MobileImagePayload(id:image.id,request:requestID,mime:image.mime,width:image.width,height:image.height,created:created,expires:expires,data:encoded.data.base64EncodedString())
+                            if let data=try? MobileProtocol.encode(payload),save(data,id:image.id,expires:expires) != nil { retry.removeValue(forKey:key) }
+                            else {image.availability="unavailable";retry[key]=Date().addingTimeInterval(60)}
+                        }
                     }
-                    image=retain(Cached(stamp:stamp,content:content,image:image,envelope:envelope),key:key).image
+                    image=retain(Cached(stamp:stamp,content:content,image:image),key:key).image
                 }
             }
             append(image,item:item,to:&result)
@@ -154,17 +257,24 @@ final class MobileImageCache {
         if !text.contains(target) { text += "\n\n![" + image.name.replacingOccurrences(of:"]",with:"") + "](" + target + ")" }
         if image.placement=="user" {result.user=text} else {result.final=text}
     }
-    func deadline(_ id: String) -> Double? { expiry[id] }
     func message(_ id: String,part: Int,prepare: ((String) -> Void)? = nil) -> MobileMessage {
         pinned = id; defer { pinned = nil }
         prune()
-        if envelopes[id] == nil, let owner = owners[id], owner.expires > Date().timeIntervalSince1970 { prepare?(owner.request) }
-        guard let value=envelopes[id],let expires=expiry[id],expires > Date().timeIntervalSince1970 else {return MobileMessage(action:"image",error:"IMAGE_UNAVAILABLE",imageID:id)}
-        let bytes=Data(value.payload.utf8),count=(bytes.count+MobileProtocol.imageChunkBytes-1)/MobileProtocol.imageChunkBytes
+        if let value = stored[id], !validPayload(value) { discard(id) }
+        if stored[id] == nil, let owner = owners[id], owner.expires > Date().timeIntervalSince1970 { prepare?(owner.request) }
+        guard let value=stored[id],validPayload(value) else {return MobileMessage(action:"image",error:"IMAGE_UNAVAILABLE",imageID:id)}
+        let count=(value.bytes+MobileProtocol.imageChunkBytes-1)/MobileProtocol.imageChunkBytes
         guard part >= 0,part < count else{return MobileMessage(action:"image",error:"INVALID",imageID:id)}
         access[id]=Date().timeIntervalSince1970
-        let start=part*MobileProtocol.imageChunkBytes,end=min(bytes.count,start+MobileProtocol.imageChunkBytes)
-        return MobileMessage(action:"image",imageID:id,imagePart:part,imageManifest:MobileDetailManifest(id:id,revision:value.revision,digest:value.digest,bytes:bytes.count,parts:count),imageChunk:bytes.subdata(in:start..<end).base64EncodedString())
+        let start=part*MobileProtocol.imageChunkBytes,length=min(MobileProtocol.imageChunkBytes,value.bytes-start)
+        return autoreleasepool {
+            do {
+                let reader=try FileHandle(forReadingFrom:file(value));defer {try? reader.close()}
+                try reader.seek(toOffset:UInt64(start))
+                guard let bytes=try reader.read(upToCount:length),bytes.count==length else {throw AppFailure("Incomplete image cache file")}
+                return MobileMessage(action:"image",imageID:id,imagePart:part,imageManifest:MobileDetailManifest(id:id,revision:1,digest:value.digest,bytes:value.bytes,parts:count),imageChunk:bytes.base64EncodedString())
+            } catch {discard(id);return MobileMessage(action:"image",error:"IMAGE_UNAVAILABLE",imageID:id)}
+        }
     }
     private static func raster(_ bytes: Data) -> (data:Data,mime:String,width:Int,height:Int)? {
         guard let source=CGImageSourceCreateWithData(bytes as CFData,[kCGImageSourceShouldCache:false] as CFDictionary) else { return vector(bytes) }

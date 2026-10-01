@@ -169,7 +169,7 @@ struct UsageTrendsView: View {
     private var key: String { [state.usage.revision.uuidString,period,model,granularity,period == "custom" ? String(Calendar.current.startOfDay(for:from).timeIntervalSince1970) : "",period == "custom" ? String(Calendar.current.startOfDay(for:through).timeIntervalSince1970) : ""].joined(separator:"|") }
     private func load() {
         let snapshot = state.usage, range = UsageRange(period:period,from:from,through:through), model = model, granularity = granularity
-        projection.load(key:key) { TrendProjection.build(snapshot,range:range,model:model,granularity:granularity) }
+        projection.load(key:key,revision:snapshot.revision) { TrendProjection.build(snapshot,range:range,model:model,granularity:granularity) }
     }
     var body: some View {
         VStack(alignment:.leading,spacing:22) {

@@ -37,14 +37,26 @@ struct FetchRefreshControls: View {
 
 final class AsyncProjection<Value>: ObservableObject {
     @Published private(set) var value: Value
-    private var requested = ""
+    private var requested: String?
     private var generation = 0
+    private var cacheRevision: UUID?
     private var cache: [String:Value] = [:]
     private var order: [String] = []
     private var work: DispatchWorkItem?
     private let queue = DispatchQueue(label:"com.wujuhu.codexio.presentation",qos:.userInitiated)
     init(_ initial: Value) { value = initial }
-    func load(key: String,compute: @escaping () -> Value) {
+    func invalidate(for revision: UUID) {
+        guard cacheRevision != revision else { return }
+        cacheRevision = revision
+        // Snapshot revisions include data, pricing and time boundaries. Old
+        // filters/pages cannot be reused, but keep the displayed value until
+        // its replacement is ready.
+        cache.removeAll(keepingCapacity:true); order.removeAll(keepingCapacity:true)
+        requested = nil; generation += 1
+        work?.cancel(); work = nil
+    }
+    func load(key: String,revision: UUID,compute: @escaping () -> Value) {
+        invalidate(for:revision)
         guard key != requested else { return }
         requested = key; generation += 1; let token = generation
         work?.cancel()

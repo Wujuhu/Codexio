@@ -63,7 +63,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
     private var sentImages: [String:MobileImageStamp] = [:]
     private var imageDeferred: [String:Date] = [:]
     private lazy var imageCache: MobileImageCache = {
-        let cache = MobileImageCache(queue:queue)
+        let cache = MobileImageCache(queue:queue,directory:paths.data.appendingPathComponent("mobile-image-cache",isDirectory:true))
         cache.onReady = { [weak self] id in
             guard let self, self.active else { return }
             let previous = self.details[id]?.digest
@@ -417,6 +417,18 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
         let revision = max(datasets[dataset]?.revision ?? 0,Int64(Date().timeIntervalSince1970*1000))+1
         datasets[dataset] = MobileEnvelope(dataset:dataset,revision:revision,digest:hash,payload:String(decoding:data,as:UTF8.self))
     }
+    private func imageUploadBody(_ image: MobileImageCache.Stored,generation: UUID) async -> Data? {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                guard self.active, self.generation == generation else { continuation.resume(returning:nil); return }
+                let body: Data? = autoreleasepool {
+                    guard let value = self.imageCache.envelope(image) else { return nil }
+                    return try? MobileProtocol.encode(value)
+                }
+                continuation.resume(returning:body)
+            }
+        }
+    }
     private func loadDetail(_ requestID: String) throws -> MobileEnvelope? {
         guard let raw = try detailProvider?(requestID) else { return nil }
         let canonical = raw.string("id"), id = MobileProtocol.hash(Data(canonical.utf8))
@@ -569,7 +581,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
         let support = cloudDetails, imageSupport = cloudImages
         let allDetails = Array(details.values)
         imageCache.prune()
-        let imageChanges = imageCache.envelopes.values.filter { sentImages[String($0.dataset.dropFirst(6))]?.digest != $0.digest && Date() >= (imageDeferred[String($0.dataset.dropFirst(6))] ?? .distantPast) }
+        let imageChanges = Array(imageCache.uploadRecords.lazy.filter { self.sentImages[$0.id]?.digest != $0.digest && Date() >= (self.imageDeferred[$0.id] ?? .distantPast) }.prefix(2))
         let knownKinds = cloudRequestKinds, previousRecent = cloudRecent
         if probe, let recent = datasets["recent"], !changed.contains(where:{$0.dataset == "recent"}) { changed.append(recent) }
         guard !changed.isEmpty || !readers.isEmpty || !host.revoked.isEmpty || probe || (support == true && !detailChanges.isEmpty) || (imageSupport && !imageChanges.isEmpty) else { return }
@@ -584,7 +596,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                 var supported = support, uploaded: [MobileEnvelope] = [], capacityIDs: [String] = []
                 var detailFailure: String?, kinds = knownKinds, imagesSupported = imageSupport, probeFailed = false
                 var cloudSucceeded = !readers.isEmpty || !host.revoked.isEmpty, transientDetailFailure = false
-                var uploadedImages: [MobileEnvelope] = [], deferredImages: [String] = []
+                var uploadedImages: [MobileImageCache.Stored] = [], deferredImages: [String] = []
                 if probe {
                     do {
                         let response = try await transport.request("/v1/hosts/\(host.id)/capabilities",token:host.writer)
@@ -644,10 +656,11 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                     }
                 }
                 if imagesSupported {
-                    for image in imageChanges.prefix(2) {
-                        let id = String(image.dataset.dropFirst(6))
+                    for image in imageChanges {
+                        let id = image.id
                         do {
-                            _ = try await transport.request("/v1/hosts/\(host.id)/images/\(id)",method:"PUT",token:host.writer,body:MobileProtocol.encode(image))
+                            guard let body = await self.imageUploadBody(image,generation:generation) else { continue }
+                            _ = try await transport.request("/v1/hosts/\(host.id)/images/\(id)",method:"PUT",token:host.writer,body:body)
                             cloudSucceeded = true; uploadedImages.append(image)
                         } catch {
                             if case MobileError.http(_,_,let reason) = error, ["IMAGE_CAPACITY","IMAGE_EXPIRED"].contains(reason ?? "") { deferredImages.append(id); continue }
@@ -663,13 +676,12 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                     self.cloudDetails = resolvedSupport
                     self.cloudRequestKinds = resolvedKinds; self.cloudImages = resolvedImages; self.host?.imageCapability = resolvedImages
                     for image in sentImageValues {
-                        let id = String(image.dataset.dropFirst(6))
-                        if let expires = self.imageCache.deadline(id) { self.sentImages[id] = MobileImageStamp(digest:image.digest,expires:expires) }
+                        self.sentImages[image.id] = MobileImageStamp(digest:image.digest,expires:image.expires)
                     }
                     for id in delayedImages { self.imageDeferred[id] = Date().addingTimeInterval(3600) }
                     self.sentImages = self.sentImages.filter {$0.value.expires > Date().timeIntervalSince1970}
                     if self.sentImages.count > 128 { self.sentImages = Dictionary(uniqueKeysWithValues:self.sentImages.sorted {$0.value.expires > $1.value.expires}.prefix(128).map {($0.key,$0.value)}) }
-                    self.imageDeferred = self.imageDeferred.filter {self.imageCache.envelopes[$0.key] != nil}
+                    self.imageDeferred = self.imageDeferred.filter {self.imageCache.contains($0.key)}
                     if let resolvedRecent, self.cloudRecent != resolvedRecent {
                         self.cloudRecent = resolvedRecent
                         try? MobileProtocol.encode(resolvedRecent).write(to:self.cloudRecentURL,options:.atomic)
@@ -694,7 +706,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                         }
                     }
                     var imageStateChanged = !sentImageValues.isEmpty
-                    let justUploadedImages = Set(sentImageValues.map {String($0.dataset.dropFirst(6))})
+                    let justUploadedImages = Set(sentImageValues.map(\.id))
                     for value in sentDetails {
                         let id = String(value.dataset.dropFirst(7))
                         if let revision = newDetailRevisions[id], self.details[id]?.digest == value.digest {

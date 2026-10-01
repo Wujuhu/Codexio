@@ -248,7 +248,12 @@ final class AppState: ObservableObject {
             DispatchQueue.main.async { [weak self] in
                 guard let self, !self.stopped else { return }
                 let changed = self.usage.revision != result.revision
-                if changed { self.usage = result }
+                if changed {
+                    self.overviewProjection.invalidate(for:result.revision)
+                    self.trendProjection.invalidate(for:result.revision)
+                    self.logProjection.invalidate(for:result.revision)
+                    self.usage = result
+                }
                 self.clock.updated = result.updated
                 if self.pricesRevision != priceVersion { self.prices = prices; self.pricesRevision = priceVersion }
                 if self.modelIDs != models { self.modelIDs = models }
@@ -460,7 +465,8 @@ final class AppState: ObservableObject {
         brandingQueue.async { [weak self] in
             guard let self else { return }
             do {
-                let image = try Branding.appIcon(id), dock = Branding.dockIcon(image)
+                Branding.prepareSmallImages()
+                let image = try Branding.appIcon(id), dock = Branding.dockIcon(image,id:id)
                 if persist {
                     let old = self.preferences.analytics.string("app_icon","main")
                     self.preferences.analytics["app_icon"] = id
@@ -471,9 +477,10 @@ final class AppState: ObservableObject {
                     guard !self.stopped else { return }
                     self.appIconStyle = id; self.appLogoImage = image; self.appIconApplying = false
                     NSApp.applicationIconImage = dock
+                    self.onMenuDataChange?()
                 }
             } catch {
-                DispatchQueue.main.async { self.appIconApplying = false; self.errorMessage = error.localizedDescription }
+                DispatchQueue.main.async { self.appIconApplying = false; self.errorMessage = error.localizedDescription; self.onMenuDataChange?() }
             }
         }
     }
