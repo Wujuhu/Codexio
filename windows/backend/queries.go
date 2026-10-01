@@ -327,8 +327,12 @@ func (s *Store) Chart(q Query) (resultRows []Row, err error) {
 	}
 	buckets := map[string]*metricSum{}
 	requests := map[string]int{}
+	firstBucket := time.Time{}
 	if e := s.stream(q, func(r Row) {
 		if t, ok := ParseStamp(r["timestamp"]); ok {
+			if firstBucket.IsZero() || t.Before(firstBucket) {
+				firstBucket = t
+			}
 			k := chartKey(t, granularity)
 			if buckets[k] == nil {
 				buckets[k] = newMetricSum()
@@ -350,6 +354,9 @@ func (s *Store) Chart(q Query) (resultRows []Row, err error) {
 			return nil, e
 		}
 		if t, ok := ParseStamp(raw); ok {
+			if firstBucket.IsZero() || t.Before(firstBucket) {
+				firstBucket = t
+			}
 			k := chartKey(t, granularity)
 			requests[k]++
 			if buckets[k] == nil {
@@ -358,7 +365,11 @@ func (s *Store) Chart(q Query) (resultRows []Row, err error) {
 		}
 	}
 	rows.Close()
-	keys := chartBucketKeys(start, end, granularity)
+	bucketStart := start
+	if bucketStart.IsZero() {
+		bucketStart = firstBucket
+	}
+	keys := chartBucketKeys(bucketStart, end, granularity)
 	known := map[string]bool{}
 	for _, key := range keys {
 		known[key] = true

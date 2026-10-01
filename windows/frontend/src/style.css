@@ -31,3 +31,4 @@ button,input,select,textarea{font-family:inherit} svg text{font-family:inherit}
 
 @font-face{font-family:"Codexio Inter";src:url('/fonts/InterVariable.woff2') format('woff2');font-style:normal;font-weight:100 900;font-display:swap}
 body,button,input,select,textarea{font-family:"Codexio Inter","Microsoft YaHei UI",system-ui,sans-serif}
+.report-card,.report-card *{font-family:"Codexio Inter","Microsoft YaHei UI",system-ui,sans-serif!important}

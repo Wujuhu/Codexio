@@ -1,6 +1,6 @@
 <script lang="ts">
   import {onDestroy} from 'svelte';
-  import {api,rows,text,kind,numeric,priced,stamp,type Row} from '../lib/api';
+  import {api,rows,text,kind,numeric,compact,priced,stamp,type Row} from '../lib/api';
   import {tr} from '../lib/i18n';
   import {effort,speed,preview,duration} from './logFormat';
   import Markdown from './Markdown.svelte';
@@ -39,7 +39,7 @@
         {#if speed(request.service_tier)}<div class="field-pair"><span class="muted">{tr('速度')}</span><span>{speed(request.service_tier)}</span></div>{/if}
         <div class="field-pair"><span class="muted">{tr('费用')}</span><span>{priced(request)}</span></div>
         <div class="field-pair"><span class="muted">{tr('耗时')}</span><span>{duration(request.duration_ms)}</span></div>
-        {#each [['input_tokens','输入 Token'],['cached_input_tokens','缓存读取'],['cache_write_input_tokens','缓存写入'],['output_tokens','输出 Token'],['reasoning_output_tokens','推理输出'],['total_tokens','总 Token']] as [key,label]}<div class="field-pair"><span class="muted">{tr(label)}</span><span>{numeric(request[key])}</span></div>{/each}
+        {#each [['input_tokens','输入 Token'],['cached_input_tokens','缓存读取'],['cache_write_input_tokens','缓存写入'],['output_tokens','输出 Token'],['reasoning_output_tokens','推理输出'],['total_tokens','总 Token']] as [key,label]}<div class="field-pair"><span class="muted">{tr(label)}</span><span>{compact(request[key])}</span></div>{/each}
       </section>
       <section><div class="row between"><h3>{tr('原始请求')}</h3><button class="quiet" aria-label={tr('复制')} disabled={!body(data.user)} onclick={()=>copy(body(data.user),'user')}><Icon name={copied==='user'?'check':'copy'} size={15}/></button></div>
         {#if body(data.user)}<Markdown content={body(data.user)} {onerror}/>{:else}<p class="muted">{tr('暂无原始请求')}</p>{/if}
@@ -51,7 +51,7 @@
       </section>
       {#if rows(data.attachments).length}<section><h3>{tr('附件')}</h3>{#each rows(data.attachments) as attachment}<div class="attachment"><Icon name="report" size={15}/><span>{text(attachment.name??attachment.filename??attachment.path??attachment.type)}</span></div>{/each}</section>{/if}
       {#if members.length}<details class="calls" bind:open={callsOpen}><summary>{tr('模型调用')} ({numeric(data.total_members)})</summary>
-        {#each members as member}<div class="call"><div class="call-head"><Model record={member}/><button class="quiet" disabled={busy} onclick={()=>inspect(member)}>{tr('详情')}</button></div><small class="muted">{kind(member.record_kind)} · {[effort(member.reasoning_effort),speed(member.service_tier)].filter(Boolean).join(' · ')}</small><p>{numeric(member.total_tokens)} Token · {priced(member)}</p>{#if member.output_preview}<p class="muted call-preview">{text(member.output_preview)}</p>{/if}</div>{/each}
+        {#each members as member}<div class="call"><div class="call-head"><Model record={member}/><button class="quiet" disabled={busy} onclick={()=>inspect(member)}>{tr('详情')}</button></div><small class="muted">{kind(member.record_kind)} · {[effort(member.reasoning_effort),speed(member.service_tier)].filter(Boolean).join(' · ')}</small><p>{compact(member.total_tokens)} Token · {priced(member)}</p>{#if member.output_preview}<p class="muted call-preview">{text(member.output_preview)}</p>{/if}</div>{/each}
         {#if Number(data.pages)>1}<div class="row call-pages"><button disabled={page<=1||busy} onclick={()=>load(currentId,page-1)}>{tr('上一页')}</button><span>{page} / {data.pages}</span><button disabled={page>=data.pages||busy} onclick={()=>load(currentId,page+1)}>{tr('下一页')}</button></div>{/if}
       </details>{/if}
     {/if}

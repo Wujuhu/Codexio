@@ -8,6 +8,8 @@
  $: pages=local?Math.max(1,Number(data.chat_pages??1)):Math.max(1,Number(ranking.pages??1));
  $: page=Math.min(page,pages-1);
  $: shown=candidates.slice(0,visible);
+ $: void settings;
+ $: void onsave;
  onDestroy(()=>sequence++);
  async function load(_source:Row,metric:string,current:number){const ticket=++sequence;try{const result=await api('GetChatRanking',metric,current+1);if(ticket===sequence)ranking=result}catch(e){if(ticket===sequence)onerror?.(e)}}
  function toggleMode(){local=!local;page=0;visible=5;expanded=new Set();sequence++;}
@@ -17,6 +19,7 @@
  function precise(value:any){const n=number(value);return n===null?'—':n.toLocaleString('en-US',{maximumFractionDigits:n>0&&n<.01?4:2})+'%'}
  function creditsText(value:any){const n=number(value);return n===null?'—':n.toLocaleString('en-US',{maximumFractionDigits:2})}
  function breakdown(row:Row,key:string){const total=number(row[sort]);const amounts=new Map<string,number>();for(const group of rows(row.groups)){const n=number(group[sort]);if(n!==null){const label=text(group[key],tr('未知'));amounts.set(label,(amounts.get(label)??0)+n)}}const result=Array.from(amounts,([label,value])=>({label,value})).sort((a,b)=>b.value-a.value);const rest=(total??0)-result.reduce((sum,item)=>sum+item.value,0);if(total!==null&&rest>Math.max(.000001,total*.0001))result.push({label:tr('未归类'),value:rest});return total!==null&&total>0?result.map(item=>({...item,percent:item.value/total*100})):[]}
+ function groupLabel(key:string,value:string){if(key==='reasoning_effort')return({minimal:'Minimal',low:'Low',medium:'Medium',high:'High',max:'Max'} as Record<string,string>)[value]??value;if(key==='speed')return['priority','fast'].includes(value)?tr('快速模式'):['standard','default'].includes(value)?tr('标准'):value;return value}
  async function open(id:string){try{await api('OpenChat',id)}catch(e){onerror?.(e)}}
  async function refresh(){try{await api('RefreshAccountReports')}catch(e){onerror?.(e)}}
 </script>
@@ -28,7 +31,7 @@
  {:else}<div class="ranking-list" class:local>
   <div class="ranking-header"><span>{tr('聊天')}</span>{#if !local}<button class="sort-column" onclick={()=>changeSort('weekly_limit_percent')}>{tr('占每周限额的 %')}</button>{/if}<button class="sort-column" onclick={()=>changeSort('balance_usage_credits')}>{tr(local?'Token':'已用额度')}</button></div>
   {#each shown as row}{@const id=String(row.thread_id??row.session_id)}{@const openRow=expanded.has(id)}<article class:expanded={openRow} class="ranking-entry"><button class="ranking-row" onclick={()=>toggle(id)}><span class="chat-name"><span class="chevron">{openRow?'⌄':'›'}</span><span>{text(row.title??row.name??row.session_title??row.thread_id??row.session_id)}{#if row.data_status==='partial'}<small>{tr('部分数据')}</small>{/if}</span></span>{#if !local}<span>{precise(row.weekly_limit_percent)}</span>{/if}<span>{local?compact(row.local_tokens??row.tokens??row.total_tokens):creditsText(row.balance_usage_credits)}</span></button>
-   {#if openRow}<div class="ranking-details">{#if !local}{#each [['model','模型'],['reasoning_effort','推理强度'],['speed','速度']] as [key,label]}<div class="breakdown"><span>{tr(label)}</span><div>{#each breakdown(row,key) as group}<span>{group.label} <small>{precise(group.percent)}</small></span>{:else}<span>—</span>{/each}</div></div>{/each}{/if}<button class="quiet open-chat" onclick={()=>open(id)}>{tr('打开聊天 ↗')}</button></div>{/if}
+   {#if openRow}<div class="ranking-details">{#if !local}{#each [['model','模型'],['reasoning_effort','推理强度'],['speed','速度']] as [key,label]}<div class="breakdown"><span>{tr(label)}</span><div>{#each breakdown(row,key) as group}<span>{groupLabel(key,group.label)} <small>{precise(group.percent)}</small></span>{:else}<span>—</span>{/each}</div></div>{/each}{/if}<button class="quiet open-chat" onclick={()=>open(id)}>{tr('打开聊天 ↗')}</button></div>{/if}
   </article>{/each}
  </div><div class="ranking-footer">{#if visible<Math.min(25,candidates.length)}<button onclick={()=>visible=Math.min(25,visible+5)}>{tr('显示更多')}</button>{/if}<small>{!local?tr('统计截至')+' '+utcReportStamp(ranking.data_as_of):''}</small><div><button aria-label={tr('上一页')} disabled={local?Number(data.chat_page??1)<=1:!page} onclick={()=>changePage(-1)}>‹</button><span>{local?data.chat_page??1:page+1} / {pages}</span><button aria-label={tr('下一页')} disabled={local?Number(data.chat_page??1)>=pages:page+1>=pages} onclick={()=>changePage(1)}>›</button></div></div>{/if}
 </section>

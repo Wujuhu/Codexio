@@ -22,7 +22,7 @@ export function compact(value: any): string {
   const n=number(value);
   if(n===null)return'—';
   const absolute=Math.abs(n);
-  const [unit,suffix]=absolute>=1e9?[1e9,'B']:absolute>=1e6?[1e6,'M']:absolute>=1e3?[1e3,'K']:[1,''];
+  const [unit,suffix]=absolute>=999_950_000?[1e9,'B']:absolute>=999_950?[1e6,'M']:absolute>=1e3?[1e3,'K']:[1,''];
   return (n/unit).toLocaleString('en-US',{maximumFractionDigits:suffix?1:0})+suffix;
 }
 export function cost(value: any): string { const n=number(value); return n === null ? '—' : '$' + n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }

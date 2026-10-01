@@ -1,5 +1,5 @@
 <script lang="ts">
- import {number,numeric,rows,type Row} from '../lib/api';
+ import {number,compact,rows,type Row} from '../lib/api';
  import {tr} from '../lib/i18n';
  import GlassHover from './GlassHover.svelte';
  export let data:Row[]=[];
@@ -48,7 +48,7 @@
   {#if !daily.length}<div class="empty small">{tr('暂无数据')}</div>{:else}
   <div class="calendar-grid" style:grid-template-columns={`repeat(${columns}, ${side}px)`} style:grid-template-rows={`repeat(${rowCount}, ${rowCount===1?44:side}px)`} style:gap={`${gap}px`}>
    {#each Array(offset) as _}<span aria-hidden="true"></span>{/each}
-   {#each buckets as row}<button class="day" class:unknown={number(row.tokens)===null} aria-label={`${label(row)} · ${numeric(row.tokens)} Token`} style:background={color(row,maximum)} onmouseenter={event=>show(event,row)} onmousemove={event=>show(event,row)} onmouseleave={()=>hover=null} onfocus={event=>show(event,row)} onblur={()=>hover=null} onkeydown={event=>{if(event.key==='Escape')hover=null;}} onclick={()=>{hover=null;onselect(row);}}></button>{/each}
+   {#each buckets as row}<button class="day" class:unknown={number(row.tokens)===null} aria-label={`${label(row)} · ${compact(row.tokens)} Token`} style:background={color(row,maximum)} onmouseenter={event=>show(event,row)} onmousemove={event=>show(event,row)} onmouseleave={()=>hover=null} onfocus={event=>show(event,row)} onblur={()=>hover=null} onkeydown={event=>{if(event.key==='Escape')hover=null;}} onclick={()=>{hover=null;onselect(row);}}></button>{/each}
   </div>
   <div class="month-axis">{#each months as month}<span style:left={`${Math.min(Math.floor((month.i+offset)/rowCount)*(side+gap),Math.max(0,availableWidth-28))}px`}>{month.date.toLocaleDateString(undefined,{month:'short'})}</span>{/each}</div>
   {/if}

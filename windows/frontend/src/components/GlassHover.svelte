@@ -1,6 +1,6 @@
 <script lang="ts">
  import {onMount} from 'svelte';
- import {numeric,number,priced,type Row} from '../lib/api';
+ import {numeric,compact,number,priced,type Row} from '../lib/api';
  import {tr} from '../lib/i18n';
  export let row:Row;
  export let title:string;
@@ -15,7 +15,7 @@
 <svelte:window bind:innerWidth={viewportWidth} bind:innerHeight={viewportHeight}/>
 <div class="usage-glass-hover" role="tooltip" style:left={`${left}px`} style:top={`${top}px`} bind:clientWidth={width} bind:clientHeight={height}>
  <strong>{title}</strong>
- <div><span>Token</span><b>{numeric(row.tokens)}</b></div>
+ <div><span>Token</span><b>{compact(row.tokens)}</b></div>
  <div><span>{tr('费用')}</span><b>{priced(row,'usd')}</b></div>
  <div><span>{tr('用户请求')}</span><b>{numeric(row.user_requests)}</b></div>
  {#if row.tokens_complete===false || (number(row.skipped?.tokens)??0)>0}<small>{tr('数据不完整')}</small>{/if}
