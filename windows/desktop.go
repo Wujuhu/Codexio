@@ -330,30 +330,35 @@ func (h *desktopHost) openFloating() {
 	}
 }
 func desktopFloatingSize(c backend.Row) (int, int) {
-	sizes := map[string][2]int{"classic": {320, 200}, "rings": {340, 228}, "tiles": {360, 210}, "compact": {340, 140}, "minimal": {280, 152}, "orb": {148, 148}}
+	week := backend.ValueString(c["quota_scope"]) == "week" || backend.ValueBool(c["_week_only"])
+	sizes := map[string][2]int{"classic": {320, 172}, "rings": {340, 216}, "tiles": {360, 184}, "compact": {340, 116}, "minimal": {280, 128}, "orb": {148, 148}}
+	weekSizes := map[string][2]int{"classic": {286, 112}, "rings": {196, 196}, "tiles": {248, 136}, "compact": {228, 92}, "minimal": {176, 96}, "orb": {148, 148}}
+	if week {
+		sizes = weekSizes
+	}
 	size, ok := sizes[backend.ValueString(c["visual_style"])]
 	if !ok {
 		size = sizes["classic"]
 	}
 	width, height := size[0], size[1]
-	if n := backend.ValueInt(c["window_width"]); n > 0 {
-		width = int(n)
-	}
-	if n := backend.ValueInt(c["window_height"]); n > 0 {
-		height = int(n)
+	edge := backend.ValueString(c["dock_edge"])
+	if edge == "" || edge == "none" {
+		if n := backend.ValueInt(c["window_width"]); n > 0 {
+			width = int(n)
+		}
+		if n := backend.ValueInt(c["window_height"]); n > 0 {
+			height = int(n)
+		}
 	}
 	if backend.ValueString(c["visual_style"]) == "orb" {
 		side := max(72, min(400, max(width, height)))
 		width, height = side, side
 	}
-	edge := backend.ValueString(c["dock_edge"])
-	week := backend.ValueString(c["quota_scope"]) == "week"
-	week = week || backend.ValueBool(c["_week_only"])
 	switch edge {
 	case "top", "bottom":
-		width, height = 642, 40
+		width, height = 590, 46
 		if week {
-			width = 432
+			width = 360
 		}
 		if n := backend.ValueInt(c["dock_top_width"]); n > 0 {
 			width = int(n)
@@ -361,16 +366,16 @@ func desktopFloatingSize(c backend.Row) (int, int) {
 		if n := backend.ValueInt(c["dock_top_height"]); n > 0 {
 			height = int(n)
 		}
-		minimum := 460
+		minimum := 420
 		if week {
-			minimum = 300
+			minimum = 260
 		}
 		width = max(minimum, min(960, width))
-		height = max(40, min(96, height))
+		height = max(44, min(96, height))
 	case "left", "right":
-		width, height = 52, 252
+		width, height = 62, 236
 		if week {
-			height = 172
+			height = 142
 		}
 		if n := backend.ValueInt(c["dock_side_width"]); n > 0 {
 			width = int(n)
@@ -378,11 +383,11 @@ func desktopFloatingSize(c backend.Row) (int, int) {
 		if n := backend.ValueInt(c["dock_side_height"]); n > 0 {
 			height = int(n)
 		}
-		minimum := 220
+		minimum := 196
 		if week {
-			minimum = 152
+			minimum = 124
 		}
-		width = max(52, min(120, width))
+		width = max(58, min(120, width))
 		height = max(minimum, min(720, height))
 	}
 	return width, height
@@ -391,20 +396,23 @@ func desktopFloatingLimits(c backend.Row) (int, int, int, int) {
 	week := backend.ValueString(c["quota_scope"]) == "week" || backend.ValueBool(c["_week_only"])
 	switch backend.ValueString(c["dock_edge"]) {
 	case "top", "bottom":
-		minimum := 460
+		minimum := 420
 		if week {
-			minimum = 300
+			minimum = 260
 		}
-		return minimum, 40, 960, 96
+		return minimum, 44, 960, 96
 	case "left", "right":
-		minimum := 220
+		minimum := 196
 		if week {
-			minimum = 152
+			minimum = 124
 		}
-		return 52, minimum, 120, 720
+		return 58, minimum, 120, 720
 	}
 	if backend.ValueString(c["visual_style"]) == "orb" {
 		return 72, 72, 400, 400
+	}
+	if week {
+		return 160, 80, 720, 500
 	}
 	return 200, 96, 1200, 800
 }

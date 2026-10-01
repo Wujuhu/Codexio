@@ -232,11 +232,49 @@ func (s *Service) GetSettings() Row {
 	r["report_preferred_period"] = PreferredReportPeriod(time.Now())
 	return r
 }
+func normalizeFloatingChanges(old, changes Row) Row {
+	next := CloneRow(changes)
+	changed := func(key string) bool {
+		value, present := changes[key]
+		return present && dataJSON(value) != dataJSON(old[key])
+	}
+	clearFree := func() { next["window_width"], next["window_height"] = nil, nil }
+	clearHorizontal := func() { next["dock_top_width"], next["dock_top_height"] = nil, nil }
+	clearVertical := func() { next["dock_side_width"], next["dock_side_height"] = nil, nil }
+	if changed("visual_style") {
+		clearFree()
+	}
+	if changed("quota_scope") {
+		clearFree()
+		clearHorizontal()
+		clearVertical()
+	}
+	if changed("dock_edge") {
+		oldEdge, newEdge := ValueString(old["dock_edge"]), ValueString(changes["dock_edge"])
+		if oldEdge == "" {
+			oldEdge = "none"
+		}
+		if newEdge == "" {
+			newEdge = "none"
+		}
+		if newEdge == "none" {
+			clearFree()
+		} else if newEdge == "top" || newEdge == "bottom" {
+			if oldEdge == "none" || oldEdge == "left" || oldEdge == "right" {
+				clearHorizontal()
+			}
+		} else if oldEdge == "none" || oldEdge == "top" || oldEdge == "bottom" {
+			clearVertical()
+		}
+	}
+	return next
+}
 func (s *Service) SaveSettings(changes Row) (Row, error) {
 	if s.mock && (ValueBool(changes["upstream_detection_enabled"]) || ValueBool(changes["mobile_sync_enabled"])) {
 		return nil, errors.New("模拟模式不会修改真实服务或 Codex 配置")
 	}
 	old := s.Config()
+	changes = normalizeFloatingChanges(old, changes)
 	if e := SaveConfig(s.directory, changes); e != nil {
 		return nil, e
 	}
