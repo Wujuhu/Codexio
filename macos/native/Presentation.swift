@@ -37,22 +37,36 @@ struct FetchRefreshControls: View {
 
 final class AsyncProjection<Value>: ObservableObject {
     @Published private(set) var value: Value
-    private var requested = ""
+    private var requested: String?
     private var generation = 0
+    private var cacheRevision: UUID?
     private var cache: [String:Value] = [:]
     private var order: [String] = []
     private var work: DispatchWorkItem?
     private let queue = DispatchQueue(label:"com.wujuhu.codexio.presentation",qos:.userInitiated)
     init(_ initial: Value) { value = initial }
-    func load(key: String,compute: @escaping () -> Value) {
+    func invalidate(for revision: UUID) {
+        guard cacheRevision != revision else { return }
+        cacheRevision = revision
+        // Snapshot revisions include data, pricing and time boundaries. Old
+        // filters/pages cannot be reused, but keep the displayed value until
+        // its replacement is ready.
+        cache.removeAll(keepingCapacity:true); order.removeAll(keepingCapacity:true)
+        requested = nil; generation += 1
+        work?.cancel(); work = nil
+    }
+    func load(key: String,revision: UUID,compute: @escaping () -> Value) {
+        invalidate(for:revision)
         guard key != requested else { return }
         requested = key; generation += 1; let token = generation
         work?.cancel()
+        work = nil
         if let cached = cache[key] { value = cached; return }
         let next = DispatchWorkItem { [weak self] in
             let result = compute()
             DispatchQueue.main.async {
                 guard let self, self.generation == token else { return }
+                self.work = nil
                 self.cache[key] = result; self.order.append(key)
                 while self.order.count > 12 { self.cache.removeValue(forKey:self.order.removeFirst()) }
                 self.value = result

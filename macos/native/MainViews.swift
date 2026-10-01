@@ -162,7 +162,7 @@ struct OverviewView: View {
     private var key: String { state.usage.revision.uuidString+":"+period }
     private func load() {
         let snapshot = state.usage, range = UsageRange(period:period), granularity = period == "today" ? "hour" : period == "all" ? "week" : "day"
-        projection.load(key:key) { TrendProjection.build(snapshot,range:range,model:"all",granularity:granularity) }
+        projection.load(key:key,revision:snapshot.revision) { TrendProjection.build(snapshot,range:range,model:"all",granularity:granularity) }
     }
     var body: some View {
         ScrollView {
@@ -233,7 +233,7 @@ struct LogsView: View {
     private func load() {
         let snapshot = state.usage, range = UsageRange(period:period,from:from,through:through)
         let mode = mode, model = model, tier = tier, status = status, query = query, page = page, filterKey = filterKey
-        projection.load(key:key) { LogProjection.build(snapshot,range:range,mode:mode,model:model,tier:tier,status:status,query:query,page:page,filterKey:filterKey) }
+        projection.load(key:key,revision:snapshot.revision) { LogProjection.build(snapshot,range:range,mode:mode,model:model,tier:tier,status:status,query:query,page:page,filterKey:filterKey) }
     }
     private func toggle(_ key: String,_ enabled: Bool) {
         var values = Set(fields); if enabled { values.insert(key) } else { values.remove(key) }

@@ -91,6 +91,7 @@ final class MenuBarController {
         if !state.menuVisible {
             removeItem(); close(); return
         }
+        guard Branding.smallImagesReady else { return }
         if item == nil {
             item = NSStatusBar.system.statusItem(withLength:NSStatusItem.variableLength)
             item?.button?.target = self; item?.button?.action = #selector(toggle)

@@ -106,6 +106,8 @@ final class NativeUpdater {
     private var download: NativeUpdateDownload?
     private var operation: UpdateCancellation?
     private var installerAttempt: UpdateCancellation?
+    private var installationWatchdog: DispatchSourceTimer?
+    private var installationEpoch = UUID()
     private var model: NativeUpdatePresentation?
     private var sheet: NSWindow?
     private var deferrals: Object = [:]
@@ -118,6 +120,7 @@ final class NativeUpdater {
     var onPresentationNeeded: (() -> Void)?
     var onPresentationFinished: (() -> Void)?
     var onInstallRequested: (() -> Void)?
+    var onInstallationTimedOut: (() -> Void)?
 
     init(state: AppState) {
         self.state = state
@@ -126,7 +129,7 @@ final class NativeUpdater {
         timer?.tolerance = 60
         recoverPreviousJobs(initial:true)
     }
-    deinit { timer?.invalidate(); download?.cancel() }
+    deinit { timer?.invalidate(); installationWatchdog?.cancel(); download?.cancel() }
 
     // The application coordinates this sheet with reports. This method never activates the app.
     @discardableResult func presentIfNeeded(on window: NSWindow) -> Bool {
@@ -138,9 +141,10 @@ final class NativeUpdater {
         explicitPresentation = false
         let sheet = NativeUpdateSheet.make(model:model,update:{ [weak self] in self?.startUpdate() },later:{ [weak self] in self?.deferUpdate() },cancel:{ [weak self] in self?.cancelDownload(deferReminder:true) })
         self.sheet = sheet
-        window.beginSheet(sheet) { [weak self] _ in
-            self?.sheet = nil
-            self?.onPresentationFinished?()
+        window.beginSheet(sheet) { [weak self, weak sheet] _ in
+            guard let self, self.sheet === sheet else { return }
+            self.sheet = nil
+            self.onPresentationFinished?()
         }
         return true
     }
@@ -311,12 +315,49 @@ final class NativeUpdater {
         guard !terminating, jobDirectory != nil else { return }
         installOnQuit = true; model?.phase = .installing
         state.updateStatus = L("正在准备安装更新", "Preparing to install the update")
+        startInstallationWatchdog()
         onInstallRequested?()
+        if installOnQuit, !terminating {
+            stopInstallationWatchdog()
+            installOnQuit = false; model?.phase = .ready
+            state.updateStatus = L("退出流程未开始，请关闭其他确认窗口后重试", "Quitting has not started. Close other confirmation windows and try again.")
+            onPresentationNeeded?()
+        }
+    }
+
+    private func startInstallationWatchdog() {
+        stopInstallationWatchdog()
+        let epoch = installationEpoch
+        let watchdog = DispatchSource.makeTimerSource(queue:reminderQueue)
+        watchdog.schedule(deadline:.now()+30,leeway:.seconds(1))
+        watchdog.setEventHandler { [weak self] in
+            performQuitCallback { [weak self] in
+                guard let self, self.installationEpoch == epoch, self.installOnQuit else { return }
+                let directory = self.jobDirectory, version = self.release?.version ?? ""
+                let message = L("自动安装准备已超过 30 秒，请下载 Mac ZIP 手动安装。", "Automatic installation preparation exceeded 30 seconds. Download the Mac ZIP and install it manually.")
+                self.stopInstallationWatchdog()
+                self.onInstallationTimedOut?()
+                self.cancelTermination()
+                self.jobDirectory = nil
+                self.showFailure(message,version:version,directory:directory)
+                if let directory { self.queue.async { try? Self.writeState(directory,"failed",version:version,message:message) } }
+            }
+        }
+        installationWatchdog = watchdog; watchdog.resume()
+    }
+    func stopInstallationWatchdog() {
+        installationEpoch = UUID(); installationWatchdog?.cancel(); installationWatchdog = nil
     }
 
     // Called before the existing upstream/normal-exit sequence, including ordinary Command-Q.
     func beginTermination() {
         terminating = true
+        if let sheet {
+            self.sheet = nil
+            sheet.sheetParent?.endSheet(sheet)
+            sheet.orderOut(nil)
+            onPresentationFinished?()
+        }
         if !installOnQuit {
             operation?.cancel(); download?.cancel()
             if let directory = jobDirectory, operation == nil, let release {
@@ -326,8 +367,10 @@ final class NativeUpdater {
         }
     }
     func cancelTermination() {
+        stopInstallationWatchdog()
         let hadInstaller = installerAttempt != nil
         terminating = false; installOnQuit = false; installerAttempt?.cancel()
+        installerAttempt = nil
         if operation?.cancelled == true { model?.phase = .offer }
         if let directory = jobDirectory, operation == nil {
             queue.async { try? atomicJSON(["cancel":true],to:directory.appendingPathComponent("cancel.json")); try? FileManager.default.removeItem(at:directory.appendingPathComponent("commit.json")) }
@@ -346,14 +389,15 @@ final class NativeUpdater {
     func prepareInstallerIfNeeded(completion: @escaping (Error?) -> Void) {
         guard !state.paths.mock else { completion(nil); return }
         guard installOnQuit, let directory = jobDirectory, let release else {
-            reminderQueue.async { DispatchQueue.main.async { completion(nil) } }; return
+            reminderQueue.async { performQuitCallback { completion(nil) } }; return
         }
         let attempt = UpdateCancellation(), data = state.paths.data
         installerAttempt = attempt
         queue.async {
             do {
                 try Self.prepareInstaller(directory:directory,release:release,data:data,attempt:attempt)
-                DispatchQueue.main.async {
+                performQuitCallback {
+                    guard self.installerAttempt === attempt else { return }
                     self.installerAttempt = nil
                     completion(attempt.cancelled || !self.terminating || !self.installOnQuit ? URLError(.cancelled) : nil)
                 }
@@ -364,7 +408,8 @@ final class NativeUpdater {
                     if !["rolled_back","unconfirmed","failed"].contains(previous.string("state")) { try? Self.writeState(directory,"failed",version:release.version,message:error.localizedDescription) }
                     Self.cleanupPayload(directory)
                 }
-                DispatchQueue.main.async {
+                performQuitCallback {
+                    guard self.installerAttempt === attempt else { return }
                     self.installerAttempt = nil; self.installOnQuit = false; self.terminating = false
                     if !cancelled { self.jobDirectory = nil; self.showFailure(error.localizedDescription,version:release.version,directory:directory) }
                     completion(error)
@@ -562,7 +607,9 @@ final class NativeUpdater {
             let previous = readObject(directory.appendingPathComponent("state.json"))
             if !["rolled_back","unconfirmed"].contains(previous.string("state")) {
                 let cancelled = readObject(directory.appendingPathComponent("cancel.json")).flag("cancel")
-                try? writeState(directory,cancelled ? "cancelled" : "failed",version:rawVersion,message:cancelled ? "" : error.localizedDescription)
+                if !(cancelled && previous.string("state") == "failed" && !previous.string("message").isEmpty) {
+                    try? writeState(directory,cancelled ? "cancelled" : "failed",version:rawVersion,message:cancelled ? "" : error.localizedDescription)
+                }
             }
             cleanupPayload(directory)
             throw error

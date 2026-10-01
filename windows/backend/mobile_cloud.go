@@ -60,7 +60,7 @@ func (m *MobileHost) cloud(ctx context.Context, path, method, token string, valu
 	}
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("User-Agent", "Codexio/0.3.4")
+	request.Header.Set("User-Agent", "Codexio/0.3.5")
 	response, e := mobileCloudClient.Do(request)
 	if e != nil {
 		return nil, &mobileNetworkError{cause: e}

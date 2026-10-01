@@ -17,6 +17,13 @@ func L(_ zh: String, _ en: String) -> String {
     NSLocalizedString(zh, tableName: "Localizable", bundle: .main, value: en, comment: "")
 }
 
+// NSTerminateLater pumps the modal-panel loop, which does not drain the default
+// main dispatch queue. Quit callbacks must also run in that mode and wake it.
+func performQuitCallback(_ action: @escaping () -> Void) {
+    RunLoop.main.perform(inModes:[.common,.modalPanel],block:action)
+    CFRunLoopWakeUp(CFRunLoopGetMain())
+}
+
 extension Dictionary where Key == String, Value == Any {
     func string(_ key: String, _ fallback: String = "") -> String { self[key] as? String ?? fallback }
     func object(_ key: String) -> Object { self[key] as? Object ?? [:] }

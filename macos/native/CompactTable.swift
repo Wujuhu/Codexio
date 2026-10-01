@@ -98,7 +98,8 @@ private final class GridDetailCell: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
     func apply(_ row: GridRow) {
-        coordinator?.popover.close()
+        coordinator?.close(); coordinator = nil
+        link.target = nil; link.action = nil; link.entered = nil; link.exited = nil
         guard let source = row.detail else { return }
         let payload = source()
         let coordinator = DetailsLink.Coordinator(row:payload.0,members:[])
@@ -109,7 +110,11 @@ private final class GridDetailCell: NSView {
         link.exited = { [weak coordinator] in coordinator?.anchorInside = false; coordinator?.scheduleClose() }
     }
     override func layout() { super.layout(); link.frame = NSRect(x:3,y:(bounds.height-24)/2,width:max(0,bounds.width-6),height:24) }
-    deinit { coordinator?.popover.close() }
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil { coordinator?.anchorInside = false; coordinator?.close() }
+        super.viewWillMove(toWindow:newWindow)
+    }
+    deinit { coordinator?.close() }
 }
 
 private final class CompactScrollView: NSScrollView {

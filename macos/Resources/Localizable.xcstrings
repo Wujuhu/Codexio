@@ -14849,6 +14849,22 @@
         }
       }
     },
+    "自动安装准备已超过 30 秒，请下载 Mac ZIP 手动安装。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatic installation preparation exceeded 30 seconds. Download the Mac ZIP and install it manually."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动安装准备已超过 30 秒，请下载 Mac ZIP 手动安装。"
+          }
+        }
+      }
+    },
     "自动审批审查": {
       "localizations": {
         "en": {
@@ -16685,6 +16701,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "退出时自动重启失败：%s"
+          }
+        }
+      }
+    },
+    "退出流程未开始，请关闭其他确认窗口后重试": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quitting has not started. Close other confirmation windows and try again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "退出流程未开始，请关闭其他确认窗口后重试"
           }
         }
       }

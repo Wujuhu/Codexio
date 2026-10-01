@@ -25,7 +25,7 @@ enum MobileFormat {
         return String(value)
     }
     static func money(_ value: Double?) -> String { value.map {String(format:"$%.2f",$0)} ?? "—" }
-    static let update: DateFormatter = {let f=DateFormatter(); f.dateFormat="M.d HH:mm"; return f}()
+    static let update: DateFormatter = {let f=DateFormatter(); f.dateFormat="M.d HH:mm"; f.timeZone = .autoupdatingCurrent; return f}()
     static func date(_ value: Double) -> String { Date(timeIntervalSince1970:value).formatted(.dateTime.month().day()) }
 }
 struct MobileCard<Content: View>: View {
@@ -217,14 +217,32 @@ struct RequestDetails: View {
     private var finalTitle: String { item?.isApproval == true ? "审查结果" : "最终回复" }
     private var detailNotice: String? { store.detailErrors[id] ?? (detail?.availability == "unavailable" ? "源记录中暂无正文。" : nil) }
     private var loadKey: String { store.selected+id+String(store.supportsDetails)+String(store.detailVersions[id] ?? 0) }
+    private var userImages: [MobileImageReference] { (detail?.images ?? []).filter {$0.placement == "user"} }
+    private var finalImages: [MobileImageReference] { (detail?.images ?? []).filter {$0.placement == "final"} }
+    private var legacyImages: [MobileAttachment] {
+        guard let detail, (detail.images ?? []).isEmpty else { return [] }
+        var result: [MobileAttachment] = []
+        for attachment in detail.attachments.filter(isImage).sorted(by:{($0.thumbnail != nil) && ($1.thumbnail == nil)}) {
+            if result.contains(where:{ prior in
+                if prior.id == attachment.id { return true }
+                if let left = prior.thumbnail, let right = attachment.thumbnail { return left == right }
+                return prior.name == attachment.name
+            }) { continue }
+            result.append(attachment)
+        }
+        return result
+    }
+    private var legacyImageExpiry: Double { detail.map {$0.started+3*86400} ?? 0 }
+    private var fileAttachments: [MobileAttachment] { (detail?.attachments ?? []).filter {!isImage($0)} }
+    private func isImage(_ attachment: MobileAttachment) -> Bool { (attachment.mime ?? "").lowercased().hasPrefix("image/") || attachment.thumbnail != nil }
     var body: some View {
         List {
-            if detail?.user.isEmpty == false || store.detailLoading.contains(id) || (item?.preview?.isEmpty == false && item?.isApproval != true) || detailNotice == nil {
+            if detail?.user.isEmpty == false || !userImages.isEmpty || store.detailLoading.contains(id) || (item?.preview?.isEmpty == false && item?.isApproval != true) || detailNotice == nil {
             Section(userTitle) {
-                if let detail, !detail.user.isEmpty {
-                    message(detail.user,lines:5,expanded:expandUser)
+                if let detail, !detail.user.isEmpty || !userImages.isEmpty {
+                    message(detail.user,images:userImages,lines:5,expanded:expandUser)
                     if expandUser, detail.full, !detail.userComplete { Text("原文不完整").font(.caption).foregroundStyle(.secondary) }
-                    expandButton(userTitle,expanded:$expandUser)
+                    if !detail.user.isEmpty { expandButton(userTitle,expanded:$expandUser) }
                 } else if store.detailLoading.contains(id) { ProgressView("正在读取原文") }
                 else {
                     if let preview = item?.preview, !preview.isEmpty, item?.isApproval != true {
@@ -234,14 +252,17 @@ struct RequestDetails: View {
                 }
             }
             }
-            if detail?.final.isEmpty == false || store.detailLoading.contains(id) || detailNotice == nil {
+            if detail?.final.isEmpty == false || !finalImages.isEmpty || !legacyImages.isEmpty || store.detailLoading.contains(id) || detailNotice == nil {
             Section(finalTitle) {
-                if let detail, !detail.final.isEmpty {
-                    message(detail.final,lines:20,expanded:expandFinal)
+                if let detail, !detail.final.isEmpty || !finalImages.isEmpty {
+                    message(detail.final,images:finalImages,lines:20,expanded:expandFinal)
                     if expandFinal, detail.full, !detail.finalComplete { Text("回复不完整").font(.caption).foregroundStyle(.secondary) }
-                    expandButton(finalTitle,expanded:$expandFinal)
+                    if !detail.final.isEmpty { expandButton(finalTitle,expanded:$expandFinal) }
                 } else if store.detailLoading.contains(id) { ProgressView("正在读取回复") }
-                else if detailNotice == nil { Text(item?.status == "running" ? "任务进行中" : "暂无最终回复").foregroundStyle(.secondary) }
+                else if detailNotice == nil, legacyImages.isEmpty { Text(item?.status == "running" ? "任务进行中" : "暂无最终回复").foregroundStyle(.secondary) }
+                ForEach(legacyImages) { attachment in
+                    MobileLegacyImageView(attachment:attachment,expires:legacyImageExpiry) { if detail?.full != true { store.loadDetail(id,full:true) } }
+                }
             }
             }
             if let error = detailNotice {
@@ -250,10 +271,9 @@ struct RequestDetails: View {
             if detail?.availability == "capacity", store.detailErrors[id] == nil {
                 Section { Text("内容超出同步容量，仅显示预览。").font(.caption).foregroundStyle(.secondary) }
             }
-            if let detail, !detail.attachments.isEmpty {
+            if !fileAttachments.isEmpty {
                 Section("附件") {
-                    ForEach(detail.attachments) { MobileAttachmentView(attachment:$0) }
-                    if !detail.full, detail.attachments.contains(where:{($0.mime ?? "").hasPrefix("image/")}) { Button("读取可用缩略图") { store.loadDetail(id,full:true) } }
+                    ForEach(fileAttachments) { Label($0.name,systemImage:"doc").font(.subheadline) }
                 }
             }
             if let item {
@@ -266,15 +286,15 @@ struct RequestDetails: View {
                     LabeledContent("耗时",value:item.duration.map {String(format:"%.0f 秒",$0)} ?? "—")
                 }
             }
-            Section { Text("云端详情最多保留 7 天；容量不足时，部分记录可能尚未同步或已被移除。").font(.caption).foregroundStyle(.secondary) }
+            Section { Text("云端文字最多保留 7 天，图片最多保留 3 天；容量不足时，部分记录可能尚未同步或已被移除。").font(.caption).foregroundStyle(.secondary) }
         }.navigationTitle("请求").navigationBarTitleDisplayMode(.inline)
             .task(id:loadKey) { store.loadDetail(id,full:expandUser || expandFinal) }
             .onDisappear { store.cancelDetail(id) }
     }
-    private func message(_ text: String, lines: Int, expanded: Bool) -> some View {
-        MobileMarkdownView(text:text)
+    private func message(_ text: String, images: [MobileImageReference], lines: Int, expanded: Bool) -> some View {
+        MobileMarkdownView(text:text,images:images)
             .fixedSize(horizontal:false,vertical:true)
-            .frame(maxHeight:expanded && detail?.full == true ? nil : UIFont.preferredFont(forTextStyle:.body).lineHeight*CGFloat(lines),alignment:.top)
+            .frame(maxHeight:(expanded && detail?.full == true) || !images.isEmpty ? nil : UIFont.preferredFont(forTextStyle:.body).lineHeight*CGFloat(lines),alignment:.top)
             .clipped()
     }
     private func expandButton(_ label: String, expanded: Binding<Bool>) -> some View {

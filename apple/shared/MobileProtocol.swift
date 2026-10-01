@@ -14,6 +14,11 @@ enum MobileProtocol {
     static let detailChunkBytes = 65_536
     static let detailRows = 64
     static let detailRetention: Double = 7 * 86_400
+    static let imageCapability = "request-images-v1"
+    static let imageRetention: Double = 3 * 86_400
+    static let imageDataLimit = 1_048_576
+    static let imageEnvelopeLimit = 1_500_000
+    static let imageChunkBytes = 65_536
     static func prefix(_ value: String, bytes: Int) -> String {
         guard value.utf8.count > bytes else { return value }
         var result = String(decoding:value.utf8.prefix(max(0,bytes)),as:UTF8.self)
@@ -213,6 +218,10 @@ struct MobileMessage: Codable {
     var detailManifest: MobileDetailManifest? = nil
     var detailChunk: String? = nil
     var force: Bool? = nil
+    var imageID: String? = nil
+    var imagePart: Int? = nil
+    var imageManifest: MobileDetailManifest? = nil
+    var imageChunk: String? = nil
 }
 
 struct MobileDetailManifest: Codable, Equatable {
@@ -221,8 +230,8 @@ struct MobileDetailManifest: Codable, Equatable {
     var digest: String
     var bytes: Int
     var parts: Int
-    func valid(for value: String) -> Bool {
-        id == value && revision > 0 && digest.count == 64 && bytes > 0 && bytes <= MobileProtocol.detailLimit
+    func valid(for value: String, limit: Int = MobileProtocol.detailLimit) -> Bool {
+        id == value && revision > 0 && digest.count == 64 && bytes > 0 && bytes <= limit
             && parts == (bytes + MobileProtocol.detailChunkBytes - 1) / MobileProtocol.detailChunkBytes
     }
 }
@@ -234,6 +243,43 @@ struct MobileAttachment: Codable, Identifiable, Equatable {
     var name: String
     var mime: String?
     var thumbnail: String? // Bounded JPEG data; never a local or remote URL.
+}
+struct MobileImageReference: Codable, Identifiable, Equatable, Sendable {
+    var id: String
+    var name: String
+    var mime: String
+    var placement: String
+    var width: Int
+    var height: Int
+    var expires: Double
+    var availability: String = "available"
+    var valid: Bool {
+        id.count == 64 && id.allSatisfy { $0.isHexDigit } && name.utf8.count <= 240
+            && ["user","final"].contains(placement) && expires.isFinite && expires > 0
+            && ["available","unavailable","expired"].contains(availability)
+            && width >= 0 && height >= 0 && width <= 2048 && height <= 2048
+            && mime.hasPrefix("image/") && mime.utf8.count <= 100
+    }
+}
+struct MobileImagePayload: Codable {
+    var id: String
+    var request: String
+    var mime: String
+    var width: Int
+    var height: Int
+    var created: Double
+    var expires: Double
+    var data: String
+    func decoded(for image: MobileImageReference, now: Double = Date().timeIntervalSince1970) -> Data? {
+        guard image.valid, image.availability == "available", id == image.id,
+              request.count == 64, request.allSatisfy({$0.isHexDigit}), mime == image.mime,
+              width == image.width, height == image.height, width > 0, height > 0,
+              created.isFinite, created > 0, created <= now+300, expires.isFinite,
+              expires <= created+MobileProtocol.imageRetention, expires <= image.expires+1, expires > now,
+              data.utf8.count <= (MobileProtocol.imageDataLimit+2)/3*4,
+              let bytes = Data(base64Encoded:data), !bytes.isEmpty, bytes.count <= MobileProtocol.imageDataLimit else { return nil }
+        return bytes
+    }
 }
 struct MobileRequestDetail: Codable, Equatable {
     var id: String
@@ -247,6 +293,7 @@ struct MobileRequestDetail: Codable, Equatable {
     var availability: String
     var attachments: [MobileAttachment]
     var full: Bool
+    var images: [MobileImageReference]? = nil
     var expires: Double { max(started,completed ?? started) + MobileProtocol.detailRetention }
     func preview() -> Self {
         var value = self
@@ -261,6 +308,7 @@ struct MobileRequestDetail: Codable, Equatable {
             && (completed?.isFinite ?? true) && user.utf8.count <= MobileProtocol.detailLimit
             && final.utf8.count <= MobileProtocol.detailLimit && attachments.count <= 6
             && attachments.allSatisfy { $0.name.utf8.count <= 240 && ($0.thumbnail?.utf8.count ?? 0) <= 16_384 }
+            && (images?.count ?? 0) <= 32 && (images?.allSatisfy(\.valid) ?? true)
     }
 }
 

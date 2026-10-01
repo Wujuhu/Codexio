@@ -4,15 +4,18 @@ import SQLite3
 final class Database {
     private var handle: OpaquePointer?
     private let lock = NSRecursiveLock()
+    private var messageEvictionGeneration: UInt64 = 0
     private let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
     private let sourceDateFormatter: DateFormatter = {
         let formatter = DateFormatter(); formatter.locale = Locale(identifier:"en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd'T'HH-mm-ss"; return formatter
     }()
     let url: URL
+    let requestMedia: RequestMediaStore
 
     init(_ url: URL, readOnly: Bool = false) throws {
         self.url = url
+        requestMedia = RequestMediaStore(database:url)
         let flags = readOnly ? SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX : SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
         guard sqlite3_open_v2(url.path, &handle, flags, nil) == SQLITE_OK else { throw AppFailure(L("无法打开用量数据库", "Cannot open the usage database")) }
         sqlite3_busy_timeout(handle, 15000)
@@ -176,8 +179,12 @@ final class Database {
     func repairRequestMetadata(_ evidence: Object) throws {
         guard var row = try requestTurn(evidence.string("id")) else { return }
         if row.flag("metadata_missing") { row = evidence }
+        if evidence["resume_kind"] is NSNull, ["model_switch","interrupted"].contains(row.string("resume_kind")) {
+            if row.flag("model_switch_continuation") || row.flag("request_resume_continuation") { row["continuation_of"] = NSNull() }
+            row["resume_kind"] = NSNull(); row["prompt_source_turn_id"] = NSNull(); row["model_switch_continuation"] = false; row["request_resume_continuation"] = false
+        }
         for key in ["cwd","session_cwd","prompt_source_turn_id","resume_kind","continuation_of","context_compaction_item_id","parent_session_id","parent_turn_id"] where !evidence.string(key).isEmpty { row[key] = evidence[key] }
-        for key in ["has_user_message","has_final_message","context_compaction_observed","explicit_task_start","context_compaction_completed","model_switch_continuation","is_approval_review"] where evidence.flag(key) { row[key] = true }
+        for key in ["has_user_message","has_final_message","context_compaction_observed","explicit_task_start","context_compaction_completed","model_switch_continuation","request_resume_continuation","is_approval_review"] where evidence.flag(key) { row[key] = true }
         for key in ["prompt_preview","output_preview"] where row.string(key).isEmpty && !evidence.string(key).isEmpty { row[key] = evidence[key] }
         if RequestClassification.isApproval(row) { row["record_kind"] = RequestClassification.approval }
         else if row.flag("has_user_message") || !row.string("continuation_of").isEmpty { row["record_kind"] = "user_request" }
@@ -216,7 +223,31 @@ final class Database {
         lock.lock(); defer { lock.unlock() }
         guard !id.isEmpty else { return }
         let old = try query("SELECT data,digest,revision FROM usage_request_messages WHERE id=?",[id]).first ?? [:]
-        var value = jsonObject(Data(old.string("data").utf8))
+        var value = jsonObject(Data(old.string("data").utf8)), patch = patch
+        let sameUser = !patch.string("user_message_key").isEmpty && patch.string("user_message_key") == value.string("user_message_key")
+        var sameFinal = !patch.string("final_message_key").isEmpty && patch.string("final_message_key") == value.string("final_message_key")
+        if patch.removeValue(forKey:"final_fallback") as? Bool == true,
+           value.string("final_source") == "message" || (patch.string("final").isEmpty && patch.objects("final_attachments").isEmpty && (!value.string("final").isEmpty || !value.objects("final_attachments").isEmpty)) {
+            if patch.string("final") == value.string("final") {
+                sameFinal = true
+                patch["final_source"] = value["final_source"]; patch["final_message_key"] = value["final_message_key"]
+                patch["final_complete"] = value.flag("final_complete")
+            } else {
+                for key in ["final","final_complete","final_attachments","final_source","final_message_key"] { patch.removeValue(forKey:key) }
+            }
+        }
+        for (key,merge) in [("attachments",sameUser),("final_attachments",sameFinal)] where patch[key] != nil && merge {
+            patch[key] = RequestMedia.deduplicated(value.objects(key)+patch.objects(key))
+        }
+        if patch["generated_attachments"] != nil {
+            patch["generated_attachments"] = RequestMedia.deduplicated(value.objects("generated_attachments")+patch.objects("generated_attachments"))
+            if !value.objects("generated_attachments").isEmpty, !value.flag("generated_complete") { patch["generated_complete"] = false }
+        }
+        for key in ["attachments","final_attachments","generated_attachments"] where patch[key] != nil {
+            let previous = key == "attachments" ? value.objects(key) : value.objects("final_attachments")+value.objects("generated_attachments")
+            patch[key] = RequestMedia.preservingCreationDates(patch.objects(key),from:previous)
+        }
+        if sameUser, patch.string("user").isEmpty, !value.string("user").isEmpty { patch["user"] = value["user"]; patch["user_complete"] = value["user_complete"] }
         for (key,field) in patch { value[key] = field }
         value["id"] = id
         for key in ["user","final"] {
@@ -224,9 +255,13 @@ final class Database {
             value[key] = bounded.text
             if !bounded.complete { value[key+"_complete"] = false }
         }
-        value["attachments"] = Array(value.objects("attachments").prefix(32))
+        for key in ["attachments","final_attachments","generated_attachments"] {
+            let attachments = RequestMedia.deduplicated(value.objects(key))
+            value[key] = Array(attachments.prefix(RequestMedia.limit))
+            if attachments.count > RequestMedia.limit { value[key == "attachments" ? "user_complete" : key == "generated_attachments" ? "generated_complete" : "final_complete"] = false }
+        }
         let terminal = ["completed","aborted"].contains(value.string("status"))
-        let any = !value.string("user").isEmpty || !value.string("final").isEmpty || !value.objects("attachments").isEmpty
+        let any = !value.string("user").isEmpty || !value.string("final").isEmpty || ["attachments","final_attachments","generated_attachments"].contains {!value.objects($0).isEmpty}
         value["availability"] = !any ? "unavailable" : value.flag("user_complete") && (!terminal || value.flag("final_complete")) ? "available" : "partial"
         var material = value
         material.removeValue(forKey:"recovery_signature")
@@ -245,6 +280,7 @@ final class Database {
             bytes += row.integer("size") ?? 0
             if index >= 512 || bytes > 67_108_864 {
                 try run("DELETE FROM usage_request_messages WHERE id=?",[row.string("id")])
+                if sqlite3_changes(handle) > 0 { messageEvictionGeneration &+= 1 }
             }
         }
     }
@@ -339,8 +375,7 @@ final class Database {
         }
         return (done, unavailable)
     }
-    func requestMessageDetail(_ requestID: String) throws -> Object? {
-        lock.lock(); defer { lock.unlock() }
+    private func messageRoot(_ requestID: String) throws -> Object? {
         guard !requestID.isEmpty, requestID.utf8.count <= 512,
               let lookup = try query("SELECT id FROM usage_request_ids WHERE id=? OR mobile_id=? LIMIT 1",[requestID,requestID]).first,
               var root = try requestTurn(lookup.string("id")) else { return nil }
@@ -348,59 +383,103 @@ final class Database {
         while !root.string("alias_of").isEmpty, seen.insert(root.string("id")).inserted, seen.count <= 64 {
             guard let parent = try requestTurn(root.string("alias_of")) else { break }; root = parent
         }
-        guard root.string("record_kind") != "context_compaction" else { return nil }
-        var members = try detailMembers(root)
-        let promptSourceID = root.flag("has_user_message") ? "" : root.string("prompt_source_turn_id")
-        let promptSourceKey = promptSourceID.hasPrefix("turn:") ? promptSourceID : "turn:"+root.string("session_id")+":"+promptSourceID
-        let promptSource = promptSourceID.isEmpty ? nil : try requestTurn(promptSourceKey)
-        let recoveryMembers = members+(promptSource.map {[$0]} ?? [])
-        var sources: [String:[(URL,URL)]] = [:], signatures: [String:String] = [:]
-        for member in recoveryMembers {
-            let id = member.string("id"), files = try sourceFiles(member)
-            sources[id] = files
-            signatures[id] = identity(files.map { value -> [Any] in
-                let stamp = FileStamp(value.0)
-                return [value.0.path,stamp.size,stamp.modified?.timeIntervalSince1970 ?? 0,stamp.device,stamp.inode]
-            })
+        return root.string("record_kind") == "context_compaction" ? nil : root
+    }
+    private func messagePromptSource(_ root: Object) throws -> Object? {
+        let source = root.flag("has_user_message") ? "" : root.string("prompt_source_turn_id")
+        guard !source.isEmpty else { return nil }
+        let key = source.hasPrefix("turn:") ? source : "turn:"+root.string("session_id")+":"+source
+        return try requestTurn(key)
+    }
+    private struct MessageRecoveryNeed {
+        let files: [(URL,URL)]
+        let fileSignature: [[Any]]
+        let ownsInput: Bool
+        let terminal: Bool
+        func signature(_ detail: Object,store: RequestMediaStore) -> String {
+            identity(["message-recovery-v2",RequestMedia.schema,ownsInput,terminal,fileSignature,store.missingIDs(detail)])
         }
-        let missing = try recoveryMembers.filter { member in
-            let stored = try query("SELECT data FROM usage_request_messages WHERE id=?",[member.string("id")]).first ?? [:]
-            let detail = jsonObject(Data(stored.string("data").utf8))
-            let ownsInput = member.string("id") == root.string("id") || member.string("id") == promptSourceKey || member.flag("has_user_message")
-            return ((ownsInput && !detail.flag("user_complete")) || (["completed","aborted"].contains(member.string("status")) && !detail.flag("final_complete"))) && detail.string("recovery_signature") != signatures[member.string("id")]
+        func incomplete(_ detail: Object,store: RequestMediaStore) -> Bool {
+            (ownsInput && (!detail.flag("user_complete") || detail.integer("user_media_schema") != RequestMedia.schema))
+                || (terminal && (!detail.flag("final_complete") || detail.integer("final_media_schema") != RequestMedia.schema))
+                || !store.missingIDs(detail).isEmpty
         }
-        if !missing.isEmpty {
-            var batches: [URL:(URL,Set<String>)] = [:], order: [URL] = []
-            for member in missing {
-                let id = member.string("id")
-                for (file,rootURL) in sources[id] ?? [] {
-                    if batches[file] == nil { batches[file] = (rootURL,[]); order.append(file) }
-                    batches[file]?.1.insert(id)
+    }
+    func prepareRequestMessageDetails(_ requestIDs: [String]) throws {
+        lock.lock(); defer { lock.unlock() }
+        let messageGeneration = messageEvictionGeneration, mediaGeneration = requestMedia.evictionGeneration
+        var members: [String:Object] = [:], inputs = Set<String>(), roots = Set<String>()
+        // Reuse the existing bounded continuation/source lookup, collecting only
+        // metadata. Bodies remain per-request instead of accumulating a batch.
+        for requestID in requestIDs.prefix(64) {
+            try autoreleasepool {
+                guard let root = try messageRoot(requestID), roots.insert(root.string("id")).inserted else { return }
+                inputs.insert(root.string("id"))
+                for member in try detailMembers(root) { members[member.string("id")] = member }
+                if let source = try messagePromptSource(root) { inputs.insert(source.string("id")); members[source.string("id")] = source }
+            }
+        }
+        var missing: [String:MessageRecoveryNeed] = [:]
+        for (id,member) in members {
+            try autoreleasepool {
+                let stored = try query("SELECT data FROM usage_request_messages WHERE id=?",[id]).first ?? [:]
+                let detail = jsonObject(Data(stored.string("data").utf8))
+                let files = try sourceFiles(member)
+                let signature = files.map { value -> [Any] in
+                    let stamp = FileStamp(value.0)
+                    return [value.0.path,stamp.size,stamp.modified?.timeIntervalSince1970 ?? 0,stamp.device,stamp.inode]
+                }
+                let need = MessageRecoveryNeed(files:files,fileSignature:signature,ownsInput:inputs.contains(id) || member.flag("has_user_message"),terminal:["completed","aborted"].contains(member.string("status")))
+                if need.incomplete(detail,store:requestMedia), detail.string("recovery_signature") != need.signature(detail,store:requestMedia) { missing[id] = need }
+            }
+        }
+        var pending = Set(missing.keys)
+        // Keep each request's preferred source ahead of its archive/fork
+        // fallbacks while coalescing requests at the same source priority.
+        for priority in 0..<(missing.values.map { $0.files.count }.max() ?? 0) {
+            var batches: [URL:(URL,Set<String>)] = [:]
+            for id in pending.sorted() {
+                guard let need = missing[id], need.files.indices.contains(priority) else { continue }
+                let (file,root) = need.files[priority]
+                if batches[file] == nil { batches[file] = (root,[]) }
+                batches[file]?.1.insert(id)
+            }
+            for file in batches.keys.sorted(by:{$0.path < $1.path}) {
+                guard let (root,ids) = batches[file] else { continue }
+                try autoreleasepool {
+                    try UsageIndexer(self).recoverMessageDetails(ids:ids,file:file,root:root)
+                    for id in ids {
+                        let detail = jsonObject(Data((try query("SELECT data FROM usage_request_messages WHERE id=?",[id]).first ?? [:]).string("data").utf8))
+                        if let need = missing[id], !need.incomplete(detail,store:requestMedia) { pending.remove(id) }
+                    }
                 }
             }
-            var pending = Set(missing.map {$0.string("id")})
-            for file in order {
-                guard let (rootURL,targets) = batches[file] else { continue }
-                let ids = targets.intersection(pending)
-                guard !ids.isEmpty else { continue }
-                try UsageIndexer(self).recoverMessageDetails(ids:ids,file:file,root:rootURL)
-                for member in missing where ids.contains(member.string("id")) {
-                    let id = member.string("id")
-                    let detail = jsonObject(Data((try query("SELECT data FROM usage_request_messages WHERE id=?",[id]).first ?? [:]).string("data").utf8))
-                    let ownsInput = id == root.string("id") || id == promptSourceKey || member.flag("has_user_message")
-                    if (!ownsInput || detail.flag("user_complete")) && (!["completed","aborted"].contains(member.string("status")) || detail.flag("final_complete")) { pending.remove(id) }
-                }
-            }
-            for member in missing {
-                let id = member.string("id")
-                try writeRequestMessage(id,patch:["recovery_signature":signatures[id] ?? "missing"])
-            }
-            members = try detailMembers(try requestTurn(root.string("id")) ?? root)
         }
+        for (id,need) in missing {
+            try autoreleasepool {
+                let detail = jsonObject(Data((try query("SELECT data FROM usage_request_messages WHERE id=?",[id]).first ?? [:]).string("data").utf8))
+                if (messageEvictionGeneration != messageGeneration || requestMedia.evictionGeneration != mediaGeneration), need.incomplete(detail,store:requestMedia) {
+                    // A later member may evict an earlier recovered body/image.
+                    // Allow the consumer to recover it immediately; do not turn
+                    // cache pressure into a persistent source-failure result.
+                    if detail["recovery_signature"] != nil { try writeRequestMessage(id,patch:["recovery_signature":NSNull()]) }
+                    return
+                }
+                // Keep the pre-read file stamp: an append during recovery must
+                // invalidate this attempt. Refreshed media may now exist on disk.
+                try writeRequestMessage(id,patch:["recovery_signature":need.signature(detail,store:requestMedia)])
+            }
+        }
+    }
+    func requestMessageDetail(_ requestID: String) throws -> Object? {
+        lock.lock(); defer { lock.unlock() }
+        try prepareRequestMessageDetails([requestID])
+        guard let root = try messageRoot(requestID) else { return nil }
+        let members = try detailMembers(root), promptSource = try messagePromptSource(root)
         if let promptSource, let stored = try query("SELECT data FROM usage_request_messages WHERE id=?",[promptSource.string("id")]).first {
             let input = jsonObject(Data(stored.string("data").utf8))
-            if input.flag("user_complete") || !input.string("user").isEmpty {
-                try writeRequestMessage(root.string("id"),patch:["user":input.string("user"),"user_complete":input.flag("user_complete"),"attachments":input.objects("attachments")])
+            if input.flag("user_complete") || !input.string("user").isEmpty || !input.objects("attachments").isEmpty {
+                try writeRequestMessage(root.string("id"),patch:["user":input.string("user"),"user_complete":input.flag("user_complete"),"attachments":input.objects("attachments"),"user_media_schema":input.integer("user_media_schema") ?? 0,"user_message_key":input.string("user_message_key")])
             }
         }
         guard (try requestTurn(root.string("id")))?.string("record_kind") != "context_compaction" else { return nil }
@@ -408,7 +487,7 @@ final class Database {
         for member in members {
             let id = member.string("id")
             var detail = jsonObject(Data((try query("SELECT data FROM usage_request_messages WHERE id=?",[id]).first ?? [:]).string("data").utf8))
-            let metadata: Object = ["started_at":parsedDate(member["started_at"])?.timeIntervalSince1970 as Any? ?? NSNull(),"completed_at":parsedDate(member["ended_at"])?.timeIntervalSince1970 as Any? ?? NSNull(),"status":member.string("status","unknown"),"recovery_signature":signatures[id] ?? "missing"]
+            let metadata: Object = ["started_at":parsedDate(member["started_at"])?.timeIntervalSince1970 as Any? ?? NSNull(),"completed_at":parsedDate(member["ended_at"])?.timeIntervalSince1970 as Any? ?? NSNull(),"status":member.string("status","unknown")]
             for (key,value) in metadata { detail[key] = value }
             try writeRequestMessage(id,patch:detail)
             let stored = try query("SELECT data,digest,revision FROM usage_request_messages WHERE id=?",[id]).first ?? [:]
@@ -419,9 +498,13 @@ final class Database {
         guard let first = details.first, let last = details.last else { return nil }
         let users = details.map {$0.string("user")}.filter {!$0.isEmpty}
         let user = RequestMessageText.bounded(users.joined(separator:"\n\n")), final = last.string("final")
-        let allAttachments = details.flatMap {$0.objects("attachments")}, attachments = Array(allAttachments.prefix(32))
-        let userComplete = user.complete && members.count < 64 && allAttachments.count <= 32 && first.flag("user_complete") && details.dropFirst().allSatisfy {$0.string("user").isEmpty || $0.flag("user_complete")}
-        let finalComplete = members.count < 64 && last.flag("final_complete"), terminal = ["completed","aborted"].contains(last.string("status"))
+        let terminal = ["completed","aborted"].contains(last.string("status"))
+        let usesGenerated = final.isEmpty && last.objects("final_attachments").isEmpty && terminal
+        let finalAttachments = usesGenerated ? last.objects("generated_attachments") : last.objects("final_attachments")
+        let allAttachments = RequestMedia.deduplicated(details.flatMap {$0.objects("attachments")}+finalAttachments)
+        let attachments = Array(allAttachments.prefix(RequestMedia.limit)), fits = allAttachments.count <= RequestMedia.limit
+        let userComplete = user.complete && members.count < 64 && fits && first.flag("user_complete") && first.integer("user_media_schema") == RequestMedia.schema && details.dropFirst().allSatisfy {($0.string("user").isEmpty && $0.objects("attachments").isEmpty) || ($0.flag("user_complete") && $0.integer("user_media_schema") == RequestMedia.schema)}
+        let finalComplete = members.count < 64 && fits && last.flag("final_complete") && last.integer("final_media_schema") == RequestMedia.schema && (!usesGenerated || finalAttachments.isEmpty || last.flag("generated_complete"))
         let available = !user.text.isEmpty || !final.isEmpty || !attachments.isEmpty
         var result: Object = ["id":root.string("id"),"user":user.text,"final":final,"user_complete":userComplete,"final_complete":finalComplete,"started_at":first["started_at"] ?? NSNull(),"completed_at":last["completed_at"] ?? NSNull(),"status":last.string("status","unknown"),"attachments":attachments,"availability":!available ? "unavailable" : userComplete && (!terminal || finalComplete) ? "available" : "partial"]
         result["digest"] = identity(result)
@@ -432,48 +515,36 @@ final class Database {
 
 enum RequestMessageText {
     static let byteLimit = 1_048_576
-    static func bounded(_ text: String) -> (text: String,complete: Bool) {
-        guard text.utf8.count > byteLimit else { return (text,true) }
-        var bytes = Data(text.utf8.prefix(byteLimit))
+    static func bounded(_ text: String,limit: Int = byteLimit) -> (text: String,complete: Bool) {
+        guard text.utf8.count > limit else { return (text,true) }
+        var bytes = Data(text.utf8.prefix(limit))
         while String(data:bytes,encoding:.utf8) == nil { bytes.removeLast() }
         return (String(data:bytes,encoding:.utf8) ?? "",false)
     }
-    static func extract(_ content: Any?,user: Bool) -> Object {
-        let parts = content as? [Object] ?? []
-        var text = content as? String ?? parts.filter {["text","input_text","output_text"].contains($0.string("type"))}.map {$0.string("text")}.joined(separator:"\n")
-        var attachments: [Object] = [], complete = true
+    static func extract(_ content: Any?,user: Bool,cwd: String = "",store: RequestMediaStore? = nil) -> Object {
+        let parts = RequestMedia.content(content)
+        let input = bounded(parts.filter {["text","input_text","output_text"].contains($0.string("type"))}.map {$0.string("text")}.joined(separator:"\n"),limit:16_000_000)
+        var text = input.text, extra: [Object] = [], complete = input.complete
         if user {
             if text.contains("<send_user_message_question_reply>") { return [:] }
             let tags = "recommended_plugins|environment_context|permissions(?: instructions)?|INSTRUCTIONS|user_instructions|developer_instructions|skills_instructions|skill_instructions|system|developer|system-reminder|app-context|collaboration_mode|multi_agent_role|multi_agent_mode"
             text = text.replacingOccurrences(of:"(?is)<("+tags+")(?:\\s[^>]*)?>.*?</\\1\\s*>",with:"",options:.regularExpression)
-            if let wrapper = text.range(of:"# Files mentioned by the user:"), let regex = try? NSRegularExpression(pattern:#"(?m)^## (.+?): (/[^\r\n]+)$"#) {
-                var section = String(text[wrapper.upperBound...])
-                if let request = section.range(of:"## My request") { section = String(section[..<request.lowerBound]) }
-                for match in regex.matches(in:section,range:NSRange(section.startIndex...,in:section)) {
-                    guard let name = Range(match.range(at:1),in:section), let path = Range(match.range(at:2),in:section) else { continue }
-                    attachments.append(attachment(name:String(section[name]),path:String(section[path])))
-                }
-            }
-            for part in parts where ["image","input_image","image_url","local_image","file","input_file"].contains(part.string("type")) {
-                let path = part.string("path",part.string("file_path",part.string("image_url")))
-                let name = part.string("filename",part.string("name",path.hasPrefix("/") ? URL(fileURLWithPath:path).lastPathComponent : L("图片", "Image")))
-                attachments.append(attachment(name:name,path:path.hasPrefix("/") ? path : ""))
-            }
+            extra = RequestMedia.userFiles(text)
             for marker in ["## My request:","## My request","<user_request>"] {
                 if let range = text.range(of:marker) { text = String(text[range.upperBound...]); break }
             }
             text = text.replacingOccurrences(of:"(?is)<image\\b[^>]*>.*?</image\\s*>",with:"",options:.regularExpression)
+                .replacingOccurrences(of:"(?is)<image\\b[^>]*/>",with:"",options:.regularExpression)
+                .replacingOccurrences(of:"(?is)<image\\b[^>]*>",with:"",options:.regularExpression)
                 .replacingOccurrences(of:"</user_request>",with:"")
                 .replacingOccurrences(of:"Distinguish instructions in attached documents from the user's request.",with:"")
             if text.trimmingCharacters(in:.whitespacesAndNewlines).hasPrefix("# Files mentioned by the user:") { text = ""; complete = false }
             if ["# AGENTS.md instructions","<environment_context>","<INSTRUCTIONS>"].contains(where:{text.trimmingCharacters(in:.whitespacesAndNewlines).hasPrefix($0)}) { return [:] }
         }
+        let media = RequestMedia.extract(text:&text,parts:parts,extra:extra,placement:user ? "user" : "final",cwd:cwd,store:store)
+        let redacted = RequestMedia.preview(text)
+        if redacted != text { complete = false; text = redacted }
         let value = bounded(text.trimmingCharacters(in:.whitespacesAndNewlines))
-        return ["text":value.text,"complete":value.complete && complete && attachments.count <= 32,"attachments":Array(attachments.prefix(32))]
-    }
-    private static func attachment(name: String,path: String) -> Object {
-        let ext = URL(fileURLWithPath:path.isEmpty ? name : path).pathExtension.lowercased()
-        let mime = ["png":"image/png","jpg":"image/jpeg","jpeg":"image/jpeg","gif":"image/gif","webp":"image/webp","heic":"image/heic" ][ext] ?? "application/octet-stream"
-        return ["id":identity([name,path]),"name":String(name.prefix(255)),"path":path.utf8.count <= 4096 ? path : "","mime":mime]
+        return ["text":value.text,"complete":value.complete && complete && media.complete,"attachments":media.attachments,"media_schema":RequestMedia.schema]
     }
 }

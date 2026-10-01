@@ -105,9 +105,29 @@ struct LocalActivityView: View {
         let grid = heatmapDimensions(width:width), cellHeight = aggregation == "week" ? 44 : grid.side
         return CGFloat(grid.rows)*cellHeight+CGFloat(grid.rows-1)*4+10+16
     }
+    private func heatmapMonthLabels(_ values: [DayUsage],rows: Int,offset: Int,side: CGFloat,width: CGFloat) -> [(title: String,x: CGFloat,width: CGFloat)] {
+        let calendar = Calendar.current, font = NSFont.systemFont(ofSize:11)
+        let indices = values.indices.filter { ($0 == 0 && calendar.component(.day,from:values[$0].date) <= 20) || ($0 > 0 && calendar.component(.month,from:values[$0].date) != calendar.component(.month,from:values[$0-1].date)) }
+        let labels = indices.map { index -> (title: String,x: CGFloat,width: CGFloat) in
+            let title = values[index].date.formatted(.dateTime.month(.abbreviated))
+            let labelWidth = ceil((title as NSString).size(withAttributes:[.font:font]).width)
+            return (title,max(0,min(CGFloat((index+offset)/rows)*(side+4),width-labelWidth)),labelWidth)
+        }
+        guard labels.count > 2 else { return labels }
+        let last = labels[labels.count-1]
+        var visible = [labels[0]]
+        // Keep both edge labels readable when a narrow layout cannot fit every month.
+        for label in labels.dropFirst().dropLast() {
+            let previous = visible[visible.count-1]
+            if label.x >= previous.x+previous.width+4, label.x+label.width+4 <= last.x { visible.append(label) }
+        }
+        visible.append(last)
+        return visible
+    }
     private func heatmap(width: CGFloat) -> some View {
         let values = buckets, maximum = max(1,values.compactMap(\.tokens).max() ?? 0)
         let grid = heatmapDimensions(width:width), rows = grid.rows, columns = grid.columns, offset = grid.offset, side = grid.side
+        let months = heatmapMonthLabels(values,rows:rows,offset:offset,side:side,width:width)
         return VStack(alignment:.leading,spacing:10) {
             HStack(alignment:.top,spacing:4) {
                 ForEach(0..<columns,id:\.self) { column in
@@ -124,14 +144,13 @@ struct LocalActivityView: View {
                 }
             }
             .overlay(alignment:.topLeading) { UsageHoverSurface(days:values,rows:rows,offset:offset,cellSize:side) }
-            let months = values.indices.filter { ($0 == 0 && Calendar.current.component(.day,from:values[$0].date) <= 20) || ($0 > 0 && Calendar.current.component(.month,from:values[$0].date) != Calendar.current.component(.month,from:values[$0-1].date)) }
             ZStack(alignment:.topLeading) {
-                ForEach(months,id:\.self) { index in
-                    Text(values[index].date.formatted(.dateTime.month(.abbreviated)))
-                        .font(.system(size:11)).foregroundStyle(.secondary)
-                        .offset(x:CGFloat((index+offset)/rows)*(side+4))
+                ForEach(months.indices,id:\.self) { index in
+                    Text(months[index].title)
+                        .font(.system(size:11)).foregroundStyle(.secondary).fixedSize()
+                        .offset(x:months[index].x)
                 }
-            }.frame(height:16)
+            }.frame(width:width,height:16,alignment:.topLeading)
         }.frame(width:width,height:heatmapHeight(width:width),alignment:.topLeading)
     }
 }
@@ -150,7 +169,7 @@ struct UsageTrendsView: View {
     private var key: String { [state.usage.revision.uuidString,period,model,granularity,period == "custom" ? String(Calendar.current.startOfDay(for:from).timeIntervalSince1970) : "",period == "custom" ? String(Calendar.current.startOfDay(for:through).timeIntervalSince1970) : ""].joined(separator:"|") }
     private func load() {
         let snapshot = state.usage, range = UsageRange(period:period,from:from,through:through), model = model, granularity = granularity
-        projection.load(key:key) { TrendProjection.build(snapshot,range:range,model:model,granularity:granularity) }
+        projection.load(key:key,revision:snapshot.revision) { TrendProjection.build(snapshot,range:range,model:model,granularity:granularity) }
     }
     var body: some View {
         VStack(alignment:.leading,spacing:22) {

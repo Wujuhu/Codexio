@@ -9,6 +9,8 @@ final class UpstreamCoordinator {
     private var journalURL: URL { directory.appendingPathComponent("route.json") }
     private var relay: UpstreamRelay?
     private var quitting = false
+    private var quitGeneration = UUID()
+    private var quitAlert: NSAlert?
     init(state: AppState) { self.state = state }
     private func nested(_ value: Object,_ path: [String]) -> Any? {
         var current: Any = value
@@ -118,27 +120,43 @@ final class UpstreamCoordinator {
     }
     func prepareQuit(completion: @escaping () -> Void) {
         guard !state.paths.mock else { completion(); return }
+        let generation = UUID(); quitGeneration = generation
         queue.async { [weak self] in
-            guard let self else { DispatchQueue.main.async(execute:completion); return }
+            guard let self else { performQuitCallback(completion); return }
             self.quitting = true
             do {
                 try self.restore(); self.client.closeAndWait()
-                DispatchQueue.main.async(execute:completion)
+                performQuitCallback { guard self.quitGeneration == generation else { return }; completion() }
             }
             catch {
-                self.report(error.localizedDescription); self.client.close()
-                DispatchQueue.main.async {
+                self.client.close()
+                performQuitCallback {
+                    guard self.quitGeneration == generation else { return }
+                    self.report(error.localizedDescription)
                     let alert = NSAlert(); alert.messageText = L("上游路由未能恢复", "The upstream route could not be restored")
                     alert.informativeText = error.localizedDescription
                     alert.addButton(withTitle:L("返回应用", "Return to app")); alert.addButton(withTitle:L("保留恢复记录并退出", "Keep recovery data and quit"))
-                    if alert.runModal() == .alertSecondButtonReturn {
-                        self.queue.async { self.relay?.stop(); self.relay = nil; self.client.closeAndWait(); DispatchQueue.main.async(execute:completion) }
+                    self.quitAlert = alert
+                    let response = alert.runModal()
+                    if self.quitAlert === alert { self.quitAlert = nil }
+                    guard self.quitGeneration == generation else { return }
+                    if response == .alertSecondButtonReturn {
+                        self.queue.async {
+                            self.relay?.stop(); self.relay = nil; self.client.closeAndWait()
+                            performQuitCallback { guard self.quitGeneration == generation else { return }; completion() }
+                        }
                     } else { self.state.onCancelQuit?() }
                 }
             }
         }
     }
     func cancelQuit() {
+        quitGeneration = UUID()
+        if let alert = quitAlert {
+            quitAlert = nil
+            if NSApp.modalWindow === alert.window { NSApp.abortModal() }
+            alert.window.orderOut(nil)
+        }
         queue.async { [weak self] in
             guard let self else { return }; self.quitting = false
             guard self.relay == nil, self.state.preferences.analytics.flag("upstream_detection_enabled") else { return }

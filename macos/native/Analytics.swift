@@ -155,14 +155,23 @@ enum Analytics {
             if row.flag("is_subagent"), !RequestClassification.isApproval(row) {
                 let start = row.string("started_at"), session = row.string("session_id"), turn = row.string("turn_id")
                 let applicable = links.filter { link in
-                    let matches = link.string("child_session_id") == session || (!row.string("agent_path").isEmpty && link.string("target") == row.string("agent_path"))
-                    guard matches, link.string("timestamp") <= start else { return false }
+                    let child = link.string("child_session_id")
+                    let matches = !child.isEmpty ? child == session : (!row.string("parent_session_id").isEmpty && link.string("parent_session_id") == row.string("parent_session_id") && !row.string("agent_path").isEmpty && link.string("target") == row.string("agent_path"))
+                    guard matches else { return false }
                     if !link.string("child_turn_id").isEmpty { return link.string("child_turn_id") == turn }
+                    // A spawn names the child's first turn. started_at may be
+                    // rounded to seconds while the spawn retains milliseconds.
+                    if link.string("kind") == "spawn" {
+                        guard let spawned = parsedDate(link["timestamp"]), let started = parsedDate(start), floor(spawned.timeIntervalSince1970) <= floor(started.timeIntervalSince1970) else { return false }
+                        return bySession[session]?.first?.string("turn_id") == turn
+                    }
+                    guard link.string("timestamp") <= start else { return false }
                     return bySession[session]?.first(where:{$0.string("started_at") >= link.string("timestamp")})?.string("turn_id") == turn
                 }.sorted {$0.string("timestamp") > $1.string("timestamp")}
-                if let link = applicable.first {
+                let parents = Set(applicable.map {reference($0.string("parent_turn_id"),session:$0.string("parent_session_id"))})
+                if parents.count == 1, let link = applicable.first {
                     row["parent_session_id"] = link["parent_session_id"]; row["parent_turn_id"] = link["parent_turn_id"]
-                } else if bySession[session]?.first?.string("turn_id") != turn { row["parent_turn_id"] = nil
+                } else if parents.count > 1 || bySession[session]?.first?.string("turn_id") != turn { row["parent_turn_id"] = nil
                 }
             }
             return row
@@ -184,6 +193,26 @@ enum Analytics {
             }
         }
         let approvalTurns = Set(turnMap.filter {RequestClassification.isApproval($0.value)}.keys)
+        let sessionParents = Dictionary(grouping:inputTurns.filter {$0.flag("is_subagent") && !$0.string("parent_session_id").isEmpty},by:{$0.string("session_id")})
+            .mapValues {Set($0.map {$0.string("parent_session_id")})}
+        func scopedRoot(_ row: Object) -> String {
+            let value = row.string("root_turn_id"), session = row.string("session_id")
+            guard !value.isEmpty, value != row.string("turn_id") else { return "" }
+            let local = reference(value,session:session)
+            if turnMap[local]?.string("session_id") == session { return local }
+            guard row.flag("is_subagent") else { return "" }
+            // Modern child contexts carry the root turn in an ancestor thread,
+            // not in their own thread. Resolve only through recorded parent IDs.
+            var pending = Array(sessionParents[session] ?? []), visited: Set<String> = [session], candidates = Set<String>()
+            while !pending.isEmpty, visited.count <= 64 {
+                let parent = pending.removeLast()
+                guard visited.insert(parent).inserted else { continue }
+                let key = reference(value,session:parent)
+                if turnMap[key]?.string("session_id") == parent { candidates.insert(key) }
+                pending += (sessionParents[parent] ?? []).filter {!visited.contains($0)}
+            }
+            return candidates.count == 1 ? candidates.first! : ""
+        }
         var rootCache: [String:String] = [:]
         func root(_ id: String) -> String {
             if let known = rootCache[id] { return known }
@@ -193,8 +222,8 @@ enum Analytics {
                 var parent = ""
                 if !row.string("alias_of").isEmpty { parent = reference(row.string("alias_of"),session:row.string("session_id")) }
                 else if !row.string("continuation_of").isEmpty { parent = reference(row.string("continuation_of"),session:row.string("session_id")) }
-                else if !row.string("root_turn_id").isEmpty && row.string("root_turn_id") != row.string("turn_id") { parent = reference(row.string("root_turn_id"),session:row.string("session_id")) }
-                else if row.flag("is_subagent") || RequestClassification.isApproval(row), !row.string("parent_session_id").isEmpty, !row.string("parent_turn_id").isEmpty { parent = reference(row.string("parent_turn_id"),session:row.string("parent_session_id")) }
+                else { parent = scopedRoot(row) }
+                if parent.isEmpty, row.flag("is_subagent") || RequestClassification.isApproval(row), !row.string("parent_session_id").isEmpty, !row.string("parent_turn_id").isEmpty { parent = reference(row.string("parent_turn_id"),session:row.string("parent_session_id")) }
                 if parent.isEmpty || turnMap[parent] == nil { break }
                 cursor = parent
             }

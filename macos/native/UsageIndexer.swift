@@ -148,7 +148,7 @@ final class UsageIndexer {
                 try database.registerRequestSource(row.string("id"),file:file,root:root)
             }
         }
-        if offset == size && cursor.number("modified") == modified && cursor.integer("resume_metadata_version") == 1 { scannedFiles[file.path] = signature; return }
+        if offset == size && cursor.number("modified") == modified && cursor.integer("resume_metadata_version") == RequestResume.metadataVersion { scannedFiles[file.path] = signature; return }
         let handle = try FileHandle(forReadingFrom:file); defer { try? handle.close() }
         var valid = offset <= size && cursor.integer("parser") == 1
         if valid && offset > 0 {
@@ -158,22 +158,26 @@ final class UsageIndexer {
         }
         if !valid { offset = 0 }
         var state: Object = offset > 0 ? cursor.object("state") : ["rollout_id":rollout,"session_id":rollout,"model":"unknown","provider":"unknown","turn_id":"","prompt_preview":"","turns":Object(),"last_by_source":Object(),"last_totals":Object()]
-        if offset > 0, cursor.integer("resume_metadata_version") != 1,
+        if offset > 0, cursor.integer("resume_metadata_version") != RequestResume.metadataVersion,
            resumeRepairSessions?.contains(state.string("session_id")) == true {
             try repairResumeMetadata(file,through:offset,state:&state)
         }
         try handle.seek(toOffset:UInt64(offset))
         var pending = Data(), oversized = false
+        // FileHandle and JSON bridging create autoreleased buffers/objects.
+        // Bound their lifetime to each read and record, not the entire scan.
         while !cancelled {
-            let chunk = try handle.read(upToCount:1_048_576) ?? Data()
+            let chunk = try autoreleasepool { try handle.read(upToCount:1_048_576) } ?? Data()
             if chunk.isEmpty { break }
             pending.append(chunk)
             try database.transaction {
                 while let newline = pending.firstIndex(of:10) {
                     let length = newline+1
                     if !oversized {
-                        let record = jsonObject(pending.subdata(in:0..<newline))
-                        if !record.isEmpty { try process(record,state:&state) }
+                        try autoreleasepool {
+                            let record = jsonObject(pending.subdata(in:0..<newline))
+                            if !record.isEmpty { try process(record,state:&state) }
+                        }
                     }
                     oversized = false; pending.removeSubrange(0...newline); offset += length
                 }
@@ -190,7 +194,7 @@ final class UsageIndexer {
         try handle.seek(toOffset:UInt64(offset-length))
         let hash = digest(try handle.read(upToCount:length) ?? Data())
         try handle.seek(toOffset:current)
-        try database.put("usage_cursors",key:key,value:["parser":1,"resume_metadata_version":1,"offset":offset,"modified":modified,"tail_hash":hash,"state":state])
+        try database.put("usage_cursors",key:key,value:["parser":1,"resume_metadata_version":RequestResume.metadataVersion,"offset":offset,"modified":modified,"tail_hash":hash,"state":state])
     }
     private func shouldPersist(_ id: String) -> Bool { detailTargets?.contains(id) ?? true }
     private func persistTurn(_ row: Object) throws {
@@ -209,6 +213,21 @@ final class UsageIndexer {
         if shouldPersist(id) { try database.writeRequestMessage(id,patch:value) }
         else if state.string("turn_id").hasPrefix("legacy-user:"), patch["user"] != nil { recoveryLegacyMessage = (id,value) }
     }
+    private func messageDetail(_ content: Any?,user: Bool,state: Object,stamp: String) -> Object {
+        let turn = state.string("turn_id"), id = "turn:"+state.string("session_id")+":"+turn
+        if metadataOnly || (detailTargets != nil && !shouldPersist(id) && !turn.isEmpty && !turn.hasPrefix("legacy-user:")) {
+            return ["text":plain(content,user:user),"complete":false,"has_images":RequestMedia.content(content).contains(where:RequestMedia.isImagePart)]
+        }
+        let cwd = state.string("cwd")
+        var detail = RequestMessageText.extract(content,user:user,cwd:cwd.isEmpty ? state.string("session_cwd") : cwd,store:database.requestMedia)
+        let created = parsedDate(stamp)?.timeIntervalSince1970
+        let attachments = detail.objects("attachments")
+        if !attachments.isEmpty {
+            detail["attachments"] = attachments.map { image -> Object in var image = image; image["created_at"] = created as Any? ?? NSNull(); return image }
+            if created == nil { detail["complete"] = false }
+        }
+        return detail
+    }
     func recoverMessageDetails(ids: Set<String>,file: URL,root: URL,metadataOnly: Bool = false) throws {
         guard !ids.isEmpty else { return }
         activeSource = (file,root); defer { activeSource = nil }
@@ -222,15 +241,17 @@ final class UsageIndexer {
         let limit = metadataOnly ? 33_554_432 : 67_108_864
         var pending = Data(), read = 0, oversized = false, complete = Set<String>()
         while read < limit && !cancelled {
-            let chunk = try reader.read(upToCount:min(1_048_576,limit-read)) ?? Data()
+            let chunk = try autoreleasepool { try reader.read(upToCount:min(1_048_576,limit-read)) } ?? Data()
             if chunk.isEmpty { break }; read += chunk.count; pending.append(chunk)
             try database.transaction {
                 while let newline = pending.firstIndex(of:10) {
                     if !oversized {
-                        let entry = jsonObject(pending.subdata(in:0..<newline))
-                        if !entry.isEmpty { try process(entry,state:&state) }
-                        let row = state.object("turns").object(state.string("turn_id"))
-                        if ids.contains(row.string("id")), !row.string("ended_at").isEmpty { complete.insert(row.string("id")) }
+                        try autoreleasepool {
+                            let entry = jsonObject(pending.subdata(in:0..<newline))
+                            if !entry.isEmpty { try process(entry,state:&state) }
+                            let row = state.object("turns").object(state.string("turn_id"))
+                            if ids.contains(row.string("id")), !row.string("ended_at").isEmpty { complete.insert(row.string("id")) }
+                        }
                     }
                     oversized = false; pending.removeSubrange(0...newline)
                 }
@@ -266,15 +287,15 @@ final class UsageIndexer {
         }
         guard !row.isEmpty else { return }
         if patch.flag("clear") {
-            guard row.string("resume_kind") == "model_switch" else { return }
-            if row.flag("model_switch_continuation") { row["continuation_of"] = NSNull() }
-            row["resume_kind"] = NSNull(); row["prompt_source_turn_id"] = NSNull(); row["model_switch_continuation"] = false
+            guard ["model_switch","interrupted"].contains(row.string("resume_kind")) else { return }
+            if row.flag("model_switch_continuation") || row.flag("request_resume_continuation") { row["continuation_of"] = NSNull() }
+            row["resume_kind"] = NSNull(); row["prompt_source_turn_id"] = NSNull(); row["model_switch_continuation"] = false; row["request_resume_continuation"] = false
         } else {
-            guard row.string("prompt_preview").isEmpty || row.string("resume_kind") == "model_switch" else { return }
+            guard row.string("prompt_preview").isEmpty || ["model_switch","interrupted"].contains(row.string("resume_kind")) else { return }
             row["prompt_preview"] = patch.string("preview"); row["prompt_source_turn_id"] = patch.string("source")
-            row["resume_kind"] = "model_switch"
+            row["resume_kind"] = patch.string("kind","model_switch")
             if !patch.string("continuation").isEmpty, row.string("continuation_of").isEmpty {
-                row["continuation_of"] = patch.string("continuation"); row["model_switch_continuation"] = true
+                row["continuation_of"] = patch.string("continuation"); row["request_resume_continuation"] = true
             }
         }
         try persistTurn(row)
@@ -287,14 +308,15 @@ final class UsageIndexer {
         let reader = try FileHandle(forReadingFrom:file); defer { try? reader.close() }
         var context: Object = [:], patches: [String:Object] = [:], pending = Data(), read = 0, oversized = false
         while read < limit && !cancelled {
-            let chunk = try reader.read(upToCount:min(1_048_576,limit-read)) ?? Data()
+            let chunk = try autoreleasepool { try reader.read(upToCount:min(1_048_576,limit-read)) } ?? Data()
             if chunk.isEmpty { break }; read += chunk.count; pending.append(chunk)
             while let newline = pending.firstIndex(of:10) {
                 if !oversized {
-                    let entry = jsonObject(pending.subdata(in:0..<newline))
-                    if let patch = RequestResume.observe(entry,context:&context,preview:{self.plain($0,user:true)}) {
-                        if patch.flag("clear") { patches.removeValue(forKey:patch.string("turn")) }
-                        else { patches[patch.string("turn")] = patch }
+                    autoreleasepool {
+                        let entry = jsonObject(pending.subdata(in:0..<newline))
+                        if let patch = RequestResume.observe(entry,context:&context,preview:{self.plain($0,user:true)}) {
+                            patches[patch.string("turn")] = patch
+                        }
                     }
                 }
                 oversized = false; pending.removeSubrange(0...newline)
@@ -317,6 +339,7 @@ final class UsageIndexer {
     }
     private func plain(_ content: Any?, user: Bool) -> String {
         var text = content as? String ?? (content as? [Object] ?? []).filter { ["text","input_text","output_text"].contains($0.string("type")) }.map { $0.string("text") }.joined(separator:"\n")
+        text = RequestMedia.preview(text)
         if user {
             if text.contains("<send_user_message_question_reply>") { return "" }
             let tags = "recommended_plugins|environment_context|permissions(?: instructions)?|INSTRUCTIONS|user_instructions|developer_instructions|skills_instructions|skill_instructions|system|developer|system-reminder|app-context|collaboration_mode|multi_agent_role|multi_agent_mode"
@@ -324,7 +347,7 @@ final class UsageIndexer {
             text = requestPreview(text)
             if ["# AGENTS.md instructions","<environment_context>","<INSTRUCTIONS>"].contains(where:{text.trimmingCharacters(in:.whitespacesAndNewlines).hasPrefix($0)}) { return "" }
             if text.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty {
-                let images = (content as? [Object] ?? []).filter {["image","input_image","image_url","local_image"].contains($0.string("type"))}.count
+                let images = (content as? [Object] ?? []).filter(RequestMedia.isImagePart).count
                 if images > 0 { text = L("图片", "Image")+" ×\(images)" }
             }
         }
@@ -477,32 +500,39 @@ final class UsageIndexer {
                 try saveTurn(&state,stamp:stamp) { $0["context_compaction_observed"] = true; if item.string("type") == "ContextCompaction" { $0["context_compaction_item_id"] = item["id"] } }
             }
         }
-        let userContent: Any? = kind == "event_msg" && subtype == "user_message" ? payload["message"] ?? payload["content"] : kind == "response_item" && payload.string("role") == "user" ? payload["content"] : kind == "event_msg" && ["user_message","userMessage","UserMessage"].contains(item.string("type")) ? item["content"] ?? item["message"] : nil
-        if let content = userContent, !inherited {
+        let userContent: Any? = kind == "event_msg" && subtype == "user_message" ? payload["message"] ?? payload["content"] ?? "" : kind == "response_item" && payload.string("role") == "user" ? payload["content"] : kind == "event_msg" && ["user_message","userMessage","UserMessage"].contains(item.string("type")) ? item["content"] ?? item["message"] ?? "" : nil
+        if let rawContent = userContent, !inherited, !RequestResume.isContextOnlyUser(entry) {
+            let content = RequestMedia.content(rawContent,metadata:item.isEmpty ? payload : item)
             let text = plain(content,user:true)
-            let reply = (content as? String)?.contains("<send_user_message_question_reply>") == true
-            guard !text.isEmpty || reply else { return }
-            let fullText = content as? String ?? (content as? [Object] ?? []).map { $0.string("text") }.joined(separator:"\n")
-            let fingerprint = identity(String(fullText.prefix(262144))), messageID = payload.string("id",item.string("id"))
+            var detail = messageDetail(content,user:true,state:state,stamp:stamp)
+            let fullText = content.map { $0.string("text") }.joined(separator:"\n")
+            let reply = fullText.contains("<send_user_message_question_reply>")
+            guard !text.isEmpty || reply || !detail.objects("attachments").isEmpty else { return }
+            let fingerprint = identity([String(fullText.prefix(262144)),fullText.isEmpty ? identity(content.filter(RequestMedia.isImagePart)) : ""]), messageID = payload.string("id",item.string("id"))
             let representation = kind == "response_item" ? "response" : "event"
             let previousInput = state.object("request_last_input")
             let current = state.object("turns").object(state.string("turn_id"))
+            // Existing parser-1 cursors used only the original text hash.
+            // Accept that one boundary without rescanning historical files.
+            let legacyText = rawContent as? String ?? (rawContent as? [Object] ?? []).map {$0.string("text")}.joined(separator:"\n")
+            let legacyFingerprint = previousInput.integer("fingerprint_version") == nil && !legacyText.isEmpty && previousInput.string("fingerprint") == identity(String(legacyText.prefix(262144)))
             let conflictingIDs = !messageID.isEmpty && !previousInput.string("message_id").isEmpty && messageID != previousInput.string("message_id")
             let sameIdentity = !messageID.isEmpty && previousInput.string("message_id") == messageID && previousInput.string("turn_id") == state.string("turn_id")
-            let paired = sameIdentity || (!conflictingIDs && previousInput.string("fingerprint") == fingerprint && previousInput.string("representation") != representation && previousInput.string("turn_id") == state.string("turn_id") && !current.flag("has_usage") && current.string("ended_at").isEmpty)
+            let paired = sameIdentity || (!conflictingIDs && (previousInput.string("fingerprint") == fingerprint || legacyFingerprint) && previousInput.string("representation") != representation && previousInput.string("turn_id") == state.string("turn_id") && !current.flag("has_usage") && current.string("ended_at").isEmpty)
             if state.string("turn_id").isEmpty || (!paired && (["completed","aborted"].contains(current.string("status")) || state.string("turn_id").hasPrefix("legacy-user:"))) {
                 state["previous_turn_id"] = state["turn_id"]; state["turn_id"] = "legacy-user:"+identity([stamp,content]); state["root_turn_id"] = nil
             }
+            if !metadataOnly, detail.integer("media_schema") != RequestMedia.schema { detail = messageDetail(content,user:true,state:state,stamp:stamp) }
             if !text.isEmpty { state["prompt_preview"] = text }
             let previous = state.string("previous_turn_id")
-            state["request_last_input"] = ["fingerprint":fingerprint,"message_id":messageID,"representation":representation,"turn_id":state.string("turn_id")]
+            let messageKey = paired ? previousInput.string("message_key",identity([state.string("turn_id"),fingerprint])) : identity([state.string("turn_id"),messageID,stamp,fingerprint])
+            state["request_last_input"] = ["fingerprint":fingerprint,"fingerprint_version":2,"message_id":messageID,"representation":representation,"turn_id":state.string("turn_id"),"message_key":messageKey]
             try saveTurn(&state,stamp:stamp) { row in
                 if !text.isEmpty { row["prompt_preview"] = text }
                 row["has_user_message"] = true
                 if reply && !previous.isEmpty { row["continuation_of"] = previous }
             }
-            let detail = RequestMessageText.extract(content,user:true)
-            if !detail.isEmpty { try saveMessage(state,patch:["user":detail.string("text"),"user_complete":detail.flag("complete"),"attachments":detail.objects("attachments")]) }
+            if !detail.isEmpty { try saveMessage(state,patch:["user":detail.string("text"),"user_complete":detail.flag("complete"),"attachments":detail.objects("attachments"),"user_message_key":messageKey,"user_media_schema":RequestMedia.schema]) }
         }
         if !inherited, !state.flag("is_subagent") {
             var context = state.object("resume_tracking")
@@ -520,6 +550,29 @@ final class UsageIndexer {
             state["resume_tracking"] = context
             if let patch { try applyResume(patch,state:&state) }
         }
+        if !inherited, !metadataOnly, kind == "response_item", !state.string("turn_id").isEmpty {
+            let type = payload.string("type"), callID = payload.string("call_id",payload.string("id"))
+            var tools = state.object("request_image_tools")
+            let toolName = payload.string("name"), arguments = String(payload.string("arguments",payload.string("input")).prefix(65_536))
+            let composedImageTool = ["exec","functions.exec"].contains(toolName) && ["tools.image_gen__imagegen(","image_gen.imagegen("].contains(where:arguments.contains)
+            if ["function_call","custom_tool_call"].contains(type), RequestMedia.imageTool(toolName) || composedImageTool, !callID.isEmpty, callID.utf8.count <= 512 {
+                tools[callID] = state.string("turn_id")
+                if tools.count > 16 { for key in tools.keys.sorted() where key != callID { tools.removeValue(forKey:key); if tools.count <= 16 { break } } }
+            }
+            let generated = type == "image_generation_call" && (payload.string("turn_id").isEmpty || payload.string("turn_id") == state.string("turn_id")) && (payload.string("thread_id").isEmpty || payload.string("thread_id") == state.string("session_id"))
+            let matched = ["function_call_output","custom_tool_call_output"].contains(type) && tools.string(callID) == state.string("turn_id")
+            if generated || matched {
+                let output: Any? = generated ? payload : payload["output"]
+                let detail = messageDetail(RequestMedia.toolParts(output),user:false,state:state,stamp:stamp)
+                let images = detail.objects("attachments").filter {$0.string("mime").hasPrefix("image/")}
+                if !images.isEmpty {
+                    try saveMessage(state,patch:["generated_attachments":images,"generated_complete":detail.flag("complete"),"generated_media_schema":RequestMedia.schema])
+                    try saveTurn(&state,stamp:stamp) { $0["has_generated_image"] = true }
+                }
+                tools.removeValue(forKey:callID)
+            }
+            state["request_image_tools"] = tools
+        }
         if !inherited && ((kind == "response_item" && payload.string("role") == "assistant") || (kind == "event_msg" && subtype == "agent_message")) {
             guard ["","commentary","final","final_answer"].contains(payload.string("phase")), ["","commentary","final","final_answer"].contains(payload.string("channel")), ["","all","user"].contains(payload.string("recipient")), kind != "response_item" || payload.string("type","message") == "message" else { return }
             let metadata = payload.object("internal_chat_message_metadata_passthrough")
@@ -527,9 +580,17 @@ final class UsageIndexer {
             guard owner.isEmpty || owner == state.string("session_id"), explicitTurn.isEmpty || explicitTurn == state.string("turn_id") else { return }
             let output = plain(payload["content"] ?? payload["message"],user:false)
             if ["final","final_answer"].contains(payload.string("phase")) || ["final","final_answer"].contains(payload.string("channel")) {
-                let detail = RequestMessageText.extract(payload["content"] ?? payload["message"],user:false)
-                try saveMessage(state,patch:["final":detail.string("text"),"final_complete":detail.flag("complete")])
-                try saveTurn(&state,stamp:stamp) { $0["has_final_message"] = !detail.string("text").isEmpty }
+                let detail = messageDetail(payload["content"] ?? payload["message"],user:false,state:state,stamp:stamp)
+                if !detail.string("text").isEmpty || !detail.objects("attachments").isEmpty || detail.flag("has_images") {
+                    let previous = state.object("request_last_final"), messageID = payload.string("id")
+                    let fingerprint = identity(detail.string("text").isEmpty ? detail.objects("attachments").map {$0.string("source_key")} : [detail.string("text")])
+                    let conflicting = !messageID.isEmpty && !previous.string("message_id").isEmpty && messageID != previous.string("message_id")
+                    let paired = previous.string("turn_id") == state.string("turn_id") && ((!messageID.isEmpty && messageID == previous.string("message_id")) || (!conflicting && fingerprint == previous.string("fingerprint") && previous.string("representation") != kind))
+                    let key = paired ? previous.string("message_key") : identity([state.string("turn_id"),messageID,stamp,fingerprint])
+                    state["request_last_final"] = ["turn_id":state.string("turn_id"),"message_id":messageID,"fingerprint":fingerprint,"representation":kind,"message_key":key]
+                    try saveMessage(state,patch:["final":detail.string("text"),"final_complete":detail.flag("complete"),"final_attachments":detail.objects("attachments"),"final_source":"message","final_message_key":key,"final_media_schema":RequestMedia.schema])
+                    try saveTurn(&state,stamp:stamp) { $0["has_final_message"] = true }
+                }
             }
             if !output.isEmpty {
                 state["output_preview"] = output
@@ -548,20 +609,18 @@ final class UsageIndexer {
         }
         if kind == "event_msg" && ["task_complete","turn_complete","turn_aborted"].contains(subtype), !inherited {
             let explicitTurn = payload.string("turn_id")
-            guard explicitTurn.isEmpty || explicitTurn == state.string("turn_id") else { return }
-            let detail = RequestMessageText.extract(payload["last_agent_message"],user:false)
+            guard explicitTurn.isEmpty || explicitTurn == state.string("turn_id"), payload.string("thread_id").isEmpty || payload.string("thread_id") == state.string("session_id") else { return }
+            let detail = messageDetail(payload["last_agent_message"],user:false,state:state,stamp:stamp)
             try saveTurn(&state,stamp:stamp) { row in
                 row["ended_at"] = parsedDate(payload["completed_at"]).map(iso) ?? stamp
                 row["status"] = subtype == "turn_aborted" ? "aborted" : "completed"
                 let final = plain(payload["last_agent_message"],user:false)
                 if !final.isEmpty { row["output_preview"] = final; row["latest_output_preview"] = final }
                 if let duration = payload.number("duration_ms"), duration >= 0 { row["duration_ms"] = duration }
-                if !detail.string("text").isEmpty { row["has_final_message"] = true }
-                row["context_compaction_completed"] = payload["last_agent_message"] is NSNull && subtype != "turn_aborted"
+                if !detail.string("text").isEmpty || !detail.objects("attachments").isEmpty || detail.flag("has_images") || row.flag("has_generated_image") { row["has_final_message"] = true }
+                row["context_compaction_completed"] = payload["last_agent_message"] is NSNull && !row.flag("has_generated_image") && subtype != "turn_aborted"
             }
-            var patch: Object = [:]
-            if !detail.string("text").isEmpty { patch["final"] = detail.string("text"); patch["final_complete"] = detail.flag("complete") }
-            try saveMessage(state,patch:patch)
+            try saveMessage(state,patch:["final":detail.string("text"),"final_complete":detail.flag("complete"),"final_attachments":detail.objects("attachments"),"final_source":"completion","final_message_key":identity([state.string("turn_id"),detail.string("text")]),"final_fallback":true,"final_media_schema":RequestMedia.schema])
             state["preview_pending"] = [Object]()
         }
         if detailTargets != nil { return }

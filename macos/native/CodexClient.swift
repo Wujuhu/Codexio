@@ -162,6 +162,9 @@ final class CodexClient {
     func shutdown() {
         lock.lock(); shuttingDown = true; lock.unlock(); closeAndWait()
     }
+    func resumeAfterCancelledShutdown() {
+        lock.lock(); shuttingDown = false; lock.unlock()
+    }
     func closeAndWait() {
         close()
         lock.lock(); let children = retired; retired.removeAll(); lock.unlock()

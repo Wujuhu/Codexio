@@ -1,4 +1,4 @@
 {
-  "fixed": {"file_version": "0.3.4.0", "product_version": "0.3.4.0"},
-  "info": {"0000": {"ProductVersion": "0.3.4", "FileVersion": "0.3.4", "CompanyName": "Wujuhu", "FileDescription": "Codexio", "ProductName": "Codexio", "OriginalFilename": "Codexio.exe", "InternalName": "Codexio", "LegalCopyright": "Copyright Wujuhu"}}
+  "fixed": {"file_version": "0.3.5.0", "product_version": "0.3.5.0"},
+  "info": {"0000": {"ProductVersion": "0.3.5", "FileVersion": "0.3.5", "CompanyName": "Wujuhu", "FileDescription": "Codexio", "ProductName": "Codexio", "OriginalFilename": "Codexio.exe", "InternalName": "Codexio", "LegalCopyright": "Copyright Wujuhu"}}
 }

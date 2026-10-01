@@ -37,7 +37,7 @@
 
 # 当前开发流程
 
-- 当前 Mac 版本为 `0.3.4`，使用 Swift／SwiftUI／AppKit；Windows 保留已有实现与已发布版本，默认冻结。iOS 版本由 `ios/VERSION` 独立管理，当前为 0.3.1；以后每次 Release 必须附带经过核验的最新 `Codexio.ipa`，不因附带 IPA 就擅自递增其版本号。
+- 当前 Mac 版本为 `0.3.5`，使用 Swift／SwiftUI／AppKit。Windows 已按用户明确授权迁移为 Wails + Go，版本由 `windows/VERSION` 独立管理，当前确认发布 `0.3.5`；旧 Python 版本号继续保留，后续 Windows 工作仍须明确要求。iOS 版本由 `ios/VERSION` 独立管理，当前为 0.3.1；以后每次 Release 必须附带经过核验的最新 `Codexio.ipa`，不因附带 IPA 就擅自递增其版本号。
 - v0.3.2 已按当时授权完成 Mac ZIP 与清单双附件发布，保持原样。后续发布仍须新的验收及明确版本确认，默认必须包含 Mac ZIP、iOS IPA 与清单；任何校验失败都保持草稿。
 - 每次修改完成并通过验证、开发打包后，提交到本地 Git；开发打包不等于确认正式发布。
 - 未经用户新的明确授权，不执行 `git push`、GitHub 发布或其他远程变更。
@@ -86,6 +86,7 @@
 - 发布协调命令（替换版本号）为 `.venv/bin/python scripts/publish_release_from_macos.py --version 0.3.2 --confirm-publish`。需要继续同一提交的失败草稿时必须显式加 `--resume-draft`；远程已成功而本地归档缺失时只可用 `--sync-only` 补齐。
 - 协调脚本用 UTF-8 零字节正文创建草稿并上传 Mac ZIP、iOS IPA 与清单，下载并核验版本、大小、SHA-256、Tag、标题、空正文和附件集合后才发布并标记 latest。默认不运行 Windows CI。v0.3.2 等历史版本保持原附件集合，除非用户明确要求补传。
 - 发布后协调脚本核验远程 Tag、标题、空正文与附件，下载本次平台附件到临时目录，通过相同校验后创建本地正式目录，并执行 `git fetch origin tag v<版本号>`。
+- 用户明确要求向既有正式版本补充 Windows 时，从 Windows 构建主机执行 `.venv/Scripts/python.exe -X utf8 scripts/publish_release_from_macos.py --version <确认版本号> --append-windows --confirm-publish`。该分支核验本地 Go EXE、原有最小冒烟、源码指纹与已发布 Apple 附件，推送已合并的 `main`，仅新增 EXE 并更新共享清单的 Windows 字段；保留已有 Tag、发布正文和 Mac ZIP/IPA，不运行旧 Windows CI。补充后回读四附件并归档到 `release/<版本号>/`。
 
 ## 界面与数据展示补充
 

@@ -113,7 +113,6 @@ struct SettingsView: View {
     private var appearance: some View {
         VStack(spacing:0) {
             row(L("主题", "Theme")) { Picker("",selection:Binding(get:{state.theme},set:{state.setPreference("theme",$0)})) { Text(L("跟随系统", "Follow system")).tag("system"); Text(L("浅色", "Light")).tag("light"); Text(L("深色", "Dark")).tag("dark") }.labelsHidden().frame(width:155) }
-            row(L("侧边栏", "Sidebar")) { Toggle("",isOn:Binding(get:{state.sidebarVisible},set:{ value in state.sidebarVisible = value; state.setPreference("sidebar_collapsed",!value) })).labelsHidden().toggleStyle(.switch) }
             AppIconPicker(state:state).padding(.top,22)
         }
     }

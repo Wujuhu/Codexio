@@ -15,7 +15,7 @@ final class AppState: ObservableObject {
     let fetchActivity = FetchActivity()
     let quotaClock = ScanClock()
     let menuQuotaClock = ScanClock()
-    lazy var mobileSync = MobileSync(paths: paths, detailProvider: { [weak self] id in try self?.database.requestMessageDetail(id) })
+    lazy var mobileSync = MobileSync(paths: paths, detailProvider: { [weak self] id in try self?.database.requestMessageDetail(id) }, detailPreparer: { [weak self] ids in try self?.database.prepareRequestMessageDetails(ids) })
     var usageReportDirectory: URL { paths.data.appendingPathComponent("Reports", isDirectory: true) }
     private lazy var usageReportStore = UsageReportStore(directory: usageReportDirectory)
     private let brandingQueue = DispatchQueue(label:"com.wujuhu.codexio.branding",qos:.utility)
@@ -72,6 +72,7 @@ final class AppState: ObservableObject {
     private var scanning = false
     private var refreshing = false
     private var stopped = false
+    private var quitGeneration = UUID()
     var mainWindowVisible = false
     private var reportGeneration = UUID()
     private var reportLoadedAt: Date?
@@ -146,6 +147,7 @@ final class AppState: ObservableObject {
         reportGeneration = UUID()
     }
     func finishQuit(completion: @escaping (Error?) -> Void) {
+        quitGeneration = UUID()
         stop()
         snapshotQueue.async { [self] in
             client.shutdown()
@@ -154,8 +156,27 @@ final class AppState: ObservableObject {
                     try writeWidget(["schema":1,"updated_at":Date().timeIntervalSince1970,"host_running":false,"host_pid":NSNull(),"request":NSNull(),"quota":["applicable":true],"today":NSNull()])
                     try Installation.retireLegacyWidgetServices(paths:paths)
                 }
-                DispatchQueue.main.async { completion(nil) }
-            } catch { DispatchQueue.main.async { completion(error) } }
+                performQuitCallback { completion(nil) }
+            } catch { performQuitCallback { completion(error) } }
+        }
+    }
+    func resumeAfterCancelledQuit() {
+        guard stopped else { return }
+        let generation = quitGeneration
+        // Resume behind the old shutdown work, so it cannot close a new client
+        // or leave a late offline snapshot after cancellation.
+        let pending = DispatchGroup()
+        for queue in [snapshotQueue,dataQueue,accountQueue,reportQueue] {
+            pending.enter(); queue.async { pending.leave() }
+        }
+        pending.notify(queue:.main) { [self] in
+            guard stopped, quitGeneration == generation else { return }
+            client.resumeAfterCancelledShutdown()
+            stopped = false; scanning = false; refreshing = false; reportInFlight = false
+            loading = false; reportsLoading = false
+            configureTimers()
+            if !paths.mock, UserDefaults.standard.bool(forKey:"codexio.mobile.enabled") { mobileSync.start() }
+            announceWidgetHost()
         }
     }
     func announceWidgetHost() {
@@ -227,7 +248,12 @@ final class AppState: ObservableObject {
             DispatchQueue.main.async { [weak self] in
                 guard let self, !self.stopped else { return }
                 let changed = self.usage.revision != result.revision
-                if changed { self.usage = result }
+                if changed {
+                    self.overviewProjection.invalidate(for:result.revision)
+                    self.trendProjection.invalidate(for:result.revision)
+                    self.logProjection.invalidate(for:result.revision)
+                    self.usage = result
+                }
                 self.clock.updated = result.updated
                 if self.pricesRevision != priceVersion { self.prices = prices; self.pricesRevision = priceVersion }
                 if self.modelIDs != models { self.modelIDs = models }
@@ -439,7 +465,8 @@ final class AppState: ObservableObject {
         brandingQueue.async { [weak self] in
             guard let self else { return }
             do {
-                let image = try Branding.appIcon(id), dock = Branding.dockIcon(image)
+                Branding.prepareSmallImages()
+                let image = try Branding.appIcon(id), dock = Branding.dockIcon(image,id:id)
                 if persist {
                     let old = self.preferences.analytics.string("app_icon","main")
                     self.preferences.analytics["app_icon"] = id
@@ -450,9 +477,10 @@ final class AppState: ObservableObject {
                     guard !self.stopped else { return }
                     self.appIconStyle = id; self.appLogoImage = image; self.appIconApplying = false
                     NSApp.applicationIconImage = dock
+                    self.onMenuDataChange?()
                 }
             } catch {
-                DispatchQueue.main.async { self.appIconApplying = false; self.errorMessage = error.localizedDescription }
+                DispatchQueue.main.async { self.appIconApplying = false; self.errorMessage = error.localizedDescription; self.onMenuDataChange?() }
             }
         }
     }
