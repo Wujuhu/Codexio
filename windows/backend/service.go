@@ -210,6 +210,13 @@ func (s *Service) SavePrice(model string, rates Row) (Row, error) {
 	s.notify("pricing")
 	return s.GetPrices(), nil
 }
+func (s *Service) SyncPrices() (Row, error) {
+	if e := s.store.RefreshPrices(s.ctx); e != nil {
+		return s.GetPrices(), e
+	}
+	s.notify("pricing")
+	return s.GetPrices(), nil
+}
 func (s *Service) GetReports(period string) (Row, error) { return s.reports.Get(period) }
 
 func (s *Service) GetSettings() Row {

@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -75,23 +76,23 @@ func parsePriceFeed(feed Row, primary bool, now string) []Row {
 	}
 	return rows
 }
-func (s *Store) syncPrices(ctx context.Context) {
+func (s *Store) syncPrices(ctx context.Context, force bool) error {
 	s.mu.RLock()
 	enabled := s.config["auto_sync_prices"] != false
 	s.mu.RUnlock()
-	if !enabled {
-		return
+	if !enabled && !force {
+		return nil
 	}
 	path := filepath.Join(s.priceDirectory(), "pricing_cache.json")
 	cache, _ := ReadJSON(path)
-	if checked, ok := ParseStamp(cache["checked_at"]); ok {
+	if checked, ok := ParseStamp(cache["checked_at"]); ok && !force {
 		retry := 24 * time.Hour
 		if dataString(cache, "status") == "offline" {
 			retry = time.Hour
 		}
 		elapsed := time.Since(checked)
 		if elapsed >= 0 && elapsed < retry {
-			return
+			return nil
 		}
 	}
 	type answer struct {
@@ -112,8 +113,8 @@ func (s *Store) syncPrices(ctx context.Context) {
 	s.mu.RLock()
 	enabled = s.config["auto_sync_prices"] != false
 	s.mu.RUnlock()
-	if !enabled || ctx.Err() != nil {
-		return
+	if (!enabled && !force) || ctx.Err() != nil {
+		return ctx.Err()
 	}
 	rows := primary.rows
 	status := "synced"
@@ -129,7 +130,7 @@ func (s *Store) syncPrices(ctx context.Context) {
 		s.mu.Lock()
 		s.priceStatus = Row{"status": "offline", "error": cache["error"], "updated_at": cache["updated_at"]}
 		s.mu.Unlock()
-		return
+		return errors.New(ValueString(cache["error"]))
 	}
 	refs := map[string]Row{}
 	for _, r := range reference.rows {
@@ -179,7 +180,14 @@ func (s *Store) syncPrices(ctx context.Context) {
 	if len(conflicts) > 0 {
 		cache["error"] = "两源单价冲突，保留已有价格"
 	}
-	if WriteJSON(path, cache) == nil {
-		_ = s.loadPrices()
+	if err := WriteJSON(path, cache); err != nil {
+		return err
 	}
+	return s.loadPrices()
+}
+
+func (s *Store) RefreshPrices(ctx context.Context) error {
+	s.work.Lock()
+	defer s.work.Unlock()
+	return s.syncPrices(ctx, true)
 }

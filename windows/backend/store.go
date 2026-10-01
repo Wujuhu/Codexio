@@ -237,7 +237,7 @@ func (s *Store) Run(ctx context.Context, changed func()) {
 		if !s.options.Mock {
 			e = s.collect(ctx, force)
 			if e == nil {
-				s.syncPrices(ctx)
+				_ = s.syncPrices(ctx, false)
 			}
 		}
 		// Successful file transactions must be visible even when another file

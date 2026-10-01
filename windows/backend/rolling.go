@@ -22,8 +22,7 @@ type RollingEstimator struct {
 
 func NewRollingEstimator(store *Store, config func() Row, changed func()) (*RollingEstimator, error) {
 	_, err := store.db.Exec(`CREATE TABLE IF NOT EXISTS usage_week_intervals(id INTEGER PRIMARY KEY AUTOINCREMENT,end_at TEXT NOT NULL,data TEXT NOT NULL);
-	CREATE INDEX IF NOT EXISTS week_intervals_end ON usage_week_intervals(end_at DESC,id DESC);
-	DELETE FROM usage_week_intervals WHERE id NOT IN(SELECT id FROM usage_week_intervals ORDER BY end_at DESC,id DESC LIMIT 100)`)
+	CREATE INDEX IF NOT EXISTS week_intervals_end ON usage_week_intervals(end_at DESC,id DESC)`)
 	if err != nil {
 		return nil, err
 	}
@@ -134,10 +133,8 @@ func (e *RollingEstimator) process(now time.Time) {
 	if _, err = tx.Exec("INSERT INTO usage_week_intervals(end_at,data) VALUES(?,?)", ledgerStamp(endAt), string(b)); err != nil {
 		return
 	}
-	if _, err = tx.Exec("DELETE FROM usage_week_intervals WHERE id NOT IN(SELECT id FROM usage_week_intervals ORDER BY end_at DESC,id DESC LIMIT 100)"); err == nil {
-		if tx.Commit() == nil && e.changed != nil {
-			e.changed()
-		}
+	if tx.Commit() == nil && e.changed != nil {
+		e.changed()
 	}
 }
 
@@ -186,7 +183,7 @@ func (e *RollingEstimator) usage(start, end time.Time, sole bool) (int64, float6
 }
 
 func (e *RollingEstimator) reprice(version string) error {
-	rows, err := e.store.db.Query("SELECT id,data FROM usage_week_intervals ORDER BY end_at DESC,id DESC LIMIT 100")
+	rows, err := e.store.db.Query("SELECT id,data FROM usage_week_intervals ORDER BY end_at DESC,id DESC")
 	if err != nil {
 		return err
 	}
@@ -245,7 +242,7 @@ func (e *RollingEstimator) Rows(account string) []Row {
 	if account == "" {
 		return []Row{}
 	}
-	rows, err := e.store.db.Query("SELECT data FROM usage_week_intervals WHERE json_extract(data,'$.account_key')=? ORDER BY end_at DESC,id DESC LIMIT 100", account)
+	rows, err := e.store.db.Query("SELECT data FROM usage_week_intervals WHERE json_extract(data,'$.account_key')=? ORDER BY end_at DESC,id DESC LIMIT 20", account)
 	if err != nil {
 		return []Row{}
 	}
