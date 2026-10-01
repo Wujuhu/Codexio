@@ -7,7 +7,7 @@
 <p align="center">在 Mac 和 Windows 上查看 Codex 额度、用量与任务，在 iPhone 上继续阅读。</p>
 
 <p align="center">
-  <a href="https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.exe"><strong>下载 Windows 版</strong></a> ·
+  <a href="https://github.com/Wujuhu/Codexio/releases/download/v0.3.5/Codexio.exe"><strong>下载 Windows 版</strong></a> ·
   <a href="https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.app.zip"><strong>下载 macOS 版</strong></a> ·
   <a href="https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.ipa"><strong>下载 iPhone 版</strong></a> ·
   <a href="https://github.com/Wujuhu/Codexio/releases/latest">最新版本</a> ·
@@ -20,7 +20,7 @@ Codexio 是围绕 Codex 日常使用打造的原生应用：在一个界面中�
 
 | 平台 | 版本 | 系统要求 | 下载 |
 | --- | --- | --- | --- |
-| Windows | [0.3.5](windows/VERSION) | Windows 10/11 x64，WebView2 Runtime | [Codexio.exe](https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.exe) |
+| Windows | [0.3.5](windows/VERSION) | Windows 10/11 x64，WebView2 Runtime | [Codexio.exe](https://github.com/Wujuhu/Codexio/releases/download/v0.3.5/Codexio.exe) |
 | macOS | [0.3.5](macos/VERSION) | macOS 15+，Apple Silicon（arm64） | [Codexio.app.zip](https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.app.zip) |
 | iPhone | [0.3.1](ios/VERSION) | iOS 26+ | [Codexio.ipa](https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.ipa) |
 
