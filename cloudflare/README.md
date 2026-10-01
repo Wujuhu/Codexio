@@ -1,12 +1,12 @@
 # 手机阅读与同步协议
 
-**2026-10-01 本地准备：** 本目录新增 `request-images-v1`、独立图片存储、三天图片/七天消息清理及 `0003_request_images.sql`。本轮没有执行远程迁移、部署、修改账户资源或推送 Git；下文的 2026-09-30 记录仅描述此前生产状态。新行为要在明确获得云部署授权后，先迁移再部署才会生效。
+**2026-10-01 已部署：** 用户明确要求“完成云端部署”后，已执行 `0003_request_images.sql` 并部署本目录 Worker，生产端开启 `request-images-v1`、独立图片存储、三天图片/七天消息保留与每 15 分钟清理。生产协议核验及实际定时清理均通过，详见文末的 2026-10-01 记录；2026-09-30 记录保留为历史。没有推送 Git、发布安装包或更改客户端版本。
 
 此前已于 **2026-09-30 15:12:20（Asia/Shanghai）** 按用户明确授权完成 Codexio 同步服务的 D1 详情迁移和 Worker 部署。生产端启用 `request-details-v1` 与 `request-kinds-v1`，新版本接收 100% 流量。部署源码来自本地提交 `fbb33f0`，已回读远程模块并核对源码一致；没有推送 Git、创建 GitHub Release、修改 App 版本或 Windows。
 
 ## 部署前提与兼容
 
-1. 部署须取得用户明确的云部署授权，并使用可用的 Cloudflare 管理 API 凭据。2026-09-30 的授权仅用于下方记载的历史部署；本轮本地修改没有复用该授权执行任何远程操作。
+1. 部署须取得用户明确的云部署授权，并使用可用的 Cloudflare 管理 API 凭据。2026-10-01 部署依据本次新的明确授权；后续变更不得将本次授权扩展为任意生产操作。
 2. 对现有 D1 确认已执行 `migrations/0002_request_details.sql`，再显式执行 `migrations/0003_request_images.sql`。新迁移使用可重复的 `CREATE IF NOT EXISTS` / `INSERT OR IGNORE`，添加图片表、生命周期表、内容到期队列、索引和清理触发器；已有 payload 不在 SQL 中直接改写，交给 Worker 有界清理并重算 digest。`schema.sql` 供新库初始化使用。
 3. 再部署本地 `worker.mjs` 与配置。`DETAILS_ENABLED=1` 启用详情；`IMAGES_ENABLED=1` 且图片/生命周期表均存在时声明 `request-images-v1`。关闭能力标志不停止到期清理。新 Worker 必须在 `0003` 后部署：缺少到期队列表时摘要返回 `RETENTION_UNSUPPORTED`，不会继续接受无法履行保留期限的上传。配置将定时任务改为每 15 分钟执行一次。
 4. 发布前由获授权的协调者核对实际 Worker、D1 绑定、索引、能力响应、配对与撤销行为，再使用真实 D1 返回的 `meta.rows_read` / `meta.rows_written` 判断额度。不要从本地 SQL 审计推断已部署或云端验证通过。
@@ -87,7 +87,7 @@ Mac 正文来源按请求记录实际日志片段，旧记录复用既有扫描�
 
 复用既有 `MobileProtocol.swift` 的证书固定、消息编码、SHA-256 和凭据隔离，`MobileSync.swift` 的串行后台队列/内容签名发布，以及 `MobileStore.swift` 的前台轮询、请求合并、generation 和按主机缓存。账本原文恢复由 `Database.requestMessageDetail` 提供；没有新增采集器或历史重扫。Markdown 采用系统 `AttributedString` 与 SwiftUI 控件，没有第三方渲染执行环境。
 
-本轮云端修改只做源码审阅、本地 `node --check`，并通过既有 `.venv/bin/python` 在内存 SQLite 应用 `schema.sql` 后重复执行 `0003_request_images.sql`；没有运行远程 D1 命令、部署或新增测试文件/维护性测试套件。统一 Swift 编译、既有最小运行冒烟和 ZIP/IPA 交付校验由本轮主执行者完成。图片传输沿用既有 envelope、SHA-256、64 KiB 分块、host/reader 鉴权和全局预算，保留正文原有有界容量事务。
+开发准备阶段完成源码审阅、本地 `node --check`，并通过既有 `.venv/bin/python` 在内存 SQLite 应用 `schema.sql` 后重复执行 `0003_request_images.sql`；该阶段没有执行远程迁移或部署。2026-10-01 获得新的明确授权后完成下述生产部署与核验，未新增维护性测试套件。统一 Swift 编译、既有最小运行冒烟和 ZIP/IPA 交付校验已由客户端开发打包完成。图片传输沿用既有 envelope、SHA-256、64 KiB 分块、host/reader 鉴权和全局预算，保留正文原有有界容量事务。
 
 ## 生产部署核验 · 2026-09-30
 
@@ -98,3 +98,14 @@ Mac 正文来源按请求记录实际日志片段，旧记录复用既有扫描�
 - 本机代理按域名建立连接时返回隧道 503；核验客户端使用该域名公开解析的连接 IP，并继续校验原域名 TLS 证书及 Host，生产健康与协议核验通过。此方式只用于本次核验，未改系统网络或 App 地址，不在 App 中固定 IP。
 - 核验结果与实际 D1 管理查询元数据：`build/checks/v034-work/cloud-deployment.json`；迁移结果：`cloud-migration.json`；源码及设置备份：`build/backups/cloudflare/20260930T070355Z`。
 - 该核验是生产服务协议检查，不等于 iPhone 真机验收。Mac 须保持主程序运行以提供新正文；已有的否定能力缓存最多保留一小时，用户需要立即重新协商时，可自行关闭再开启 Mac 同步，然后在手机刷新/重试，配对凭据可继续使用。
+
+## 生产图片能力部署核验 · 2026-10-01
+
+- 用户本次明确授权完成云端部署。先保存线上模块、配置、计划、数据库结构和 D1 Time Travel 恢复点，再执行增量迁移 `0003_request_images.sql`；三张新表、四个索引、三个触发器及外键核对通过。备份在 `build/backups/cloudflare/20261001T130813Z/`。
+- Worker 于 2026-10-01 21:11:59（Asia/Shanghai）更新，版本为 `1f184766-27f0-4641-814e-f9186b26c577`，部署 ID 为 `89c0030a-addf-4126-bc28-239e3ab90493`，接收 100% 流量。源码来自本地提交 `f59e32c`；回读线上模块 SHA-256 为 `e030b9bfe42598d02c3bf80a5b3916bee8fc5043ba2b8e98511f0a404fe0ff45`，与本地文件完全一致。
+- 保留原有 DB、RATE 绑定及每日 20,000 请求预算，启用 `DETAILS_ENABLED=1`、`IMAGES_ENABLED=1`，清理计划更新为 `*/15 * * * *`。生产能力响应已确认同时包含 `request-kinds-v1`、`request-details-v1`、`request-images-v1`。
+- 使用临时模拟 host/reader 完成 23 次最终协议核验：配对、图片先于详情上传、未关联图片不可读、正文内图片引用、两段图片读取及完整 SHA-256/PNG 字节一致、重复上传、固定生命周期、错误凭据拒绝、七天旧摘要与当前任务文本清理且统计保留、原始三天/七天截止后立即拒读、过期图片不可续期，以及 reader 撤销后的图片读取拒绝。
+- 另设不接受真实客户端访问的临时清理记录；没有调用手动清理来替代定时执行。2026-10-01 21:15:39（Asia/Shanghai）观察到过期图片、详情、生命周期行已被计划任务实际删除，旧摘要文本也已剥离。全部协议和清理模拟记录随后移除。
+- 核验只使用模拟内容，没有读取真实用户正文或启动/重启已安装 Mac App、iPhone App。本机默认 Python User-Agent 曾收到非 JSON 的边缘拦截响应；核验客户端使用明确的 Codexio 部署 User-Agent 后通过，未改系统网络、服务地址或固定连接 IP。
+- 总记录在 `build/checks/cloud-images-deploy-20261001/deployment.json`，迁移、D1 管理查询元数据、源码/绑定回读及模拟记录清理证据位于同目录。此次仅云端部署和本地文档提交，没有 Git 推送、GitHub Release 或客户端重新打包。
+- 已运行的 Mac 可能仍缓存旧的“不支持图片”能力，最长一小时。需要立即重新协商时，用户可在 Mac 设置中关闭后重新开启同步，再在手机刷新；配对关系保留，图片按现有批次逐步上传。本次协议核验不等于 iPhone 真机验收。
