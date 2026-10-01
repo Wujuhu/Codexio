@@ -18,12 +18,13 @@ export const rows = (value: any): Row[] => Array.isArray(value) ? value : [];
 export const text = (value: any, fallback = '—'): string => value === null || value === undefined || value === '' ? fallback : String(value);
 export const number = (value: any): number | null => value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value);
 export function numeric(value: any): string { const n=number(value); return n === null ? '—' : new Intl.NumberFormat(undefined, {maximumFractionDigits:0}).format(n); }
-export function compact(value: any): string {
+export function compact(value: any, fractionDigits:0|1=1): string {
   const n=number(value);
   if(n===null)return'—';
   const absolute=Math.abs(n);
-  const [unit,suffix]=absolute>=999_950_000?[1e9,'B']:absolute>=999_950?[1e6,'M']:absolute>=1e3?[1e3,'K']:[1,''];
-  return (n/unit).toLocaleString('en-US',{maximumFractionDigits:suffix?1:0})+suffix;
+  const edge=fractionDigits===0?999.5:999.95;
+  const [unit,suffix]=absolute>=edge*1e6?[1e9,'B']:absolute>=edge*1e3?[1e6,'M']:absolute>=1e3?[1e3,'K']:[1,''];
+  return (n/unit).toLocaleString('en-US',{maximumFractionDigits:suffix?fractionDigits:0})+suffix;
 }
 export function cost(value: any): string { const n=number(value); return n === null ? '—' : '$' + n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
 export function priced(row: Row, key='cost_usd'): string { const en=document.documentElement.lang==='en';const value=row[key] ?? row.usd; return number(value)===null ? en?'Unpriced':'未定价' : cost(value) + (row.cost_complete===false || Number(row.unpriced_calls)>0 || row.pricing_status==='partial' ? en?' · Partially priced':' · 部分定价' : ''); }

@@ -40,7 +40,36 @@ export function preview(record: Row): string {
 
 export function metadata(record: Row, timeOnly=false): string {
   const context = number(record.model_context_window);
-  return [logTime(record.timestamp,timeOnly), effort(record.reasoning_effort), speed(record.service_tier), context !== null ? compact(context) : '',record.is_subagent?tr('子代理'):record.record_kind==='unassigned'?tr('未归属调用'):''].filter(Boolean).join(' · ');
+  return [logTime(record.timestamp,timeOnly), effort(record.reasoning_effort), speed(record.service_tier), context !== null ? compact(context,0) : '',record.is_subagent?tr('子代理'):record.record_kind==='unassigned'?tr('未归属调用'):''].filter(Boolean).join(' · ');
+}
+
+function startedMillis(value:unknown):number|null {
+  if(value==null||value==='')return null;
+  const n=number(value),time=n===null?Date.parse(String(value)):n<1e12?n*1000:n;
+  return Number.isFinite(time)?time:null;
+}
+
+export function runningDuration(record:Row,now=Date.now()):boolean {
+  if(!(record.duration_running??(record.request_status??record.status)==='running'))return false;
+  if(Array.isArray(record.duration_active_starts))return record.duration_active_starts.some((value:unknown)=>{const start=startedMillis(value);return start!==null&&now-start<86400000});
+  const start=startedMillis(record.duration_started_at??record.started_at??record.timestamp);
+  return start!==null&&now-start<86400000;
+}
+
+export function durationMilliseconds(record:Row,now=Date.now()):number|null {
+  if(!runningDuration(record,now))return number(record.duration_ms);
+  if(Array.isArray(record.duration_active_starts)){
+    const base=number(record.duration_completed_ms);
+    const starts=record.duration_active_starts.map(startedMillis);
+    if(base===null||!starts.length)return null;
+    let elapsed=base;
+    for(const start of starts){if(start===null)return null;elapsed+=Math.max(0,now-start)}
+    return elapsed;
+  }
+  // Compatibility for existing single-segment projections awaiting refresh.
+  if(Number(record.duration_segments??1)>1)return null;
+  const start=startedMillis(record.duration_started_at??record.started_at??record.timestamp);
+  return start===null?null:Math.max(0,now-start);
 }
 
 export function logTime(value:unknown,timeOnly=false):string {

@@ -116,19 +116,21 @@ func (s *Store) project() error {
 	priceChanged := dataString(state, "prices") != version
 	full := prior == "" || priceChanged
 	groupFull := full || ValueInt(state["request_projection_version"]) != requestMetadataVersion
+	durationChanged := ValueInt(state["duration_projection_version"]) != 1
 	// Running status expires without rescanning history. Future rows are filtered by query time.
 	now := time.Now()
 	expired := false
 	var stale int
 	_ = tx.QueryRow(`SELECT count(*) FROM usage_request_groups WHERE json_extract(data,'$.request_status')='running' AND timestamp<?`, ledgerStamp(now.Add(-24*time.Hour))).Scan(&stale)
 	expired = stale > 0
-	if !groupFull && ValueInt(state["revision"]) == revision && !expired {
+	if !groupFull && ValueInt(state["revision"]) == revision && !expired && !durationChanged {
 		if s.Generation() == 0 {
 			s.generation.Store(ValueInt(state["generation"]))
 		}
 		return nil
 	}
-	dirty, e := projectionDirtySessions(tx, expired)
+	// Only active sessions need the new duration projection. No log replay.
+	dirty, e := projectionDirtySessions(tx, expired || durationChanged)
 	if e != nil {
 		return e
 	}
@@ -204,7 +206,7 @@ func (s *Store) project() error {
 		return e
 	}
 	generation := s.Generation() + 1
-	_, e = tx.Exec("INSERT INTO usage_query_state VALUES('go_projection',?) ON CONFLICT(key) DO UPDATE SET data=excluded.data", dataJSON(Row{"revision": revision, "prices": version, "generation": generation, "request_projection_version": requestMetadataVersion}))
+	_, e = tx.Exec("INSERT INTO usage_query_state VALUES('go_projection',?) ON CONFLICT(key) DO UPDATE SET data=excluded.data", dataJSON(Row{"revision": revision, "prices": version, "generation": generation, "request_projection_version": requestMetadataVersion, "duration_projection_version": 1}))
 	if e != nil {
 		return e
 	}
@@ -614,13 +616,20 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 		var finalMeta Row
 		duration := float64(0)
 		durationKnown := true
+		activeStarts := []string{}
 		segments := 0
 		for _, key := range keys {
 			meta := bases[key].meta
 			mainContinuation := !ValueBool(meta["is_subagent"]) && !approvalRequest(meta) && (dataString(meta, "continuation_of") != "" || dataString(meta, "root_turn_id") != "" && key != root)
 			if key == root || mainContinuation {
 				segments++
-				if d, ok := ValueFloat(meta["duration_ms"]); ok && d >= 0 {
+				if dataString(meta, "status") == "running" && status == "running" {
+					if started, ok := ParseStamp(meta["started_at"]); ok && now.Sub(started) < 24*time.Hour {
+						activeStarts = append(activeStarts, ledgerStamp(started))
+					} else {
+						durationKnown = false
+					}
+				} else if d, ok := ValueFloat(meta["duration_ms"]); ok && d >= 0 {
 					duration += d
 				} else {
 					start, ok := ParseStamp(meta["started_at"])
@@ -648,7 +657,7 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 		if segments > 1 {
 			group["duration_segments"] = segments
 			group["duration_ms"] = nil
-			if durationKnown {
+			if durationKnown && len(activeStarts) == 0 {
 				group["duration_ms"] = duration
 			}
 		}
@@ -666,7 +675,12 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 				group["duration_ms"] = float64(end.Sub(start).Milliseconds())
 			}
 		}
-		group["duration_running"] = status == "running"
+		group["duration_running"] = status == "running" && len(activeStarts) > 0
+		group["duration_active_starts"] = activeStarts
+		group["duration_completed_ms"] = nil
+		if durationKnown {
+			group["duration_completed_ms"] = duration
+		}
 		group["duration_started_at"] = group["started_at"]
 		if e = saveGroup(tx, group); e != nil {
 			return e

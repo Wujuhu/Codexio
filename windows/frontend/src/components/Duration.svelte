@@ -1,7 +1,27 @@
 <script lang="ts">
- import{onDestroy}from'svelte';import{number}from'../lib/api';export let milliseconds:any=null;export let running=false;let elapsed:number|null=null;let timer:ReturnType<typeof setInterval>|undefined;
- $: configure(milliseconds,running);
- function configure(value:any,active:boolean){if(timer)clearInterval(timer);timer=undefined;const base=number(value);elapsed=base;if(active&&base!==null){const began=performance.now();timer=setInterval(()=>elapsed=base+performance.now()-began,1000)}}
- onDestroy(()=>{if(timer)clearInterval(timer)});
+ import{onMount}from'svelte';
+ import{type Row}from'../lib/api';
+ import{duration,durationMilliseconds,runningDuration}from'./logFormat';
+ export let record:Row={};
+ let element:HTMLSpanElement;let now=Date.now();let visible=false;let foreground=false;
+ let timer:ReturnType<typeof setInterval>|undefined;
+ $: active=runningDuration(record);
+ $: elapsed=durationMilliseconds(record,now);
+ $: configure(active&&visible&&foreground);
+ function stop(){if(timer!==undefined){clearInterval(timer);timer=undefined}}
+ function configure(ticking:boolean){
+  if(!ticking){stop();return}
+  if(timer!==undefined)return;
+  now=Date.now();
+  timer=setInterval(()=>{now=Date.now();if(!runningDuration(record,now))stop()},1000);
+ }
+ onMount(()=>{
+  const visibility=()=>{foreground=!document.hidden;now=Date.now()};
+  visibility();
+  document.addEventListener('visibilitychange',visibility);
+  const observer=new IntersectionObserver(entries=>{visible=entries[0]?.isIntersecting??false;if(visible)now=Date.now()});
+  observer.observe(element);
+  return()=>{observer.disconnect();document.removeEventListener('visibilitychange',visibility);stop()};
+ });
 </script>
-{elapsed===null?'—':(elapsed/1000).toFixed(1)+'s'}
+<span bind:this={element}>{duration(elapsed)}</span>

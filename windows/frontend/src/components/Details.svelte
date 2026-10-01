@@ -2,9 +2,10 @@
   import {onDestroy} from 'svelte';
   import {api,rows,text,kind,numeric,compact,priced,stamp,type Row} from '../lib/api';
   import {tr} from '../lib/i18n';
-  import {effort,speed,preview,duration} from './logFormat';
+  import {effort,speed,preview} from './logFormat';
   import Markdown from './Markdown.svelte';
   import Model from './Model.svelte';
+  import Duration from './Duration.svelte';
   import Icon from './Icon.svelte';
   export let id=''; export let reloadKey=''; export let onerror:(error:any)=>void=()=>{};
   let data:Row={}, busy=false, page=1, sequence=0, copied='', currentId='', callsOpen=false;
@@ -35,7 +36,7 @@
         <div class="field-pair"><span class="muted">{tr('推理强度')}</span><span>{effort(request.reasoning_effort)||'—'}</span></div>
         {#if speed(request.service_tier)}<div class="field-pair"><span class="muted">{tr('速度')}</span><span>{speed(request.service_tier)}</span></div>{/if}
         <div class="field-pair"><span class="muted">{tr('费用')}</span><span>{priced(request)}</span></div>
-        <div class="field-pair"><span class="muted">{tr('耗时')}</span><span>{duration(request.duration_ms)}</span></div>
+        <div class="field-pair"><span class="muted">{tr('耗时')}</span><Duration record={request}/></div>
         {#each [['input_tokens','输入 Token'],['cached_input_tokens','缓存读取'],['cache_write_input_tokens','缓存写入'],['output_tokens','输出 Token'],['reasoning_output_tokens','推理输出'],['total_tokens','总 Token']] as [key,label]}<div class="field-pair"><span class="muted">{tr(label)}</span><span>{compact(request[key])}</span></div>{/each}
       </section>
       <section><div class="row between"><h3>{tr('原始请求')}</h3><button class="quiet" aria-label={tr('复制')} disabled={!body(data.user)} onclick={()=>copy(body(data.user),'user')}><Icon name={copied==='user'?'check':'copy'} size={15}/></button></div>

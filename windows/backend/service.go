@@ -85,7 +85,7 @@ func NewService(directory, executable, version string, mock bool, callbacks Desk
 	opts.Changed = func() { s.notify("update") }
 	s.updater = NewUpdater(opts)
 	s.reports = NewReportManager(s.store, directory, s.Config)
-	s.upstream = NewUpstreamProxy(directory, s.Config, mock, func() { s.notify("upstream") })
+	s.upstream = NewUpstreamProxy(directory, version, s.Config, mock, func() { s.notify("upstream") })
 	s.mobile = NewMobileHost(directory, s.store, s.quota, s.Config, mock, func() { s.notify("mobile") })
 	return s, nil
 }
@@ -413,6 +413,7 @@ func (s *Service) UpstreamAction(enabled bool) (Row, error) {
 	oldEnabled := ValueBool(s.Config()["upstream_detection_enabled"])
 	r, e := s.upstream.Toggle(enabled)
 	if e != nil {
+		s.notify("upstream")
 		return previous, e
 	}
 	if e = SaveConfig(s.directory, Row{"upstream_detection_enabled": enabled}); e != nil {
@@ -422,6 +423,7 @@ func (s *Service) UpstreamAction(enabled bool) (Row, error) {
 	s.mu.Lock()
 	s.config["upstream_detection_enabled"] = enabled
 	s.mu.Unlock()
+	s.quota.Refresh()
 	s.notify("settings")
 	return r, nil
 }

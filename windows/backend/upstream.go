@@ -30,6 +30,7 @@ import (
 type UpstreamProxy struct {
 	mu              sync.Mutex
 	directory       string
+	version         string
 	config          func() Row
 	mock            bool
 	changed         func()
@@ -49,12 +50,15 @@ type UpstreamProxy struct {
 	cancel          context.CancelFunc
 }
 
-func NewUpstreamProxy(dir string, config func() Row, mock bool, changed func()) *UpstreamProxy {
-	return &UpstreamProxy{directory: dir, config: config, mock: mock, changed: changed, status: "disabled", desiredEnabled: ValueBool(config()["upstream_detection_enabled"]), observations: make(chan Row, 64), websockets: map[*upstreamDuplex]bool{}}
+func NewUpstreamProxy(dir, version string, config func() Row, mock bool, changed func()) *UpstreamProxy {
+	return &UpstreamProxy{directory: dir, version: version, config: config, mock: mock, changed: changed, status: "disabled", desiredEnabled: ValueBool(config()["upstream_detection_enabled"]), observations: make(chan Row, 64), websockets: map[*upstreamDuplex]bool{}}
 }
 func (p *UpstreamProxy) Public() Row {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.publicLocked()
+}
+func (p *UpstreamProxy) publicLocked() Row {
 	return Row{"enabled": p.server != nil, "desired_enabled": p.desiredEnabled, "status": p.status, "error": p.lastError, "route_changed": p.routeChanged, "client_running": p.clientRunning, "already_targeted": p.alreadyTargeted, "restart_required": p.restartRequired}
 }
 func (p *UpstreamProxy) Toggle(enabled bool) (Row, error) {
@@ -71,10 +75,30 @@ func (p *UpstreamProxy) Toggle(enabled bool) (Row, error) {
 	}
 	p.mu.Lock()
 	if p.server != nil {
+		client, err := p.openConfigClient()
+		if err != nil {
+			p.mu.Unlock()
+			return p.Public(), err
+		}
+		matched, err := client.targets(ValueStrings(p.journal["base_path"]), ValueString(p.journal["applied_endpoint"]))
+		client.close()
+		if err != nil || !matched {
+			p.alreadyTargeted = false
+			p.mu.Unlock()
+			if err == nil {
+				err = errors.New("路由已被其他程序修改，保留当前配置和转发")
+			}
+			return p.Public(), err
+		}
 		p.desiredEnabled = true
 		p.routeChanged = false
 		p.clientRunning = clientRunning
 		p.alreadyTargeted = true
+		p.status = "running"
+		p.lastError = ""
+		if !clientRunning {
+			p.restartRequired = false
+		}
 		p.mu.Unlock()
 		return p.Public(), nil
 	}
@@ -90,7 +114,12 @@ func (p *UpstreamProxy) Toggle(enabled bool) (Row, error) {
 	if e := p.restoreJournal(); e != nil {
 		return Row{"enabled": false, "error": e.Error()}, e
 	}
-	plan, e := upstreamResolve()
+	client, e := p.openConfigClient()
+	if e != nil {
+		return p.publicLocked(), e
+	}
+	defer client.close()
+	plan, e := client.resolve()
 	if e != nil {
 		return Row{"enabled": false, "error": e.Error()}, e
 	}
@@ -110,48 +139,18 @@ func (p *UpstreamProxy) Toggle(enabled bool) (Row, error) {
 	token := base64.RawURLEncoding.EncodeToString(random)
 	endpoint := "http://" + ln.Addr().String() + "/" + token + "/v1"
 	path := ValueString(plan["patch_path"])
-	original, e := os.ReadFile(path)
-	existed := e == nil
-	if e != nil && !os.IsNotExist(e) {
-		ln.Close()
-		return nil, e
-	}
 	locator := ValueStrings(plan["locator"])
-	table, key := locator[:len(locator)-1], locator[len(locator)-1]
-	line := upstreamQuoteKey(key) + " = " + strconvQuote(endpoint)
-	patched, old, present, e := upstreamPatch(string(original), table, key, &line)
-	if e != nil {
-		ln.Close()
-		return nil, e
-	}
-	j := Row{"route_version": "go-1", "config": path, "locator": locator, "original_present": present, "original_line": old, "original_endpoint": plan["original_endpoint"], "applied_endpoint": endpoint, "existed": existed, "original_digest": upstreamDigest([]any{present, plan["original_endpoint"]}), "applied_digest": upstreamDigest([]any{true, endpoint})}
-	if e = WriteJSON(p.journalPath(), j); e != nil {
-		ln.Close()
-		return nil, e
-	}
-	// Check again immediately before writing; preserve concurrent user edits.
-	current, _ := os.ReadFile(path)
-	if !bytes.Equal(current, original) {
-		_ = os.Remove(p.journalPath())
-		ln.Close()
-		return nil, errors.New("Codex 配置同时发生变化，请重试")
-	}
-	if e = writePrivateFile(path, []byte(patched)); e != nil {
-		_ = os.Remove(p.journalPath())
-		ln.Close()
-		return nil, e
-	}
+	before, present := plan["original_endpoint"], ValueBool(plan["original_present"])
+	j := Row{"route_version": "go-rpc-1", "config": path, "locator": locator, "base_path": plan["base_path"], "original_present": present, "original_endpoint": before, "applied_endpoint": endpoint, "origin": plan["origin"], "provider_id": plan["provider"], "original_digest": upstreamDigest([]any{present, before}), "applied_digest": upstreamDigest([]any{true, endpoint})}
 	db, e := sql.Open("sqlite", filepath.Join(p.directory, "upstream.sqlite"))
 	if e != nil {
 		ln.Close()
-		_ = p.restoreJournal()
 		return nil, e
 	}
 	db.SetMaxOpenConns(1)
 	if _, e = db.Exec(`PRAGMA journal_mode=WAL;PRAGMA busy_timeout=5000;CREATE TABLE IF NOT EXISTS observations(response_id TEXT PRIMARY KEY,model TEXT NOT NULL,event TEXT NOT NULL,rank INTEGER NOT NULL,observed_at REAL NOT NULL);CREATE TABLE IF NOT EXISTS revision(id INTEGER PRIMARY KEY,value INTEGER NOT NULL);INSERT OR IGNORE INTO revision VALUES(1,0)`); e != nil {
 		db.Close()
 		ln.Close()
-		_ = p.restoreJournal()
 		return nil, e
 	}
 	proxy := httputil.NewSingleHostReverseProxy(target)
@@ -211,19 +210,43 @@ func (p *UpstreamProxy) Toggle(enabled bool) (Row, error) {
 	p.db = db
 	p.journal = j
 	p.cancel = cancel
+	go p.writeObservations(ctx)
+	go func() { _ = server.Serve(ln) }()
+	// The relay is accepting requests before Codex adopts its address, like Mac.
+	if e = WriteJSON(p.journalPath(), j); e != nil {
+		p.closeRelayLocked()
+		return p.publicLocked(), e
+	}
+	e = client.write(locator, endpoint, path, ValueString(plan["version"]))
+	if e == nil {
+		var matched bool
+		matched, e = client.targets(ValueStrings(plan["base_path"]), endpoint)
+		if e == nil && !matched {
+			e = errors.New("路由未生效，正在恢复")
+		}
+	}
+	if e != nil {
+		// A separate RPC deadline permits rollback even after the write timed out.
+		restoreError := p.restoreJournal()
+		if restoreError == nil {
+			p.closeRelayLocked()
+		} else {
+			p.status = "error"
+			p.lastError = restoreError.Error()
+		}
+		return p.publicLocked(), errors.Join(e, restoreError)
+	}
 	p.status = "running"
 	p.desiredEnabled = true
 	p.routeChanged = true
 	p.clientRunning = clientRunning
-	p.alreadyTargeted = false
+	p.alreadyTargeted = true
 	p.restartRequired = clientRunning
 	p.lastError = ""
-	go p.writeObservations(ctx)
-	go func() { _ = server.Serve(ln) }()
 	if p.changed != nil {
 		go p.changed()
 	}
-	return Row{"enabled": true, "desired_enabled": true, "status": "running", "route_changed": true, "client_running": clientRunning, "already_targeted": false, "restart_required": clientRunning}, nil
+	return p.publicLocked(), nil
 }
 func (p *UpstreamProxy) Stop() error {
 	if p.mock {
@@ -252,6 +275,20 @@ func (p *UpstreamProxy) stop(clientRunning bool) error {
 		p.lastError = e.Error()
 		return e
 	}
+	p.closeRelayLocked()
+	p.status = "disabled"
+	p.lastError = ""
+	p.desiredEnabled = false
+	p.routeChanged = hadRoute
+	p.clientRunning = clientRunning
+	p.alreadyTargeted = false
+	p.restartRequired = hadRoute && clientRunning
+	if p.changed != nil {
+		go p.changed()
+	}
+	return nil
+}
+func (p *UpstreamProxy) closeRelayLocked() {
 	if p.server != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		_ = p.server.Shutdown(ctx)
@@ -272,17 +309,7 @@ func (p *UpstreamProxy) stop(clientRunning bool) error {
 		p.db = nil
 	}
 	p.listener = nil
-	p.status = "disabled"
-	p.lastError = ""
-	p.desiredEnabled = false
-	p.routeChanged = hadRoute
-	p.clientRunning = clientRunning
-	p.alreadyTargeted = false
-	p.restartRequired = hadRoute && clientRunning
-	if p.changed != nil {
-		go p.changed()
-	}
-	return nil
+	p.journal = nil
 }
 func (p *UpstreamProxy) journalPath() string {
 	return filepath.Join(p.directory, "upstream", "route.json")
@@ -295,11 +322,22 @@ func (p *UpstreamProxy) restoreJournal() error {
 	if e != nil {
 		return errors.New("上游恢复记录无法读取，已保留配置")
 	}
-	if ValueString(j["route_version"]) != "go-1" && ValueInt(j["route_version"]) != 3 {
+	if ValueString(j["route_version"]) != "go-rpc-1" && ValueString(j["route_version"]) != "go-1" && ValueInt(j["route_version"]) != 3 {
 		return p.restoreLegacyJournal(j)
 	}
 	if ValueString(j["original_digest"]) != upstreamDigest([]any{ValueBool(j["original_present"]), j["original_endpoint"]}) || ValueString(j["applied_digest"]) != upstreamDigest([]any{true, j["applied_endpoint"]}) {
 		return errors.New("上游恢复记录校验失败，已保留原配置")
+	}
+	if ValueString(j["route_version"]) == "go-rpc-1" {
+		client, err := p.openConfigClient()
+		if err != nil {
+			return err
+		}
+		defer client.close()
+		if err = client.restore(j); err != nil {
+			return err
+		}
+		return os.Remove(p.journalPath())
 	}
 	path := ValueString(j["config"])
 	locator := ValueStrings(j["locator"])
@@ -321,9 +359,7 @@ func (p *UpstreamProxy) restoreJournal() error {
 		return os.Remove(p.journalPath())
 	}
 	if ValueString(actual) != ValueString(j["applied_endpoint"]) {
-		// A user changed the selected endpoint. Keep that change and stop only
-		// our own route; it no longer points at this process.
-		return os.Remove(p.journalPath())
+		return errors.New("路由已被其他程序修改，保留当前配置和转发")
 	}
 	var line *string
 	if originalPresent {
@@ -353,14 +389,6 @@ func upstreamDigest(value any) string {
 	_ = encoder.Encode(value)
 	return HashString(strings.TrimSuffix(b.String(), "\n"))
 }
-func tomlDecodeProfile(value string, out *Row) error {
-	var m map[string]any
-	if e := toml.Unmarshal([]byte(value), &m); e != nil {
-		return errors.New("客户端配置方案参数无效")
-	}
-	*out = Row(m)
-	return nil
-}
 func (p *UpstreamProxy) RestartClient() error {
 	if p.mock {
 		return errors.New("模拟模式不会重启真实客户端")
@@ -388,130 +416,6 @@ func upstreamNested(doc map[string]any, path []string) (any, bool) {
 		v = next
 	}
 	return v, true
-}
-func upstreamReadTOML(path string) (Row, error) {
-	b, e := os.ReadFile(path)
-	if os.IsNotExist(e) {
-		return Row{}, nil
-	}
-	if e != nil {
-		return nil, e
-	}
-	var m map[string]any
-	if e = toml.Unmarshal(b, &m); e != nil {
-		return nil, e
-	}
-	return Row(m), nil
-}
-func upstreamMerge(a, b Row) Row {
-	r := CloneRow(a)
-	for k, v := range b {
-		if _, ok := v.(map[string]any); ok {
-			r[k] = upstreamMerge(ValueRow(r[k]), ValueRow(v))
-		} else {
-			r[k] = v
-		}
-	}
-	return r
-}
-func upstreamResolve() (Row, error) {
-	rootPath, selectedProfile, e := upstreamDesktopRoute()
-	if e != nil {
-		return nil, e
-	}
-	root, e := upstreamReadTOML(rootPath)
-	if e != nil {
-		return nil, errors.New("Codex 配置不是有效 TOML")
-	}
-	profile := ValueString(root["profile"])
-	if selectedProfile != "" {
-		profile = selectedProfile
-	}
-	overlay := Row{}
-	overlayPath := rootPath
-	prefix := []string{}
-	if profile != "" {
-		if strings.ContainsAny(profile, `/\`) || profile == "." || profile == ".." {
-			return nil, errors.New("配置方案名称无效")
-		}
-		separate := filepath.Join(filepath.Dir(rootPath), profile+".config.toml")
-		if _, e = os.Stat(separate); e == nil {
-			overlayPath = separate
-			overlay, e = upstreamReadTOML(separate)
-			if e != nil {
-				return nil, e
-			}
-		} else {
-			overlay = ValueRow(ValueRow(root["profiles"])[profile])
-			if len(overlay) == 0 {
-				return nil, errors.New("当前配置方案不存在")
-			}
-			prefix = []string{"profiles", profile}
-		}
-	}
-	effective := upstreamMerge(root, overlay)
-	provider := ValueString(effective["model_provider"])
-	if provider == "" {
-		provider = "openai"
-	}
-	for _, unsupported := range []string{"amazon-bedrock", "ollama", "lmstudio"} {
-		if provider == unsupported {
-			return nil, errors.New("当前内置模型供应商没有可接管的 Responses base_url")
-		}
-	}
-	path := rootPath
-	locator := []string{"openai_base_url"}
-	origin := ValueString(effective["openai_base_url"])
-	var original any
-	var originalPresent bool
-	if provider == "openai" {
-		if _, ok := overlay["openai_base_url"]; ok {
-			path = overlayPath
-			locator = append(prefix, "openai_base_url")
-		} else if _, ok := root["openai_base_url"]; !ok && profile != "" {
-			path = overlayPath
-			locator = append(prefix, "openai_base_url")
-		}
-		if origin == "" {
-			auth, _ := systemReadJSON(filepath.Join(filepath.Dir(rootPath), "auth.json"), 1<<20)
-			if ValueString(effective["forced_login_method"]) == "api" || ValueString(auth["OPENAI_API_KEY"]) != "" {
-				origin = "https://api.openai.com/v1"
-			} else {
-				origin = "https://chatgpt.com/backend-api/codex"
-			}
-		}
-	} else {
-		base := ValueRow(ValueRow(root["model_providers"])[provider])
-		over := ValueRow(ValueRow(overlay["model_providers"])[provider])
-		p := upstreamMerge(base, over)
-		if len(p) == 0 {
-			return nil, errors.New("当前模型供应商未定义")
-		}
-		if api := ValueString(p["wire_api"]); api != "" && api != "responses" {
-			return nil, errors.New("上游检测仅支持 Responses API")
-		}
-		origin = ValueString(p["base_url"])
-		locator = []string{"model_providers", provider, "base_url"}
-		if _, ok := over["base_url"]; ok {
-			path = overlayPath
-			locator = append(append([]string{}, prefix...), locator...)
-		}
-	}
-	u, e := url.Parse(origin)
-	if e != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "https" && u.Scheme != "http") {
-		return nil, errors.New("模型服务 base_url 无效或包含不支持的账号/查询参数")
-	}
-	doc, e := upstreamReadTOML(path)
-	if e != nil {
-		return nil, e
-	}
-	original, originalPresent = upstreamNested(map[string]any(doc), locator)
-	if originalPresent {
-		if _, ok := original.(string); !ok {
-			return nil, errors.New("当前模型服务 base_url 字段无效")
-		}
-	}
-	return Row{"root_config": rootPath, "patch_path": path, "locator": locator, "origin": strings.TrimRight(origin, "/"), "provider": provider, "original_endpoint": original, "original_present": originalPresent}, nil
 }
 func strconvQuote(s string) string { b, _ := json.Marshal(s); return string(b) }
 func upstreamQuoteKey(s string) string {

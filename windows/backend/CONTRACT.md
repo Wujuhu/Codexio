@@ -25,6 +25,10 @@ Binding prefix: `codexio/windows/backend.Service`. Use `@wailsio/runtime` `Call.
 
 ## Common field meanings
 
+Active request duration adds `duration_completed_ms` and `duration_active_starts` to `duration_running`/`duration_started_at`. The frontend adds elapsed time only for those active main-request segments, renders HH:MM:SS, and stops its local timer when finished, hidden or outside the viewport. No timer requests SQLite data or publishes ledger state. Existing active sessions receive a one-time derived projection repair without replaying log files.
+
+Windows upstream configuration uses the Mac `config/read` (`includeLayers`) and `config/value/write` (`expectedVersion`) workflow through the existing owned RPC client. The verified user-layer file, profile locator, original value and applied endpoint form the `go-rpc-1` restore journal. Effective-route readback is required after applying a route. Desktop process discovery is only for restart decisions; the CLI binary may live outside the desktop app installation tree. Legacy journals retain their original restore path.
+
 `Query` JSON uses `mode,period,start,end,model,tier,status,search,source,page,page_size,granularity`. Defaultperiod today; start/end local ISO date or timestamp, upperdate inclusive. `source="local"` restricts verified local contributions (reports/activity). Summary uses `usd,tokens,user_requests,input_tokens,cached_input_tokens,cache_hit_rate,unpriced_calls,unpriced_tokens,cost_complete`.
 
 Ledger/group rows preserve original snake-case: `id,timestamp,record_kind,session_title,prompt_preview,output_preview,model,models,reasoning_effort,service_tier,model_context_window,source_ids,request_status,status_label,cost_usd,pricing_status,unpriced_calls,total_tokens,input_tokens,cached_input_tokens,cache_write_input_tokens,output_tokens,duration_ms,call_count,subagent_count,association_note`. Label `automatic_approval_review` as 自动审批审查 / Automatic approval review. It never increases user_request counts or replaces recent true tasks. `context_compaction` is 上下文压缩 / Context compaction. Unknown price remainsnull.

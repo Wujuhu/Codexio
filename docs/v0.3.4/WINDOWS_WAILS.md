@@ -104,6 +104,10 @@ Verification uses the existing three mock smoke checks, production compilation a
 
 # 2026-10-01 visual and data parity
 
+The subsequent live-duration/upstream correction follows `macos/native/UpstreamCoordinator.swift` and its Settings/AppMain dialogs. Windows no longer infers the configuration file from a child executable living beneath the desktop installation: the current ChatGPT package launches its CLI from a separate user-directory cache, which failed that assumption. Codex's `config/read` provides the user layer and version; `config/value/write` applies/restores only the selected route with optimistic concurrency, followed by an effective-config readback. Real read-only config discovery succeeded on this machine; applying, repeated enabling without a write, and restoring were verified in an isolated configuration directory. The user's live route and desktop clients were not changed by verification.
+
+Running durations now render from stable active-segment start timestamps plus completed-segment duration. Only visible duration cells tick, and completed rows retain recorded elapsed time. Context-window labels use whole K/M/B values, such as `828K`. The derived duration migration only includes active sessions, with no new historical log scan.
+
 Windows bundles `InterVariable.woff2` from the user-supplied Inter 4.1 archive together with `Inter-OFL-1.1.txt` (SIL Open Font License 1.1). Latin text and numerals use the bundled variable font; Chinese falls back to the Windows interface font without a system installation. Application compact numbers are locale-independent K/M/B values, while AI report cards keep their established report-specific Chinese notation.
 
 Follow-up to the reported Windows screenshots: activity and overview metric formatters now receive their data explicitly so asynchronous first-load data invalidates the rendered values. Model cells reserve arrow space only when upstream observations exist. Logs distribute spare width across unsized columns and constrain readable minima; pricing uses six equal columns. Plan-history disclosure alignment and spacing are tightened, and the duplicate estimate heading is removed.
