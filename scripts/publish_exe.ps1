@@ -57,7 +57,8 @@ while ($Pending.Count -gt 0) {
 $Destination = Join-Path $DevelopmentDir "Codexio.exe"
 # Windows may allow replacing an image while its process still runs. Preserve
 # the original pathname as well as the process; callers can deliver a pending EXE.
-$RunningDestination = @(Get-CimInstance Win32_Process -Filter "Name='Codexio.exe'" | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.Equals($Destination, [StringComparison]::OrdinalIgnoreCase) })
+$RunningPaths = @(Get-CimInstance Win32_Process -Filter "Name='Codexio.exe'" | Where-Object { $_.ExecutablePath } | Select-Object -ExpandProperty ExecutablePath)
+$RunningDestination = @($RunningPaths | Where-Object { $_.Equals($Destination, [StringComparison]::OrdinalIgnoreCase) })
 if ($RunningDestination.Count -gt 0) {
     throw "The development EXE is running. Its original path and the staged build were preserved."
 }
@@ -75,6 +76,8 @@ try {
     $Index = 0
     foreach ($file in $Files) {
         if ($file.Equals($Destination, [StringComparison]::OrdinalIgnoreCase)) { continue }
+        # A user may be running the previous pending build. Keep that path too.
+        if ($RunningPaths -icontains $file) { continue }
         $Index++
         $Backup = Join-Path $BackupDir ("obsolete-{0}.exe" -f $Index)
         Move-Item -LiteralPath $file -Destination $Backup
@@ -117,7 +120,7 @@ foreach ($directory in ($Directories | Sort-Object Length -Descending)) {
         }
     }
 }
-$Remaining = @(Get-ChildItem -LiteralPath $DevelopmentDir -File -Filter "*.exe" -Recurse -Force)
+$Remaining = @(Get-ChildItem -LiteralPath $DevelopmentDir -File -Filter "*.exe" -Recurse -Force | Where-Object { $RunningPaths -inotcontains $_.FullName })
 if ($Remaining.Count -ne 1 -or $Remaining[0].FullName -ine $Destination) {
     throw "The development directory still contains more than one executable; publication is incomplete."
 }
