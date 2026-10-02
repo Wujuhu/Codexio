@@ -25,8 +25,34 @@ enum MobileFormat {
         return String(value)
     }
     static func money(_ value: Double?) -> String { value.map {String(format:"$%.2f",$0)} ?? "—" }
+    static func duration(_ seconds: Double?) -> String {
+        guard let seconds, seconds.isFinite, seconds >= 0, seconds < Double(Int.max) else { return "—" }
+        let value = Int(seconds)
+        if value >= 3600 { return "\(value/3600)小时\(value%3600/60)分\(value%60)秒" }
+        if value >= 60 { return "\(value/60)分\(value%60)秒" }
+        return "\(value)秒"
+    }
     static let update: DateFormatter = {let f=DateFormatter(); f.dateFormat="M.d HH:mm"; f.timeZone = .autoupdatingCurrent; return f}()
     static func date(_ value: Double) -> String { Date(timeIntervalSince1970:value).formatted(.dateTime.month().day()) }
+}
+struct RequestDuration: View {
+    @EnvironmentObject private var store: MobileStore
+    let item: MobileRequest
+    let active: Bool
+    @Environment(\.scenePhase) private var phase
+    @State private var visible = false
+    var body: some View {
+        Group {
+            if item.status == "running", let start = store.runningStarts[item.id] {
+                TimelineView(.animation(minimumInterval:1,paused:!active || !visible || phase != .active)) { context in
+                    Text(MobileFormat.duration(max(0,context.date.timeIntervalSince(start))))
+                }
+            } else {
+                Text(MobileFormat.duration(item.duration))
+            }
+        }.monospacedDigit().lineLimit(1)
+            .onAppear { visible = true }.onDisappear { visible = false }
+    }
 }
 struct MobileCard<Content: View>: View {
     @ViewBuilder var content: Content
@@ -38,8 +64,8 @@ struct MobileRoot: View {
     var body: some View {
         TabView(selection:$store.tab) {
             NavigationStack { OverviewPage(scan:{scanner=true}).navigationTitle("").toolbar {header} }.tabItem {Label("概览",systemImage:"square.grid.2x2")}.tag(0)
-            NavigationStack { UsagePage().navigationTitle("用量").navigationBarTitleDisplayMode(.large) }.tabItem {Label("用量",systemImage:"chart.xyaxis.line")}.tag(1)
             NavigationStack(path:$store.recordPath) { RecordsPage().navigationTitle("记录").navigationDestination(for:String.self) { RequestDetails(id:$0) } }.tabItem {Label("记录",systemImage:"list.bullet")}.tag(2)
+            NavigationStack { UsagePage().navigationTitle("用量").navigationBarTitleDisplayMode(.large) }.tabItem {Label("用量",systemImage:"chart.xyaxis.line")}.tag(1)
             NavigationStack { MobileSettings(scan:{scanner=true}).navigationTitle("设置") }.tabItem {Label("设置",systemImage:"slider.horizontal.3")}.tag(3)
         }
         .sheet(isPresented:$scanner) { NavigationStack { QRScanner { value in scanner=false; store.beginPair(value) }.ignoresSafeArea(edges:.bottom).navigationTitle("扫描电脑配对二维码").navigationBarTitleDisplayMode(.inline).toolbar {ToolbarItem(placement:.cancellationAction) { Button("取消") {scanner=false} }} } }
@@ -98,7 +124,11 @@ struct OverviewPage: View {
                         if let task = store.overviewTask {
                             if task.status == "running", Date().timeIntervalSince1970-(store.live?.observed ?? 0) > 900 { Text("任务状态待更新").font(.caption).foregroundStyle(.orange) }
                             Text(task.preview ?? "请求预览未同步").font(.title3.weight(.semibold)).lineLimit(3)
-                            Text([task.model,task.effort ?? ""].filter {!$0.isEmpty}.joined(separator:" · ")).font(.caption).foregroundStyle(.secondary)
+                            HStack(alignment:.firstTextBaseline) {
+                                Text([task.model,task.effort ?? ""].filter {!$0.isEmpty}.joined(separator:" · ")).lineLimit(1)
+                                Spacer(minLength:8)
+                                RequestDuration(item:task,active:store.tab == 0).fixedSize()
+                            }.font(.caption).foregroundStyle(.secondary)
                             HStack {Text(MobileFormat.tokens(task.tokens)+" Token"); Spacer();Text(MobileFormat.money(task.cost))}.monospacedDigit()
                         } else { Text("暂无运行或已完成的任务").foregroundStyle(.secondary).padding(.vertical,10) }
                     }
@@ -107,7 +137,7 @@ struct OverviewPage: View {
                 MobileCard { Text("今天").font(.headline); metricRow(store.live?.today ?? MobileMetric()) }
                 if !store.recent.isEmpty {
                     Text("最近使用").font(.title2.bold())
-                    MobileCard { ForEach(Array(store.recent.prefix(3))) { item in Button { store.showRequest(item) } label: {RequestSummary(item:item)}.buttonStyle(.plain); if item.id != store.recent.prefix(3).last?.id {Divider()} } }
+                    MobileCard { ForEach(Array(store.recent.prefix(3))) { item in Button { store.showRequest(item) } label: {RequestSummary(item:store.request(item.id) ?? item,active:store.tab == 0)}.buttonStyle(.plain); if item.id != store.recent.prefix(3).last?.id {Divider()} } }
                 }
             }.padding(20)
         }.background(Color(uiColor:.systemGroupedBackground)).refreshable {store.refresh()}
@@ -186,11 +216,12 @@ struct UsagePage: View {
 }
 struct RequestSummary: View {
     let item: MobileRequest
+    let active: Bool
     var body: some View {
         VStack(alignment:.leading,spacing:7) {
             Text(item.isApproval ? "自动审批审查" : item.preview ?? "请求预览未同步").font(.subheadline.weight(.medium)).lineLimit(2).foregroundStyle(.primary)
-            HStack {Text(item.model);Spacer();Text(MobileFormat.money(item.cost))}.font(.caption).foregroundStyle(.secondary)
-            HStack {Text(Date(timeIntervalSince1970:item.started),style:.time);Text("·");Text(item.effort ?? "");Spacer();Text(MobileFormat.tokens(item.tokens)+" Token")}.font(.caption2).foregroundStyle(.secondary)
+            HStack {Text([item.model,item.effort ?? ""].filter {!$0.isEmpty}.joined(separator:" · ")).lineLimit(1);Spacer();Text(MobileFormat.money(item.cost)).fixedSize()}.font(.caption).foregroundStyle(.secondary)
+            HStack {Text(Date(timeIntervalSince1970:item.started),style:.time);Text("·");RequestDuration(item:item,active:active);Spacer();Text(MobileFormat.tokens(item.tokens)+" Token").fixedSize()}.font(.caption2).foregroundStyle(.secondary)
         }.padding(.vertical,3)
     }
 }
@@ -201,7 +232,7 @@ struct RecordsPage: View {
     private var rows: [MobileRequest] {store.recent.filter {query.isEmpty || ($0.preview ?? "").localizedCaseInsensitiveContains(query) || $0.model.localizedCaseInsensitiveContains(query)}}
     var body: some View {
         List {
-            ForEach(Array(rows.prefix(count))) {item in NavigationLink(value:item.id) {RequestSummary(item:item)}}
+            ForEach(Array(rows.prefix(count))) {item in NavigationLink(value:item.id) {RequestSummary(item:store.request(item.id) ?? item,active:store.tab == 2 && store.recordPath.isEmpty)}}
             if count < rows.count {Button("显示更多") {count+=20}.frame(maxWidth:.infinity)}
         }.searchable(text:$query,prompt:"搜索请求或模型").overlay {if rows.isEmpty {ContentUnavailableView("暂无记录",systemImage:"list.bullet")}}.onChange(of:query) {_,_ in count=20}.refreshable {store.refresh()}
     }
@@ -279,11 +310,11 @@ struct RequestDetails: View {
             if let item {
                 Section("请求信息") {
                     LabeledContent("模型",value:item.model)
-                    LabeledContent("状态",value:["running":"进行中","completed":"已完成","aborted":"已中断"][item.status] ?? item.status)
                     LabeledContent("思考强度",value:item.effort ?? "—")
+                    LabeledContent("状态",value:["running":"进行中","completed":"已完成","aborted":"已中断"][item.status] ?? item.status)
                     LabeledContent("费用",value:MobileFormat.money(item.cost))
                     LabeledContent("Token",value:MobileFormat.tokens(item.tokens))
-                    LabeledContent("耗时",value:item.duration.map {String(format:"%.0f 秒",$0)} ?? "—")
+                    LabeledContent("耗时") { RequestDuration(item:item,active:store.tab == 2) }
                 }
             }
             Section { Text("云端文字最多保留 7 天，图片最多保留 3 天；容量不足时，部分记录可能尚未同步或已被移除。").font(.caption).foregroundStyle(.secondary) }
