@@ -7,8 +7,18 @@ import (
 
 const mobileTextRetention = int64(7 * 86400)
 
+// Request timestamps use fractional Unix seconds, matching MobileProtocol.swift.
+// ValueInt rejects non-integral numbers, so reuse the ledger timestamp parser.
+func mobileContentSeconds(value any) int64 {
+	stamp, ok := ParseStamp(value)
+	if !ok {
+		return 0
+	}
+	return stamp.Unix()
+}
+
 func mobileDetailExpires(value Row) int64 {
-	return max(ValueInt(value["started"]), ValueInt(value["completed"])) + mobileTextRetention
+	return max(mobileContentSeconds(value["started"]), mobileContentSeconds(value["completed"])) + mobileTextRetention
 }
 
 // Match the Worker retention projection. Removing an expired preview never
@@ -22,7 +32,7 @@ func mobileRetainValue(kind string, value any, now int64) (any, bool, int64) {
 		}
 	}
 	validRequest := func(r Row) bool {
-		started := ValueInt(r["started"])
+		started := mobileContentSeconds(r["started"])
 		return started > now-mobileTextRetention && started <= now+300
 	}
 	switch kind {
@@ -32,7 +42,7 @@ func mobileRetainValue(kind string, value any, now int64) (any, bool, int64) {
 		for _, row := range rows {
 			if validRequest(row) {
 				kept = append(kept, row)
-				deadline(ValueInt(row["started"]) + mobileTextRetention)
+				deadline(mobileContentSeconds(row["started"]) + mobileTextRetention)
 			} else {
 				changed = true
 			}
@@ -45,7 +55,7 @@ func mobileRetainValue(kind string, value any, now int64) (any, bool, int64) {
 				r["task"] = nil
 				changed = true
 			} else {
-				deadline(ValueInt(task["started"]) + mobileTextRetention)
+				deadline(mobileContentSeconds(task["started"]) + mobileTextRetention)
 			}
 		}
 	case "detail":
@@ -55,7 +65,7 @@ func mobileRetainValue(kind string, value any, now int64) (any, bool, int64) {
 			if attachment["thumbnail"] == nil {
 				continue
 			}
-			at := ValueInt(r["started"]) + mobileImageRetention
+			at := mobileContentSeconds(r["started"]) + mobileImageRetention
 			if at <= now {
 				attachment["thumbnail"] = nil
 				changed = true
