@@ -25,27 +25,28 @@ enum MobileFormat {
         return String(value)
     }
     static func money(_ value: Double?) -> String { value.map {String(format:"$%.2f",$0)} ?? "—" }
+    static func model(_ value: String) -> String { value.capitalized.replacingOccurrences(of:"Gpt-",with:"GPT-") }
     static func speed(_ value: String?) -> String {
         switch value?.trimmingCharacters(in:.whitespacesAndNewlines).lowercased() {
-        case "default", "standard": return "standard"
-        case "priority", "fast": return "fast"
-        case "ultrafast": return "ultrafast"
-        case "mixed": return "mixed"
+        case "default", "standard": return "Standard"
+        case "priority", "fast": return "Fast"
+        case "ultrafast": return "Ultrafast"
+        case "mixed": return "Mixed"
         default: return "—"
         }
     }
     static func duration(_ seconds: Double?) -> String {
         guard let seconds, seconds.isFinite, seconds >= 0, seconds < Double(Int.max) else { return "—" }
         let value = Int(seconds)
-        if value >= 3600 { return "\(value/3600)小时\(value%3600/60)分\(value%60)秒" }
-        if value >= 60 { return "\(value/60)分\(value%60)秒" }
-        return "\(value)秒"
+        if value >= 3600 { return "\(value/3600) 小时 \(value%3600/60) 分 \(value%60) 秒" }
+        if value >= 60 { return "\(value/60) 分 \(value%60) 秒" }
+        return "\(value) 秒"
     }
     static let update: DateFormatter = {let f=DateFormatter(); f.dateFormat="M.d HH:mm"; f.timeZone = .autoupdatingCurrent; return f}()
     static let requestDate: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier:"zh_CN"); f.calendar = Calendar(identifier:.gregorian)
-        f.dateFormat = "yyyy年M月d日"; f.timeZone = .autoupdatingCurrent
+        f.dateFormat = "yyyy 年 M 月 d 日"; f.timeZone = .autoupdatingCurrent
         return f
     }()
     static func date(_ value: Double) -> String { Date(timeIntervalSince1970:value).formatted(.dateTime.month().day()) }
@@ -140,7 +141,7 @@ struct OverviewPage: View {
                             if task.status == "running", Date().timeIntervalSince1970-(store.live?.observed ?? 0) > 900 { Text("任务状态待更新").font(.caption).foregroundStyle(.orange) }
                             Text(task.preview ?? "请求预览未同步").font(.title3.weight(.semibold)).lineLimit(3)
                             HStack(alignment:.firstTextBaseline) {
-                                Text([task.model.capitalized,task.effort ?? ""].filter {!$0.isEmpty}.joined(separator:" · ")).lineLimit(1)
+                                Text([MobileFormat.model(task.model),task.effort?.capitalized ?? ""].filter {!$0.isEmpty}.joined(separator:" · ")).lineLimit(1)
                                 Spacer(minLength:8)
                                 RequestDuration(item:task,active:store.tab == 0).fixedSize()
                             }.font(.caption).foregroundStyle(.secondary)
@@ -205,7 +206,7 @@ struct UsagePage: View {
                 LazyVStack(spacing:12) {
                     ForEach(period.models.sorted {value($0.metric,metric)>value($1.metric,metric)}) { model in
                         MobileCard {
-                            HStack {Text(model.name.capitalized).font(.headline);Spacer();Text(metric == 0 ? MobileFormat.money(model.metric.cost) : metric == 1 ? MobileFormat.tokens(model.metric.tokens) : "\(model.metric.requests) 次").font(.subheadline).monospacedDigit()}
+                            HStack {Text(MobileFormat.model(model.name)).font(.headline);Spacer();Text(metric == 0 ? MobileFormat.money(model.metric.cost) : metric == 1 ? MobileFormat.tokens(model.metric.tokens) : "\(model.metric.requests) 次").font(.subheadline).monospacedDigit()}
                             GeometryReader { g in ZStack(alignment:.leading) {Capsule().fill(Color.accentColor.opacity(0.10));Capsule().fill(Color.accentColor.gradient).frame(width:g.size.width*share(model.metric,metric))} }.frame(height:8)
                             HStack {ForEach(0..<3) {i in Text(["费用","Token","请求"][i]+" "+String(format:"%.0f%%",share(model.metric,i)*100)).font(.caption).foregroundStyle(i==metric ? .primary : .secondary).frame(maxWidth:.infinity,alignment:.leading)}}
                         }
@@ -235,7 +236,7 @@ struct RequestSummary: View {
     var body: some View {
         VStack(alignment:.leading,spacing:7) {
             Text(item.isApproval ? "自动审批审查" : item.preview ?? "请求预览未同步").font(.subheadline.weight(.medium)).lineLimit(2).foregroundStyle(.primary)
-            HStack {Text([item.model.capitalized,item.effort ?? ""].filter {!$0.isEmpty}.joined(separator:" · ")).lineLimit(1);Spacer();Text(MobileFormat.money(item.cost)).fixedSize()}.font(.caption).foregroundStyle(.secondary)
+            HStack {Text([MobileFormat.model(item.model),item.effort?.capitalized ?? ""].filter {!$0.isEmpty}.joined(separator:" · ")).lineLimit(1);Spacer();Text(MobileFormat.money(item.cost)).fixedSize()}.font(.caption).foregroundStyle(.secondary)
             HStack {Text(MobileFormat.update.string(from:Date(timeIntervalSince1970:item.started)));Text("·");RequestDuration(item:item,active:active);Spacer();Text(MobileFormat.tokens(item.tokens)+" Token").fixedSize()}.font(.caption2).foregroundStyle(.secondary)
         }.padding(.vertical,3)
     }
@@ -324,8 +325,8 @@ struct RequestDetails: View {
             }
             if let item {
                 Section("请求信息") {
-                    LabeledContent("模型",value:item.model.capitalized)
-                    LabeledContent("思考强度",value:item.effort ?? "—")
+                    LabeledContent("模型",value:MobileFormat.model(item.model))
+                    LabeledContent("思考强度",value:item.effort?.capitalized ?? "—")
                     LabeledContent("速度",value:MobileFormat.speed(item.speed))
                     LabeledContent("状态",value:["running":"进行中","completed":"已完成","aborted":"已中断"][item.status] ?? item.status)
                     LabeledContent("费用",value:MobileFormat.money(item.cost))
