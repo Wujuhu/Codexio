@@ -320,12 +320,26 @@ def main():
                         help="只下载并核验本平台已发布附件，补齐本地 release 归档")
     parser.add_argument("--include-windows", action="store_true",
                         help="仅在用户明确要求本次也发布 Windows 时使用；默认不触发 Windows CI")
+    parser.add_argument("--append-windows", action="store_true",
+                        help="从 Windows 构建主机向既有正式 Release 补充已验证 EXE，保留 Tag/正文/Apple 附件")
+    parser.add_argument("--asset-only", action="store_true",
+                        help="仅追加 EXE，不修改共享清单；用于用户明确保留不同 Windows 版本的情形")
+    parser.add_argument("--prepare-only", action="store_true",
+                        help="仅准备并验证追加 Windows 附件的候选文件，不推送或上传")
     parser.add_argument("--notes-file", type=Path,
                         help="仅在用户明确要求正文时读取 UTF-8 说明文件；默认仍为空正文")
     args = parser.parse_args()
-    if not args.confirm_publish and not args.sync_only:
+    if not args.confirm_publish and not args.sync_only and not (args.append_windows and args.prepare_only):
         parser.error("发布必须显式提供 --confirm-publish")
     try:
+        if args.append_windows:
+            if args.resume_draft or args.include_windows or args.notes_file or args.sync_only and args.prepare_only:
+                raise UpdateError("追加 Windows 附件不能同时创建/改写草稿、正文或触发旧 CI")
+            from append_windows_release import append_windows
+            print(append_windows(args.version, asset_only=args.asset_only, prepare_only=args.prepare_only, sync_only=args.sync_only))
+            return
+        if args.asset_only or args.prepare_only:
+            raise UpdateError("--asset-only / --prepare-only 仅用于 --append-windows")
         notes = args.notes_file.read_text(encoding="utf-8") if args.notes_file else ""
         print(publish(args.version, resume_draft=args.resume_draft, sync_only=args.sync_only,
                       include_windows=args.include_windows, notes=notes))

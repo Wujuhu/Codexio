@@ -8,6 +8,12 @@ __pycache__/
 dist/
 release/
 build/
+windows/frontend/node_modules/
+windows/frontend/dist/
+!windows/build/
+!windows/build/windows/
+!windows/build/windows/Codexio.exe.manifest
+!windows/build/windows/info.json
 *.log
 tests/_ui_*.png
 

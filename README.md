@@ -4,9 +4,10 @@
 
 <h1 align="center">Codexio</h1>
 
-<p align="center">在 Mac 上查看 Codex 额度、用量与任务，在 iPhone 上继续阅读。</p>
+<p align="center">在 Mac 和 Windows 上查看 Codex 额度、用量与任务，在 iPhone 上继续阅读。</p>
 
 <p align="center">
+  <a href="https://github.com/Wujuhu/Codexio/releases/download/v0.3.5/Codexio.exe"><strong>下载 Windows 版</strong></a> ·
   <a href="https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.app.zip"><strong>下载 macOS 版</strong></a> ·
   <a href="https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.ipa"><strong>下载 iPhone 版</strong></a> ·
   <a href="https://github.com/Wujuhu/Codexio/releases/latest">最新版本</a> ·
@@ -19,12 +20,13 @@ Codexio 是围绕 Codex 日常使用打造的原生应用：在一个界面中�
 
 | 平台 | 版本 | 系统要求 | 下载 |
 | --- | --- | --- | --- |
+| Windows | [0.3.5](windows/VERSION) | Windows 10/11 x64，WebView2 Runtime | [Codexio.exe](https://github.com/Wujuhu/Codexio/releases/download/v0.3.5/Codexio.exe) |
 | macOS | [0.3.5](macos/VERSION) | macOS 15+，Apple Silicon（arm64） | [Codexio.app.zip](https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.app.zip) |
 | iPhone | [0.3.1](ios/VERSION) | iOS 26+ | [Codexio.ipa](https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.ipa) |
 
-**iOS IPA 为未签名设备包，需要通过 SideStore 等工具自行重签后安装。** Mac 与 iOS 的版本独立管理，安装包及校验信息以 [最新 Release](https://github.com/Wujuhu/Codexio/releases/latest) 和其中的 `latest.json` 为准。
+**iOS IPA 为未签名设备包，需要通过 SideStore 等工具自行重签后安装。** Windows、Mac 与 iOS 的版本独立管理，安装包及校验信息以 [最新 Release](https://github.com/Wujuhu/Codexio/releases/latest) 和其中的 `latest.json` 为准。
 
-Windows 保留 Python/PySide6 历史实现，面向 Windows 10/11 x64，默认冻结维护；已有 EXE 可在 [历史 Releases](https://github.com/Wujuhu/Codexio/releases) 查找。
+Windows 已按用户明确要求迁移到 Wails + Go，使用 Svelte/TypeScript 与系统 WebView2，不再捆绑 Python/PySide。Windows 版本由 `windows/VERSION` 独立管理；Python 源码保留为历史实现和规则参考。
 
 ## 快速开始
 
@@ -37,14 +39,28 @@ Windows 保留 Python/PySide6 历史实现，面向 Windows 10/11 x64，默认�
 
 应用使用 `/Applications/Codexio.app` 作为稳定安装位置。若从下载目录等其他位置打开完整 App，会校验并安装到该位置后重新启动，以保持唯一的小组件扩展。后续可在 App 内检查更新，下载完成后由你主动选择安装。
 
+### Windows
+
+Windows 10/11 x64 需要 WebView2 Runtime；额度读取使用本机 Codex 登录状态。关闭主窗口后可从托盘重新打开；同版本重复启动显示已有主窗口，不同版本可同时运行。悬浮窗、停靠、系统代理、请求详情图片与手机同步均由主程序提供。
+
+开发使用 Go 1.26.1、Node.js/npm 和固定的 Wails `v3.0.0-beta.26`，SQLite 为纯 Go实现，不需要安装 Python、Visual Studio 或 C++ SDK：
+
+```powershell
+.\run.ps1
+.\run.ps1 --mock
+.\build_exe.ps1
+```
+
+`build_exe.ps1` 检查源码指纹、EXE 版本、架构和哈希，并执行原有三项隔离冒烟后，交付到 `build/dev/windows`。运行中的旧 EXE 会被保留，新包暂存到 `pending`；启用新版前应自行从托盘退出旧程序。开发打包不会自动推送、发布或触发 Windows CI。详见 [Windows Wails 开发记录](docs/v0.3.4/WINDOWS_WAILS.md) 与 [通用功能对齐记录](docs/v0.3.4/WINDOWS_035_PARITY_PLAN.md)。
+
 ### iPhone
 
 1. 下载 `Codexio.ipa`，完成重签并安装到 iPhone。
-2. 让手机与 Mac 处于**可互通的同一局域网**，保持 Mac 上的 Codexio 运行，在 **设置 → 同步** 开启同步并点击“生成二维码”。
+2. 让手机与运行 Codexio 的电脑处于**可互通的同一局域网**，保持电脑上的 Codexio 运行，在 **设置 → 同步** 开启同步并点击“生成二维码”。
 3. 在手机点击“连接我的电脑”，允许相机和本地网络权限后扫码。
-4. 在 Mac 点击“确认配对”。二维码单次有效，5 分钟后过期。
+4. 在电脑点击“确认配对”。二维码单次有效，5 分钟后过期。
 
-配对后优先使用局域网。需要离开局域网后阅读时，可在 Mac 的同步设置中输入服务管理员提供的邀请码，单独启用云同步。已配对手机下一次成功连接 Mac 后会获得云端配置。目前每台 Mac 最多授权 3 部手机，每部手机最多保存 3 台 Mac。
+配对后优先使用局域网。需要离开局域网后阅读时，可在电脑的同步设置中输入服务管理员提供的邀请码，单独启用云同步。已配对手机下一次成功连接电脑后会获得云端配置。目前每台电脑最多授权 3 部手机，每部手机最多保存 3 台电脑。
 
 ## 特色功能
 
@@ -53,9 +69,10 @@ Windows 保留 Python/PySide6 历史实现，面向 Windows 10/11 x64，默认�
 | **额度与任务概览** | 5 小时／周剩余额度、重置时间、当前任务、今日指标和最近请求 |
 | **请求与调用记录** | 按日期、模型、速度和状态筛选，查看 Token、费用、思考强度、耗时与可用正文 |
 | **用量与订阅分析** | 趋势图、年度活动热图、模型构成、聊天排行与订阅周期报告 |
-| **菜单栏与桌面小组件** | 自选菜单栏字段和顺序，显示额度、数值和任务图标；提供请求及不同样式的额度组件 |
+| **菜单栏与桌面小组件（macOS）** | 自选菜单栏字段和顺序，显示额度、数值和任务图标；提供请求及不同样式的额度组件 |
+| **托盘与悬浮窗（Windows）** | 从托盘打开主窗口，选择悬浮样式与贴边停靠，跟随系统代理连接网络 |
 | **模型定价** | 查看基础价格、手工覆盖价格，按统一规则计算本地费用 |
-| **手机阅读** | 查看概览与趋势，按需展开用户消息、最终回复及图片预览，在已配对 Mac 之间切换 |
+| **手机阅读** | 查看概览与趋势，按需展开用户消息、最终回复及图片预览，在已配对电脑之间切换 |
 
 ## 常见问题
 
@@ -154,10 +171,12 @@ Mac 脚本自动创建或复用项目 `.venv`，按本机架构编译。iOS 脚�
 | [`ios/App/`](ios/App/) | iPhone 主 App、阅读界面与同步客户端 |
 | [`apple/shared/`](apple/shared/) | Mac／iOS 共用同步协议与数据结构 |
 | [`cloudflare/`](cloudflare/) | 云同步 Worker、数据库结构与迁移 |
+| [`windows/`](windows/) | Windows Wails + Go 主程序及 Svelte 界面 |
 | [`src/codexio/`](src/codexio/) | 历史 Windows 实现及共用品牌、价格资源 |
 | [`scripts/`](scripts/) | 构建、归档、版本与交付工具 |
 | `build/dev/macos/` | 开发 App、`Codexio.app.zip` 与 `latest.json` |
 | `build/dev/ios/` | 未签名 `Codexio.ipa` 与 `build-info.json` |
+| `build/dev/windows/` | Windows 开发 EXE 与统一 `latest.json` |
 
 </details>
 
