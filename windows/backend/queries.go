@@ -67,12 +67,11 @@ func queryFilter(q Query, groups bool) (string, []any) {
 		args = append(args, q.Model)
 	}
 	if q.Tier != "" && q.Tier != "all" {
-		where += ` AND json_extract(data,'$.service_tier')=?`
-		tier := normalizedTier(q.Tier)
-		if groups && q.Tier == "mixed" {
-			tier = "mixed"
+		aliases := map[string][]string{"default": {"default", "standard"}, "priority": {"priority", "fast"}, "ultrafast": {"ultrafast", "ultra_fast", "ultra-fast"}, "mixed": {"mixed"}, "unknown": {"unknown"}}[requestSpeed(q.Tier)]
+		where += ` AND lower(trim(json_extract(data,'$.service_tier'))) IN (` + strings.TrimSuffix(strings.Repeat("?,", len(aliases)), ",") + `)`
+		for _, tier := range aliases {
+			args = append(args, tier)
 		}
-		args = append(args, tier)
 	}
 	if q.Status != "" && q.Status != "all" {
 		if groups {

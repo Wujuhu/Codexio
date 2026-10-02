@@ -1,19 +1,22 @@
-import {compact, kind, number, percent, stamp, text, type Row} from '../lib/api';
-import {tr} from '../lib/i18n';
+import {compact, kind, number, percent, text, type Row} from '../lib/api';
+import {isEnglish, tr} from '../lib/i18n';
 
 export function modelName(value: unknown): string {
   return text(value).replace(/gpt-/gi, 'GPT-').replace(/-(astra|sol|luna|terra)\b/gi, (_, name: string) => ` ${name[0].toUpperCase()}${name.slice(1).toLowerCase()}`);
 }
 
 export function effort(value: unknown): string {
-  const names: Record<string,string> = {none:'None',minimal:'Minimal',low:'Low',medium:'Medium',high:'High',xhigh:'Extra high',max:'Max',ultra:'Ultra',unknown:'Unknown',无:'None',最轻:'Minimal',轻度:'Low',中等:'Medium',高度:'High',极高:'Extra high',最高:'Max',超高:'Ultra',未知:'Unknown'};
+  const names: Record<string,string> = {none:'None',minimal:'Minimal',low:'Low',medium:'Medium',high:'High',xhigh:'Extra High','extra high':'Extra High',extra_high:'Extra High','extra-high':'Extra High',max:'Max',ultra:'Ultra',unknown:'Unknown',无:'None',最轻:'Minimal',轻度:'Low',中等:'Medium',高度:'High',极高:'Extra High',最高:'Max',超高:'Ultra',未知:'Unknown'};
   const raw = text(value, '').trim();
   return names[raw.toLowerCase()] ?? raw;
 }
 
 export function speed(value: unknown): string {
-  const raw = text(value, '').toLowerCase();
-  return ['priority','fast'].includes(raw) ? 'Fast' : ['ultrafast','ultra_fast','ultra-fast'].includes(raw) ? 'Ultrafast' : '';
+  const raw = text(value, '').trim().toLowerCase();
+  if (['default','standard'].includes(raw)) return 'Standard';
+  if (['priority','fast'].includes(raw)) return 'Fast';
+  if (['ultrafast','ultra_fast','ultra-fast'].includes(raw)) return 'Ultrafast';
+  return raw === 'mixed' ? 'Mixed' : '—';
 }
 
 export function humanPrompt(value: unknown): string {
@@ -38,9 +41,9 @@ export function preview(record: Row): string {
   return label;
 }
 
-export function metadata(record: Row, timeOnly=false): string {
+export function requestTags(record: Row): string {
   const context = number(record.model_context_window);
-  return [logTime(record.timestamp,timeOnly), effort(record.reasoning_effort), speed(record.service_tier), context !== null ? compact(context,0) : '',record.is_subagent?tr('子代理'):record.record_kind==='unassigned'?tr('未归属调用'):''].filter(Boolean).join(' · ');
+  return [speed(record.service_tier), context !== null ? compact(context,0) : '',record.is_subagent?tr('子代理'):record.record_kind==='unassigned'?tr('未归属调用'):''].filter(Boolean).join(' · ');
 }
 
 function startedMillis(value:unknown):number|null {
@@ -49,34 +52,50 @@ function startedMillis(value:unknown):number|null {
   return Number.isFinite(time)?time:null;
 }
 
-export function runningDuration(record:Row,now=Date.now()):boolean {
-  if(!(record.duration_running??(record.request_status??record.status)==='running'))return false;
-  if(Array.isArray(record.duration_active_starts))return record.duration_active_starts.some((value:unknown)=>{const start=startedMillis(value);return start!==null&&now-start<86400000});
-  const start=startedMillis(record.duration_started_at??record.started_at??record.timestamp);
-  return start!==null&&now-start<86400000;
+function durationAnchor(record:Row):{start:number;base:number}|null {
+  const start=startedMillis(record.duration_started_at),base=number(record.duration_base_ms);
+  if(start!==null&&start>0&&base!==null&&base>=0)return{start,base};
+  // Old projections can prove a single active segment. Multiple starts cannot
+  // be summed safely without the backend's merged execution intervals.
+  if(!Array.isArray(record.duration_active_starts))return null;
+  const starts=record.duration_active_starts.map(startedMillis),completed=number(record.duration_completed_ms);
+  if(starts.some((value:number|null)=>value===null||value<=0)||completed===null||completed<0)return null;
+  const unique=[...new Set(starts)];
+  return unique.length===1&&unique[0]!==null?{start:unique[0],base:completed}:null;
+}
+
+export function runningDuration(record:Row):boolean {
+  return !!(record.duration_running??(record.request_status??record.status)==='running')&&durationAnchor(record)!==null;
 }
 
 export function durationMilliseconds(record:Row,now=Date.now()):number|null {
-  if(!runningDuration(record,now))return number(record.duration_ms);
-  if(Array.isArray(record.duration_active_starts)){
-    const base=number(record.duration_completed_ms);
-    const starts=record.duration_active_starts.map(startedMillis);
-    if(base===null||!starts.length)return null;
-    let elapsed=base;
-    for(const start of starts){if(start===null)return null;elapsed+=Math.max(0,now-start)}
-    return elapsed;
+  if(record.duration_running??(record.request_status??record.status)==='running'){
+    const anchor=durationAnchor(record);
+    return anchor===null?null:anchor.base+Math.max(0,now-anchor.start);
   }
-  // Compatibility for existing single-segment projections awaiting refresh.
-  if(Number(record.duration_segments??1)>1)return null;
-  const start=startedMillis(record.duration_started_at??record.started_at??record.timestamp);
-  return start===null?null:Math.max(0,now-start);
+  const duration=number(record.duration_ms);
+  return duration!==null&&duration>=0?duration:null;
 }
 
-export function logTime(value:unknown,timeOnly=false):string {
-  if(!timeOnly)return stamp(value);
-  const n=number(value);if(value==null||value==='')return'—';
-  const date=new Date(n===null?String(value):n<1e12?n*1000:n);
-  return Number.isFinite(date.getTime())?date.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'}):'—';
+const pad=(value:number)=>String(value).padStart(2,'0');
+const months=['January','February','March','April','May','June','July','August','September','October','November','December'];
+export function logTime(value:unknown):string {
+  const milliseconds=startedMillis(value);
+  if(milliseconds===null)return'—';
+  const date=new Date(milliseconds);
+  return `${date.getMonth()+1}.${date.getDate()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+export function fullTime(value:unknown):string {
+  const milliseconds=startedMillis(value);
+  if(milliseconds===null)return'—';
+  const date=new Date(milliseconds),clock=`${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return isEnglish()?`${months[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()} ${clock}`:`${date.getFullYear()} 年 ${date.getMonth()+1} 月 ${date.getDate()} 日 ${clock}`;
+}
+
+export function requestStatus(record:Row):string {
+  const labels:Record<string,string>={running:'进行中',completed:'已完成',aborted:'已中止',unknown:'未知'};
+  return tr(labels[record.request_status??record.status]??'未知');
 }
 
 export function hitRate(record: Row): string {
@@ -90,5 +109,7 @@ export function duration(value: unknown): string {
   const milliseconds = number(value);
   if (milliseconds === null || milliseconds < 0) return '—';
   const seconds = Math.floor(milliseconds / 1000);
-  return [Math.floor(seconds / 3600),Math.floor(seconds / 60) % 60,seconds % 60].map(part=>String(part).padStart(2,'0')).join(':');
+  const hours=Math.floor(seconds/3600),minutes=Math.floor(seconds/60)%60,remaining=seconds%60;
+  if(isEnglish())return hours>0?`${hours} h ${minutes} min ${remaining} s`:minutes>0?`${minutes} min ${remaining} s`:`${remaining} s`;
+  return hours>0?`${hours} 小时 ${minutes} 分 ${remaining} 秒`:minutes>0?`${minutes} 分 ${remaining} 秒`:`${remaining} 秒`;
 }

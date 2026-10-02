@@ -51,8 +51,8 @@ var rolloutUUID = regexp.MustCompile(`(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0
 var mentionedFilePattern = regexp.MustCompile(`(?m)^## (.+?): ((?:[A-Za-z]:[\\/]|/)[^\r\n]+)$`)
 var embeddedImagePattern = regexp.MustCompile(`(?is)<image\b[^>]*>.*?</image\s*>`)
 
-// Bump input interpretation without invalidating byte cursors or immutable meters.
-const requestMetadataVersion = 3
+// Bump input/execution interpretation without invalidating byte cursors or meters.
+const requestMetadataVersion = 4
 
 // Image/tool payloads in real rollouts exceed 8 MiB. Keep a memory bound while
 // accepting the same complete JSONL records as the v0.2.10 readline collector.
@@ -146,9 +146,10 @@ func (s *Store) collect(ctx context.Context, force bool) error {
 	var scanErrors []error
 	s.metadataRepairRemaining = 4
 	s.metadataRepairPriority = map[string]bool{}
-	// Prioritize related missing/resumed inputs without changing parent-first
-	// meter scans. At most four metadata chunks are recovered per collection.
-	priority, e := s.db.Query(`SELECT key FROM usage_cursors c WHERE json_extract(c.data,'$.parser_version')=1 AND COALESCE(json_extract(c.data,'$.metadata_version'),0)<>? AND (json_extract(c.data,'$.metadata_repair') IS NOT NULL OR EXISTS(SELECT 1 FROM usage_turns t WHERE json_extract(t.data,'$.session_id')=json_extract(c.data,'$.go_state.session_id') AND (COALESCE(json_extract(t.data,'$.prompt_preview'),'')='' OR COALESCE(json_extract(t.data,'$.resume_kind'),'')<>'' OR instr(lower(COALESCE(json_extract(t.data,'$.prompt_preview'),'')),'<external_codex_apps_')>0))) ORDER BY json_extract(c.data,'$.mtime') DESC LIMIT 4`, requestMetadataVersion)
+	// Repair recent sources first without changing parent-first meter scans.
+	// Timing interpretation applies to completed as well as resumed turns; at
+	// most four bounded metadata chunks are recovered per collection.
+	priority, e := s.db.Query(`SELECT key FROM usage_cursors c WHERE json_extract(c.data,'$.parser_version')=1 AND COALESCE(json_extract(c.data,'$.metadata_version'),0)<>? ORDER BY json_extract(c.data,'$.mtime') DESC LIMIT 4`, requestMetadataVersion)
 	if e != nil {
 		return e
 	}
@@ -778,7 +779,7 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 	if kind == "turn_context" {
 		explicit = firstString(p["turn_id"], p["id"])
 	} else if sub == "task_started" || sub == "turn_started" {
-		explicit = dataString(p, "turn_id")
+		explicit = firstString(p["turn_id"], p["id"])
 	}
 	if explicit != "" {
 		if sub == "task_started" || sub == "turn_started" {
@@ -854,7 +855,9 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 		}
 		if kind == "event_msg" {
 			r["status"] = "running"
-			r["started_at"] = timestamp
+			// Match UsageIndexer: the event's execution timestamp is authoritative;
+			// its containing log timestamp is only the source-backed fallback.
+			r["started_at"] = firstString(stamp(p["started_at"]), timestamp)
 			r["started_inferred"] = false
 			r["explicit_task_start"] = true
 		}

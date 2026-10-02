@@ -2,7 +2,7 @@
   import {onDestroy} from 'svelte';
   import {defaultQuery,rows,numeric,compact,priced,cost,text,type Row,type Query} from '../lib/api';
   import {tr} from '../lib/i18n';
-  import {preview,metadata,hitRate,duration,effort,speed,logTime} from './logFormat';
+  import {preview,requestTags,hitRate,duration,effort,speed,logTime,fullTime,requestStatus} from './logFormat';
   import Filters from './Filters.svelte';
   import DetailPopover from './DetailPopover.svelte';
   import Model from './Model.svelte';
@@ -34,7 +34,7 @@
   function persistWidths(){void onsave({log_column_widths:Object.fromEntries(Object.entries(widths).map(([key,width])=>[key,Math.round(width)]))}).catch(onerror)}
   function end(){if(drag){drag=null;persistWidths()}}
   function keyResize(event:KeyboardEvent,index:number){if(!['ArrowLeft','ArrowRight'].includes(event.key))return;event.preventDefault();widths={...widths,[columns[index].key]:Math.max(minimumWidth(columns[index].key),Math.min(1200,rendered[index]+(event.key==='ArrowLeft'?-10:10)))};persistWidths()}
-  function cell(record:Row,key:string):string{switch(key){case'time':return logTime(record.timestamp,query.period==='today');case'input':return compact(record.input_tokens);case'output':return compact(record.output_tokens);case'total':return compact(record.total_tokens);case'cached':return compact(record.cached_input_tokens);case'cache_write':return compact(record.cache_write_input_tokens);case'cache_rate':return hitRate(record);case'cost':return cost(record.cost_usd??record.usd);case'duration':return duration(record.duration_ms);case'effort':return effort(record.reasoning_effort)||'—';case'speed':return speed(record.service_tier)?'Fast':['default','standard',''].includes(String(record.service_tier??''))?tr('标准'):tr('未知');case'context':return compact(record.model_context_window,0);case'status':return tr(({running:'进行中',completed:'已完成',aborted:'已中止',unknown:'未知'} as Record<string,string>)[record.status]??'未知');default:return text(record[key])}}
+  function cell(record:Row,key:string):string{switch(key){case'time':return logTime(record.timestamp);case'input':return compact(record.input_tokens);case'output':return compact(record.output_tokens);case'total':return compact(record.total_tokens);case'cached':return compact(record.cached_input_tokens);case'cache_write':return compact(record.cache_write_input_tokens);case'cache_rate':return hitRate(record);case'cost':return cost(record.cost_usd??record.usd);case'duration':return duration(record.duration_ms);case'effort':return effort(record.reasoning_effort)||'—';case'speed':return speed(record.service_tier);case'context':return compact(record.model_context_window,0);case'status':return requestStatus(record);default:return text(record[key])}}
   function closeMenu(event:PointerEvent){if(menu?.open&&!menu.contains(event.target as Node))menu.open=false}
   onDestroy(()=>drag=null);
 </script>
@@ -45,7 +45,7 @@
     <table style:width={`${tableWidth}px`} style:min-width={`${tableWidth}px`}>
       <colgroup>{#each rendered as width}<col style:width={`${width}px`}/>{/each}</colgroup>
       <thead><tr>{#each columns as column,i}<th scope="col">{column.key==='content'?`${tr('请求')} / ${tr('时间')}`:tr(column.title)}<button type="button" class="column-handle" aria-label={`${tr(column.key==='content'?'请求':column.title)} · ${tr('请求详情')==='Request details'?'Resize column':'调整列宽'}`} onpointerdown={event=>begin(event,i)} onkeydown={event=>keyResize(event,i)}></button></th>{/each}</tr></thead>
-      <tbody>{#each rows(data.rows) as record (record.id)}<tr>{#each columns as column}<td>{#if column.key==='content'}<div class="request-text" title={preview(record)}>{preview(record)}</div><small class="muted request-meta" title={metadata(record)}>{metadata(record,query.period==='today')}</small>{:else if column.key==='model'}<Model {record}/>{:else if column.key==='duration'}<Duration {record}/>{:else if column.key==='details'}<DetailPopover id={String(record.id)} {record} {onerror}/>{:else}<span title={column.key==='cost'?priced(record):cell(record,column.key)}>{cell(record,column.key)}</span>{/if}</td>{/each}</tr>{/each}</tbody>
+      <tbody>{#each rows(data.rows) as record (record.id)}<tr>{#each columns as column}<td>{#if column.key==='content'}<div class="request-text" title={preview(record)}>{preview(record)}</div><small class="muted request-meta" title={fullTime(record.timestamp)}>{logTime(record.timestamp)} · <Duration {record}/> · {requestTags(record)}</small>{:else if column.key==='model'}<Model {record}/>{:else if column.key==='duration'}<Duration {record}/>{:else if column.key==='details'}<DetailPopover id={String(record.id)} {record} {onerror}/>{:else}<span title={column.key==='cost'?priced(record):cell(record,column.key)}>{cell(record,column.key)}</span>{/if}</td>{/each}</tr>{/each}</tbody>
     </table>
     {#if !rows(data.rows).length}<div class="empty">{tr('暂无数据')}</div>{/if}
   </div>

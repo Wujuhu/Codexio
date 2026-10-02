@@ -166,7 +166,7 @@ func (s *Store) localInsights(q Query) (result Row, err error) {
 		confirmed := quality == "" || quality == "response" || quality == "legacy_last" || quality == "cumulative_delta" && strings.HasPrefix(dataString(r, "id"), "response:")
 		if confirmed {
 			active[date] = true
-			tier := normalizedTier(r["service_tier"])
+			tier := requestSpeed(r["service_tier"])
 			speeds[tier]++
 			effort := dataString(r, "reasoning_effort")
 			if effort == "" {
@@ -247,7 +247,10 @@ func (s *Store) localInsights(q Query) (result Row, err error) {
 		current++
 		cursor = cursor.AddDate(0, 0, -1)
 	}
-	calls := speeds["default"] + speeds["priority"] + speeds["unknown"]
+	calls := 0
+	for _, count := range speeds {
+		calls += count
+	}
 	var fast, effortPercent any
 	var most any
 	mostCount := 0

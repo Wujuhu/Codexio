@@ -431,6 +431,28 @@ func repairCachedInputOwnership(query func(string, ...any) *sql.Row, row Row) {
 }
 func mergeRecoveredTurn(row, evidence Row) Row {
 	row = CloneRow(row)
+	// Recover source timing without replacing a terminal row with an earlier
+	// running prefix of the bounded replay. No wall-clock timestamp is inferred.
+	if ValueBool(evidence["explicit_task_start"]) && evidence["started_inferred"] == false {
+		if _, ok := ParseStamp(evidence["started_at"]); ok {
+			row["started_at"], row["started_inferred"] = evidence["started_at"], false
+		}
+	}
+	if end, ok := ParseStamp(evidence["ended_at"]); ok && (dataString(evidence, "status") == "completed" || dataString(evidence, "status") == "aborted") {
+		previous, exists := ParseStamp(row["ended_at"])
+		if !exists || !end.Before(previous) {
+			row["ended_at"], row["status"] = evidence["ended_at"], evidence["status"]
+			if duration, ok := ValueFloat(evidence["duration_ms"]); ok && duration >= 0 {
+				row["duration_ms"] = duration
+			}
+		}
+	}
+	if observed, ok := ParseStamp(evidence["observed_at"]); ok {
+		previous, exists := ParseStamp(row["observed_at"])
+		if !exists || observed.After(previous) {
+			row["observed_at"] = evidence["observed_at"]
+		}
+	}
 	contextHashes := map[string]bool{}
 	for _, hash := range ValueStrings(evidence["context_input_hashes"]) {
 		if hash != pythonHash("") {
@@ -502,7 +524,7 @@ func (s *Store) repairSourceMetadataCursor(ctx context.Context, path, source, fi
 	through := ValueInt(cursor["offset"])
 	if len(progress) == 0 {
 		var needed int
-		if e := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM usage_turns WHERE json_extract(data,'$.session_id')=? AND (COALESCE(json_extract(data,'$.prompt_preview'),'')='' OR COALESCE(json_extract(data,'$.has_user_message'),0)=0 OR COALESCE(json_extract(data,'$.resume_kind'),'')<>'' OR instr(lower(COALESCE(json_extract(data,'$.prompt_preview'),'')),'<external_codex_apps_')>0))`, firstString(oldState["session_id"], rolloutID(path))).Scan(&needed); e != nil {
+		if e := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM usage_turns WHERE json_extract(data,'$.session_id')=?)`, firstString(oldState["session_id"], rolloutID(path))).Scan(&needed); e != nil {
 			return e
 		}
 		if needed == 0 {

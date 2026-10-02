@@ -4,6 +4,7 @@
   import { tr } from '../lib/i18n';
   import { toPng } from 'html-to-image';
   import Icon from './Icon.svelte';
+  import {modelName} from './logFormat';
   export let initialPeriod = 'day';
   export let settings: Row = {};
   export let onsave: (r: Row) => Promise<void>;
@@ -165,7 +166,7 @@
               <div class="mac-report-rule mac-report-rhythm-rule"></div>
               <section class="mac-report-models">
                 <div class="mac-report-heading"><h2>{tr('模型使用')}</h2><small>{numeric(calls)} {tr('次调用')}</small></div>
-                {#each top as model}<div class="mac-report-model-row"><div><strong>{text(model.model)}</strong><small>{costLabel(model)} · {tokenLabel(model.tokens, model.tokens_complete !== false && Number(model.skipped?.tokens ?? 0) === 0)} Token</small></div><span>{numeric(model.call_count ?? model.calls ?? model.requests)} {tr('次')} · {sharePercent(model.call_count ?? model.calls ?? model.requests, calls)}%</span></div>{/each}
+                {#each top as model}<div class="mac-report-model-row"><div><strong>{modelName(model.model)}</strong><small>{costLabel(model)} · {tokenLabel(model.tokens, model.tokens_complete !== false && Number(model.skipped?.tokens ?? 0) === 0)} Token</small></div><span>{numeric(model.call_count ?? model.calls ?? model.requests)} {tr('次')} · {sharePercent(model.call_count ?? model.calls ?? model.requests, calls)}%</span></div>{/each}
                 {#if !top.length}<p>{tr('暂无模型调用')}</p>{/if}
               </section>
               <div class="mac-report-spacer"></div>
