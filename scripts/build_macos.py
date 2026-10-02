@@ -123,6 +123,7 @@ def build_native(bundle, version):
     run("iconutil", "-c", "icns", iconset, "-o", resources / "Codexio.icns")
     shutil.copy2(ROOT / "src/codexio/pricing_seed.json", resources / "pricing_seed.json")
     shutil.copytree(ROOT / "macos/Resources/ReportCards", resources / "ReportCards")
+    shutil.copytree(ROOT / "macos/Resources/ReportCat", resources / "ReportCat")
     localization_resources(resources)
 
 

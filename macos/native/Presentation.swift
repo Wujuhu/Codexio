@@ -25,10 +25,12 @@ final class FetchActivity: ObservableObject {
 struct FetchRefreshControls: View {
     @ObservedObject var activity: FetchActivity
     let clock: ScanClock
+    let openReport: () -> Void
     let refresh: () -> Void
     var body: some View {
         HStack(spacing:8) {
             if activity.busy {ProgressView().controlSize(.mini).frame(width:12,height:12).accessibilityLabel(L("正在抓取数据", "Fetching data"))}
+            ReportCatButton(action:openReport)
             ScanStamp(clock:clock).font(.system(size:12)).foregroundStyle(.secondary)
             Button(action:refresh) {Image(systemName:"arrow.clockwise").font(.system(size:11))}.buttonStyle(.plain).disabled(activity.busy).help(L("刷新", "Refresh")).accessibilityLabel(L("刷新", "Refresh"))
         }

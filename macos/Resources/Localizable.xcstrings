@@ -7809,6 +7809,22 @@
         }
       }
     },
+    "打开 AI 使用报告": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open AI usage reports"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开 AI 使用报告"
+          }
+        }
+      }
+    },
     "打开 Codexio 主程序": {
       "localizations": {
         "en": {

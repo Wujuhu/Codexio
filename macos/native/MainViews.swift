@@ -25,7 +25,7 @@ struct MainView: View {
                 HStack(spacing:18) {
                     Button { state.toggleSidebar() } label: { Image(systemName:"sidebar.left") }.buttonStyle(.plain).accessibilityLabel(L("切换侧边栏", "Toggle sidebar"))
                     Spacer()
-                    FetchRefreshControls(activity:state.fetchActivity,clock:state.clock) {state.refresh()}
+                    FetchRefreshControls(activity:state.fetchActivity,clock:state.clock,openReport:{state.onOpenUsageReport?()}) {state.refresh()}
                 }.padding(.horizontal,PageLayout.inset).frame(height:48)
                 Divider()
                 HStack(alignment:.firstTextBaseline) {
