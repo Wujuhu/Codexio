@@ -125,6 +125,9 @@ struct MobileRequest: Codable, Identifiable, Equatable {
     var cost: Double?
     var duration: Double?
     var kind: String? = nil
+    // Stable active-interval timing, in seconds. Completed requests use duration.
+    var durationStarted: Double? = nil
+    var durationBase: Double? = nil
     var isApproval: Bool { kind == "approval_review" || model.lowercased() == "codex-auto-review" }
 }
 struct MobileQuota: Codable, Equatable {

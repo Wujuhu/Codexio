@@ -52,7 +52,7 @@ private enum ReportCatImages {
                   let sourceWidth = properties[kCGImagePropertyPixelWidth] as? NSNumber,
                   let sourceHeight = properties[kCGImagePropertyPixelHeight] as? NSNumber, sourceWidth.doubleValue > 0 else { return nil }
             let aspect = CGFloat(sourceHeight.doubleValue/sourceWidth.doubleValue)
-            let pixels = Int(ceil(width*0.2*scale*max(1,aspect)))
+            let pixels = Int(ceil(width*ReportCatAnimation.displayUnit*scale*max(1,aspect)))
             let options: [CFString:Any] = [kCGImageSourceCreateThumbnailFromImageAlways:true,kCGImageSourceCreateThumbnailWithTransform:true,kCGImageSourceThumbnailMaxPixelSize:pixels,kCGImageSourceShouldCacheImmediately:true]
             guard let image = CGImageSourceCreateThumbnailAtIndex(source,0,options as CFDictionary) else { return nil }
             if dark {
@@ -160,6 +160,7 @@ private final class ReportCatImageView: NSView {
             }
         }
         if canAnimate, animator != nil {
+            animator?.startTailLoop()
             guard timer == nil else { return }
             let next = Timer(timeInterval:ReportCatAnimation.playbackInterval,repeats:false) { [weak self] _ in
                 guard let self else { return }

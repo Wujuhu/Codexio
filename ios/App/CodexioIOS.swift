@@ -53,18 +53,22 @@ enum MobileFormat {
     static func date(_ value: Double) -> String { Date(timeIntervalSince1970:value).formatted(.dateTime.month().day()) }
 }
 struct RequestDuration: View {
-    @EnvironmentObject private var store: MobileStore
     let item: MobileRequest
     let active: Bool
     @Environment(\.scenePhase) private var phase
     @State private var visible = false
     var body: some View {
+        let previous = item.durationBase ?? 0
         Group {
-            if item.status == "running", let start = store.runningStarts[item.id] {
+            if item.status == "running", let start = item.durationStarted, start.isFinite, start > 0, previous.isFinite, previous >= 0 {
                 TimelineView(.animation(minimumInterval:1,paused:!active || !visible || phase != .active)) { context in
-                    Text(MobileFormat.duration(max(0,context.date.timeIntervalSince(start))))
+                    // Match UsageRow.duration: prior execution plus the current
+                    // active segment, excluding idle gaps between continuations.
+                    Text(MobileFormat.duration(previous+max(0,context.date.timeIntervalSince1970-start)))
                 }
             } else {
+                // Old caches/hosts lack the active anchor. Do not invent a local
+                // start or count their idle gaps as execution time.
                 Text(MobileFormat.duration(item.duration))
             }
         }.monospacedDigit().lineLimit(1)

@@ -14,7 +14,7 @@ const imageLimit = 1048576, imageEnvelopeLimit = 1500000, imageRows = 128, image
 const imageMimes = new Set(['image/jpeg','image/png','image/gif','image/webp','image/heic','image/tiff','image/bmp']);
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const dimensions = (width,height) => Number.isSafeInteger(width) && Number.isSafeInteger(height) && width > 0 && height > 0 && Math.max(width,height) <= 2048 && width*height <= 4194304;
-const fields = new Set(['name','timeZone','observed','task','runningCount','today','five','week','remaining','reset','retained','tokens','cost','requests','costComplete','hitRate','id','started','status','preview','model','effort','speed','duration','kind','daily','periods','start','metric','days','total','models']);
+const fields = new Set(['name','timeZone','observed','task','runningCount','today','five','week','remaining','reset','retained','tokens','cost','requests','costComplete','hitRate','id','started','status','preview','model','effort','speed','duration','durationStarted','durationBase','kind','daily','periods','start','metric','days','total','models']);
 function validPayload(value, depth = 0) {
   if (depth > 8) return false;
   if (value === null || typeof value === 'boolean') return true;
@@ -177,10 +177,13 @@ function validImage(value,record,now) {
 }
 function validDataset(value,dataset) {
   if(!validPayload(value))return false;
-  const requestKeys=new Set(['id','started','status','preview','model','effort','speed','tokens','cost','duration','kind']);
+  const requestKeys=new Set(['id','started','status','preview','model','effort','speed','tokens','cost','duration','durationStarted','durationBase','kind']);
   const summaryKeys=new Set(['remaining','reset','observed','retained','tokens','cost','requests','costComplete','hitRate']);
   const safeSummary=item=>object(item) && Object.keys(item).every(key=>summaryKeys.has(key));
-  const safeRequest=item=>object(item) && requestID(item.id) && Number.isFinite(item.started) && item.started>0 && Object.keys(item).every(key=>requestKeys.has(key));
+  const safeRequest=item=>object(item) && requestID(item.id) && Number.isFinite(item.started) && item.started>0
+    && (item.durationStarted==null || Number.isFinite(item.durationStarted) && item.durationStarted>0)
+    && (item.durationBase==null || Number.isFinite(item.durationBase) && item.durationBase>=0)
+    && Object.keys(item).every(key=>requestKeys.has(key));
   if(dataset==='recent')return Array.isArray(value) && value.every(safeRequest);
   if(dataset==='live')return object(value) && Object.keys(value).every(key=>['name','timeZone','observed','task','runningCount','today','five','week'].includes(key)) && (value.task==null || safeRequest(value.task)) && safeSummary(value.today) && safeSummary(value.five) && safeSummary(value.week);
   const aggregateKeys=new Set(['daily','periods','id','start','metric','days','total','models','name','tokens','cost','requests','costComplete','hitRate']);

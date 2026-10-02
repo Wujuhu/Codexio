@@ -11,6 +11,12 @@
 3. 再部署本地 `worker.mjs` 与配置。`DETAILS_ENABLED=1` 启用详情；`IMAGES_ENABLED=1` 且图片/生命周期表均存在时声明 `request-images-v1`。关闭能力标志不停止到期清理。新 Worker 必须在 `0003` 后部署：缺少到期队列表时摘要返回 `RETENTION_UNSUPPORTED`，不会继续接受无法履行保留期限的上传。配置将定时任务改为每 15 分钟执行一次。
 4. 发布前由获授权的协调者核对实际 Worker、D1 绑定、索引、能力响应、配对与撤销行为，再使用真实 D1 返回的 `meta.rows_read` / `meta.rows_written` 判断额度。不要从本地 SQL 审计推断已部署或云端验证通过。
 
+### 实际运行耗时字段（2026-10-02 本地已实现，尚未部署）
+
+`live.task` 与 `recent` 的请求摘要新增可选 `durationStarted`（当前执行段的 Unix 开始时间，秒）和 `durationBase`（此前已完成执行区间的累计秒数）。`started` 仍表示原始请求时间，用于列表和详情日期。iOS 运行中显示 `durationBase + max(0, now - durationStarted)`，与 Mac `UsageRow.duration` 一致，排除续接之间的等待；结束后使用 Mac 从实际结束记录计算的 `duration`。这些时间锚点不随每秒计时改写或重传。
+
+旧手机忽略新增字段；新手机读取旧缓存时忽略此前的 `runningStarts`，缺少执行段锚点时不猜测计时起点。Worker 只扩展这两个字段的白名单与数值检查，不需要数据库迁移。必须先部署新版 Worker 再使用新版 Mac 云同步，否则旧 Worker 会拒绝包含新字段的摘要；局域网同步不依赖此云端部署。
+
 正文能力名为 `request-details-v1`，请求分类能力为 `request-kinds-v1`，图片能力为 `request-images-v1`。新详情可携带最多 32 个 `images` 引用；原有 `attachments` 和旧版正文协议继续兼容，Mac 未协商到图片能力时省略 `images` 和图片上传。最近记录可携带可选 `kind: approval_review`；旧手机可忽略此字段，新手机也兼容 `codex-auto-review` 模型标识。Mac 先协商能力，旧 Worker 的最近记录继续使用不含审批记录及新增字段的独立云端投影，保留摘要同步；新版 Worker 才同步独立审批记录。两条链路使用单调版本，局域网版本不会落后于已上传的云端投影。
 
 缺少详情表或明确不支持详情时，正文保持待提供状态，Mac 显示“云端正文同步尚未启用”。暂时的能力探测失败不等于不支持，一分钟后重试；成功探测或明确不支持后每小时最多检查一次。摘要和详情仍按各自内容变化发布，普通同步不重复传输相同正文。

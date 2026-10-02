@@ -15,7 +15,6 @@ private struct MobileDiskCache: Codable {
     var live: MobileLive?
     var recent: [MobileRequest]
     var trends: MobileTrends
-    var runningStarts: [String:Date]? = nil
 }
 private struct MobileDetailTransfer {
     var manifest: MobileDetailManifest
@@ -39,7 +38,6 @@ private struct MobileDetailTransfer {
     @Published var revokedPrompt: String?
     @Published var tab = 0
     @Published var recordPath: [String] = []
-    @Published private(set) var runningStarts: [String:Date] = [:]
     @Published private(set) var detailValues: [String:MobileRequestDetail] = [:]
     @Published private(set) var detailErrors: [String:String] = [:]
     @Published private(set) var detailLoading = Set<String>()
@@ -116,18 +114,6 @@ private struct MobileDetailTransfer {
            recentRequest == nil || (envelopes["live"]?.revision ?? 0) >= (envelopes["recent"]?.revision ?? 0) { return task }
         return recentRequest
     }
-    private func refreshRunningStarts() {
-        var running = Set(recent.filter {$0.status == "running"}.map(\.id))
-        if let task = live?.task, let current = request(task.id) {
-            if current.status == "running" { running.insert(current.id) }
-            else { running.remove(current.id) }
-        }
-        // Phone-local display clocks start on first receipt, never on row appearance.
-        // Reuse the device cache so syncs, navigation and app restarts keep that start.
-        let now = Date()
-        let starts = Dictionary(uniqueKeysWithValues:running.map {($0,runningStarts[$0] ?? now)})
-        if starts != runningStarts { runningStarts = starts }
-    }
     func showRequest(_ item: MobileRequest) { tab = 2; recordPath = [item.id] }
     var connectionLabel: String {
         if device?.invalid == true { return "配对已失效" }
@@ -178,7 +164,7 @@ private struct MobileDetailTransfer {
             for image in resume { loadImage(image) }
             return
         }
-        live = nil; recent = []; trends = MobileTrends(daily:[],periods:[]); envelopes = [:]; updated = nil; runningStarts = [:]
+        live = nil; recent = []; trends = MobileTrends(daily:[],periods:[]); envelopes = [:]; updated = nil
         recordPath = []; detailValues = [:]; detailErrors = [:]; detailEnvelopes = [:]; detailAccess = [:]; detailVersions = [:]; supportsDetails = false
         clearImages()
         guard device != nil else { status = "扫描电脑上的二维码开始配对"; return }
@@ -189,10 +175,9 @@ private struct MobileDetailTransfer {
             Task { @MainActor in
                 guard stamp == self.generation, self.envelopes.isEmpty, let cache else { return }
                 self.live = cache.live; self.recent = cache.recent.filter {$0.started >= Date().timeIntervalSince1970-MobileProtocol.detailRetention}.prefix(200).map {$0}; self.trends = cache.trends.singleModelsOnly()
-                self.runningStarts = cache.runningStarts ?? [:]
                 self.envelopes = cache.versions.mapValues {_ in MobileEnvelope(dataset:"",revision:0,digest:"",payload:"")}
                 for (key,revision) in cache.versions { self.envelopes[key] = MobileEnvelope(dataset:key,revision:revision,digest:cache.digests[key] ?? "",payload:"") }
-                self.refreshRunningStarts(); self.pruneRetainedContent()
+                self.pruneRetainedContent()
                 self.status = "已显示缓存"; self.persistCache()
             }
         }
@@ -210,7 +195,7 @@ private struct MobileDetailTransfer {
             let reader = MobileReader(id:UUID().uuidString,name:String(phoneName.prefix(40)),localSecret:try MobileProtocol.secret(),cloudSecret:try MobileProtocol.secret())
             deactivate(); foreground = true
             attempt = PairedMac(code:code,reader:reader); selected = code.host; envelopes = [:]
-            live = nil; recent = []; trends = MobileTrends(daily:[],periods:[]); updated = nil; runningStarts = [:]
+            live = nil; recent = []; trends = MobileTrends(daily:[],periods:[]); updated = nil
             recordPath = []; detailValues = [:]; detailEnvelopes = [:]; detailVersions = [:]; supportsDetails = false; detailErrors = [:]
             detailAccess = [:]; clearImages()
             pairing = true; status = "正在寻找电脑，请保持同一局域网"; error = nil
@@ -423,7 +408,6 @@ private struct MobileDetailTransfer {
                 var version = value; version.payload = ""; envelopes[value.dataset] = version; changed = true
             } catch { self.error = "同步数据格式不兼容，请更新 Codexio" }
         }
-        if changed { refreshRunningStarts() }
         if renamed { do {try await saveDevices()} catch {self.error = error.localizedDescription}; guard stamp == generation else { return } }
         pruneRetainedContent()
         if changed { persistCache() }
@@ -631,7 +615,7 @@ private struct MobileDetailTransfer {
             live?.task = nil; changed = true
             if var value = envelopes["live"] { value.payload = ""; envelopes["live"] = value }
         }
-        if changed { refreshRunningStarts(); persistCache() }
+        if changed { persistCache() }
         if detailValues.values.contains(where:{$0.expires <= now}) { pruneDetails(); persistDetails() }
         if imageDeadlines.values.contains(where:{$0 <= now}) { pruneImages() }
     }
@@ -790,7 +774,7 @@ private struct MobileDetailTransfer {
     }
     private func persistCache() {
             guard !selected.isEmpty else { return }
-            let values = MobileDiskCache(versions:envelopes.mapValues(\.revision),digests:envelopes.mapValues(\.digest),live:live,recent:recent,trends:trends,runningStarts:runningStarts)
+            let values = MobileDiskCache(versions:envelopes.mapValues(\.revision),digests:envelopes.mapValues(\.digest),live:live,recent:recent,trends:trends)
             let directory = cacheDirectory, url = directory.appendingPathComponent(selected+".json")
             files.async {
                 do {
