@@ -46,7 +46,7 @@ enum MobileFormat {
     static let requestDate: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier:"zh_CN"); f.calendar = Calendar(identifier:.gregorian)
-        f.dateFormat = "yyyy 年 M 月 d 日"; f.timeZone = .autoupdatingCurrent
+        f.dateFormat = "yyyy 年 M 月 d 日 HH:mm"; f.timeZone = .autoupdatingCurrent
         return f
     }()
     static func date(_ value: Double) -> String { Date(timeIntervalSince1970:value).formatted(.dateTime.month().day()) }
