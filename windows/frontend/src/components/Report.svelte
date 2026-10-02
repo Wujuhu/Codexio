@@ -179,7 +179,7 @@
     <aside class="mac-report-controls">
       <button bind:this={closeButton} class="mac-report-close" onclick={onclose} aria-label={tr('关闭报告')}><Icon name="close" size={14}/></button>
       <div class="mac-report-periods">{#each [['day','日报'],['week','周报'],['month','月报']] as [p,label]}<button class:mac-report-selected={period === p} aria-pressed={period === p} disabled={exporting} onclick={() => { period = p; }}>{tr(label)}</button>{/each}</div>
-      <label class="mac-report-style"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18h1c3 0 3-4 1-5-1-1 0-3 2-3h2c6 0 3-10-6-10Z"/><circle cx="7" cy="9" r="1"/><circle cx="11" cy="6" r="1"/><circle cx="16" cy="7" r="1"/></svg><span>{tr('样式')}</span><span>⌄</span><select aria-label={tr('样式')} value={style} disabled={savingStyle || exporting} onchange={e => selectStyle(e.currentTarget.value)}>{#each [['bookmark','奶油猫尾书签'],['garden','薄荷猫咪花园'],['afternoon','杏色时段图']] as [s,label]}<option value={s}>{tr(label)}</option>{/each}</select></label>
+      <label class="mac-report-style"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18h1c3 0 3-4 1-5-1-1 0-3 2-3h2c6 0 3-10-6-10Z"/><circle cx="7" cy="9" r="1"/><circle cx="11" cy="6" r="1"/><circle cx="16" cy="7" r="1"/></svg><span>{tr('样式')}</span><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 9 7 6 7-6"/></svg><select aria-label={tr('样式')} value={style} disabled={savingStyle || exporting} onchange={e => selectStyle(e.currentTarget.value)}>{#each [['bookmark','奶油猫尾书签'],['garden','薄荷猫咪花园'],['afternoon','杏色时段图']] as [s,label]}<option value={s}>{tr(label)}</option>{/each}</select></label>
       <div class="mac-report-controls-spacer"></div>
       {#if !atBottom && data.summary}<div class="mac-report-scroll-hint"><img src={`/ReportCards/cat-${style}.png`} alt=""/><span>{tr('下滑看完整报告')}</span></div>{/if}
       <button class="mac-report-share" disabled={busy || exporting || !data.summary} onclick={share}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 8H4v13h16V8h-4M12 15V2m-4 4 4-4 4 4"/></svg>{tr(exporting ? '处理中' : '分享')}</button>
@@ -234,12 +234,12 @@
   .mac-report-times span{font-weight:500}
   .mac-report-times small{color:var(--mac-muted);font-size:10px;white-space:nowrap}
   .mac-report-rhythm-rule{margin-top:20px}
-  .mac-report-models{display:flex;flex-direction:column;gap:8px;padding-top:18px;flex:none}
+  .mac-report-models{display:flex;flex-direction:column;gap:16px;padding-top:18px;flex:none}
   .mac-report-models h2{font-size:26px}
   .mac-report-models .mac-report-heading>small{color:var(--mac-muted);font-weight:400}
   .mac-report-model-row{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
   .mac-report-model-row>div{min-width:0;display:flex;flex-direction:column;gap:1px}
-  .mac-report-model-row strong{font-size:15px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mac-report-model-row strong{font-size:15px;font-weight:500;line-height:1.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .mac-report-model-row small{font-size:12px;color:var(--mac-muted);white-space:nowrap}
   .mac-report-model-row>span{font-size:13px;white-space:nowrap}
   .mac-report-models>p{font-size:10px;color:var(--mac-muted)}
@@ -254,7 +254,8 @@
   .mac-report-periods{width:96px;display:flex;flex-direction:column;gap:5px;padding:4px;border-radius:16px;background:color-mix(in srgb,var(--mac-secondary) 35%,transparent)}
   .mac-report-periods button{border:0;width:100%;height:36px;padding:0;border-radius:12px;font-size:13px;font-weight:500;background:transparent}
   .mac-report-periods button.mac-report-selected{background:var(--mac-ink)!important;color:var(--mac-paper)!important}
-  .mac-report-style{position:relative;display:flex;align-items:center;justify-content:center;gap:4px;font-size:12px;min-height:24px}
+  .mac-report-style{position:relative;display:flex;align-items:center;justify-content:center;gap:4px;font-size:12px;line-height:1.6;min-height:24px}
+  .mac-report-style>svg{display:block;flex:none}
   .mac-report-style select{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;min-height:0;padding:0}
   .mac-report-style:focus-within{outline:2px solid var(--mac-accent);outline-offset:3px;border-radius:4px}
   .mac-report-controls-spacer{flex:1;min-height:0}
