@@ -49,6 +49,7 @@ enum MobileFormat {
         f.dateFormat = "yyyy 年 M 月 d 日 HH:mm"; f.timeZone = .autoupdatingCurrent
         return f
     }()
+    static let historyDate: DateFormatter = {let f=DateFormatter(); f.locale = Locale(identifier:"en_US_POSIX"); f.calendar = Calendar(identifier:.gregorian); f.dateFormat="yyyy.M.d"; return f}()
     static func date(_ value: Double) -> String { Date(timeIntervalSince1970:value).formatted(.dateTime.month().day()) }
 }
 struct RequestDuration: View {
@@ -186,29 +187,53 @@ struct UsagePage: View {
     @State private var range = 7
     @State private var metric = 0
     @State private var selected: Date?
+    private var historyAvailable: Bool { store.trends.periods.contains {$0.days == 0} }
     private var period: MobilePeriod { store.trends.periods.first {$0.days == range} ?? MobilePeriod(days:range,total:MobileMetric(),models:[]) }
-    private var days: [MobileDay] { let zone=TimeZone(identifier:store.live?.timeZone ?? "") ?? .current; var calendar=Calendar.current; calendar.timeZone=zone; let floor=calendar.date(byAdding:.day,value:1-range,to:calendar.startOfDay(for:Date()))!; return store.trends.daily.filter {$0.start >= floor.timeIntervalSince1970}.sorted {$0.start < $1.start} }
-    private var focus: MobileDay? { guard let selected else {return days.last}; return days.min {abs($0.start-selected.timeIntervalSince1970)<abs($1.start-selected.timeIntervalSince1970)} }
+    private var calendar: Calendar { var value = Calendar.current; value.timeZone = TimeZone(identifier:store.live?.timeZone ?? "") ?? .current; return value }
+    private var days: [MobileDay] {
+        if range == 0 { return historyAvailable ? store.trends.daily : [] }
+        let floor = calendar.date(byAdding:.day,value:1-range,to:calendar.startOfDay(for:Date()))!
+        return store.trends.daily.filter {$0.start >= floor.timeIntervalSince1970}.sorted {$0.start < $1.start}
+    }
+    private func dateLabel(_ day: MobileDay) -> String {
+        guard range == 0 else { return MobileFormat.date(day.start) }
+        let formatter = MobileFormat.historyDate; formatter.timeZone = calendar.timeZone
+        let start = Date(timeIntervalSince1970:day.start), label = formatter.string(from:start)
+        guard let count = day.days, count > 1, let end = calendar.date(byAdding:.day,value:count-1,to:start) else { return label }
+        return label+" – "+formatter.string(from:end)
+    }
+    private var focus: MobileDay? {
+        let points = days
+        guard let selected else { return points.last }
+        if range == 0, let bucket = points.last(where:{$0.start <= selected.timeIntervalSince1970}),
+           let end = calendar.date(byAdding:.day,value:bucket.days ?? 1,to:Date(timeIntervalSince1970:bucket.start)), selected < end { return bucket }
+        return points.min {abs($0.start-selected.timeIntervalSince1970)<abs($1.start-selected.timeIntervalSince1970)}
+    }
     private func value(_ m: MobileMetric,_ i: Int) -> Double { i == 0 ? m.cost ?? 0 : i == 1 ? Double(m.tokens ?? 0) : Double(m.requests) }
     private func share(_ m: MobileMetric,_ i: Int) -> Double {let total=value(period.total,i);return total>0 ? max(0,min(1,value(m,i)/total)) : 0}
     var body: some View {
         ScrollView {
             VStack(alignment:.leading,spacing:20) {
-                Picker("时间范围",selection:$range) {Text("近 7 天").tag(7);Text("近 30 天").tag(30);Text("近 90 天").tag(90)}.pickerStyle(.segmented)
-                MobileCard {
-                    metricRow(period.total)
-                    HStack(spacing:16) { legend("费用",.blue);legend("Token",.teal);legend("请求",.purple) }.font(.caption)
-                    if days.isEmpty {ContentUnavailableView("暂无趋势",systemImage:"chart.xyaxis.line").frame(height:190)} else {chart}
-                    if let focus {Text("\(MobileFormat.date(focus.start))  ·  \(MobileFormat.money(focus.metric.cost))  /  \(MobileFormat.tokens(focus.metric.tokens)) Token  /  \(focus.metric.requests) 次").font(.caption).foregroundStyle(.secondary).monospacedDigit()}
-                }
-                Text("模型占比").font(.title2.bold())
-                Picker("模型排序",selection:$metric) {Text("费用").tag(0);Text("Token").tag(1);Text("请求").tag(2)}.pickerStyle(.segmented)
-                LazyVStack(spacing:12) {
-                    ForEach(period.models.sorted {value($0.metric,metric)>value($1.metric,metric)}) { model in
-                        MobileCard {
-                            HStack {Text(MobileFormat.model(model.name)).font(.headline);Spacer();Text(metric == 0 ? MobileFormat.money(model.metric.cost) : metric == 1 ? MobileFormat.tokens(model.metric.tokens) : "\(model.metric.requests) 次").font(.subheadline).monospacedDigit()}
-                            GeometryReader { g in ZStack(alignment:.leading) {Capsule().fill(Color.accentColor.opacity(0.10));Capsule().fill(Color.accentColor.gradient).frame(width:g.size.width*share(model.metric,metric))} }.frame(height:8)
-                            HStack {ForEach(0..<3) {i in Text(["费用","Token","请求"][i]+" "+String(format:"%.0f%%",share(model.metric,i)*100)).font(.caption).foregroundStyle(i==metric ? .primary : .secondary).frame(maxWidth:.infinity,alignment:.leading)}}
+                Picker("时间范围",selection:$range) {Text("近 7 天").tag(7);Text("近 30 天").tag(30);Text("全部").tag(0)}.pickerStyle(.segmented)
+                if range == 0 && !historyAvailable {
+                    ContentUnavailableView("全部历史尚未同步",systemImage:"clock.arrow.circlepath",description:Text("请打开新版电脑端并刷新同步。"))
+                } else {
+                    MobileCard {
+                        metricRow(period.total)
+                        HStack(spacing:16) { legend("费用",.blue);legend("Token",.teal);legend("请求",.purple) }.font(.caption)
+                        if days.isEmpty {ContentUnavailableView("暂无趋势",systemImage:"chart.xyaxis.line").frame(height:190)} else {chart}
+                        if let focus {Text("\(dateLabel(focus))  ·  \(MobileFormat.money(focus.metric.cost))  /  \(MobileFormat.tokens(focus.metric.tokens)) Token  /  \(focus.metric.requests) 次").font(.caption).foregroundStyle(.secondary).monospacedDigit()}
+                        if range == 0, days.contains(where:{($0.days ?? 1) > 1}) { Text("较早历史按时间段汇总，近 30 天按天显示。").font(.caption).foregroundStyle(.secondary) }
+                    }
+                    Text("模型占比").font(.title2.bold())
+                    Picker("模型排序",selection:$metric) {Text("费用").tag(0);Text("Token").tag(1);Text("请求").tag(2)}.pickerStyle(.segmented)
+                    LazyVStack(spacing:12) {
+                        ForEach(period.models.sorted {value($0.metric,metric)>value($1.metric,metric)}) { model in
+                            MobileCard {
+                                HStack {Text(MobileFormat.model(model.name)).font(.headline);Spacer();Text(metric == 0 ? MobileFormat.money(model.metric.cost) : metric == 1 ? MobileFormat.tokens(model.metric.tokens) : "\(model.metric.requests) 次").font(.subheadline).monospacedDigit()}
+                                GeometryReader { g in ZStack(alignment:.leading) {Capsule().fill(Color.accentColor.opacity(0.10));Capsule().fill(Color.accentColor.gradient).frame(width:g.size.width*share(model.metric,metric))} }.frame(height:8)
+                                HStack {ForEach(0..<3) {i in Text(["费用","Token","请求"][i]+" "+String(format:"%.0f%%",share(model.metric,i)*100)).font(.caption).foregroundStyle(i==metric ? .primary : .secondary).frame(maxWidth:.infinity,alignment:.leading)}}
+                            }
                         }
                     }
                 }
@@ -218,16 +243,17 @@ struct UsagePage: View {
     private func legend(_ label: String,_ color: Color) -> some View { HStack(spacing:5) {Circle().fill(color).frame(width:6,height:6);Text(label).foregroundStyle(.secondary)} }
     private var chart: some View {
         Chart {
+            let points = days
+            let maxima = (0..<3).map { index in max(1,points.map {value($0.metric,index)}.max() ?? 1) }
             ForEach(0..<3) { index in
-                ForEach(days) { day in
-                    let maximum = max(1,days.map {value($0.metric,index)}.max() ?? 1)
-                    LineMark(x:.value("日期",Date(timeIntervalSince1970:day.start)),y:.value("趋势",value(day.metric,index)/maximum),series:.value("指标",index))
+                ForEach(points) { day in
+                    LineMark(x:.value("日期",Date(timeIntervalSince1970:day.start)),y:.value("趋势",value(day.metric,index)/maxima[index]),series:.value("指标",index))
                         .foregroundStyle([Color.blue,.teal,.purple][index])
                         .lineStyle(StrokeStyle(lineWidth:2.5,lineCap:.round,lineJoin:.round,dash:index==0 ? [] : index==1 ? [7,4] : [2,4]))
                 }
             }
             if let focus {RuleMark(x:.value("日期",Date(timeIntervalSince1970:focus.start))).foregroundStyle(.secondary.opacity(0.25))}
-        }.chartYScale(domain:0...1.2).chartYAxis(.hidden).chartXSelection(value:$selected).chartXAxis {AxisMarks(values:.automatic(desiredCount:3)) {AxisValueLabel(format:.dateTime.month().day())}}.frame(height:210).padding(.vertical,6)
+        }.chartYScale(domain:0...1.2).chartYAxis(.hidden).chartXSelection(value:$selected).chartXAxis {AxisMarks(values:.automatic(desiredCount:3)) {AxisValueLabel(format:range == 0 ? .dateTime.year().month().day() : .dateTime.month().day())}}.frame(height:210).padding(.vertical,6)
     }
 }
 struct RequestSummary: View {

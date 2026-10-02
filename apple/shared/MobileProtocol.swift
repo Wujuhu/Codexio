@@ -147,6 +147,8 @@ struct MobileDay: Codable, Identifiable, Equatable {
     var id: String
     var start: Double
     var metric: MobileMetric
+    // Calendar days covered by an older-history bucket; absent means one day.
+    var days: Int? = nil
 }
 struct MobileModel: Codable, Identifiable, Equatable {
     var id: String

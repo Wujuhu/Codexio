@@ -514,6 +514,31 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
         detailSizes = detailSizes.filter {details[$0.key] != nil}; detailDates = detailDates.filter {details[$0.key] != nil}
         if changed { try saveDetailStamps() }
     }
+    private func trendDays(_ history: [DayUsage],calendar: Calendar,today: Date) -> [MobileDay] {
+        // Reuse Analytics' ordered day totals and UsageRange's calendar boundaries.
+        // The existing cloud envelope allows 90 points: 30 recent days plus at
+        // most 60 older buckets. Every historical day contributes exactly once.
+        let recentStart = calendar.date(byAdding:.day,value:-29,to:today)!
+        let first = history.first?.date ?? today
+        let olderDays = max(0,calendar.dateComponents([.day],from:first,to:recentStart).day ?? 0)
+        let width = max(1,(olderDays+59)/60)
+        var buckets: [Date:MobileDay] = [:]
+        for day in history where day.date <= today {
+            let start: Date, span: Int
+            if day.date < recentStart {
+                let offset = calendar.dateComponents([.day],from:first,to:day.date).day ?? 0
+                start = calendar.date(byAdding:.day,value:offset/width*width,to:first)!
+                let end = min(recentStart,calendar.date(byAdding:.day,value:width,to:start)!)
+                span = calendar.dateComponents([.day],from:start,to:end).day ?? 1
+            } else { start = day.date; span = 1 }
+            var bucket = buckets[start] ?? MobileDay(id:String(start.timeIntervalSince1970),start:start.timeIntervalSince1970,metric:MobileMetric(),days:span > 1 ? span : nil)
+            if let tokens = day.tokens { bucket.metric.tokens = (bucket.metric.tokens ?? 0)+tokens }
+            if let cost = day.cost { bucket.metric.cost = (bucket.metric.cost ?? 0)+cost }
+            bucket.metric.requests += day.requests
+            buckets[start] = bucket
+        }
+        return buckets.values.sorted {$0.start < $1.start}
+    }
     func update(_ snapshot: UsageSnapshot,quota: MenuQuota,observed: Date? = nil) {
         guard !paths.mock, enabled else { return }
         let previews = true, name = deviceName
@@ -544,18 +569,19 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                     let recent = snapshot.requests.filter {$0.local && ($0.date ?? .distantPast) >= floor && ($0.date ?? .distantFuture) <= Date() && (($0.raw.string("record_kind") == "user_request" && !$0.raw.flag("is_subagent")) || RequestClassification.isApproval($0.raw))}
                     try self.put("recent",recent.prefix(200).map(request))
                     try self.updateDetails(recent)
-                    let calendar = Calendar.current, today = calendar.startOfDay(for:Date())
-                    let oldest = calendar.date(byAdding:.day,value:-89,to:today)!
-                    let days = snapshot.allDays.filter {$0.date >= oldest && $0.date <= today}.map {MobileDay(id:String($0.date.timeIntervalSince1970),start:$0.date.timeIntervalSince1970,metric:MobileMetric(tokens:$0.tokens,cost:$0.cost,requests:$0.requests))}
-                    let periods = [7,30,90].map { count -> MobilePeriod in
-                        let start = calendar.date(byAdding:.day,value:1-count,to:today)!
-                        let calls = snapshot.calls.filter {$0.local && ($0.date ?? .distantPast) >= start && ($0.date ?? .distantFuture) <= Date()}
+                    let calendar = Calendar.current, now = Date(), today = calendar.startOfDay(for:now)
+                    let days = self.trendDays(snapshot.allDays,calendar:calendar,today:today)
+                    let localCalls = snapshot.calls.filter {$0.local && ($0.date ?? .distantFuture) <= now}
+                    let periods = [7,30,0].map { count -> MobilePeriod in
+                        let start = count == 0 ? Date.distantPast : calendar.date(byAdding:.day,value:1-count,to:today)!
+                        let calls = count == 0 ? localCalls : localCalls.filter {($0.date ?? .distantPast) >= start}
                         let requests = main.filter {($0.date ?? .distantPast) >= start}
                         let grouped = Dictionary(grouping:calls,by:{$0.raw.string("model","unknown")})
                         let requestModels = Dictionary(grouping:requests,by:{$0.raw.string("model","unknown")})
                         let keys = Set(grouped.keys).union(requestModels.keys).filter {MobileTrends.isSingleModel($0) && MobileTrends.isSingleModel(modelName($0))}.sorted()
                         let models = keys.map {key in MobileModel(id:key,name:modelName(key),metric:metric(UsageSummary(rows:grouped[key] ?? [],requests:requestModels[key]?.count ?? 0)))}
-                        return MobilePeriod(days:count,total:metric(UsageSummary(rows:calls,requests:requests.count)),models:models)
+                        let total = count == 0 ? snapshot.summaries["all"] ?? UsageSummary(rows:calls,requests:requests.count) : UsageSummary(rows:calls,requests:requests.count)
+                        return MobilePeriod(days:count,total:metric(total),models:models)
                     }
                     try self.put("trends",MobileTrends(daily:days,periods:periods))
                     self.exportRevision = snapshot.revision; self.exportPreview = previews; self.exportDay = dayKey
