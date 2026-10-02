@@ -10,7 +10,7 @@ import CoreGraphics
 @MainActor
 public final class ReportCatAnimation {
     public static let duration: CFTimeInterval = 2.2
-    public static let suggestedInterval: ClosedRange<TimeInterval> = 60...90
+    public static let playbackInterval: TimeInterval = 10
     public let rootLayer = CALayer()
     public private(set) var unit: CGFloat
     private var layers: [String: CALayer] = [:]

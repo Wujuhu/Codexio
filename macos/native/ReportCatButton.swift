@@ -5,17 +5,38 @@ import SwiftUI
 struct ReportCatButton: View {
     let action: () -> Void
     var body: some View {
-        Button(action:action) { ReportCatImage().frame(width:32,height:32) }
-            .buttonStyle(.plain)
+        ReportCatControl(action:action).frame(width:32,height:32)
             .help(L("打开 AI 使用报告", "Open AI usage reports"))
             .accessibilityLabel(L("打开 AI 使用报告", "Open AI usage reports"))
     }
 }
 
-private struct ReportCatImage: NSViewRepresentable {
-    func makeNSView(context: Context) -> ReportCatImageView { ReportCatImageView(frame:.zero) }
-    func updateNSView(_ view: ReportCatImageView,context: Context) { view.refreshState() }
-    static func dismantleNSView(_ view: ReportCatImageView,coordinator: ()) { view.invalidate() }
+private struct ReportCatControl: NSViewRepresentable {
+    let action: () -> Void
+    func makeNSView(context: Context) -> Control { Control(frame:.zero) }
+    func updateNSView(_ view: Control,context: Context) {
+        view.clicked = action
+        view.setAccessibilityLabel(L("打开 AI 使用报告", "Open AI usage reports"))
+        view.artwork.refreshState()
+    }
+    static func dismantleNSView(_ view: Control,coordinator: ()) { view.clicked = nil; view.artwork.invalidate() }
+    final class Control: NSButton {
+        let artwork = ReportCatImageView(frame:.zero)
+        var clicked: (() -> Void)?
+        override init(frame: NSRect) {
+            super.init(frame:frame)
+            // Reuse NavigationButton's native target/action routing. The artwork
+            // ignores hits so the entire fixed button bounds receive the click.
+            title = ""; isBordered = false; focusRingType = .none
+            setButtonType(.momentaryChange); target = self; action = #selector(activate)
+            addSubview(artwork)
+        }
+        required init?(coder: NSCoder) { fatalError() }
+        override var intrinsicContentSize: NSSize { NSSize(width:32,height:32) }
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        override func layout() { super.layout(); artwork.frame = bounds }
+        @objc private func activate() { clicked?() }
+    }
 }
 
 private enum ReportCatImages {
@@ -140,13 +161,13 @@ private final class ReportCatImageView: NSView {
         }
         if canAnimate, animator != nil {
             guard timer == nil else { return }
-            let next = Timer(timeInterval:Double.random(in:ReportCatAnimation.suggestedInterval),repeats:false) { [weak self] _ in
+            let next = Timer(timeInterval:ReportCatAnimation.playbackInterval,repeats:false) { [weak self] _ in
                 guard let self else { return }
                 self.timer = nil
                 if self.canAnimate { self.animator?.play() }
                 self.refreshState()
             }
-            next.tolerance = 5; timer = next; RunLoop.main.add(next,forMode:.common)
+            next.tolerance = 0.5; timer = next; RunLoop.main.add(next,forMode:.common)
         } else { timer?.invalidate(); timer = nil; animator?.stop() }
     }
     private func releaseArtwork() {
