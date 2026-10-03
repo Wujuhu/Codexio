@@ -4,8 +4,9 @@
   export let record:Row={};
   export let align:'left'|'center'|'right'='center';
   export let showEffort=true;
+  export let showUpstream=true;
   $: observed=rows(record.upstream_observations??record.observations);
-  $: upstream=observed.length
+  $: upstream=!showUpstream ? [] : observed.length
     ? observed.map(row=>text(row.upstream_model??row.response_model??row.model,'')).filter(Boolean)
     : Array.isArray(record.upstream_models) ? record.upstream_models.map((value:any)=>text(value,'')).filter(Boolean) : record.upstream_model ? [String(record.upstream_model)] : [];
   $: requested=text(record.model??record.models?.join(', '));

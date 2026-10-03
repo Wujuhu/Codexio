@@ -1,4 +1,4 @@
-import {compact, kind, number, percent, text, type Row} from '../lib/api';
+import {compact, kind, number, percent, text, type Row, type Query} from '../lib/api';
 import {isEnglish, tr} from '../lib/i18n';
 
 export function modelName(value: unknown): string {
@@ -15,7 +15,7 @@ export function speed(value: unknown): string {
   const raw = text(value, '').trim().toLowerCase();
   if (['default','standard'].includes(raw)) return 'Standard';
   if (['priority','fast'].includes(raw)) return 'Fast';
-  if (['ultrafast','ultra_fast','ultra-fast'].includes(raw)) return 'Ultrafast';
+  if (['ultrafast','ultra_fast','ultra-fast'].includes(raw)) return 'Ultra Fast';
   return raw === 'mixed' ? 'Mixed' : '—';
 }
 
@@ -41,9 +41,10 @@ export function preview(record: Row): string {
   return label;
 }
 
-export function requestTags(record: Row): string {
+export function requestMetadata(record: Row, query: Query): string {
   const context = number(record.model_context_window);
-  return [speed(record.service_tier), context !== null ? compact(context,0) : '',record.is_subagent?tr('子代理'):record.record_kind==='unassigned'?tr('未归属调用'):''].filter(Boolean).join(' · ');
+  const tier = speed(record.service_tier);
+  return [logTime(record.timestamp,query), effort(record.reasoning_effort), ['Fast','Ultra Fast'].includes(tier) ? tier : '', context !== null ? compact(context,0) : ''].filter(Boolean).join(' · ');
 }
 
 function startedMillis(value:unknown):number|null {
@@ -79,11 +80,25 @@ export function durationMilliseconds(record:Row,now=Date.now()):number|null {
 
 const pad=(value:number)=>String(value).padStart(2,'0');
 const months=['January','February','March','April','May','June','July','August','September','October','November','December'];
-export function logTime(value:unknown):string {
+export function logTime(value:unknown,query?:Query):string {
   const milliseconds=startedMillis(value);
   if(milliseconds===null)return'—';
-  const date=new Date(milliseconds);
-  return `${date.getMonth()+1}.${date.getDate()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  const date=new Date(milliseconds),now=new Date();
+  const clock=`${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  if(query?.period==='today'&&date.toDateString()===now.toDateString())return clock;
+  const start=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  if(query?.period==='week')start.setDate(start.getDate()-6);
+  else if(query?.period==='month')start.setDate(start.getDate()-29);
+  else if(query?.period==='yesterday')start.setDate(start.getDate()-1);
+  else if(query?.period==='year')start.setFullYear(start.getFullYear()-1);
+  // All-time is unbounded; explicit ranges and rolling periods share one
+  // format across pages, even if the currently visible rows are all this year.
+  const years=[date.getFullYear(),start.getFullYear()];
+  for(const bound of [query?.start,query?.end]){
+    if(bound){const year=Number(bound.slice(0,4));if(Number.isFinite(year))years.push(year);}
+  }
+  const showYear=['all','all_time'].includes(query?.period??'')||years.some(year=>year!==now.getFullYear());
+  return `${showYear?`${date.getFullYear()}.`:''}${date.getMonth()+1}.${date.getDate()} ${clock}`;
 }
 
 export function fullTime(value:unknown):string {

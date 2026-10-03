@@ -52,7 +52,7 @@ var mentionedFilePattern = regexp.MustCompile(`(?m)^## (.+?): ((?:[A-Za-z]:[\\/]
 var embeddedImagePattern = regexp.MustCompile(`(?is)<image\b[^>]*>.*?</image\s*>`)
 
 // Bump input/execution interpretation without invalidating byte cursors or meters.
-const requestMetadataVersion = 4
+const requestMetadataVersion = 5
 
 // Image/tool payloads in real rollouts exceed 8 MiB. Keep a memory bound while
 // accepting the same complete JSONL records as the v0.2.10 readline collector.
@@ -702,6 +702,26 @@ func inheritedEntry(entry, state Row) bool {
 	t := stamp(entry["timestamp"])
 	return dataString(state, "parent_id") != "" && t != "" && dataString(state, "fork_timestamp") != "" && t < dataString(state, "fork_timestamp")
 }
+
+// Settings notifications describe the next request. Keep them separate from
+// the active turn, including when a stopped request remains the current ID.
+func applyRequestSettings(state, settings Row) {
+	for _, key := range []string{"model", "reasoning_effort", "service_tier", "model_context_window", "auth_mode", "cwd", "provider"} {
+		if value, exists := settings[key]; exists {
+			state[key] = value
+		}
+	}
+	if effort := firstString(settings["effort"], settings["reasoning_effort"]); effort != "" {
+		state["reasoning_effort"] = effort
+	}
+	if provider := firstString(settings["model_provider_id"], settings["model_provider"]); provider != "" {
+		state["provider"] = provider
+	}
+}
+func activateRequestSettings(state Row) {
+	applyRequestSettings(state, ValueRow(state["pending_request_settings"]))
+	delete(state, "pending_request_settings")
+}
 func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generation string) error {
 	p := ValueRow(entry["payload"])
 	kind := dataString(entry, "type")
@@ -737,25 +757,27 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 		return nil
 	}
 	inherited := inheritedEntry(entry, state)
-	if kind == "turn_context" || sub == "thread_settings_applied" {
-		settings := p
-		if sub == "thread_settings_applied" {
-			settings = ValueRow(p["thread_settings"])
-			if len(settings) == 0 {
-				settings = ValueRow(p["settings"])
-			}
+	if kind == "event_msg" && sub == "thread_settings_applied" {
+		settings := ValueRow(p["thread_settings"])
+		if len(settings) == 0 {
+			settings = ValueRow(p["settings"])
 		}
-		for _, k := range []string{"model", "service_tier", "model_context_window", "auth_mode", "cwd"} {
-			if settings[k] != nil {
-				state[k] = settings[k]
-			}
-		}
-		if effort := firstString(settings["effort"], settings["reasoning_effort"]); effort != "" {
-			state["reasoning_effort"] = effort
-		}
-		if provider := firstString(settings["model_provider_id"], settings["model_provider"]); provider != "" {
-			state["provider"] = provider
-		}
+		pending := ValueRow(state["pending_request_settings"])
+		applyRequestSettings(pending, settings)
+		state["pending_request_settings"] = pending
+		return nil
+	}
+	explicit := ""
+	if kind == "turn_context" {
+		explicit = firstString(p["turn_id"], p["id"])
+	} else if sub == "task_started" || sub == "turn_started" {
+		explicit = firstString(p["turn_id"], p["id"])
+	}
+	if explicit != "" && explicit != dataString(state, "turn_id") {
+		activateRequestSettings(state)
+	}
+	if kind == "turn_context" {
+		applyRequestSettings(state, p)
 	}
 	// Preserve inherited turn IDs only as structural parent evidence, never user rows.
 	if inherited {
@@ -775,25 +797,14 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 		}
 		return nil
 	}
-	explicit := ""
-	if kind == "turn_context" {
-		explicit = firstString(p["turn_id"], p["id"])
-	} else if sub == "task_started" || sub == "turn_started" {
-		explicit = firstString(p["turn_id"], p["id"])
-	}
 	if explicit != "" {
 		if sub == "task_started" || sub == "turn_started" {
 			settings := ValueRow(p["thread_settings"])
 			if len(settings) == 0 {
 				settings = ValueRow(p["settings"])
 			}
-			for _, k := range []string{"model", "reasoning_effort", "service_tier", "model_context_window", "cwd"} {
-				if settings[k] != nil {
-					state[k] = settings[k]
-				} else if p[k] != nil {
-					state[k] = p[k]
-				}
-			}
+			applyRequestSettings(state, p)
+			applyRequestSettings(state, settings)
 		}
 		old := getTurn(state, dataString(state, "turn_id"), timestamp)
 		if dataString(state, "turn_id") != explicit && old != nil && ValueBool(old["synthetic"]) && !ValueBool(old["has_usage"]) && dataString(old, "ended_at") == "" {
@@ -922,6 +933,8 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 						}
 					}
 					state["turn_id"] = id
+					activateRequestSettings(state)
+					state["request_model"] = state["model"]
 					state["previous_turn_id"] = func() any {
 						if r != nil {
 							return r["turn_id"]
@@ -970,8 +983,18 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 	messageMetadata := ValueRow(p["internal_chat_message_metadata_passthrough"])
 	eventOwner, eventTurn := firstString(p["thread_id"], messageMetadata["thread_id"]), firstString(p["turn_id"], messageMetadata["turn_id"])
 	ownsEvent := (eventOwner == "" || eventOwner == dataString(state, "session_id")) && (eventTurn == "" || eventTurn == dataString(state, "turn_id"))
-	if r != nil {
-		for _, k := range []string{"model", "reasoning_effort", "service_tier", "model_context_window", "provider", "cwd", "session_cwd"} {
+	if r != nil && ownsEvent && dataString(r, "ended_at") == "" {
+		// Capture configuration at the request boundary even without a meter.
+		// Explicit null clears a prior speed; absence must never invent Standard.
+		if explicit != "" || r["request_settings_version"] == nil {
+			for _, key := range []string{"model", "reasoning_effort", "service_tier"} {
+				r[key] = state[key]
+			}
+			if !ValueBool(state["_recovery_skipped"]) {
+				r["request_settings_version"] = 1
+			}
+		}
+		for _, k := range []string{"model_context_window", "provider", "cwd", "session_cwd"} {
 			if state[k] != nil {
 				r[k] = state[k]
 			}

@@ -473,6 +473,13 @@ func mergeRecoveredTurn(row, evidence Row) Row {
 	if ValueBool(evidence["has_user_message"]) && (ValueInt(row["input_ownership_version"]) == requestMetadataVersion || automaticResume(row)) {
 		row["prompt_preview"] = evidence["prompt_preview"]
 	}
+	// A complete replay can disprove settings formerly copied from notifications
+	// after the turn ended. Preserve unknowns rather than retaining that false data.
+	if ValueInt(evidence["request_settings_version"]) == 1 && dataString(evidence, "ended_at") != "" {
+		for _, key := range []string{"model", "reasoning_effort", "service_tier", "request_settings_version"} {
+			row[key] = evidence[key]
+		}
+	}
 	for _, k := range []string{"cwd", "session_cwd", "root_turn_id", "parent_session_id", "parent_turn_id", "inherited_parent_turn_id", "alias_of", "model", "reasoning_effort", "service_tier", "model_context_window"} {
 		if evidence[k] != nil && evidence[k] != "" && evidence[k] != "unknown" {
 			row[k] = evidence[k]
@@ -556,7 +563,7 @@ func (s *Store) repairSourceMetadataCursor(ctx context.Context, path, source, fi
 		cursor["metadata_version"] = requestMetadataVersion
 		delete(cursor, "metadata_repair")
 		if through == ValueInt(cursor["offset"]) {
-			for _, key := range []string{"resume_tracking", "last_input", "previous_turn_id", "request_model"} {
+			for _, key := range []string{"resume_tracking", "last_input", "previous_turn_id", "request_model", "pending_request_settings", "model", "reasoning_effort", "service_tier"} {
 				oldState[key] = recovered[key]
 			}
 		}
