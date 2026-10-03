@@ -1,9 +1,4 @@
-PySide6-Essentials>=6.6,<6.10
-aiohttp>=3.10,<4
-tomlkit>=0.13,<1
-psutil>=6,<8
-certifi>=2024.8.30
-cryptography>=45,<52
-zeroconf>=0.140,<1
-qrcode>=8,<10
-tzlocal>=5,<6
+# Current Python launcher, packaging and release tools use the standard library.
+# Windows application dependencies are declared in windows/go.mod and
+# windows/frontend/package.json. The retired Python desktop dependencies remain
+# available in Git history; do not reinstall its PySide runtime for current builds.

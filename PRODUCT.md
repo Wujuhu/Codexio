@@ -1,6 +1,6 @@
 # Codexio product context
 
-> v0.3.1 的 Mac 原生重构以 [新规划](docs/v0.3.1/PLAN.md)为准。本文较早的 C 原型和 PySide6 布局要求仍可解释现有 Windows 行为，但不应覆盖本轮 Mac 界面设计；数据口径与用户已确认的产品事实继续适用。v0.3.1 已确认的双平台变更是订阅页逐张列出额度重置及截止时间、每张提供“使用重置”、删除 SSH 来源功能，以及跟随系统语言的简体中文／英文界面；Mac 两种语言均使用系统默认字体，Windows 使用其系统界面字体。下方旧能力清单描述的是 0.2.10 现状。
+> **历史设计记录：** 本文记录 v0.2.x 的 C 原型与 Python／PySide6 阶段，包含已被替代的品牌、布局和数据源方案。当前 Mac 使用 Swift／SwiftUI／AppKit，Windows 使用 Wails／Go／Svelte，iPhone 使用 SwiftUI；现行功能与约束以 [README](README.md)、[AGENTS.md](AGENTS.md) 和对应平台源码为准。本文用于追溯历史，不作为当前实现要求。
 
 <!-- impeccable:product-schema 1 -->
 
@@ -42,7 +42,7 @@ The sidebar now uses six two-character labels: 概览、日志、用量、订阅
 
 Confirmed for local 0.2.2 on 2026-09-10: show only Standard, Fast and applicable context conditions in one pricing table, with no separate API Base rows. Make the ordinary Standard row bold across all six columns and use official API Standard rates. Manual edits change only the base; a price-policy revision automatically revalues history and dependent caches. Keep the existing icon and move the main sidebar wordmark slightly left and down, using Times New Roman.
 
-README.md, src/codexio/dashboard.py, src/codexio/window.py, src/codexio/theme.py, and current synthetic screenshots rendered with scripts/render_preview.py. Preview data must be visibly identified as synthetic.
+Historical evidence includes `v0.2.10:src/codexio/dashboard.py`, `v0.2.10:src/codexio/window.py`, `v0.2.10:src/codexio/theme.py`, and the synthetic previews produced at that time. The Python desktop UI, screenshot matrix and its generator have been retired from the current working tree; their committed history remains available in Git. Current previews must still be visibly identified as synthetic.
 
 ## Product Principles
 
