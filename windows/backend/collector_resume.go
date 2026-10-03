@@ -178,6 +178,9 @@ func entryUserContent(entry Row) (any, string) {
 		}
 		return values
 	}
+	if kind == "request_submission" {
+		return content(p["content"], p), "submission"
+	}
 	if kind == "response_item" && dataString(p, "role") == "user" && (sub == "" || sub == "message") {
 		return content(p["content"], p), "response"
 	}
@@ -479,6 +482,9 @@ func mergeRecoveredTurn(row, evidence Row) Row {
 		for _, key := range []string{"model", "reasoning_effort", "service_tier", "request_settings_version"} {
 			row[key] = evidence[key]
 		}
+	}
+	if snapshot := ValueRow(evidence["submission_snapshot"]); len(snapshot) > 0 {
+		row["submission_snapshot"] = snapshot
 	}
 	for _, k := range []string{"cwd", "session_cwd", "root_turn_id", "parent_session_id", "parent_turn_id", "inherited_parent_turn_id", "alias_of", "model", "reasoning_effort", "service_tier", "model_context_window"} {
 		if evidence[k] != nil && evidence[k] != "" && evidence[k] != "unknown" {

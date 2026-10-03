@@ -33,8 +33,12 @@ export function preview(record: Row): string {
   if (['automatic_approval_review','context_compaction'].includes(record.record_kind)) return kind(record.record_kind);
   const raw = text(record.prompt_preview, '');
   let label = humanPrompt(raw);
-  if (!label && raw) label = /external_codex_apps_open_page|^<(?:environment_context|permissions|INSTRUCTIONS|app-context)|^# AGENTS\.md instructions/i.test(raw) ? (tr('请求详情')==='Request details'?'Context message':'上下文消息') : tr('附件消息');
-  if (!label) label = humanPrompt(record.session_title) || kind(record.record_kind ?? 'user_request');
+  if (!label && raw && !/external_codex_apps_open_page|^<(?:environment_context|permissions|INSTRUCTIONS|app-context)|^# AGENTS\.md instructions/i.test(raw)) label = tr('附件消息');
+  if (!label) {
+    const empty = record.submission_snapshot?.input_state === 'empty';
+    const running = (record.request_status ?? record.status) === 'running';
+    label = empty ? (isEnglish()?'Empty request':'空请求') : running ? (isEnglish()?'Reading request…':'正在读取请求…') : (isEnglish()?'Request content unavailable':'请求内容未记录');
+  }
   label = label.replace(/\s+/g, ' ').trim();
   // The collector owns Mac's bounded 600-character request preview. The cell
   // truncates only at its measured width, so widening it reveals the text.

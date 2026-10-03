@@ -52,7 +52,7 @@ var mentionedFilePattern = regexp.MustCompile(`(?m)^## (.+?): ((?:[A-Za-z]:[\\/]
 var embeddedImagePattern = regexp.MustCompile(`(?is)<image\b[^>]*>.*?</image\s*>`)
 
 // Bump input/execution interpretation without invalidating byte cursors or meters.
-const requestMetadataVersion = 5
+const requestMetadataVersion = 6
 
 // Image/tool payloads in real rollouts exceed 8 MiB. Keep a memory bound while
 // accepting the same complete JSONL records as the v0.2.10 readline collector.
@@ -723,6 +723,7 @@ func activateRequestSettings(state Row) {
 	delete(state, "pending_request_settings")
 }
 func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generation string) error {
+	var submittedInput []any
 	p := ValueRow(entry["payload"])
 	kind := dataString(entry, "type")
 	sub := dataString(p, "type")
@@ -844,6 +845,14 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 			state["request_model"] = state["model"]
 		}
 		r := getTurn(state, explicit, timestamp)
+		if dataString(r, "ended_at") == "" && len(ValueRow(r["submission_snapshot"])) == 0 {
+			if snapshot, input := s.requestSubmission(source, dataString(state, "session_id"), explicit, firstString(stamp(p["started_at"]), r["started_at"], timestamp)); snapshot != nil {
+				r["submission_snapshot"] = snapshot
+				applyRequestSettings(state, snapshot)
+				state["request_model"] = state["model"]
+				submittedInput = input
+			}
+		}
 		if p["root_turn_id"] != nil {
 			r["root_turn_id"] = p["root_turn_id"]
 			state["root_turn_id"] = p["root_turn_id"]
@@ -964,6 +973,9 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 					r["status"] = "running"
 				}
 				text, attachments, complete = s.collectedRequestMessage(message, true, state, timestamp)
+				if ValueBool(p["input_partial"]) {
+					complete = false
+				}
 				if dataString(r, "prompt_preview") == "" || automaticResume(r) && !paired {
 					r["prompt_preview"] = requestMessagePreview(text, attachments)
 				}
@@ -1113,6 +1125,12 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 		}
 	}
 	trimTurns(state)
+	if len(submittedInput) > 0 {
+		// Reuse the normal message ownership, deduplication and bounded body cache.
+		// Later rollout representations pair with this input on the same turn.
+		snapshot := ValueRow(r["submission_snapshot"])
+		return s.processEntry(tx, Row{"type": "request_submission", "timestamp": timestamp, "payload": Row{"content": submittedInput, "turn_id": explicit, "thread_id": state["session_id"], "input_partial": snapshot["input_partial"]}}, state, source, file, generation)
+	}
 	return nil
 }
 func trimTurns(state Row) {
