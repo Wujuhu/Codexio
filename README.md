@@ -105,7 +105,7 @@ Codexio 只读采集原始 Codex 日志，设置、账本和缓存保存在本�
 
 ## 开发与贡献
 
-Mac 使用 Swift／SwiftUI／AppKit／WidgetKit，iPhone 使用 SwiftUI／Charts，Windows 使用 Wails + Go 与 Svelte／TypeScript。历史 Python 实现保留为规则参考和共享资源来源。
+Mac 使用 Swift／SwiftUI／AppKit／WidgetKit，iPhone 使用 SwiftUI／Charts，Windows 使用 Wails + Go 与 Svelte／TypeScript。旧 Python 桌面程序已退役；Python 仅保留原生 Mac 启动、构建／交付工具和必要的规则参考，共享图标、价格种子与翻译资源继续保留。详见 [Python 目录说明](src/codexio/README.md)，完整旧版可从 [v0.2.10 源码](https://github.com/Wujuhu/Codexio/tree/v0.2.10/src/codexio)及 Git 历史查阅。
 
 | 平台 | 构建环境 | 开发打包入口 |
 | --- | --- | --- |

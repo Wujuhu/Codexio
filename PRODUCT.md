@@ -42,7 +42,7 @@ The sidebar now uses six two-character labels: 概览、日志、用量、订阅
 
 Confirmed for local 0.2.2 on 2026-09-10: show only Standard, Fast and applicable context conditions in one pricing table, with no separate API Base rows. Make the ordinary Standard row bold across all six columns and use official API Standard rates. Manual edits change only the base; a price-policy revision automatically revalues history and dependent caches. Keep the existing icon and move the main sidebar wordmark slightly left and down, using Times New Roman.
 
-Historical evidence includes the Python implementation in `src/codexio/dashboard.py`, `src/codexio/window.py`, `src/codexio/theme.py`, and the synthetic previews produced at that time. The retired screenshot matrix and its generator were removed during repository cleanup; their committed history remains available in Git. Current previews must still be visibly identified as synthetic.
+Historical evidence includes `v0.2.10:src/codexio/dashboard.py`, `v0.2.10:src/codexio/window.py`, `v0.2.10:src/codexio/theme.py`, and the synthetic previews produced at that time. The Python desktop UI, screenshot matrix and its generator have been retired from the current working tree; their committed history remains available in Git. Current previews must still be visibly identified as synthetic.
 
 ## Product Principles
 
