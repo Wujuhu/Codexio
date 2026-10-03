@@ -2,6 +2,7 @@
 
 - 日常功能开发、验证和 Mac 打包全部留在 `build`，不因一次开发构建写入或覆盖 `release`。仅在用户第二次明确确认发布及版本号后，才允许推送，并由发布协调脚本完成正式发布；成功后核验远程附件并归档到 `release/<确认的版本号>/`。
 - **开发及源码修改统一在本机进行，Mac 与 iOS 在本机构建；Windows 构建通过 SSH 连接局域网 Windows 主机，不默认使用云端构建。** Windows 名称为 `WJH`，局域网 IP 为 `192.168.1.16`，SSH 密钥路径为 `/Users/wjh/.ssh/windows_ed25519`。
+- Windows 主机上的项目目录为 `C:\CodeWJH\Projects\Codexio`。每次通过局域网 SSH 完成 Windows 构建后，必须在该电脑的 `C:\CodeWJH\Projects\Codexio\build\dev\windows` 保留经验证的 `Codexio.exe` 和配套清单；需要回传本机时使用复制，保留 Windows 上的产物。
 - **只有局域网 Windows 主机无法连接时，才向用户请求允许使用云端构建 Windows；取得用户针对本次云端构建的明确许可后才能执行。** 不自动回退到 GitHub Actions 或其他云端构建服务；用户要求 Windows 开发或构建，不等于授权云端构建。
 - **自 2026-09-28 起 Windows 默认冻结；除非用户特别明确要求，不修改 Windows 源码／版本、不构建或上传 EXE、不触发 Windows CI。Mac 与 iOS 按各自需求开发，发布时遵守下述 IPA 必传规则。**
 - **以后每次 Release 都必须上传 iOS IPA。** 默认正式版本目录为 `Codexio.app.zip`、`Codexio.ipa`、`latest.json` 三个文件；缺少或过期的 IPA 必须阻止发布，不能再只发布 Mac。ZIP 内保留完整的 `Codexio.app`，不生成 DMG。只有用户明确要求 Windows 并适配联合流程后才额外包含 EXE；历史版本及其附件不自动补传或覆盖。
