@@ -4,188 +4,123 @@
 
 <h1 align="center">Codexio</h1>
 
-<p align="center">在 Mac 和 Windows 上查看 Codex 额度、用量与任务，在 iPhone 上继续阅读。</p>
+<p align="center">看清 Codex 的额度、用量与每一次请求。</p>
 
 <p align="center">
-  <a href="https://github.com/Wujuhu/Codexio/releases/download/v0.3.5/Codexio.exe"><strong>下载 Windows 版</strong></a> ·
   <a href="https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.app.zip"><strong>下载 macOS 版</strong></a> ·
+  <a href="https://github.com/Wujuhu/Codexio/releases/download/v0.3.5/Codexio.exe"><strong>下载 Windows 版</strong></a> ·
   <a href="https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.ipa"><strong>下载 iPhone 版</strong></a> ·
-  <a href="https://github.com/Wujuhu/Codexio/releases/latest">最新版本</a> ·
+  <a href="https://github.com/Wujuhu/Codexio/releases">所有版本</a> ·
   <a href="https://github.com/Wujuhu/Codexio/issues">反馈问题</a>
 </p>
 
-Codexio 是围绕 Codex 日常使用打造的原生应用：在一个界面中查看账户额度、本机 Token 消耗、请求记录和使用趋势，通过菜单栏与桌面小组件关注任务进展，并将需要阅读的内容同步到 iPhone。
+Codexio 是 Codex 的用量与任务看板。它读取本机日志，汇总 Token、费用估算、请求记录和使用趋势，结合账户额度帮助你了解日常使用情况。Mac 提供菜单栏与桌面小组件，Windows 提供托盘与悬浮窗；配对 iPhone 后，还可以在手机上查看状态、阅读请求与最终回复。
 
-## 下载与系统要求
+![Codexio macOS 概览](docs/images/macos-overview.png)
 
-| 平台 | 版本 | 系统要求 | 下载 |
+<p align="center"><sub>macOS 主分支开发界面，使用隔离模拟数据；正式安装包的界面可能有所不同。</sub></p>
+
+## 下载与安装
+
+当前正式 Release 为 **[v0.3.5](https://github.com/Wujuhu/Codexio/releases/tag/v0.3.5)**，各平台安装包独立管理版本：
+
+| 平台 | 已发布包版本 | 系统要求 | 安装包 |
 | --- | --- | --- | --- |
-| Windows | [0.3.5](windows/VERSION) | Windows 10/11 x64，WebView2 Runtime | [Codexio.exe](https://github.com/Wujuhu/Codexio/releases/download/v0.3.5/Codexio.exe) |
-| macOS | [0.3.5](macos/VERSION) | macOS 15+，Apple Silicon（arm64） | [Codexio.app.zip](https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.app.zip) |
-| iPhone | [0.3.1](ios/VERSION) | iOS 26+ | [Codexio.ipa](https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.ipa) |
+| macOS | 0.3.5 | macOS 15+ · Apple Silicon（arm64） | [Codexio.app.zip](https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.app.zip) |
+| Windows | 0.3.5 | Windows 10/11 x64 · WebView2 Runtime | [Codexio.exe](https://github.com/Wujuhu/Codexio/releases/download/v0.3.5/Codexio.exe) |
+| iPhone | 0.3.1 | iOS 26+ | [Codexio.ipa](https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.ipa) |
 
-**iOS IPA 为未签名设备包，需要通过 SideStore 等工具自行重签后安装。** Windows、Mac 与 iOS 的版本独立管理，安装包及校验信息以 [最新 Release](https://github.com/Wujuhu/Codexio/releases/latest) 和其中的 `latest.json` 为准。
+**iPhone IPA 为未签名设备包，需要自行重签后安装。** 包版本、大小与 SHA-256 以 Release 中的 `latest.json` 为准。`main` 包含尚未发布的更改，源码版本号不代表已发布包版本；Windows 下载固定指向已发布的 EXE，因为后续 Apple Release 不一定附带 Windows 包。
 
-Windows 已按用户明确要求迁移到 Wails + Go，使用 Svelte/TypeScript 与系统 WebView2，不再捆绑 Python/PySide。Windows 版本由 `windows/VERSION` 独立管理；Python 源码保留为历史实现和规则参考。
+### macOS
 
-## 快速开始
+1. 下载并解压 ZIP，将 `Codexio.app` 放入“应用程序”后打开。
+2. 在这台 Mac 上登录并使用 Codex。Codexio 会尝试发现可用的 Codex 组件，并读取本机日志。
+3. 使用自定义安装或日志目录时，在 **设置 → 数据** 配置组件路径与日志目录；默认日志根目录为 `~/.codex`。
+4. 在 **设置 → 菜单栏** 选择显示字段和顺序；桌面小组件可从 macOS 小组件库添加。
 
-### Mac
-
-1. 下载并解压 `Codexio.app.zip`，将 `Codexio.app` 放入“应用程序”并打开。
-2. 在这台 Mac 上正常使用并登录 Codex。Codexio 会尝试发现 Codex／ChatGPT 内置的 Codex 组件或独立 CLI，并读取本机日志。
-3. 若使用自定义目录，在 **设置 → 数据** 配置“Codex 组件路径”和“本机日志目录”。默认日志根目录为 `~/.codex`。
-4. 在 **设置 → 菜单栏** 选择显示字段和顺序；桌面小组件可从 macOS 的小组件库添加。
-
-应用使用 `/Applications/Codexio.app` 作为稳定安装位置。若从下载目录等其他位置打开完整 App，会校验并安装到该位置后重新启动，以保持唯一的小组件扩展。后续可在 App 内检查更新，下载完成后由你主动选择安装。
+Mac 使用 `/Applications/Codexio.app` 作为稳定安装位置。从其他目录打开完整 App 时，会校验并接管该位置后重新启动，以保持唯一的小组件扩展。应用内更新在下载完成后由你主动选择安装。
 
 ### Windows
 
-Windows 10/11 x64 需要 WebView2 Runtime；额度读取使用本机 Codex 登录状态。关闭主窗口后可从托盘重新打开；同版本重复启动显示已有主窗口，不同版本可同时运行。悬浮窗、停靠、系统代理、请求详情图片与手机同步均由主程序提供。
-
-开发使用 Go 1.26.1、Node.js/npm 和固定的 Wails `v3.0.0-beta.26`，SQLite 为纯 Go实现，不需要安装 Python、Visual Studio 或 C++ SDK：
-
-```powershell
-.\run.ps1
-.\run.ps1 --mock
-.\build_exe.ps1
-```
-
-`build_exe.ps1` 检查源码指纹、EXE 版本、架构和哈希，并执行原有三项隔离冒烟后，交付到 `build/dev/windows`。运行中的旧 EXE 会被保留，新包暂存到 `pending`；启用新版前应自行从托盘退出旧程序。开发打包不会自动推送、发布或触发 Windows CI。详见 [Windows Wails 开发记录](docs/v0.3.4/WINDOWS_WAILS.md) 与 [通用功能对齐记录](docs/v0.3.4/WINDOWS_035_PARITY_PLAN.md)。
+1. 下载 `Codexio.exe`，确认系统已安装 WebView2 Runtime，然后运行。
+2. 登录并使用本机 Codex；如目录未自动识别，在设置中配置数据路径。
+3. 根据需要启用悬浮窗。关闭主窗口后，可从系统托盘重新打开；退出应用使用托盘菜单。
 
 ### iPhone
 
-1. 下载 `Codexio.ipa`，完成重签并安装到 iPhone。
-2. 让手机与运行 Codexio 的电脑处于**可互通的同一局域网**，保持电脑上的 Codexio 运行，在 **设置 → 同步** 开启同步并点击“生成二维码”。
-3. 在手机点击“连接我的电脑”，允许相机和本地网络权限后扫码。
-4. 在电脑点击“确认配对”。二维码单次有效，5 分钟后过期。
+1. 下载 IPA，使用重签工具安装到 iPhone。
+2. 让手机与电脑处于**可互通的同一局域网**，保持电脑上的 Codexio 运行，在 **设置 → 同步** 开启同步并生成二维码。
+3. 在手机点击“连接我的电脑”，允许相机和本地网络权限后扫码，再在电脑确认配对。二维码单次有效，5 分钟后过期。
 
-配对后优先使用局域网。需要离开局域网后阅读时，可在电脑的同步设置中输入服务管理员提供的邀请码，单独启用云同步。已配对手机下一次成功连接电脑后会获得云端配置。目前每台电脑最多授权 3 部手机，每部手机最多保存 3 台电脑。
+配对后优先通过局域网同步。外出阅读需在电脑上单独启用云同步，并使用服务管理员提供的邀请码；手机下一次成功连接电脑时会取得云端配置。目前每台电脑最多授权 3 部手机，每部手机最多保存 3 台电脑。
 
-## 特色功能
+## 功能概览
 
-| 功能 | 可以查看或完成的内容 |
+| 功能 | 内容 |
 | --- | --- |
-| **额度与任务概览** | 5 小时／周剩余额度、重置时间、当前任务、今日指标和最近请求 |
-| **请求与调用记录** | 按日期、模型、速度和状态筛选，查看 Token、费用、思考强度、耗时与可用正文 |
-| **用量与订阅分析** | 趋势图、年度活动热图、模型构成、聊天排行与订阅周期报告 |
-| **菜单栏与桌面小组件（macOS）** | 自选菜单栏字段和顺序，显示额度、数值和任务图标；提供请求及不同样式的额度组件 |
-| **托盘与悬浮窗（Windows）** | 从托盘打开主窗口，选择悬浮样式与贴边停靠，跟随系统代理连接网络 |
-| **模型定价** | 查看基础价格、手工覆盖价格，按统一规则计算本地费用 |
-| **手机阅读** | 查看概览与趋势，按需展开用户消息、最终回复及图片预览，在已配对电脑之间切换 |
+| **额度与任务** | 5 小时／周剩余额度、重置时间、当前任务与最近请求 |
+| **请求记录** | 按日期、模型、速度和状态筛选，查看 Token、费用、思考强度、耗时与可用正文 |
+| **用量分析** | 费用、总 Token、用户请求、命中率，以及趋势、活动热图、模型构成和聊天排行 |
+| **AI 使用报告** | 日报、周报与月报，回顾用量和模型偏好，并导出报告图片 |
+| **订阅与定价** | 订阅周期统计、模型基础价格与手动价格覆盖 |
+| **桌面集成** | Mac 菜单栏字段选择与排序、请求／额度小组件；Windows 托盘、悬浮窗与贴边停靠 |
+| **手机阅读** | 概览与趋势、用户消息和最终回复、可用图片预览，以及多台已配对电脑切换 |
 
-## 常见问题
-
-<details>
-<summary><strong>关闭 Mac 窗口后，还会继续运行吗？</strong></summary>
-
-会。关闭主窗口后，主 App 可继续在后台运行，并可通过 Dock 或菜单栏重新打开。**⌘Q 会退出主 App，停止采集、额度查询、同步和上游转发**；小组件随后提示“打开 Codexio 主程序”。小组件自身不采集数据，也不会自行启动主 App。普通退出不会因为已下载更新而重开应用。
-
-常用快捷键：⌘K 搜索、⌘, 设置、⌘R 刷新、⌘W 关闭窗口、⌘Q 退出。
-
-</details>
-
-<details>
-<summary><strong>为什么账户额度和本机统计不一致，或者没有显示额度？</strong></summary>
-
-账户额度可能由同一账户的多台设备共同消耗；本机统计来自这台 Mac 可读取的日志。ChatGPT 登录模式可显示账户额度，API Key 或自定义 provider 模式保留本机用量与费用，官方订阅额度显示为不适用。缺少日志、报告或价格时会保留未知状态。
-
-</details>
-
-<details>
-<summary><strong>手机可以在外出时查看数据吗？</strong></summary>
-
-首次配对需要手机与 Mac 处于可互通的局域网。完成配对并启用云同步后，手机可通过蜂窝网络读取已上传内容。Mac 退出后，云端保留的是上次上传的数据；手机进入后台后暂停连接与轮询，返回前台恢复。
-
-</details>
-
-<details>
-<summary><strong>手机的“上次更新”表示什么时间？</strong></summary>
-
-表示手机成功接收并应用同步数据的本地时间。它与源数据生成时间不同；额度观测、重置和内容到期时间仍使用各自的业务时间。
-
-</details>
+主分支另已加入 Mac 小猫报告入口和手机阅读改进：Mac → iPhone 同步支持完整历史的聚合趋势，以及排除暂停等待的实际运行耗时；iPhone 记录补充日期、时间和耗时。这些改进不代表上方正式安装包已包含全部功能，Windows 的手机同步范围也尚未完全一致。
 
 ## 数据与隐私
 
-**“费用”是按模型价格和应用规则折算的 API 等价值，不是实际账单、ChatGPT 订阅扣款或官方 Credits。** 普通基础价与 Codex 登录模式的 Fast／长上下文换算分别处理；第三方 provider 的实际计费可能不同，缺价保留未定价状态。计算方法见 [计价规则](docs/codex-pricing.md)。
+**费用是按模型价格与应用规则折算的 API 等价值，不是实际账单、ChatGPT 订阅扣款或官方 Credits。** 基础价与 Codex 登录模式的 Fast／长上下文规则分别计算；第三方服务的实际计费可能不同，缺少价格时保留未定价状态。总 Token 为输入与输出之和，缓存与推理 Token 不重复累加；用户请求数与模型调用数分别统计。详见 [计价规则](docs/codex-pricing.md) 与 [数据口径](docs/v0.3.1/DATA_CAPABILITIES.md)。
 
-总 Token 为已确认输入与输出之和，缓存已含在输入内、推理 Token 已含在输出内，不重复累加。用户请求按明确的聊天、消息及续接关系归组，可关联的子任务归入主请求；请求数与模型调用数分别统计。更多说明见 [数据口径](docs/v0.3.1/DATA_CAPABILITIES.md)。
+Codexio 只读采集原始 Codex 日志，设置、账本和缓存保存在本机。**手机同步默认关闭，云同步需单独启用。** 启用后，配对手机可读取用量、额度、请求摘要、可用正文、最终回复与图片预览；云同步会将相应内容上传至 Cloudflare 服务，内容不会自动脱敏。
 
-原始 Codex 日志以只读方式采集。Mac 默认将设置、SQLite 账本、价格版本和缓存保存在 `~/Library/Application Support/Codexio`，兼容已有的 `AIQuotaWidget`／`AIQuota` 数据目录。
-
-**手机同步默认关闭，云同步需单独启用。** 启用后，配对设备可读取用量、额度、请求预览、可用的用户正文、最终回复和图片预览；开启云同步会将这些内容存储到 Cloudflare 服务。同步内容不提供自动脱敏保证。
-
-| 云端内容 | 保留规则 |
+| 云端内容 | 保留与容量 |
 | --- | --- |
-| **消息正文** | 最长 **7 天**；每台 Mac 最多 64 条、合计 8 MiB，单条最多 1 MiB；容量限制可能使内容更早被移除 |
-| **图片预览** | 最长 **3 天**；最长边 2048 像素、每张不超过 1 MiB，动画使用静态预览 |
-| **用量摘要** | 当前状态、最近记录、近 90 天日汇总及 7／30／90 日模型统计；统计汇总不因单条消息到期而清空 |
+| 请求摘要与正文 | 最长 7 天；正文每台电脑最多 64 条、合计 8 MiB，单条最多 1 MiB |
+| 图片预览 | 最长 3 天；最长边 2048 像素、每张最多 1 MiB；每台电脑最多 128 张、云端预览数据合计 32 MiB |
+| 用量聚合 | 范围由电脑端版本决定，不因单条消息到期而清空 |
 
-保留期按源记录时间计算，重复上传不会续期；到期后停止读取，实际删除由后台任务分批执行。内容缺失、过期或超过容量时显示相应状态。完整范围与容量见 [手机阅读与同步协议](cloudflare/README.md)。
+保留期按源记录时间计算，重复上传不续期；容量限制可能使内容更早不可用。到期内容立即停止读取，实际删除由后台任务分批处理。云服务还受管理员配置、全局每日请求预算与 Cloudflare 平台限额约束，达到限制时手机保留已验证缓存。
 
-局域网使用 TLS 并校验配对证书指纹，云端通过 HTTPS 和设备凭据鉴权。同步不上传原始日志文件、完整工具执行过程或 Codex 登录凭据，也不提供远程执行任务或任意文件下载接口。
+当前主分支中，Mac 的手机趋势覆盖全部历史：近 30 天按日展示，更早数据合并为最多 60 个区间；Windows 的手机同步仍提供近 90 天趋势及 7／30／90 日统计。完整历史聚合不等于保存全部消息正文。协议、预算和容量细节见 [手机阅读与同步](cloudflare/README.md)。
 
-关闭同步会停止服务，已上传副本继续按保留规则清理；“移除密钥”会停用该 Mac 的云端读写权限。手机移除设备会删除对应本地缓存，远程撤销权限不会抹除离线设备已保存的内容。
+局域网使用 TLS 并校验配对证书指纹，云端使用 HTTPS 和设备凭据鉴权。同步不上传原始日志文件、完整工具执行过程或 Codex 登录凭据，也不提供远程执行任务或任意文件下载。关闭同步会停止服务，已上传副本继续按保留规则清理；撤销授权不会抹除离线设备已经保存的内容。
 
-可选的 **设置 → 应用 → 上游检测** 默认关闭。开启后，Responses 请求通过本机转发以关联响应 ID 与模型名称；关闭或正常退出时恢复原服务配置，详见 [上游检测说明](docs/upstream-detection.md)。
+可选的 **上游检测** 默认关闭。开启后，相关请求经本机转发以关联响应 ID 和模型名称；关闭或正常退出时恢复原服务配置。使用前可阅读 [上游检测说明](docs/upstream-detection.md)。
+
+## 常见问题
+
+**为什么账户额度与本机用量不同，或者额度不可用？**
+
+账户额度可能由多台设备共同消耗，本机统计只来自当前电脑可读取的日志。ChatGPT 登录模式可查询订阅额度；API Key 或自定义 provider 模式保留本机用量统计，官方订阅额度显示为不适用。缺少日志、报告或价格时会显示未知状态。
+
+**关闭 Mac 窗口后还会继续运行吗？**
+
+会，主 App 可继续在菜单栏运行。⌘Q 会退出主 App，停止采集、额度查询、同步和上游转发；小组件会提示“打开 Codexio 主程序”。小组件不独立采集，也不会自行启动主 App。
+
+**电脑关机后，手机还能看到内容吗？**
+
+启用云同步后可读取此前上传且仍有效的内容，但不会产生新数据；未启用时可查看已有本地缓存。手机进入后台后暂停连接与轮询，返回前台恢复。
 
 ## 开发与贡献
 
-Mac 使用 Swift、SwiftUI、AppKit、SQLite 与 WidgetKit，iPhone 使用 SwiftUI 与 Charts，两端复用同步协议。问题反馈、功能建议和文档修正可通过 [Issues](https://github.com/Wujuhu/Codexio/issues) 交流。反馈时请附应用版本、系统版本与复现步骤，并去除个人请求内容和凭据。
+Mac 使用 Swift／SwiftUI／AppKit／WidgetKit，iPhone 使用 SwiftUI／Charts，Windows 使用 Wails + Go 与 Svelte／TypeScript。历史 Python 实现保留为规则参考和共享资源来源。
 
-修改代码前请阅读 [AGENTS.md](AGENTS.md)，了解平台范围、现有最小验证与交付约定。本地构建产物保存在 `build`，构建不会自动推送或发布。
+| 平台 | 构建环境 | 开发打包入口 |
+| --- | --- | --- |
+| macOS | 完整 Xcode（macOS 26+ SDK）、Python 3.12／3.13 | `./build_macos.sh` |
+| iOS | `/Applications/Xcode.app`、iOS 26+ SDK、项目 Python 环境 | `.venv/bin/python scripts/build_ios.py` |
+| Windows | Windows x64、Go 1.26.1、Node.js/npm；脚本固定 Wails 版本 | `.\build_exe.ps1` |
 
-<details>
-<summary><strong>本地构建</strong></summary>
+Mac 入口自动创建或复用 `.venv`；Python 仅参与构建与交付，原生 App 运行不依赖 Python。开发产物位于 `build/dev/<平台>`，打包不会自动推送或发布。修改前请阅读 [AGENTS.md](AGENTS.md)，遵守平台范围、最小冒烟与交付约定；Windows 开发需单独明确授权。
 
-Mac 构建需要完整 Xcode（含 macOS 26+ SDK）及 Python 3.12／3.13。Python 用于组装与交付校验，交付的原生 Mac App 不依赖 Python、Qt 或 WebView。iOS 构建还需要支持 iOS 26+ 的 iPhoneOS SDK。
-
-```bash
-git clone https://github.com/Wujuhu/Codexio.git
-cd Codexio
-
-# 构建 Mac 开发包，包含现有隔离冒烟与交付校验
-./build_macos.sh
-
-# 可选：启动隔离模拟数据预览
-./run_macos.sh --mock
-
-# 构建未签名 iPhone IPA
-.venv/bin/python scripts/build_ios.py
-```
-
-Mac 脚本自动创建或复用项目 `.venv`，按本机架构编译。iOS 脚本使用 `/Applications/Xcode.app`，生成 arm64 设备包；编译与归档校验不等同于真机安装验收。
-
-`CODEXIO_DATA_DIR` 可指定应用数据目录，`CODEX_HOME` 可指定默认 Codex 根目录。
-
-</details>
-
-<details>
-<summary><strong>源码目录与开发产物</strong></summary>
-
-| 目录 | 内容 |
-| --- | --- |
-| [`macos/native/`](macos/native/) | Mac 主程序、界面、账本、菜单栏、更新与同步 |
-| [`macos/widget/`](macos/widget/) | WidgetKit 请求与额度组件 |
-| [`ios/App/`](ios/App/) | iPhone 主 App、阅读界面与同步客户端 |
-| [`apple/shared/`](apple/shared/) | Mac／iOS 共用同步协议与数据结构 |
-| [`cloudflare/`](cloudflare/) | 云同步 Worker、数据库结构与迁移 |
-| [`windows/`](windows/) | Windows Wails + Go 主程序及 Svelte 界面 |
-| [`src/codexio/`](src/codexio/) | 历史 Windows 实现及共用品牌、价格资源 |
-| [`scripts/`](scripts/) | 构建、归档、版本与交付工具 |
-| `build/dev/macos/` | 开发 App、`Codexio.app.zip` 与 `latest.json` |
-| `build/dev/ios/` | 未签名 `Codexio.ipa` 与 `build-info.json` |
-| `build/dev/windows/` | Windows 开发 EXE 与统一 `latest.json` |
-
-</details>
+欢迎通过 [Issues](https://github.com/Wujuhu/Codexio/issues) 反馈问题、建议功能或提交文档修正。问题报告请包含应用版本、系统版本与复现步骤，并移除个人请求内容和凭据。
 
 ## 文档
 
-- [macOS 开发说明](docs/macos.md)：原生结构、构建与稳定安装路径。
-- [iOS 开发与配对记录](docs/ios/DEVELOPMENT_HANDOFF.md)：手机安装、配对与生命周期。
-- [手机阅读与同步协议](cloudflare/README.md)：正文、图片、云端保留与容量约束。
-- [计价规则](docs/codex-pricing.md) · [数据口径](docs/v0.3.1/DATA_CAPABILITIES.md) · [上游检测](docs/upstream-detection.md)。
-- [v0.3.5 开发记录](docs/v0.3.5/DEVELOPMENT.md) · [Windows 历史平台记录](docs/v0.3.3/WINDOWS_PARITY.md)。
+- [macOS 开发说明](docs/macos.md) · [iOS 开发说明](docs/ios/DEVELOPMENT_HANDOFF.md) · [Windows Wails 开发说明](docs/v0.3.4/WINDOWS_WAILS.md)
+- [手机阅读与同步](cloudflare/README.md) · [计价规则](docs/codex-pricing.md) · [上游检测](docs/upstream-detection.md)
+- [当前开发记录](docs/v0.3.5/DEVELOPMENT.md) · [协作与交付约定](AGENTS.md)
 
-开发记录按时间保留历史内容；当前功能以源码及对应版本的安装包为准。
+开发记录包含历史过程，具体行为请以对应版本的源码与安装包为准。

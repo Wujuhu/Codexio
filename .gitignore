@@ -1,4 +1,8 @@
 .venv/
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -15,9 +19,10 @@ windows/frontend/dist/
 !windows/build/windows/Codexio.exe.manifest
 !windows/build/windows/info.json
 *.log
-tests/_ui_*.png
 
 # Local design-session process state.
 .impeccable/questions/*.state.json
+# Retired generated UI review matrices; keep curated documentation images only.
+.impeccable/review/
 .wrangler/
 cloudflare/.wrangler/
