@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.app.zip"><strong>下载 macOS 版</strong></a> ·
-  <a href="https://github.com/Wujuhu/Codexio/releases/download/v0.3.5/Codexio.exe"><strong>下载 Windows 版</strong></a> ·
+  <a href="https://github.com/Wujuhu/Codexio/releases/download/v0.3.6/Codexio.exe"><strong>下载 Windows 版</strong></a> ·
   <a href="https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.ipa"><strong>下载 iPhone 版</strong></a> ·
   <a href="https://github.com/Wujuhu/Codexio/releases">所有版本</a> ·
   <a href="https://github.com/Wujuhu/Codexio/issues">反馈问题</a>
@@ -27,7 +27,7 @@ Codexio 是 Codex 的用量与任务看板。它读取本机日志，汇总 Toke
 | 平台 | 已发布包版本 | 系统要求 | 安装包 |
 | --- | --- | --- | --- |
 | macOS | 0.3.6 | macOS 15+ · Apple Silicon（arm64） | [Codexio.app.zip](https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.app.zip) |
-| Windows | 0.3.5 | Windows 10/11 x64 · WebView2 Runtime | [Codexio.exe](https://github.com/Wujuhu/Codexio/releases/download/v0.3.5/Codexio.exe) |
+| Windows | 0.3.6 | Windows 10/11 x64 · WebView2 Runtime | [Codexio.exe](https://github.com/Wujuhu/Codexio/releases/download/v0.3.6/Codexio.exe) |
 | iPhone | 0.3.1 | iOS 26+ | [Codexio.ipa](https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.ipa) |
 
 **iPhone IPA 为未签名设备包，需要自行重签后安装。** 包版本、大小与 SHA-256 以 Release 中的 `latest.json` 为准。`main` 可能包含尚未发布的更改，源码版本号不代表已发布包版本；Windows 下载固定指向已发布的 EXE，因为 Apple Release 不一定附带 Windows 包。
@@ -67,7 +67,7 @@ Mac 使用 `/Applications/Codexio.app` 作为稳定安装位置。从其他目�
 | **桌面集成** | Mac 菜单栏字段选择与排序、请求／额度小组件；Windows 托盘、悬浮窗与贴边停靠 |
 | **手机阅读** | 概览与趋势、用户消息和最终回复、可用图片预览，以及多台已配对电脑切换 |
 
-v0.3.6 加入 Mac 小猫报告入口和手机阅读改进：Mac → iPhone 同步支持完整历史的聚合趋势，以及排除暂停等待的实际运行耗时；本次附带的 iPhone 包补充记录日期、时间和耗时。Windows 的手机同步范围尚未完全一致。
+v0.3.6 加入 Mac／Windows 小猫报告入口和手机阅读改进：桌面 → iPhone 同步支持完整历史的聚合趋势，以及排除暂停等待的实际运行耗时；本次附带的 iPhone 包补充记录日期、时间和耗时。Windows 同时统一了请求模型、思考强度、速度及日期的显示格式。
 
 ## 数据与隐私
 
@@ -83,7 +83,7 @@ Codexio 只读采集原始 Codex 日志，设置、账本和缓存保存在本�
 
 保留期按源记录时间计算，重复上传不续期；容量限制可能使内容更早不可用。到期内容立即停止读取，实际删除由后台任务分批处理。云服务还受管理员配置、全局每日请求预算与 Cloudflare 平台限额约束，达到限制时手机保留已验证缓存。
 
-Mac v0.3.6 的手机趋势覆盖全部历史：近 30 天按日展示，更早数据合并为最多 60 个区间；Windows 的手机同步仍提供近 90 天趋势及 7／30／90 日统计。完整历史聚合不等于保存全部消息正文。协议、预算和容量细节见 [手机阅读与同步](cloudflare/README.md)。
+Mac／Windows v0.3.6 的手机趋势覆盖全部历史：近 30 天按日展示，更早数据合并为最多 60 个区间，周期统计提供近 7 天、近 30 天和全部历史。完整历史聚合不等于保存全部消息正文。协议、预算和容量细节见 [手机阅读与同步](cloudflare/README.md)。
 
 局域网使用 TLS 并校验配对证书指纹，云端使用 HTTPS 和设备凭据鉴权。同步不上传原始日志文件、完整工具执行过程或 Codex 登录凭据，也不提供远程执行任务或任意文件下载。关闭同步会停止服务，已上传副本继续按保留规则清理；撤销授权不会抹除离线设备已经保存的内容。
 
