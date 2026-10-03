@@ -1,8 +1,8 @@
 <script lang="ts">
   import {onDestroy} from 'svelte';
-  import {api,rows,text,kind,numeric,compact,priced,stamp,type Row} from '../lib/api';
+  import {api,rows,text,kind,numeric,compact,priced,type Row} from '../lib/api';
   import {tr} from '../lib/i18n';
-  import {effort,speed,preview} from './logFormat';
+  import {effort,speed,preview,fullTime,requestStatus} from './logFormat';
   import Markdown from './Markdown.svelte';
   import Model from './Model.svelte';
   import Duration from './Duration.svelte';
@@ -26,18 +26,20 @@
 <aside class="inspector surface" aria-busy={busy}>
   <div class="inspector-scroll">
     <header><h2>{tr('请求详情')}</h2>
-      {#if data.request}<h3 class="request-title">{preview(request)}</h3><p class="request-date muted">{stamp(request.timestamp)}</p>{/if}
+      {#if data.request}<h3 class="request-title">{preview(request)}</h3>{/if}
     </header>
     {#if !id}<div class="empty">{tr('点击请求查看详情')}</div>
     {:else if busy&&!data.request}<div class="empty">{tr('正在加载')}</div>
     {:else if data.request}
       <section class="metric-fields">
-        <div class="field-pair model-pair"><span class="muted">{tr('模型')}</span><Model record={request} align="right"/></div>
+        <div class="field-pair model-pair"><span class="muted">{tr('模型')}</span><Model record={request} align="right" showEffort={false}/></div>
         <div class="field-pair"><span class="muted">{tr('推理强度')}</span><span>{effort(request.reasoning_effort)||'—'}</span></div>
-        {#if speed(request.service_tier)}<div class="field-pair"><span class="muted">{tr('速度')}</span><span>{speed(request.service_tier)}</span></div>{/if}
+        <div class="field-pair"><span class="muted">{tr('速度')}</span><span>{speed(request.service_tier)}</span></div>
+        <div class="field-pair"><span class="muted">{tr('状态')}</span><span>{requestStatus(request)}</span></div>
         <div class="field-pair"><span class="muted">{tr('费用')}</span><span>{priced(request)}</span></div>
-        <div class="field-pair"><span class="muted">{tr('耗时')}</span><Duration record={request}/></div>
         {#each [['input_tokens','输入 Token'],['cached_input_tokens','缓存读取'],['cache_write_input_tokens','缓存写入'],['output_tokens','输出 Token'],['reasoning_output_tokens','推理输出'],['total_tokens','总 Token']] as [key,label]}<div class="field-pair"><span class="muted">{tr(label)}</span><span>{compact(request[key])}</span></div>{/each}
+        <div class="field-pair"><span class="muted">{tr('耗时')}</span><Duration record={request}/></div>
+        <div class="field-pair"><span class="muted">{tr('时间')}</span><span>{fullTime(request.timestamp)}</span></div>
       </section>
       <section><div class="row between"><h3>{tr('原始请求')}</h3><button class="quiet" aria-label={tr('复制')} disabled={!body(data.user)} onclick={()=>copy(body(data.user),'user')}><Icon name={copied==='user'?'check':'copy'} size={15}/></button></div>
         {#if body(data.user)}<Markdown content={body(data.user)} requestId={currentId} images={rows(data.images).filter(image=>image.placement!=='final')} {onerror}/>{:else}<p class="muted">{tr('暂无原始请求')}</p>{/if}
@@ -49,12 +51,12 @@
       </section>
       {#if rows(data.attachments).length}<section><h3>{tr('附件')}</h3>{#each rows(data.attachments) as attachment}<div class="attachment"><Icon name="file" size={14}/><span>{text(attachment.name)}</span></div>{/each}</section>{/if}
       {#if members.length}<details class="calls" bind:open={callsOpen}><summary>{tr('模型调用')} ({numeric(data.total_members)})</summary>
-        {#each members as member}<div class="call"><div class="call-head"><Model record={member} align="left"/></div><small class="muted">{kind(member.record_kind)} · {[effort(member.reasoning_effort),speed(member.service_tier)].filter(Boolean).join(' · ')}</small><p>{compact(member.total_tokens)} Token · {priced(member)}</p>{#if member.output_preview}<p class="muted call-preview">{text(member.output_preview)}</p>{/if}</div>{/each}
+        {#each members as member}<div class="call"><div class="call-head"><Model record={member} align="left"/></div><small class="muted">{kind(member.record_kind)} · {speed(member.service_tier)}</small><p>{compact(member.total_tokens)} Token · {priced(member)}</p>{#if member.output_preview}<p class="muted call-preview">{text(member.output_preview)}</p>{/if}</div>{/each}
         {#if Number(data.pages)>1}<div class="row call-pages"><button disabled={page<=1||busy} onclick={()=>load(currentId,page-1)}>{tr('上一页')}</button><span>{page} / {data.pages}</span><button disabled={page>=data.pages||busy} onclick={()=>load(currentId,page+1)}>{tr('下一页')}</button></div>{/if}
       </details>{/if}
     {/if}
   </div>
 </aside>
 <style>
-  .inspector{width:100%;height:100%;min-height:0;max-height:100%;padding:0;text-align:left;white-space:normal;font-size:12px}.inspector-scroll{height:100%;overflow:auto;padding:20px;text-align:left;scrollbar-gutter:stable}header{padding:0 18px 15px 0;border-bottom:1px solid var(--border);margin-bottom:15px}h2{font-size:16px!important;line-height:1.4!important;padding:0!important;font-weight:600}.request-title{font-size:14px!important;font-weight:500;line-height:1.5;margin:13px 0 6px!important;overflow-wrap:anywhere}.request-date{font-size:12px;line-height:1.4}section{margin:0 0 15px!important;padding-bottom:15px;border-bottom:1px solid var(--border)}section h3{font-size:12px;font-weight:500;line-height:1.5;margin:0 0 8px}section>.row{margin-bottom:6px}.row button{padding:3px 4px}.field-pair{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:0 0 8px}.field-pair:last-child{margin:0}.field-pair>span:last-child{text-align:right;min-width:0;overflow-wrap:anywhere}.model-pair{align-items:center}.model-pair :global(.model-lines){max-width:215px;margin-left:auto;padding-left:0}.calls{margin-top:15px}.calls summary{cursor:pointer;font-size:12px;font-weight:500}.call{padding:12px 0;border-bottom:1px solid var(--border)}.call-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px}.call-head :global(.model-lines){align-items:flex-start;padding-left:0;max-width:230px}.call small{font-size:11px}.call p{font-size:12px;line-height:1.5;margin-top:5px;text-align:left}.call-preview{display:-webkit-box;-webkit-line-clamp:3;line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}.call-pages{justify-content:space-between;margin-top:12px;font-size:11px}.call-pages button{font-size:11px;padding:5px 7px}.warning{display:block;font-size:11px;margin-top:7px}.empty{font-size:12px;padding:30px 0}
+  .inspector{width:100%;height:100%;min-height:0;max-height:100%;padding:0;text-align:left;white-space:normal;font-size:12px}.inspector-scroll{height:100%;overflow:auto;padding:20px;text-align:left;scrollbar-gutter:stable}header{padding:0 18px 15px 0;border-bottom:1px solid var(--border);margin-bottom:15px}h2{font-size:16px!important;line-height:1.4!important;padding:0!important;font-weight:600}.request-title{font-size:14px!important;font-weight:500;line-height:1.5;margin:13px 0 6px!important;overflow-wrap:anywhere}section{margin:0 0 15px!important;padding-bottom:15px;border-bottom:1px solid var(--border)}section h3{font-size:12px;font-weight:500;line-height:1.5;margin:0 0 8px}section>.row{margin-bottom:6px}.row button{padding:3px 4px}.field-pair{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:0 0 8px}.field-pair:last-child{margin:0}.field-pair>span:last-child{text-align:right;min-width:0;overflow-wrap:anywhere}.model-pair{align-items:center}.model-pair :global(.model-lines){max-width:215px;margin-left:auto;padding-left:0}.calls{margin-top:15px}.calls summary{cursor:pointer;font-size:12px;font-weight:500}.call{padding:12px 0;border-bottom:1px solid var(--border)}.call-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px}.call-head :global(.model-lines){align-items:flex-start;padding-left:0;max-width:230px}.call small{font-size:11px}.call p{font-size:12px;line-height:1.5;margin-top:5px;text-align:left}.call-preview{display:-webkit-box;-webkit-line-clamp:3;line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}.call-pages{justify-content:space-between;margin-top:12px;font-size:11px}.call-pages button{font-size:11px;padding:5px 7px}.warning{display:block;font-size:11px;margin-top:7px}.empty{font-size:12px;padding:30px 0}
 </style>

@@ -7,7 +7,7 @@
   export let id=''; export let record:Row={}; export let onerror:(e:any)=>void;
   let open=false, pinned=false, shown=false, returningFocus=false, left=0, top=0;
   let detailRevision='';
-  $: revision=JSON.stringify([id,record.model,record.models,record.reasoning_effort,record.service_tier,record.model_context_window,record.request_status??record.status,record.total_tokens,record.cost_usd,record.duration_ms,record.prompt_preview,record.output_preview,record.call_count,record.upstream_observations??record.observations??record.upstream_models??record.upstream_model]);
+  $: revision=JSON.stringify([id,record.model,record.models,record.reasoning_effort,record.service_tier,record.model_context_window,record.request_status??record.status,record.total_tokens,record.cost_usd,record.duration_ms,record.duration_running,record.duration_started_at,record.duration_base_ms,record.prompt_preview,record.output_preview,record.call_count,record.upstream_observations??record.observations??record.upstream_models??record.upstream_model]);
   $: if(open&&revision!==detailRevision)detailRevision=revision;
   let trigger:HTMLButtonElement, popup:HTMLDivElement;
   let timer:ReturnType<typeof setTimeout>;

@@ -178,6 +178,9 @@ func entryUserContent(entry Row) (any, string) {
 		}
 		return values
 	}
+	if kind == "request_submission" {
+		return content(p["content"], p), "submission"
+	}
 	if kind == "response_item" && dataString(p, "role") == "user" && (sub == "" || sub == "message") {
 		return content(p["content"], p), "response"
 	}
@@ -431,6 +434,28 @@ func repairCachedInputOwnership(query func(string, ...any) *sql.Row, row Row) {
 }
 func mergeRecoveredTurn(row, evidence Row) Row {
 	row = CloneRow(row)
+	// Recover source timing without replacing a terminal row with an earlier
+	// running prefix of the bounded replay. No wall-clock timestamp is inferred.
+	if ValueBool(evidence["explicit_task_start"]) && evidence["started_inferred"] == false {
+		if _, ok := ParseStamp(evidence["started_at"]); ok {
+			row["started_at"], row["started_inferred"] = evidence["started_at"], false
+		}
+	}
+	if end, ok := ParseStamp(evidence["ended_at"]); ok && (dataString(evidence, "status") == "completed" || dataString(evidence, "status") == "aborted") {
+		previous, exists := ParseStamp(row["ended_at"])
+		if !exists || !end.Before(previous) {
+			row["ended_at"], row["status"] = evidence["ended_at"], evidence["status"]
+			if duration, ok := ValueFloat(evidence["duration_ms"]); ok && duration >= 0 {
+				row["duration_ms"] = duration
+			}
+		}
+	}
+	if observed, ok := ParseStamp(evidence["observed_at"]); ok {
+		previous, exists := ParseStamp(row["observed_at"])
+		if !exists || observed.After(previous) {
+			row["observed_at"] = evidence["observed_at"]
+		}
+	}
 	contextHashes := map[string]bool{}
 	for _, hash := range ValueStrings(evidence["context_input_hashes"]) {
 		if hash != pythonHash("") {
@@ -450,6 +475,16 @@ func mergeRecoveredTurn(row, evidence Row) Row {
 	// A retained genuine prompt is not disproved by an empty recovery body.
 	if ValueBool(evidence["has_user_message"]) && (ValueInt(row["input_ownership_version"]) == requestMetadataVersion || automaticResume(row)) {
 		row["prompt_preview"] = evidence["prompt_preview"]
+	}
+	// A complete replay can disprove settings formerly copied from notifications
+	// after the turn ended. Preserve unknowns rather than retaining that false data.
+	if ValueInt(evidence["request_settings_version"]) == 1 && dataString(evidence, "ended_at") != "" {
+		for _, key := range []string{"model", "reasoning_effort", "service_tier", "request_settings_version"} {
+			row[key] = evidence[key]
+		}
+	}
+	if snapshot := ValueRow(evidence["submission_snapshot"]); len(snapshot) > 0 {
+		row["submission_snapshot"] = snapshot
 	}
 	for _, k := range []string{"cwd", "session_cwd", "root_turn_id", "parent_session_id", "parent_turn_id", "inherited_parent_turn_id", "alias_of", "model", "reasoning_effort", "service_tier", "model_context_window"} {
 		if evidence[k] != nil && evidence[k] != "" && evidence[k] != "unknown" {
@@ -502,7 +537,7 @@ func (s *Store) repairSourceMetadataCursor(ctx context.Context, path, source, fi
 	through := ValueInt(cursor["offset"])
 	if len(progress) == 0 {
 		var needed int
-		if e := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM usage_turns WHERE json_extract(data,'$.session_id')=? AND (COALESCE(json_extract(data,'$.prompt_preview'),'')='' OR COALESCE(json_extract(data,'$.has_user_message'),0)=0 OR COALESCE(json_extract(data,'$.resume_kind'),'')<>'' OR instr(lower(COALESCE(json_extract(data,'$.prompt_preview'),'')),'<external_codex_apps_')>0))`, firstString(oldState["session_id"], rolloutID(path))).Scan(&needed); e != nil {
+		if e := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM usage_turns WHERE json_extract(data,'$.session_id')=?)`, firstString(oldState["session_id"], rolloutID(path))).Scan(&needed); e != nil {
 			return e
 		}
 		if needed == 0 {
@@ -534,7 +569,7 @@ func (s *Store) repairSourceMetadataCursor(ctx context.Context, path, source, fi
 		cursor["metadata_version"] = requestMetadataVersion
 		delete(cursor, "metadata_repair")
 		if through == ValueInt(cursor["offset"]) {
-			for _, key := range []string{"resume_tracking", "last_input", "previous_turn_id", "request_model"} {
+			for _, key := range []string{"resume_tracking", "last_input", "previous_turn_id", "request_model", "pending_request_settings", "model", "reasoning_effort", "service_tier"} {
 				oldState[key] = recovered[key]
 			}
 		}

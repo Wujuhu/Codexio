@@ -20,6 +20,7 @@ import (
 )
 
 const mobileLocalGroup = `(EXISTS(SELECT 1 FROM json_each(json_extract(g.data,'$.source_ids')) WHERE value='local' OR value LIKE 'local:%') OR json_extract(g.data,'$.source_id')='local' OR json_extract(g.data,'$.source_id') LIKE 'local:%')`
+const mobileLocalCall = `EXISTS(SELECT 1 FROM usage_query_sources s WHERE s.record_id=c.id AND (s.source_id='local' OR s.source_id LIKE 'local:%'))`
 
 func mobileIsLocal(r Row) bool {
 	sources := ValueStrings(r["source_ids"])
@@ -50,14 +51,28 @@ func mobileRequest(r Row) Row {
 		preview = preview[:80]
 	}
 	var duration any
-	if n, ok := ValueFloat(r["duration_ms"]); ok {
+	if n, ok := ValueFloat(r["duration_ms"]); ok && n >= 0 && status != "running" && !ValueBool(r["duration_running"]) {
 		duration = n / 1000
 	}
-	result := Row{"id": HashString(ValueString(r["id"])), "started": float64(t.UnixMilli()) / 1000, "status": status, "preview": mobilePrefix(string(preview), 240), "model": ValueString(r["model"]), "effort": r["reasoning_effort"], "speed": r["service_tier"], "tokens": r["total_tokens"], "cost": r["cost_usd"], "duration": duration}
+	result := Row{"id": HashString(ValueString(r["id"])), "started": mobileUnixSeconds(t), "status": status, "preview": mobilePrefix(string(preview), 240), "model": requestModelName(r["model"]), "effort": requestEffortName(r["reasoning_effort"]), "speed": requestSpeed(r["service_tier"]), "tokens": r["total_tokens"], "cost": r["cost_usd"], "duration": duration, "durationStarted": nil, "durationBase": nil}
+	if status == "running" && ValueBool(r["duration_running"]) {
+		start, validStart := ParseStamp(r["duration_started_at"])
+		base, validBase := ValueFloat(r["duration_base_ms"])
+		if validStart && start.Unix() > 0 && validBase && base >= 0 {
+			// Stable anchors shared by live.task and recent; never sample elapsed
+			// time here or advance dataset revisions just because a second passed.
+			result["durationStarted"] = mobileUnixSeconds(start)
+			result["durationBase"] = base / 1000
+		}
+	}
 	if mobileApproval(r) {
 		result["kind"] = "approval_review"
 	}
 	return result
+}
+
+func mobileUnixSeconds(stamp time.Time) float64 {
+	return float64(stamp.Unix()) + float64(stamp.Nanosecond())/1e9
 }
 func mobileApproval(r Row) bool {
 	return ValueBool(r["is_approval_review"]) || ValueString(r["record_kind"]) == "automatic_approval_review" || ValueString(r["record_kind"]) == "approval_review" || strings.EqualFold(ValueString(r["model"]), "codex-auto-review")
@@ -189,24 +204,74 @@ func (m *MobileHost) project(ctx context.Context) {
 func (m *MobileHost) datasetRevisionLocked() string {
 	return fmt.Sprintf("%d:%d:%d", ValueInt(m.datasets["live"]["revision"]), ValueInt(m.datasets["recent"]["revision"]), ValueInt(m.datasets["trends"]["revision"]))
 }
-func (m *MobileHost) projectHistory(ctx context.Context, generation int64, key string, now time.Time) error {
-	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
-	oldest := day.AddDate(0, 0, -89)
-	days := map[string]*mobileSum{}
-	dates := []time.Time{}
-	for i := 0; i < 90; i++ {
-		t := oldest.AddDate(0, 0, i)
-		dates = append(dates, t)
-		days[t.Format("2006-01-02")] = mobileNewSum()
+
+type mobileHistoryBucket struct {
+	start time.Time
+	days  int
+	sum   *mobileSum
+}
+
+func mobileCalendarDayNumber(t time.Time) int64 {
+	year, month, day := t.Date()
+	// Subtract civil dates at UTC midnight, not elapsed local hours across DST.
+	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC).Unix() / 86400
+}
+
+func mobileHistoryBuckets(first, today time.Time) []mobileHistoryBucket {
+	// Match MobileSync.trendDays: keep 30 recent calendar days and at most 60
+	// older buckets. All-history totals never depend on this display resolution.
+	recentStart := today.AddDate(0, 0, -29)
+	olderDays := max(0, int(mobileCalendarDayNumber(recentStart)-mobileCalendarDayNumber(first)))
+	width := max(1, (olderDays+59)/60)
+	buckets := make([]mobileHistoryBucket, 0, 90)
+	for offset := 0; offset < olderDays; offset += width {
+		buckets = append(buckets, mobileHistoryBucket{first.AddDate(0, 0, offset), min(width, olderDays-offset), mobileNewSum()})
 	}
+	for offset := 0; offset < 30; offset++ {
+		buckets = append(buckets, mobileHistoryBucket{recentStart.AddDate(0, 0, offset), 1, mobileNewSum()})
+	}
+	return buckets
+}
+
+func mobileHistorySum(buckets []mobileHistoryBucket, t time.Time) *mobileSum {
+	index := sort.Search(len(buckets), func(i int) bool { return buckets[i].start.After(t) }) - 1
+	if index < 0 {
+		return nil
+	}
+	return buckets[index].sum
+}
+
+func (m *MobileHost) projectHistory(ctx context.Context, generation int64, key string, now time.Time) error {
+	now = now.In(time.Local)
+	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
+	recentStart := now.Add(-7 * 24 * time.Hour)
+	taskStart := day.AddDate(0, 0, -89)
+	ranges := []int{7, 30, 0}
+	starts := map[int]time.Time{7: day.AddDate(0, 0, -6), 30: day.AddDate(0, 0, -29)}
+	db := m.store.Database()
+	endStamp := ledgerStamp(now)
+	var firstStamp string
+	e := db.QueryRowContext(ctx, `SELECT coalesce(min(first_stamp),'') FROM (
+		SELECT min(c.timestamp) AS first_stamp FROM usage_priced_calls c WHERE c.timestamp<=? AND `+mobileLocalCall+`
+		UNION ALL
+		SELECT min(g.timestamp) AS first_stamp FROM usage_request_groups g WHERE g.timestamp<=? AND g.record_kind='user_request' AND g.is_subagent=0 AND `+mobileLocalGroup+`
+	)`, endStamp, endStamp).Scan(&firstStamp)
+	if e != nil {
+		return e
+	}
+	first := day
+	if t, ok := ParseStamp(firstStamp); ok {
+		t = t.In(time.Local)
+		first = time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local)
+	}
+	buckets := mobileHistoryBuckets(first, day)
 	periods := map[int]*mobileSum{}
 	models := map[int]map[string]*mobileSum{}
-	for _, n := range []int{7, 30, 90} {
+	for _, n := range ranges {
 		periods[n] = mobileNewSum()
 		models[n] = map[string]*mobileSum{}
 	}
-	db := m.store.Database()
-	rows, e := db.QueryContext(ctx, `SELECT c.data,c.timestamp FROM usage_priced_calls c WHERE timestamp>=? AND timestamp<=? AND EXISTS(SELECT 1 FROM usage_query_sources s WHERE s.record_id=c.id AND (s.source_id='local' OR s.source_id LIKE 'local:%')) ORDER BY timestamp`, ledgerStamp(oldest), ledgerStamp(now))
+	rows, e := db.QueryContext(ctx, `SELECT c.data,c.timestamp FROM usage_priced_calls c WHERE c.timestamp<=? AND `+mobileLocalCall+` ORDER BY c.timestamp,c.id`, endStamp)
 	if e != nil {
 		return e
 	}
@@ -225,13 +290,11 @@ func (m *MobileHost) projectHistory(ctx context.Context, generation int64, key s
 			continue
 		}
 		t = t.In(time.Local)
-		d := days[t.Format("2006-01-02")]
-		if d == nil {
-			continue
+		if d := mobileHistorySum(buckets, t); d != nil {
+			d.calls.add(r)
 		}
-		d.calls.add(r)
-		for _, n := range []int{7, 30, 90} {
-			if !t.Before(day.AddDate(0, 0, -n+1)) {
+		for _, n := range ranges {
+			if n == 0 || !t.Before(starts[n]) {
 				periods[n].calls.add(r)
 				name := ValueString(r["model"])
 				if mobileSingleModel(name) {
@@ -250,7 +313,9 @@ func (m *MobileHost) projectHistory(ctx context.Context, generation int64, key s
 	if e != nil {
 		return e
 	}
-	rows, e = db.QueryContext(ctx, `SELECT g.data,g.timestamp FROM usage_request_groups g WHERE g.timestamp>=? AND g.timestamp<=? AND (g.record_kind IN ('automatic_approval_review','approval_review') OR (g.record_kind='user_request' AND g.is_subagent=0)) AND `+mobileLocalGroup+` ORDER BY timestamp DESC,id DESC`, ledgerStamp(oldest), ledgerStamp(now))
+	// User-request counts cover all history; approval rows are only needed for
+	// the existing seven-day recent list. No historical request bodies are kept.
+	rows, e = db.QueryContext(ctx, `SELECT g.data,g.timestamp FROM usage_request_groups g WHERE g.timestamp<=? AND ((g.record_kind='user_request' AND g.is_subagent=0) OR (g.timestamp>=? AND g.record_kind IN ('automatic_approval_review','approval_review'))) AND `+mobileLocalGroup+` ORDER BY g.timestamp DESC,g.id DESC`, endStamp, ledgerStamp(recentStart))
 	if e != nil {
 		return e
 	}
@@ -275,16 +340,14 @@ func (m *MobileHost) projectHistory(ctx context.Context, generation int64, key s
 			continue
 		}
 		t = t.In(time.Local)
-		d := days[t.Format("2006-01-02")]
-		if d == nil {
-			continue
-		}
 		approval := mobileApproval(r)
 		if !approval {
-			d.requests++
+			if d := mobileHistorySum(buckets, t); d != nil {
+				d.requests++
+			}
 		}
-		for _, n := range []int{7, 30, 90} {
-			if !approval && !t.Before(day.AddDate(0, 0, -n+1)) {
+		for _, n := range ranges {
+			if !approval && (n == 0 || !t.Before(starts[n])) {
 				periods[n].requests++
 				name := ValueString(r["model"])
 				if mobileSingleModel(name) {
@@ -297,23 +360,26 @@ func (m *MobileHost) projectHistory(ctx context.Context, generation int64, key s
 				}
 			}
 		}
-		status := ValueString(r["request_status"])
-		if !approval && (status == "running" || ValueBool(r["duration_running"])) {
-			running++
-		}
-		if !approval && status == "running" && (task == nil || ValueString(task["status"]) != "running") {
-			task = mobileRequest(r)
-		} else if !approval && status == "completed" && (task == nil || ValueString(task["status"]) != "running") {
-			ended, ok := ParseStamp(r["ended_at"])
-			if !ok {
-				ended = t
+		// Expanding aggregate history must not revive stale task status.
+		if !t.Before(taskStart) {
+			status := ValueString(r["request_status"])
+			if !approval && (status == "running" || ValueBool(r["duration_running"])) {
+				running++
 			}
-			if ended.After(latestCompleted) {
+			if !approval && status == "running" && (task == nil || ValueString(task["status"]) != "running") {
 				task = mobileRequest(r)
-				latestCompleted = ended
+			} else if !approval && status == "completed" && (task == nil || ValueString(task["status"]) != "running") {
+				ended, ok := ParseStamp(r["ended_at"])
+				if !ok {
+					ended = t
+				}
+				if ended.After(latestCompleted) {
+					task = mobileRequest(r)
+					latestCompleted = ended
+				}
 			}
 		}
-		if len(recent) < 200 && !t.Before(now.Add(-7*24*time.Hour)) {
+		if len(recent) < 200 && !t.Before(recentStart) {
 			public := mobileRequest(r)
 			if public != nil {
 				recent = append(recent, public)
@@ -331,12 +397,16 @@ func (m *MobileHost) projectHistory(ctx context.Context, generation int64, key s
 	if e != nil {
 		return e
 	}
-	daily := []Row{}
-	for _, t := range dates {
-		daily = append(daily, Row{"id": strconv.FormatInt(t.Unix(), 10) + ".0", "start": float64(t.Unix()), "metric": days[t.Format("2006-01-02")].metric()})
+	daily := make([]Row, 0, len(buckets))
+	for _, bucket := range buckets {
+		r := Row{"id": strconv.FormatInt(bucket.start.Unix(), 10) + ".0", "start": float64(bucket.start.Unix()), "metric": bucket.sum.metric()}
+		if bucket.days > 1 {
+			r["days"] = bucket.days
+		}
+		daily = append(daily, r)
 	}
 	pp := []Row{}
-	for _, n := range []int{7, 30, 90} {
+	for _, n := range ranges {
 		names := []string{}
 		for name := range models[n] {
 			names = append(names, name)
@@ -344,7 +414,7 @@ func (m *MobileHost) projectHistory(ctx context.Context, generation int64, key s
 		sort.Strings(names)
 		mm := []Row{}
 		for _, name := range names {
-			mm = append(mm, Row{"id": name, "name": name, "metric": models[n][name].metric()})
+			mm = append(mm, Row{"id": name, "name": requestModelName(name), "metric": models[n][name].metric()})
 		}
 		pp = append(pp, Row{"days": n, "total": periods[n].metric(), "models": mm})
 	}
@@ -359,7 +429,7 @@ func (m *MobileHost) projectHistory(ctx context.Context, generation int64, key s
 	if e == nil {
 		m.historyKey = key
 		m.requests = ids
-		m.todayMetric = days[day.Format("2006-01-02")].metric()
+		m.todayMetric = buckets[len(buckets)-1].sum.metric()
 		m.currentTask = task
 		m.runningCount = running
 	}

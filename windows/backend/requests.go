@@ -14,7 +14,7 @@ type requestBase struct {
 	note  string
 }
 
-func projectionDirtySessions(tx *sql.Tx, expired bool) (map[string]bool, error) {
+func projectionDirtySessions(tx *sql.Tx, timeChanged bool, now time.Time) (map[string]bool, error) {
 	result := map[string]bool{}
 	rows, e := tx.Query(`SELECT session_id FROM usage_records WHERE id IN(SELECT item_id FROM usage_query_changes WHERE kind='record') UNION SELECT session_id FROM usage_priced_calls WHERE id IN(SELECT item_id FROM usage_query_changes WHERE kind='record') UNION SELECT item_id FROM usage_query_changes WHERE kind='title'`)
 	if e != nil {
@@ -63,8 +63,9 @@ func projectionDirtySessions(tx *sql.Tx, expired bool) (map[string]bool, error) 
 			result[dataString(r, "child_session_id")] = true
 		}
 	}
-	if expired {
-		rows, e := tx.Query(`SELECT DISTINCT json_extract(data,'$.session_id') FROM usage_request_groups WHERE json_extract(data,'$.request_status')='running'`)
+	if timeChanged {
+		seconds := float64(now.Unix()) + float64(now.Nanosecond())/1e9
+		rows, e := tx.Query(`SELECT DISTINCT json_extract(data,'$.session_id') FROM usage_request_groups WHERE json_extract(data,'$.duration_refresh_at')<=? OR json_extract(data,'$.duration_valid_after')>?`, seconds, seconds)
 		if e != nil {
 			return nil, e
 		}
@@ -115,22 +116,27 @@ func (s *Store) project() error {
 	s.mu.RUnlock()
 	priceChanged := dataString(state, "prices") != version
 	full := prior == "" || priceChanged
-	groupFull := full || ValueInt(state["request_projection_version"]) != requestMetadataVersion
-	durationChanged := ValueInt(state["duration_projection_version"]) != 1
-	// Running status expires without rescanning history. Future rows are filtered by query time.
+	durationChanged := ValueInt(state["duration_projection_version"]) != requestDurationProjectionVersion
+	groupFull := full || ValueInt(state["request_projection_version"]) != requestMetadataVersion || durationChanged
+	// Source observations, future timestamps and clock rollback are time
+	// dependencies. A normal poll compares two cached boundaries, not history.
 	now := time.Now()
-	expired := false
-	var stale int
-	_ = tx.QueryRow(`SELECT count(*) FROM usage_request_groups WHERE json_extract(data,'$.request_status')='running' AND timestamp<?`, ledgerStamp(now.Add(-24*time.Hour))).Scan(&stale)
-	expired = stale > 0
-	if !groupFull && ValueInt(state["revision"]) == revision && !expired && !durationChanged {
+	timeChanged := false
+	if next, ok := ParseStamp(state["duration_refresh_at"]); ok && !now.Before(next) {
+		timeChanged = true
+	}
+	if validAfter, ok := ParseStamp(state["duration_valid_after"]); ok && now.Before(validAfter) {
+		timeChanged = true
+	}
+	if !groupFull && ValueInt(state["revision"]) == revision && !timeChanged {
 		if s.Generation() == 0 {
 			s.generation.Store(ValueInt(state["generation"]))
 		}
 		return nil
 	}
-	// Only active sessions need the new duration projection. No log replay.
-	dirty, e := projectionDirtySessions(tx, expired || durationChanged)
+	// A rule change repairs all derived groups once; existing priced calls and
+	// byte cursors remain valid. Later changes rebuild only affected groups.
+	dirty, e := projectionDirtySessions(tx, timeChanged, now)
 	if e != nil {
 		return e
 	}
@@ -205,8 +211,19 @@ func (s *Store) project() error {
 	if e = s.rebuildGroups(tx, now, groupFull, dirty); e != nil {
 		return e
 	}
+	var nextDurationRefresh, durationValidAfter sql.NullFloat64
+	if e = tx.QueryRow(`SELECT MIN(json_extract(data,'$.duration_refresh_at')),MAX(json_extract(data,'$.duration_valid_after')) FROM usage_request_groups`).Scan(&nextDurationRefresh, &durationValidAfter); e != nil {
+		return e
+	}
+	projection := Row{"revision": revision, "prices": version, "generation": s.Generation() + 1, "request_projection_version": requestMetadataVersion, "duration_projection_version": requestDurationProjectionVersion}
+	if nextDurationRefresh.Valid {
+		projection["duration_refresh_at"] = nextDurationRefresh.Float64
+	}
+	if durationValidAfter.Valid {
+		projection["duration_valid_after"] = durationValidAfter.Float64
+	}
 	generation := s.Generation() + 1
-	_, e = tx.Exec("INSERT INTO usage_query_state VALUES('go_projection',?) ON CONFLICT(key) DO UPDATE SET data=excluded.data", dataJSON(Row{"revision": revision, "prices": version, "generation": generation, "request_projection_version": requestMetadataVersion, "duration_projection_version": 1}))
+	_, e = tx.Exec("INSERT INTO usage_query_state VALUES('go_projection',?) ON CONFLICT(key) DO UPDATE SET data=excluded.data", dataJSON(projection))
 	if e != nil {
 		return e
 	}
@@ -586,14 +603,11 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 		hasHuman := false
 		var earliest Row
 		ownModel := dataString(group, "model")
-		status := firstString(group["status"], "unknown")
-		if status == "running" {
-			if t, ok := ParseStamp(group["started_at"]); ok && now.Sub(t) > 24*time.Hour {
-				status = "unknown"
-			}
-		}
+		ownTier := requestSpeed(group["service_tier"])
+		durationMembers := make([]Row, 0, len(keys))
 		for _, key := range keys {
 			meta := bases[key].meta
+			durationMembers = append(durationMembers, meta)
 			if !ValueBool(meta["is_subagent"]) && !approvalRequest(meta) && ValueBool(meta["has_user_message"]) {
 				hasHuman = true
 			}
@@ -605,14 +619,6 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 			}()), "session_id": meta["session_id"], "turn_id": meta["turn_id"], "source": meta["source"], "parent_session_id": meta["parent_session_id"], "parent_turn_id": meta["parent_turn_id"]})
 			if key != root && ValueBool(meta["is_subagent"]) {
 				subagents[dataString(meta, "session_id")] = true
-			}
-			if key != root && dataString(meta, "status") == "running" {
-				if t, ok := ParseStamp(meta["started_at"]); ok && now.Sub(t) < 24*time.Hour {
-					status = "running"
-				}
-			}
-			if key != root && dataString(meta, "status") == "unknown" && status == "completed" {
-				status = "unknown"
 			}
 			// Alias membership includes both temporary and official turn identifiers.
 			callRows, e := tx.Query(`SELECT data FROM usage_priced_calls WHERE session_id=? AND turn_id IN(SELECT ? UNION SELECT json_extract(t.data,'$.turn_id') FROM usage_query_turns t WHERE json_extract(t.data,'$.resolved_id')=?) ORDER BY timestamp,id`, dataString(meta, "session_id"), dataString(meta, "turn_id"), key)
@@ -635,7 +641,9 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 				}
 				summary.add(r)
 				models[dataString(r, "model")] = true
-				tiers[normalizedTier(r["service_tier"])] = true
+				if tier := requestSpeed(r["service_tier"]); tier != "unknown" {
+					tiers[tier] = true
+				}
 				for _, source := range ValueStrings(r["source_ids"]) {
 					sources[source] = true
 				}
@@ -688,14 +696,12 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 			if ownModel != "" && ownModel != "unknown" {
 				models[ownModel] = true
 			}
-			if group["service_tier"] != nil {
-				tiers[normalizedTier(group["service_tier"])] = true
+			if ownTier != "unknown" {
+				tiers[ownTier] = true
 			}
 		}
 		group["models"] = sortedKeys(models)
 		group["source_ids"] = sortedKeys(sources)
-		group["request_status"] = status
-		group["status_label"] = map[string]string{"running": "回复中", "completed": "完成", "aborted": "已中断", "unknown": "未知"}[status]
 		if earliest != nil {
 			for _, k := range []string{"session_title", "prompt_preview", "output_preview", "reasoning_effort", "service_tier", "model_context_window"} {
 				if group[k] == nil || group[k] == "" {
@@ -711,39 +717,19 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 		}
 		group["model"] = firstString(ownModel, "unknown")
 		group["service_tiers"] = sortedKeys(tiers)
-		if len(tiers) == 1 {
+		if ownTier != "unknown" {
+			group["service_tier"] = ownTier
+		} else if len(tiers) == 1 {
 			group["service_tier"] = sortedKeys(tiers)[0]
 		} else if len(tiers) > 1 {
 			group["service_tier"] = "mixed"
+		} else {
+			group["service_tier"] = "unknown"
 		}
 		var finalMeta Row
-		duration := float64(0)
-		durationKnown := true
-		activeStarts := []string{}
-		segments := 0
 		for _, key := range keys {
 			meta := bases[key].meta
 			mainContinuation := !ValueBool(meta["is_subagent"]) && !approvalRequest(meta) && (dataString(meta, "continuation_of") != "" || dataString(meta, "root_turn_id") != "" && key != root)
-			if key == root || mainContinuation {
-				segments++
-				if dataString(meta, "status") == "running" && status == "running" {
-					if started, ok := ParseStamp(meta["started_at"]); ok && now.Sub(started) < 24*time.Hour {
-						activeStarts = append(activeStarts, ledgerStamp(started))
-					} else {
-						durationKnown = false
-					}
-				} else if d, ok := ValueFloat(meta["duration_ms"]); ok && d >= 0 {
-					duration += d
-				} else {
-					start, ok := ParseStamp(meta["started_at"])
-					end, ok2 := ParseStamp(meta["ended_at"])
-					if ok && ok2 && !end.Before(start) {
-						duration += float64(end.Sub(start).Milliseconds())
-					} else {
-						durationKnown = false
-					}
-				}
-			}
 			if mainContinuation && (finalMeta == nil || dataString(meta, "ended_at") > dataString(finalMeta, "ended_at")) {
 				finalMeta = meta
 			}
@@ -751,19 +737,7 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 		if finalMeta != nil && dataString(finalMeta, "output_preview") != "" {
 			group["output_preview"] = finalMeta["output_preview"]
 		}
-		if finalMeta != nil && status != "running" {
-			status = firstString(finalMeta["status"], status)
-			group["ended_at"] = finalMeta["ended_at"]
-		}
-		group["status"], group["request_status"] = status, status
-		group["status_label"] = map[string]string{"running": "回复中", "completed": "完成", "aborted": "已中断", "unknown": "未知"}[status]
-		if segments > 1 {
-			group["duration_segments"] = segments
-			group["duration_ms"] = nil
-			if durationKnown && len(activeStarts) == 0 {
-				group["duration_ms"] = duration
-			}
-		}
+		projectRequestDuration(group, durationMembers, now)
 		if title := func() string {
 			var title string
 			_ = tx.QueryRow("SELECT title FROM usage_session_titles WHERE session_id=?", group["session_id"]).Scan(&title)
@@ -771,20 +745,6 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 		}(); title != "" {
 			group["session_title"] = title
 		}
-		if group["duration_ms"] == nil && segments <= 1 {
-			start, ok := ParseStamp(group["started_at"])
-			end, ok2 := ParseStamp(group["ended_at"])
-			if ok && ok2 && !end.Before(start) {
-				group["duration_ms"] = float64(end.Sub(start).Milliseconds())
-			}
-		}
-		group["duration_running"] = status == "running" && len(activeStarts) > 0
-		group["duration_active_starts"] = activeStarts
-		group["duration_completed_ms"] = nil
-		if durationKnown {
-			group["duration_completed_ms"] = duration
-		}
-		group["duration_started_at"] = group["started_at"]
 		if e = saveGroup(tx, group); e != nil {
 			return e
 		}

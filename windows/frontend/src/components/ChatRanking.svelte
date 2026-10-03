@@ -1,6 +1,6 @@
 <script lang="ts">
  import{onDestroy}from'svelte';import{api,rows,text,number,compact,utcReportStamp,type Row}from'../lib/api';
- import{tr}from'../lib/i18n';
+ import{tr}from'../lib/i18n';import{modelName,effort,speed}from'./logFormat';
  export let data:Row={};export let settings:Row={};export let onsave:((r:Row)=>Promise<void>)|undefined;export let onerror:((e:any)=>void)|undefined;export let onpage:((direction:number)=>void)|undefined;
  let local=false,sort='weekly_limit_percent',page=0,visible=5;let expanded=new Set<string>();let ranking:Row={},sequence=0;
  $: if(!local)void load(data.chat_usage,sort,page);
@@ -19,7 +19,7 @@
  function precise(value:any){const n=number(value);return n===null?'—':n.toLocaleString('en-US',{maximumFractionDigits:n>0&&n<.01?4:2})+'%'}
  function creditsText(value:any){const n=number(value);return n===null?'—':n.toLocaleString('en-US',{maximumFractionDigits:2})}
  function breakdown(row:Row,key:string){const total=number(row[sort]);const amounts=new Map<string,number>();for(const group of rows(row.groups)){const n=number(group[sort]);if(n!==null){const label=text(group[key],tr('未知'));amounts.set(label,(amounts.get(label)??0)+n)}}const result=Array.from(amounts,([label,value])=>({label,value})).sort((a,b)=>b.value-a.value);const rest=(total??0)-result.reduce((sum,item)=>sum+item.value,0);if(total!==null&&rest>Math.max(.000001,total*.0001))result.push({label:tr('未归类'),value:rest});return total!==null&&total>0?result.map(item=>({...item,percent:item.value/total*100})):[]}
- function groupLabel(key:string,value:string){if(key==='reasoning_effort')return({minimal:'Minimal',low:'Low',medium:'Medium',high:'High',max:'Max'} as Record<string,string>)[value]??value;if(key==='speed')return['priority','fast'].includes(value)?tr('快速模式'):['standard','default'].includes(value)?tr('标准'):value;return value}
+ function groupLabel(key:string,value:string){if(value===tr('未归类'))return value;return key==='reasoning_effort'?effort(value)||'—':key==='speed'?speed(value):key==='model'?modelName(value):value}
  async function open(id:string){try{await api('OpenChat',id)}catch(e){onerror?.(e)}}
  async function refresh(){try{await api('RefreshAccountReports')}catch(e){onerror?.(e)}}
 </script>
