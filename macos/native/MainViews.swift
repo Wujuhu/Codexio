@@ -258,7 +258,7 @@ struct LogsView: View {
                 }.fixedSize()
             }
             if compact { ScrollView(.horizontal) {filters}.frame(height:30) } else { filters }
-            CompactTable(columns:LogFields.columns(fields),rows:projection.value.rows.map { row in LogFields.row(row,timeOnly:period == "today") {state.usage.members(of:row)} },revision:projection.value.revision.uuidString+period,preferences:state.preferences,storageKey:"logs",scrollResetKey:projection.value.scrollResetKey)
+            CompactTable(columns:LogFields.columns(fields),rows:projection.value.rows.map { row in LogFields.row(row,timeOnly:period == "today",showYear:projection.value.showYear) {state.usage.members(of:row)} },revision:projection.value.revision.uuidString+period,preferences:state.preferences,storageKey:"logs",scrollResetKey:projection.value.scrollResetKey)
                 .overlay(RoundedRectangle(cornerRadius:10).stroke(.secondary.opacity(0.16)))
             HStack {
                 Text(mode == "requests" ? "\(projection.value.count-projection.value.unassigned-projection.value.compactions-projection.value.approvals) "+L("条请求", "requests")+(projection.value.approvals > 0 ? " · \(projection.value.approvals) "+L("次自动审批审查", "automatic approval reviews") : "")+(projection.value.compactions > 0 ? " · \(projection.value.compactions) "+L("次上下文压缩", "context compactions") : "")+(projection.value.unassigned > 0 ? " · \(projection.value.unassigned) "+L("次未归属调用", "unassigned calls") : "") : "\(projection.value.count) "+L("次调用", "calls")).foregroundStyle(.secondary)

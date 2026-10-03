@@ -93,6 +93,7 @@ private final class DateFormatters {
     let whole = ISO8601DateFormatter()
     let day = DateFormatter()
     let dateTime = DateFormatter()
+    let logDateTime = DateFormatter()
     let time = DateFormatter()
     let lastUpdate = DateFormatter()
     let reportDay = DateFormatter()
@@ -104,6 +105,7 @@ private final class DateFormatters {
         whole.formatOptions = [.withInternetDateTime]
         day.locale = Locale(identifier:"en_US_POSIX"); day.dateFormat = "yyyy-MM-dd"; day.timeZone = .autoupdatingCurrent
         dateTime.dateStyle = .medium; dateTime.timeStyle = .short
+        logDateTime.locale = Locale(identifier:"en_US_POSIX"); logDateTime.timeZone = .autoupdatingCurrent; logDateTime.dateFormat = "yyyy.M.d HH:mm"
         time.dateStyle = .none; time.timeStyle = .short
         lastUpdate.locale = Locale(identifier:"en_US_POSIX"); lastUpdate.timeZone = .autoupdatingCurrent; lastUpdate.dateFormat = "M.d HH:mm"
         reportDay.locale = Locale(identifier:"en_US_POSIX"); reportDay.timeZone = TimeZone(secondsFromGMT:0); reportDay.dateFormat = "M/d"
@@ -142,6 +144,11 @@ func lastUpdateText(_ date: Date?) -> String {
 func dateText(_ date: Date?, timeOnly: Bool = false) -> String {
     guard let date else { return "—" }
     return (timeOnly ? DateFormatters.current.time : DateFormatters.current.dateTime).string(from:date)
+}
+func logDateText(_ date: Date?, timeOnly: Bool = false, showYear: Bool = false) -> String {
+    guard let date else { return "—" }
+    let formatters = DateFormatters.current
+    return (timeOnly ? formatters.time : showYear ? formatters.logDateTime : formatters.lastUpdate).string(from:date)
 }
 func compact(_ value: Double?) -> String {
     guard let value, value.isFinite else { return "—" }

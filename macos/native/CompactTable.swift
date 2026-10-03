@@ -317,14 +317,14 @@ enum LogFields {
             return GridColumn(id:key,title:title(key),width:width,maximum:key == "content" ? 285 : key == "model" ? 230 : nil,alignment:.center)
         }
     }
-    static func row(_ row: UsageRow,timeOnly: Bool,details: @escaping () -> [UsageRow]) -> GridRow {
+    static func row(_ row: UsageRow,timeOnly: Bool,showYear: Bool = false,details: @escaping () -> [UsageRow]) -> GridRow {
         GridRow(id:row.id,text: { key in
             let raw = row.raw
             switch key {
             case "content":
-                let metadata = [dateText(row.date,timeOnly:timeOnly),raw.string("reasoning_effort").isEmpty ? "" : logEffortName(raw.string("reasoning_effort")),logSpeedName(raw.string("service_tier")),raw.number("model_context_window").map {compact($0)} ?? "",raw.flag("is_subagent") ? L("子代理", "Subagent") : raw.string("record_kind") == "unassigned" ? L("未归属调用", "Unassigned call") : ""].filter {!$0.isEmpty}.joined(separator:" · ")
+                let metadata = [logDateText(row.date,timeOnly:timeOnly,showYear:showYear),raw.string("reasoning_effort").isEmpty ? "" : logEffortName(raw.string("reasoning_effort")),logSpeedName(raw.string("service_tier")),raw.number("model_context_window").map {compact($0)} ?? "",raw.flag("is_subagent") ? L("子代理", "Subagent") : raw.string("record_kind") == "unassigned" ? L("未归属调用", "Unassigned call") : ""].filter {!$0.isEmpty}.joined(separator:" · ")
                 return GridText(main:raw.string("prompt_preview").isEmpty ? row.title : raw.string("prompt_preview"),secondary:metadata)
-            case "time": return GridText(main:dateText(row.date,timeOnly:timeOnly))
+            case "time": return GridText(main:logDateText(row.date,timeOnly:timeOnly,showYear:showYear))
             case "model":
                 let upstream = raw.string("upstream_model"), requested = raw.string("model")
                 return GridText(main:modelName(requested),upstream:modelName(upstream),upstreamMismatch:raw.flag("upstream_mismatched",!upstream.isEmpty && !requested.isEmpty && upstream != requested))

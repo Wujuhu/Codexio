@@ -106,6 +106,7 @@ struct LogProjection {
     var unassigned = 0
     var compactions = 0
     var approvals = 0
+    var showYear = false
     var page = 0
     var pages: Int { max(1,(count+59)/60) }
     static func build(_ snapshot: UsageSnapshot,range: UsageRange,mode: String,model: String,tier: String,status: String,query: String,page: Int,filterKey: String = "") -> LogProjection {
@@ -115,7 +116,12 @@ struct LogProjection {
             (mode == "calls" || status == "all" || row.raw.string("status","completed") == status) &&
             (query.isEmpty || [row.title,row.raw.string("prompt_preview"),row.raw.string("output_preview"),row.raw.string("session_id"),row.id].joined(separator:" ").localizedCaseInsensitiveContains(query))
         }
+        let calendar = Calendar.current, currentYear = calendar.component(.year,from:Date())
+        // Decide before pagination so every page uses the same date format.
+        let showYear = range.start == .distantPast
+            ? rows.contains { row in row.date.map {calendar.component(.year,from:$0) != currentYear} ?? false }
+            : calendar.component(.year,from:range.start) != currentYear || calendar.component(.year,from:range.end) != currentYear
         let selected = min(page,max(0,(rows.count-1)/60))
-        return LogProjection(scrollResetKey:filterKey+":"+String(selected),rows:Array(rows.dropFirst(selected*60).prefix(60)),count:rows.count,unassigned:rows.filter { $0.raw.string("record_kind") == "unassigned" }.count,compactions:rows.filter { $0.raw.string("record_kind") == "context_compaction" }.count,approvals:rows.filter {RequestClassification.isApproval($0.raw)}.count,page:selected)
+        return LogProjection(scrollResetKey:filterKey+":"+String(selected),rows:Array(rows.dropFirst(selected*60).prefix(60)),count:rows.count,unassigned:rows.filter { $0.raw.string("record_kind") == "unassigned" }.count,compactions:rows.filter { $0.raw.string("record_kind") == "context_compaction" }.count,approvals:rows.filter {RequestClassification.isApproval($0.raw)}.count,showYear:showYear,page:selected)
     }
 }
