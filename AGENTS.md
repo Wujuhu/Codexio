@@ -37,7 +37,7 @@
 
 # 当前开发流程
 
-- 当前 Mac 版本为 `0.3.5`，使用 Swift／SwiftUI／AppKit。Windows 已按用户明确授权迁移为 Wails + Go，版本由 `windows/VERSION` 独立管理，当前确认发布 `0.3.5`；旧 Python 版本号继续保留，后续 Windows 工作仍须明确要求。iOS 版本由 `ios/VERSION` 独立管理，当前为 0.3.1；以后每次 Release 必须附带经过核验的最新 `Codexio.ipa`，不因附带 IPA 就擅自递增其版本号。
+- 当前 Mac 版本为 `0.3.6`，使用 Swift／SwiftUI／AppKit。Windows 已按用户明确授权迁移为 Wails + Go，版本由 `windows/VERSION` 独立管理，当前确认发布 `0.3.5`；旧 Python 版本号继续保留，后续 Windows 工作仍须明确要求。iOS 版本由 `ios/VERSION` 独立管理，当前为 0.3.1；以后每次 Release 必须附带经过核验的最新 `Codexio.ipa`，不因附带 IPA 就擅自递增其版本号。
 - v0.3.2 已按当时授权完成 Mac ZIP 与清单双附件发布，保持原样。后续发布仍须新的验收及明确版本确认，默认必须包含 Mac ZIP、iOS IPA 与清单；任何校验失败都保持草稿。
 - 每次修改完成并通过验证、开发打包后，提交到本地 Git；开发打包不等于确认正式发布。
 - 未经用户新的明确授权，不执行 `git push`、GitHub 发布或其他远程变更。
