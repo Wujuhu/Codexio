@@ -100,14 +100,23 @@
   }
   function costLabel(row: Row) {
     const n = number(row.usd ?? row.cost_usd);
-    return n === null ? '—' : (row.cost_complete === false || Number(row.unpriced_calls) > 0 || row.pricing_status === 'partial' ? '≥' : '') + '$' + n.toFixed(2);
+    return n === null ? '—' : (row.cost_complete === false || Number(row.unpriced_calls) > 0 || row.pricing_status === 'partial' ? '≥' : '') + '$' + n.toFixed(0);
   }
   function tokenLabel(value: any, complete = true) {
     const n = number(value);
     if (n === null) return '—';
     const en = document.documentElement.lang === 'en';
     const [unit, suffix] = en ? n >= 1e9 ? [1e9, 'B'] : n >= 1e6 ? [1e6, 'M'] : n >= 1e3 ? [1e3, 'K'] : [1, ''] : n >= 1e8 ? [1e8, '亿'] : n >= 1e4 ? [1e4, '万'] : [1, ''];
-    return (complete ? '' : '≥') + (n / Number(unit)).toFixed(unit === 1 ? 0 : 2).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '') + suffix;
+    let scaled = n / Number(unit), digits = unit === 1 ? 0 : 2;
+    if (!en && unit !== 1) {
+      digits = suffix === '万' || scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2;
+      const factor = 10 ** digits;
+      scaled = Math.round(n / (Number(unit) / factor)) / factor;
+      if (suffix === '亿') digits = scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2;
+    }
+    let label = scaled.toFixed(digits);
+    if (en) label = label.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+    return (complete ? '' : '≥') + label + suffix;
   }
   function sharePercent(amount: any, total: any) { return Number(total) > 0 ? Math.round(Number(amount) / Number(total) * 100) : 0; }
   // Match ReportArtSmallMetric's one-line 0.65 minimum scale with actual font
@@ -266,4 +275,3 @@
   .mac-report-caption,.mac-report-exported{font-size:10px;text-align:center;line-height:1.4;margin:0}
   .mac-report-empty{height:100%;display:flex;align-items:center;justify-content:center;font-size:13px;padding:20px;text-align:center}
 </style>
-

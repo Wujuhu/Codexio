@@ -122,11 +122,20 @@ func reportTokenLabel(_ count: Int) -> String {
     if chinese { (unit, suffix) = value >= 100_000_000 ? (100_000_000, "亿") : value >= 10_000 ? (10_000, "万") : (1, "") }
     else { (unit, suffix) = value >= 1_000_000_000 ? (1_000_000_000, "B") : value >= 1_000_000 ? (1_000_000, "M") : value >= 1_000 ? (1_000, "K") : (1, "") }
     if unit == 1 { return String(max(0, count)) }
-    var number = String(format: "%.2f", value/unit)
-    while number.last == "0" { number.removeLast() }; if number.last == "." { number.removeLast() }
+    var scaled = value/unit, digits = 2
+    if chinese {
+        digits = suffix == "万" || scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2
+        let factor = pow(10, Double(digits))
+        scaled = (value/(unit/factor)).rounded()/factor
+        if suffix == "亿" { digits = scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2 }
+    }
+    var number = String(format: "%.*f", digits, scaled)
+    if !chinese {
+        while number.last == "0" { number.removeLast() }; if number.last == "." { number.removeLast() }
+    }
     return number + suffix
 }
-func reportUSDLabel(_ value: Double?) -> String { value.map { String(format: "$%.2f", $0) } ?? "—" }
+func reportUSDLabel(_ value: Double?) -> String { value.map { String(format: "$%.0f", $0.rounded()) } ?? "—" }
 
 struct UsageReportCollection {
     let documents: [UsageReportPeriod: UsageReportData]
