@@ -1,10 +1,12 @@
 # 打包与交付
 
 - 日常功能开发、验证和 Mac 打包全部留在 `build`，不因一次开发构建写入或覆盖 `release`。仅在用户第二次明确确认发布及版本号后，才允许推送，并由发布协调脚本完成正式发布；成功后核验远程附件并归档到 `release/<确认的版本号>/`。
+- **开发及源码修改统一在本机进行，Mac 与 iOS 在本机构建；Windows 构建通过 SSH 连接局域网 Windows 主机，不默认使用云端构建。** Windows 名称为 `WJH`，局域网 IP 为 `192.168.1.16`，SSH 密钥路径为 `/Users/wjh/.ssh/windows_ed25519`。
+- **只有局域网 Windows 主机无法连接时，才向用户请求允许使用云端构建 Windows；取得用户针对本次云端构建的明确许可后才能执行。** 不自动回退到 GitHub Actions 或其他云端构建服务；用户要求 Windows 开发或构建，不等于授权云端构建。
 - **自 2026-09-28 起 Windows 默认冻结；除非用户特别明确要求，不修改 Windows 源码／版本、不构建或上传 EXE、不触发 Windows CI。Mac 与 iOS 按各自需求开发，发布时遵守下述 IPA 必传规则。**
 - **以后每次 Release 都必须上传 iOS IPA。** 默认正式版本目录为 `Codexio.app.zip`、`Codexio.ipa`、`latest.json` 三个文件；缺少或过期的 IPA 必须阻止发布，不能再只发布 Mac。ZIP 内保留完整的 `Codexio.app`，不生成 DMG。只有用户明确要求 Windows 并适配联合流程后才额外包含 EXE；历史版本及其附件不自动补传或覆盖。
 - `build/dev/macos` 保存最新开发 APP、APP ZIP 和清单；`build/dev/windows` 保存最新开发 EXE 和清单。中间文件使用 `build/staging`，构建缓存使用 `build/cache`，检查结果使用 `build/checks`，日志使用 `build/logs`，同版本临时备份使用 `build/backups`。
-- Mac 使用 `build_macos.sh` 生成本地开发包。Windows 故障排查脚本与手动 CI 保留但默认不使用；只有用户特别要求 Windows 时才允许调用。
+- Mac 使用 `build_macos.sh` 生成本地开发包。Windows 故障排查脚本与手动 CI 保留但默认不使用；排查脚本仅在用户特别要求 Windows 时使用，手动 CI 还须满足上述云端构建授权条件。
 - 用户确认发布后执行 `.venv/bin/python scripts/publish_release_from_macos.py --version <确认的版本号> --confirm-publish`。先核验 Mac 包及最新 iOS IPA，再推送远程 `main`、创建空正文草稿，下载复核三附件后发布并原子归档。默认不触发 Windows CI；旧 Windows 三附件工作流尚不支持含 IPA 的集合，脚本会在推送前拒绝该分支，只有用户特别要求时才能另行适配。缺包、源码指纹过期、版本或哈希不符时不得发布。
 - 目标被运行进程占用时保留原文件及暂存新版，不自动结束用户进程。整理 `build` 时也必须保留运行中应用的原路径；当前 `build/macos` 属于待应用退出后清理的旧路径。
 - 本机 Codexio APP 由用户自行启动；开发、打包和核验时不要代用户启动已安装的 APP，也不要启动后要求用户确认。既有隔离模拟数据的打包冒烟入口照常执行。
