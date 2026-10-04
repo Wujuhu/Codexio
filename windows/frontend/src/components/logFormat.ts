@@ -45,10 +45,10 @@ export function preview(record: Row): string {
   return label;
 }
 
-export function requestMetadata(record: Row, query: Query): string {
+export function requestMetadata(record: Row, query: Query, showYear?: boolean): string {
   const context = number(record.model_context_window);
   const tier = speed(record.service_tier);
-  return [logTime(record.timestamp,query), effort(record.reasoning_effort), ['Fast','Ultra Fast'].includes(tier) ? tier : '', context !== null ? compact(context,0) : ''].filter(Boolean).join(' · ');
+  return [logTime(record.timestamp,query,showYear), effort(record.reasoning_effort), ['Fast','Ultra Fast'].includes(tier) ? tier : '', context !== null ? compact(context,0) : ''].filter(Boolean).join(' · ');
 }
 
 function startedMillis(value:unknown):number|null {
@@ -82,9 +82,17 @@ export function durationMilliseconds(record:Row,now=Date.now()):number|null {
   return duration!==null&&duration>=0?duration:null;
 }
 
+export function tpsLabel(record:Row):string {
+  if((record.request_status??record.status)!=='completed'||record.duration_running)return'- TPS';
+  const output=number(record.output_tokens),milliseconds=durationMilliseconds(record);
+  if(typeof record.output_tokens==='boolean'||typeof record.duration_ms==='boolean'||output===null||!Number.isInteger(output)||output<0||milliseconds===null||milliseconds<=0)return'- TPS';
+  const rate=output/(milliseconds/1000);
+  return Number.isFinite(rate)?`${Math.round(rate)} TPS`:'- TPS';
+}
+
 const pad=(value:number)=>String(value).padStart(2,'0');
 const months=['January','February','March','April','May','June','July','August','September','October','November','December'];
-export function logTime(value:unknown,query?:Query):string {
+export function logTime(value:unknown,query?:Query,showYear?:boolean):string {
   const milliseconds=startedMillis(value);
   if(milliseconds===null)return'—';
   const date=new Date(milliseconds),now=new Date();
@@ -95,14 +103,13 @@ export function logTime(value:unknown,query?:Query):string {
   else if(query?.period==='month')start.setDate(start.getDate()-29);
   else if(query?.period==='yesterday')start.setDate(start.getDate()-1);
   else if(query?.period==='year')start.setFullYear(start.getFullYear()-1);
-  // All-time is unbounded; explicit ranges and rolling periods share one
-  // format across pages, even if the currently visible rows are all this year.
+  // Logs pass the backend's filtered-range decision, including all-time pages.
   const years=[date.getFullYear(),start.getFullYear()];
   for(const bound of [query?.start,query?.end]){
     if(bound){const year=Number(bound.slice(0,4));if(Number.isFinite(year))years.push(year);}
   }
-  const showYear=['all','all_time'].includes(query?.period??'')||years.some(year=>year!==now.getFullYear());
-  return `${showYear?`${date.getFullYear()}.`:''}${date.getMonth()+1}.${date.getDate()} ${clock}`;
+  const withYear=showYear??(['all','all_time'].includes(query?.period??'')||years.some(year=>year!==now.getFullYear()));
+  return `${withYear?`${date.getFullYear()}.`:''}${date.getMonth()+1}.${date.getDate()} ${clock}`;
 }
 
 export function fullTime(value:unknown):string {

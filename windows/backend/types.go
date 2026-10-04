@@ -21,11 +21,12 @@ type Query struct {
 }
 
 type PageResult struct {
-	Rows   []Row          `json:"rows"`
-	Total  int            `json:"total"`
-	Page   int            `json:"page"`
-	Pages  int            `json:"pages"`
-	Counts map[string]int `json:"counts"`
+	Rows     []Row          `json:"rows"`
+	Total    int            `json:"total"`
+	Page     int            `json:"page"`
+	Pages    int            `json:"pages"`
+	Counts   map[string]int `json:"counts"`
+	ShowYear bool           `json:"show_year"`
 }
 
 type DataOptions struct {

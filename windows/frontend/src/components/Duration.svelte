@@ -10,12 +10,14 @@
 <script lang="ts">
  import{onMount}from'svelte';
  import{type Row}from'../lib/api';
- import{duration,durationMilliseconds,runningDuration}from'./logFormat';
+ import{duration,durationMilliseconds,runningDuration,tpsLabel}from'./logFormat';
  export let record:Row={};
+ export let showTPS=false;
  let element:HTMLSpanElement;let now=Date.now();let visible=false;let foreground=false;
  let unsubscribe:(()=>void)|undefined;
  $: active=runningDuration(record);
  $: elapsed=durationMilliseconds(record,now);
+ $: tps=showTPS?tpsLabel(record):'';
  $: configure(active&&visible&&foreground);
  function stop(){unsubscribe?.();unsubscribe=undefined}
  function configure(ticking:boolean){
@@ -34,4 +36,8 @@
   return()=>{observer.disconnect();document.removeEventListener('visibilitychange',visibility);window.removeEventListener('focus',visibility);window.removeEventListener('blur',visibility);stop()};
  });
 </script>
-<span bind:this={element}>{duration(elapsed)}</span>
+<span bind:this={element} class:two-line={showTPS}><span>{duration(elapsed)}</span>{#if showTPS}<small class="muted">{tps}</small>{/if}</span>
+<style>
+ .two-line{display:inline-flex;flex-direction:column;align-items:center;max-width:100%;vertical-align:middle;line-height:18px}
+ .two-line small{font-size:10px;line-height:14px;white-space:nowrap}
+</style>

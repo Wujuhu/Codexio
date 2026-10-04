@@ -106,9 +106,17 @@ func (s *Store) Page(q Query) (PageResult, error) {
 		page = 1
 	}
 	result := PageResult{Rows: []Row{}, Page: page, Counts: map[string]int{}}
-	if e := s.db.QueryRow("SELECT count(*) FROM "+table+" WHERE "+where, args...).Scan(&result.Total); e != nil {
+	var firstStamp sql.NullString
+	if e := s.db.QueryRow("SELECT count(*),min(timestamp) FROM "+table+" WHERE "+where, args...).Scan(&result.Total, &firstStamp); e != nil {
 		return result, e
 	}
+	// Use the complete filtered range so every page shares the same date format.
+	start, end := queryBounds(q)
+	if start.IsZero() && firstStamp.Valid {
+		start, _ = ParseStamp(firstStamp.String)
+	}
+	year := time.Now().Year()
+	result.ShowYear = (!start.IsZero() && start.In(time.Local).Year() != year) || end.In(time.Local).Year() != year
 	result.Pages = (result.Total + size - 1) / size
 	if result.Pages < 1 {
 		result.Pages = 1
