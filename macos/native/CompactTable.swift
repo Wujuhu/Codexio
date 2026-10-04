@@ -338,9 +338,14 @@ enum LogFields {
                 return GridText(main:percent(rate.map {$0*100},digits:1))
             case "cost": return GridText(main:money(row.cost))
             case "duration":
-                guard let seconds = row.duration, seconds >= 0, seconds < Double(Int.max) else { return GridText(main:"—") }
+                guard let seconds = row.duration, seconds >= 0, seconds < Double(Int.max) else { return GridText(main:"—",secondary:"- TPS") }
+                var tps = "- TPS"
+                if raw.string("status") == "completed", !raw.flag("duration_running"), seconds > 0, let output = row.outputTokens {
+                    let rate = Double(output)/seconds
+                    if rate.isFinite { tps = String(format:"%.0f TPS",rate.rounded()) }
+                }
                 let value = Int(seconds)
-                return GridText(main:String(format:"%02d:%02d:%02d",value/3600,value%3600/60,value%60))
+                return GridText(main:String(format:"%02d:%02d:%02d",value/3600,value%3600/60,value%60),secondary:tps)
             case "effort": return GridText(main:logEffortName(raw.string("reasoning_effort")))
             case "speed": return GridText(main:normalizedTier(raw.string("service_tier")) == "priority" ? "Fast" : normalizedTier(raw.string("service_tier")) == "default" ? L("标准", "Standard") : L("未知", "Unknown"))
             case "context": return GridText(main:compact(raw.number("model_context_window")))
