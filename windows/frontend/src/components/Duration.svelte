@@ -11,6 +11,7 @@
  import{onMount}from'svelte';
  import{type Row}from'../lib/api';
  import{duration,durationMilliseconds,runningDuration,tpsLabel}from'./logFormat';
+ import RequestLines from './RequestLines.svelte';
  export let record:Row={};
  export let showTPS=false;
  let element:HTMLSpanElement;let now=Date.now();let visible=false;let foreground=false;
@@ -36,8 +37,7 @@
   return()=>{observer.disconnect();document.removeEventListener('visibilitychange',visibility);window.removeEventListener('focus',visibility);window.removeEventListener('blur',visibility);stop()};
  });
 </script>
-<span bind:this={element} class:two-line={showTPS}><span>{duration(elapsed)}</span>{#if showTPS}<small class="muted">{tps}</small>{/if}</span>
+<span bind:this={element} class:two-line={showTPS}>{#if showTPS}<RequestLines primary={duration(elapsed)} secondary={tps}/>{:else}{duration(elapsed)}{/if}</span>
 <style>
- .two-line{display:inline-flex;flex-direction:column;align-items:center;max-width:100%;vertical-align:middle;line-height:18px}
- .two-line small{font-size:10px;line-height:14px;white-space:nowrap}
+ .two-line{display:block;min-width:0;max-width:100%;text-align:inherit}
 </style>

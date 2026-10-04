@@ -289,6 +289,22 @@
         }
       }
     },
+    " 秒": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": " s"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": " 秒"
+          }
+        }
+      }
+    },
     " 项目。": {
       "localizations": {
         "en": {

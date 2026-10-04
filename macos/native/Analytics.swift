@@ -49,6 +49,29 @@ struct UsageRow: Identifiable {
         if raw.flag("duration_running"), let start = runningSince { return max(0,Date().timeIntervalSince(start)) + (raw.number("duration_base_ms") ?? 0)/1000 }
         return raw.number("duration_ms").map {$0/1000}
     }
+    var outputTokensPerSecond: Double? {
+        guard raw.string("status") == "completed", !raw.flag("duration_running"),
+              let seconds = duration, seconds > 0, let outputTokens else { return nil }
+        let value = Double(outputTokens)/seconds
+        return value.isFinite ? value : nil
+    }
+    var firstTokenSeconds: Double? { recordedTTFTMilliseconds(raw).map {$0/1000} }
+}
+
+// Preserve explicit source timing only; a completed message is not a first token.
+func recordedTTFTMilliseconds(_ raw: Object) -> Double? {
+    for source in [raw,raw.object("timing"),raw.object("metrics")] {
+        for key in ["ttft_ms","time_to_first_token_ms"] {
+            if let value = source.number(key), value >= 0 { return value }
+        }
+        for key in ["ttft_seconds","time_to_first_token_seconds"] {
+            if let value = source.number(key), value >= 0, (value*1000).isFinite { return value*1000 }
+        }
+    }
+    return nil
+}
+func outputRateText(_ rate: Double?,unit: String = "TPS") -> String {
+    (rate.map {String(format:"%.0f",$0.rounded())} ?? "-")+" "+unit
 }
 
 struct UsageSummary {

@@ -2,7 +2,7 @@
   import {onDestroy} from 'svelte';
   import {api,rows,text,kind,numeric,compact,priced,type Row} from '../lib/api';
   import {tr} from '../lib/i18n';
-  import {effort,speed,preview,fullTime,requestStatus} from './logFormat';
+  import {effort,speed,preview,fullTime,requestStatus,tpsLabel,ttftLabel} from './logFormat';
   import Markdown from './Markdown.svelte';
   import Model from './Model.svelte';
   import Duration from './Duration.svelte';
@@ -39,6 +39,8 @@
         <div class="field-pair"><span class="muted">{tr('费用')}</span><span>{priced(request)}</span></div>
         {#each [['input_tokens','输入 Token'],['cached_input_tokens','缓存读取'],['cache_write_input_tokens','缓存写入'],['output_tokens','输出 Token'],['reasoning_output_tokens','推理输出'],['total_tokens','总 Token']] as [key,label]}<div class="field-pair"><span class="muted">{tr(label)}</span><span>{compact(request[key])}</span></div>{/each}
         <div class="field-pair"><span class="muted">{tr('耗时')}</span><Duration record={request}/></div>
+        <div class="field-pair"><span class="muted">TPS</span><span>{tpsLabel(request,'tokens/s')}</span></div>
+        <div class="field-pair"><span class="muted">TTFT</span><span>{ttftLabel(request)}</span></div>
         <div class="field-pair"><span class="muted">{tr('时间')}</span><span>{fullTime(request.timestamp)}</span></div>
       </section>
       <section><div class="row between"><h3>{tr('原始请求')}</h3><button class="quiet" aria-label={tr('复制')} disabled={!body(data.user)} onclick={()=>copy(body(data.user),'user')}><Icon name={copied==='user'?'check':'copy'} size={15}/></button></div>

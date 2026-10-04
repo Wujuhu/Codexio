@@ -273,6 +273,8 @@ struct LogDetail: View {
                 field(L("速度", "Speed"),normalizedTier(row.raw.string("service_tier")) == "priority" ? L("快速模式", "Fast mode") : normalizedTier(row.raw.string("service_tier")) == "default" ? L("标准", "Standard") : L("未知", "Unknown"))
                 field(L("费用", "Cost"),money(row.cost))
                 field(L("耗时", "Duration"),durationText(row.duration))
+                field("TPS",outputRateText(row.outputTokensPerSecond,unit:"tokens/s"))
+                field("TTFT",(row.firstTokenSeconds.map {String(format:"%.2f",$0)} ?? "—")+L(" 秒", " s"))
                 field(L("输入 Token", "Input tokens"),compact(row.raw.number("input_tokens")))
                 field(L("缓存读取", "Cached input"),compact(row.raw.number("cached_input_tokens")))
                 field(L("输出 Token", "Output tokens"),compact(row.raw.number("output_tokens")))

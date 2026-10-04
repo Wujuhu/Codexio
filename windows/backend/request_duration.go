@@ -9,6 +9,25 @@ import (
 const requestDurationProjectionVersion = 2
 const requestRunningFreshness = 15 * time.Minute
 
+// A completed output item does not establish first-token latency.
+func recordedTTFTMilliseconds(row Row) (float64, bool) {
+	for _, source := range []Row{row, ValueRow(row["timing"]), ValueRow(row["metrics"])} {
+		for _, key := range []string{"ttft_ms", "time_to_first_token_ms", "ttft_seconds", "time_to_first_token_seconds"} {
+			if _, boolean := source[key].(bool); boolean {
+				continue
+			}
+			value, ok := ValueFloat(source[key])
+			if key == "ttft_seconds" || key == "time_to_first_token_seconds" {
+				value *= 1000
+			}
+			if ok && value >= 0 && !math.IsNaN(value) && !math.IsInf(value, 0) {
+				return value, true
+			}
+		}
+	}
+	return 0, false
+}
+
 type requestExecutionInterval struct {
 	start, end time.Time
 }

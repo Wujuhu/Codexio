@@ -36,6 +36,7 @@ enum TableColumnWidths {
 private final class GridTextCell: NSView {
     let main = NSTextField(labelWithString:""), secondary = NSTextField(labelWithString:"")
     private var showsUpstream = false
+    private var requestLines = false
     private var upstreamColor = NSColor.secondaryLabelColor
     override init(frame: NSRect) {
         super.init(frame:frame)
@@ -46,8 +47,11 @@ private final class GridTextCell: NSView {
         addSubview(main); addSubview(secondary)
     }
     required init?(coder: NSCoder) { fatalError() }
-    func apply(_ value: GridText,alignment: NSTextAlignment) {
+    func apply(_ value: GridText,alignment: NSTextAlignment,requestLines: Bool) {
         showsUpstream = !value.upstream.isEmpty
+        self.requestLines = requestLines
+        main.font = .systemFont(ofSize:12)
+        secondary.font = .systemFont(ofSize:requestLines ? 9 : 10)
         upstreamColor = value.upstreamMismatch ? .systemGreen : .secondaryLabelColor
         main.stringValue = value.main; secondary.stringValue = showsUpstream ? value.upstream : value.secondary
         secondary.textColor = showsUpstream ? upstreamColor : .secondaryLabelColor
@@ -64,6 +68,11 @@ private final class GridTextCell: NSView {
             main.frame = NSRect(x:8,y:bottom,width:textWidth,height:18)
             secondary.frame = NSRect(x:8,y:bottom+20,width:textWidth,height:14)
         } else if secondary.isHidden { main.frame = NSRect(x:8,y:max(0,(bounds.height-18)/2),width:width,height:18) }
+        else if requestLines {
+            let bottom = max(0,(bounds.height-30)/2)
+            main.frame = NSRect(x:8,y:bottom+12,width:width,height:18)
+            secondary.frame = NSRect(x:8,y:bottom,width:width,height:12)
+        }
         else {
             let bottom = max(0,(bounds.height-34)/2)
             main.frame = NSRect(x:8,y:bottom+16,width:width,height:18)
@@ -257,7 +266,7 @@ struct CompactTable: NSViewRepresentable {
                 cell.identifier = id; cell.apply(value); return cell
             }
             let cell = tableView.makeView(withIdentifier:id,owner:nil) as? GridTextCell ?? GridTextCell(frame:.zero)
-            cell.identifier = id; cell.apply(value.text(definition.id),alignment:definition.alignment); return cell
+            cell.identifier = id; cell.apply(value.text(definition.id),alignment:definition.alignment,requestLines:["content","duration"].contains(definition.id)); return cell
         }
         func tableView(_ tableView: NSTableView,shouldSelectRow row: Int) -> Bool { parent.selection != nil }
         func tableViewSelectionDidChange(_ notification: Notification) {
@@ -339,13 +348,8 @@ enum LogFields {
             case "cost": return GridText(main:money(row.cost))
             case "duration":
                 guard let seconds = row.duration, seconds >= 0, seconds < Double(Int.max) else { return GridText(main:"—",secondary:"- TPS") }
-                var tps = "- TPS"
-                if raw.string("status") == "completed", !raw.flag("duration_running"), seconds > 0, let output = row.outputTokens {
-                    let rate = Double(output)/seconds
-                    if rate.isFinite { tps = String(format:"%.0f TPS",rate.rounded()) }
-                }
                 let value = Int(seconds)
-                return GridText(main:String(format:"%02d:%02d:%02d",value/3600,value%3600/60,value%60),secondary:tps)
+                return GridText(main:String(format:"%02d:%02d:%02d",value/3600,value%3600/60,value%60),secondary:outputRateText(row.outputTokensPerSecond))
             case "effort": return GridText(main:logEffortName(raw.string("reasoning_effort")))
             case "speed": return GridText(main:normalizedTier(raw.string("service_tier")) == "priority" ? "Fast" : normalizedTier(raw.string("service_tier")) == "default" ? L("标准", "Standard") : L("未知", "Unknown"))
             case "context": return GridText(main:compact(raw.number("model_context_window")))

@@ -617,6 +617,7 @@ final class UsageIndexer {
                 let final = plain(payload["last_agent_message"],user:false)
                 if !final.isEmpty { row["output_preview"] = final; row["latest_output_preview"] = final }
                 if let duration = payload.number("duration_ms"), duration >= 0 { row["duration_ms"] = duration }
+                if let ttft = recordedTTFTMilliseconds(payload) { row["ttft_ms"] = ttft }
                 if !detail.string("text").isEmpty || !detail.objects("attachments").isEmpty || detail.flag("has_images") || row.flag("has_generated_image") { row["has_final_message"] = true }
                 row["context_compaction_completed"] = payload["last_agent_message"] is NSNull && !row.flag("has_generated_image") && subtype != "turn_aborted"
             }
@@ -646,6 +647,7 @@ final class UsageIndexer {
             let preview = takeOutput(&state,response:response,turn:turn)
             if record.flag("context_owner_verified") { record["output_preview"] = preview }
             if let duration = payload.number("duration_ms"), duration >= 0 { record["duration_ms"] = duration }
+            if let ttft = recordedTTFTMilliseconds(payload) { record["ttft_ms"] = ttft }
             for (key,source) in [("call_started_at","started_at"),("call_ended_at","completed_at")] { record[key] = parsedDate(payload[source]).map(iso) }
             if record["duration_ms"] == nil, let start = parsedDate(record["call_started_at"]), let end = parsedDate(record["call_ended_at"]), end >= start { record["duration_ms"] = end.timeIntervalSince(start)*1000 }
             try database.writeRecord(record); remember(record,state:&state)

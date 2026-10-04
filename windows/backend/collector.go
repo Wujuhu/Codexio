@@ -1078,6 +1078,9 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 		if d, ok := ValueFloat(p["duration_ms"]); ok && d >= 0 {
 			r["duration_ms"] = d
 		}
+		if ttft, ok := recordedTTFTMilliseconds(p); ok {
+			r["ttft_ms"] = ttft
+		}
 		final, exists := p["last_agent_message"]
 		if exists {
 			r["context_compaction_completed"] = final == nil && sub != "turn_aborted"
@@ -1450,6 +1453,9 @@ func (s *Store) accounting(entry, state Row, tx *sql.Tx) (Row, error) {
 		if p[k] != nil {
 			r[k] = p[k]
 		}
+	}
+	if ttft, ok := recordedTTFTMilliseconds(p); ok {
+		r["ttft_ms"] = ttft
 	}
 	state["pending_output"] = ""
 	if modern {

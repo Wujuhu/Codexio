@@ -82,12 +82,18 @@ export function durationMilliseconds(record:Row,now=Date.now()):number|null {
   return duration!==null&&duration>=0?duration:null;
 }
 
-export function tpsLabel(record:Row):string {
-  if((record.request_status??record.status)!=='completed'||record.duration_running)return'- TPS';
+export function tpsLabel(record:Row,unit='TPS'):string {
+  const missing=`- ${unit}`;
+  if((record.request_status??record.status)!=='completed'||record.duration_running)return missing;
   const output=number(record.output_tokens),milliseconds=durationMilliseconds(record);
-  if(typeof record.output_tokens==='boolean'||typeof record.duration_ms==='boolean'||output===null||!Number.isInteger(output)||output<0||milliseconds===null||milliseconds<=0)return'- TPS';
+  if(typeof record.output_tokens==='boolean'||typeof record.duration_ms==='boolean'||output===null||!Number.isInteger(output)||output<0||milliseconds===null||milliseconds<=0)return missing;
   const rate=output/(milliseconds/1000);
-  return Number.isFinite(rate)?`${Math.round(rate)} TPS`:'- TPS';
+  return Number.isFinite(rate)?`${Math.round(rate)} ${unit}`:missing;
+}
+
+export function ttftLabel(record:Row):string {
+  const milliseconds=typeof record.ttft_ms==='boolean'?null:number(record.ttft_ms);
+  return (milliseconds!==null&&milliseconds>=0?(milliseconds/1000).toFixed(2):'—')+(isEnglish()?' s':' 秒');
 }
 
 const pad=(value:number)=>String(value).padStart(2,'0');
