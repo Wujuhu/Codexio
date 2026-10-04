@@ -5,10 +5,10 @@
 - Windows 主机上的项目目录为 `C:\CodeWJH\Projects\Codexio`。每次通过局域网 SSH 完成 Windows 构建后，必须在该电脑的 `C:\CodeWJH\Projects\Codexio\build\dev\windows` 保留经验证的 `Codexio.exe` 和配套清单；需要回传本机时使用复制，保留 Windows 上的产物。
 - SSH 处于 Windows Session 0 时，通过临时、按需的计划任务在已登录用户的交互会话中执行现有构建入口及三项隔离模拟冒烟；结束后删除该临时任务，保留构建日志和校验结果。
 - **只有局域网 Windows 主机无法连接时，才向用户请求允许使用云端构建 Windows；取得用户针对本次云端构建的明确许可后才能执行。** 不自动回退到 GitHub Actions 或其他云端构建服务；用户要求 Windows 开发或构建，不等于授权云端构建。
-- **自 2026-09-28 起 Windows 默认冻结；除非用户特别明确要求，不修改 Windows 源码／版本、不构建或上传 EXE、不触发 Windows CI。Mac 与 iOS 按各自需求开发，发布时遵守下述 IPA 必传规则。**
+- **自 2026-10-04 起，日常功能开发、修复与适用的界面改动默认同时覆盖 Mac 和 Windows，并分别完成必要验证与开发打包，无需用户逐次点名 Windows。** 用户明确限定平台，或功能仅适用于某个平台时，按实际范围处理；iOS 按需求开发。版本调整、正式发布及云端构建继续遵守各自的明确授权规则，发布时遵守下述 IPA 必传规则。
 - **以后每次 Release 都必须上传 iOS IPA。** 默认正式版本目录为 `Codexio.app.zip`、`Codexio.ipa`、`latest.json` 三个文件；缺少或过期的 IPA 必须阻止发布，不能再只发布 Mac。ZIP 内保留完整的 `Codexio.app`，不生成 DMG。只有用户明确要求 Windows 并适配联合流程后才额外包含 EXE；历史版本及其附件不自动补传或覆盖。
 - `build/dev/macos` 保存最新开发 APP、APP ZIP 和清单；`build/dev/windows` 保存最新开发 EXE 和清单。中间文件使用 `build/staging`，构建缓存使用 `build/cache`，检查结果使用 `build/checks`，日志使用 `build/logs`，同版本临时备份使用 `build/backups`。
-- Mac 使用 `build_macos.sh` 生成本地开发包。Windows 故障排查脚本与手动 CI 保留但默认不使用；排查脚本仅在用户特别要求 Windows 时使用，手动 CI 还须满足上述云端构建授权条件。
+- Mac 使用 `build_macos.sh` 生成本地开发包；Windows 通过局域网 SSH 在指定项目目录执行 `build_exe.ps1`，故障排查脚本按需要使用。手动 CI 保留，调用时须满足上述云端构建授权条件。
 - 用户确认发布后执行 `.venv/bin/python scripts/publish_release_from_macos.py --version <确认的版本号> --confirm-publish`。先核验 Mac 包及最新 iOS IPA，再推送远程 `main`、创建空正文草稿，下载复核三附件后发布并原子归档。默认不触发 Windows CI；旧 Windows 三附件工作流尚不支持含 IPA 的集合，脚本会在推送前拒绝该分支，只有用户特别要求时才能另行适配。缺包、源码指纹过期、版本或哈希不符时不得发布。
 - 目标被运行进程占用时保留原文件及暂存新版，不自动结束用户进程。整理 `build` 时也必须保留运行中应用的原路径；当前 `build/macos` 属于待应用退出后清理的旧路径。
 - 本机 Codexio APP 由用户自行启动；开发、打包和核验时不要代用户启动已安装的 APP，也不要启动后要求用户确认。既有隔离模拟数据的打包冒烟入口照常执行。
@@ -41,7 +41,7 @@
 
 # 当前开发流程
 
-- 当前 Mac 版本为 `0.3.7`，使用 Swift／SwiftUI／AppKit。Windows 已按用户明确授权迁移为 Wails + Go，版本由 `windows/VERSION` 独立管理，当前开发版本为 `0.3.7`，已发布版本为 `0.3.6`；旧 Python 版本号继续保留，后续 Windows 工作仍须明确要求。iOS 版本由 `ios/VERSION` 独立管理，当前为 0.3.1；以后每次 Release 必须附带经过核验的最新 `Codexio.ipa`，不因附带 IPA 就擅自递增其版本号。
+- 当前 Mac 版本为 `0.3.7`，使用 Swift／SwiftUI／AppKit。Windows 已按用户明确授权迁移为 Wails + Go，版本由 `windows/VERSION` 独立管理，当前开发版本为 `0.3.7`，已发布版本为 `0.3.6`；旧 Python 版本号继续保留，Mac 与 Windows 的日常需求默认同步开发。iOS 版本由 `ios/VERSION` 独立管理，当前为 0.3.1；以后每次 Release 必须附带经过核验的最新 `Codexio.ipa`，不因附带 IPA 就擅自递增其版本号。
 - v0.3.2 已按当时授权完成 Mac ZIP 与清单双附件发布，保持原样。后续发布仍须新的验收及明确版本确认，默认必须包含 Mac ZIP、iOS IPA 与清单；任何校验失败都保持草稿。
 - 每次修改完成并通过验证、开发打包后，提交到本地 Git；开发打包不等于确认正式发布。
 - 未经用户新的明确授权，不执行 `git push`、GitHub 发布或其他远程变更。
