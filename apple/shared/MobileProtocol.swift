@@ -10,6 +10,7 @@ enum MobileProtocol {
     static let limit = 262_144
     static let detailCapability = "request-details-v1"
     static let requestKindCapability = "request-kinds-v1"
+    static let requestMetricsCapability = "request-metrics-v1"
     static let detailLimit = 1_048_576
     static let detailChunkBytes = 65_536
     static let detailRows = 64
@@ -128,6 +129,9 @@ struct MobileRequest: Codable, Identifiable, Equatable {
     // Stable active-interval timing, in seconds. Completed requests use duration.
     var durationStarted: Double? = nil
     var durationBase: Double? = nil
+    // Average output tokens/s and explicitly recorded first-token latency in seconds.
+    var tps: Double? = nil
+    var ttft: Double? = nil
     var isApproval: Bool { kind == "approval_review" || model.lowercased() == "codex-auto-review" }
 }
 struct MobileQuota: Codable, Equatable {

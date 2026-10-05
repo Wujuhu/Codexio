@@ -90,6 +90,7 @@ type MobileHost struct {
 	cloudReaders              map[string]bool
 	cloudDetails              bool
 	cloudRequestKinds         bool
+	cloudRequestMetrics       bool
 	cloudImages               bool
 	imagesPending             bool
 	parentsPending            bool
@@ -97,6 +98,8 @@ type MobileHost struct {
 	nextContentExpiry         int64
 	cloudRecent               Row
 	cloudRecentNeedsUpload    bool
+	cloudLive                 Row
+	cloudLiveNeedsUpload      bool
 	cloudDetailStamps         map[string]Row
 	nextCapability            time.Time
 	uploading, uploadAgain    bool
@@ -276,6 +279,10 @@ func (m *MobileHost) loadProjectionLocked() error {
 		m.cloudRecent = envelope
 	}
 	m.cloudRecentNeedsUpload = ValueBool(value["cloudRecentNeedsUpload"])
+	if envelope := ValueRow(value["cloudLive"]); valid(envelope, "live") {
+		m.cloudLive = envelope
+	}
+	m.cloudLiveNeedsUpload = ValueBool(value["cloudLiveNeedsUpload"])
 	m.nextContentExpiry = 1
 	for id, item := range ValueRow(value["cloudDetailStamps"]) {
 		stamp := ValueRow(item)
@@ -292,7 +299,7 @@ func (m *MobileHost) saveProjectionLocked() error {
 	if m.mock {
 		return nil
 	}
-	data, e := mobileJSON(Row{"datasets": m.datasets, "cloudRecent": m.cloudRecent, "cloudRecentNeedsUpload": m.cloudRecentNeedsUpload, "cloudDetailStamps": m.cloudDetailStamps})
+	data, e := mobileJSON(Row{"datasets": m.datasets, "cloudRecent": m.cloudRecent, "cloudRecentNeedsUpload": m.cloudRecentNeedsUpload, "cloudLive": m.cloudLive, "cloudLiveNeedsUpload": m.cloudLiveNeedsUpload, "cloudDetailStamps": m.cloudDetailStamps})
 	if e != nil {
 		return e
 	}
@@ -528,7 +535,7 @@ func (m *MobileHost) stop() {
 	m.qrData = ""
 	m.qrURL = ""
 	m.details = map[string]*mobileDetail{}
-	m.cloudImages, m.cloudDetails, m.cloudRequestKinds = false, false, false
+	m.cloudImages, m.cloudDetails, m.cloudRequestKinds, m.cloudRequestMetrics = false, false, false, false
 	m.status = "同步已停止"
 	for c := range m.connections {
 		c.Close()

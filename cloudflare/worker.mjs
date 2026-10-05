@@ -8,13 +8,14 @@ const secret = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{43}$/.test(
 const datasets = ['live','recent','trends'];
 const capability = 'request-details-v1';
 const requestKindCapability = 'request-kinds-v1';
+const requestMetricsCapability = 'request-metrics-v1';
 const imageCapability = 'request-images-v1';
 const detailLimit = 1048576, chunkBytes = 65536, detailRows = 64, hostBytes = 8 * 1048576, retention = 7 * 86400;
 const imageLimit = 1048576, imageEnvelopeLimit = 1500000, imageRows = 128, imageHostBytes = 32 * 1048576, imageRetention = 3 * 86400;
 const imageMimes = new Set(['image/jpeg','image/png','image/gif','image/webp','image/heic','image/tiff','image/bmp']);
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const dimensions = (width,height) => Number.isSafeInteger(width) && Number.isSafeInteger(height) && width > 0 && height > 0 && Math.max(width,height) <= 2048 && width*height <= 4194304;
-const fields = new Set(['name','timeZone','observed','task','runningCount','today','five','week','remaining','reset','retained','tokens','cost','requests','costComplete','hitRate','id','started','status','preview','model','effort','speed','duration','durationStarted','durationBase','kind','daily','periods','start','metric','days','total','models']);
+const fields = new Set(['name','timeZone','observed','task','runningCount','today','five','week','remaining','reset','retained','tokens','cost','requests','costComplete','hitRate','id','started','status','preview','model','effort','speed','duration','durationStarted','durationBase','tps','ttft','kind','daily','periods','start','metric','days','total','models']);
 function validPayload(value, depth = 0) {
   if (depth > 8) return false;
   if (value === null || typeof value === 'boolean') return true;
@@ -67,7 +68,7 @@ async function storage(env) {
 }
 async function hasDetails(env) { const tables=await storage(env); return env.DETAILS_ENABLED === '1' && tables.has('request_details') && tables.has('payload_retention'); }
 async function hasImages(env) { const tables=await storage(env); return await hasDetails(env) && env.IMAGES_ENABLED === '1' && tables.has('request_images') && tables.has('image_lifetimes'); }
-async function capabilities(env) { return [requestKindCapability,...(await hasDetails(env)?[capability]:[]),...(await hasImages(env)?[imageCapability]:[])]; }
+async function capabilities(env) { return [requestKindCapability,requestMetricsCapability,...(await hasDetails(env)?[capability]:[]),...(await hasImages(env)?[imageCapability]:[])]; }
 function validImageReference(item) {
   if(!object(item) || Object.keys(item).some(key=>!['id','name','mime','placement','width','height','expires','availability'].includes(key))
     || !requestID(item.id) || typeof item.name!=='string' || encoder.encode(item.name).length>240
@@ -177,12 +178,14 @@ function validImage(value,record,now) {
 }
 function validDataset(value,dataset) {
   if(!validPayload(value))return false;
-  const requestKeys=new Set(['id','started','status','preview','model','effort','speed','tokens','cost','duration','durationStarted','durationBase','kind']);
+  const requestKeys=new Set(['id','started','status','preview','model','effort','speed','tokens','cost','duration','durationStarted','durationBase','tps','ttft','kind']);
   const summaryKeys=new Set(['remaining','reset','observed','retained','tokens','cost','requests','costComplete','hitRate']);
   const safeSummary=item=>object(item) && Object.keys(item).every(key=>summaryKeys.has(key));
   const safeRequest=item=>object(item) && requestID(item.id) && Number.isFinite(item.started) && item.started>0
     && (item.durationStarted==null || Number.isFinite(item.durationStarted) && item.durationStarted>0)
     && (item.durationBase==null || Number.isFinite(item.durationBase) && item.durationBase>=0)
+    && (item.tps==null || item.status==='completed' && Number.isFinite(item.tps) && item.tps>=0)
+    && (item.ttft==null || Number.isFinite(item.ttft) && item.ttft>=0)
     && Object.keys(item).every(key=>requestKeys.has(key));
   if(dataset==='recent')return Array.isArray(value) && value.every(safeRequest);
   if(dataset==='live')return object(value) && Object.keys(value).every(key=>['name','timeZone','observed','task','runningCount','today','five','week'].includes(key)) && (value.task==null || safeRequest(value.task)) && safeSummary(value.today) && safeSummary(value.five) && safeSummary(value.week);

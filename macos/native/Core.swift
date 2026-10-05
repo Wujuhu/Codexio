@@ -221,6 +221,15 @@ func normalizedTier(_ value: String) -> String {
     if ["standard","default"].contains(value.lowercased()) { return "default" }
     return value.isEmpty || value == "auto" ? "unknown" : value
 }
+func detailSpeedName(_ value: String) -> String {
+    switch value.trimmingCharacters(in:.whitespacesAndNewlines).lowercased() {
+    case "priority", "fast": return "Fast"
+    case "default", "standard": return "Standard"
+    case "ultrafast", "ultra_fast", "ultra-fast": return "Ultra Fast"
+    case "mixed": return "Mixed"
+    default: return "—"
+    }
+}
 func logSpeedName(_ value: String) -> String {
     switch normalizedTier(value).lowercased() {
     case "priority": return "Fast"

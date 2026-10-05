@@ -17,6 +17,8 @@
 
 `live.task` 与 `recent` 的请求摘要新增可选 `durationStarted`（当前执行段的 Unix 开始时间，秒）和 `durationBase`（此前已完成执行区间的累计秒数）。`started` 仍表示原始请求时间，用于列表和详情日期。iOS 运行中显示 `durationBase + max(0, now - durationStarted)`，与 Mac `UsageRow.duration` 一致，排除续接之间的等待；结束后使用 Mac 从实际结束记录计算的 `duration`。这些时间锚点不随每秒计时改写或重传。
 
+请求计时能力为 `request-metrics-v1`，在 `live.task` 与 `recent` 中携带可选 `tps`（平均输出 tokens/s）及 `ttft`（秒）。Mac 复用 `Analytics.swift` 的 `UsageRow.outputTokensPerSecond`／`firstTokenSeconds`；Windows 复用 `request_duration.go` 的显式 TTFT 解析及现有请求实际耗时。TPS 仅在明确完成且输出 Token、正数耗时有效时计算；TTFT 缺失不推算。iOS 将 TPS 四舍五入为整数，TTFT 保留两位小数。两端协商到该能力前从云端投影省略新增字段，局域网仍传输完整值；协商能力变化时沿用独立投影的摘要、单调 revision 与有界缓存，不新增采集或计时刷新。此能力的 Worker 改动尚待明确部署授权，无数据库迁移。
+
 旧手机忽略新增字段；新手机读取旧缓存时忽略此前的 `runningStarts`，缺少执行段锚点时不猜测计时起点。Worker 只扩展这两个字段的白名单与数值检查，不需要数据库迁移。此次已先完成 Worker 部署，新版 Mac 与 iOS 可在下一次同步获取执行段锚点；局域网同步不依赖云端部署。后续回滚时需要同时考虑旧 Worker 会拒绝包含新字段的摘要。
 
 正文能力名为 `request-details-v1`，请求分类能力为 `request-kinds-v1`，图片能力为 `request-images-v1`。新详情可携带最多 32 个 `images` 引用；原有 `attachments` 和旧版正文协议继续兼容，Mac 未协商到图片能力时省略 `images` 和图片上传。最近记录可携带可选 `kind: approval_review`；旧手机可忽略此字段，新手机也兼容 `codex-auto-review` 模型标识。Mac 先协商能力，旧 Worker 的最近记录继续使用不含审批记录及新增字段的独立云端投影，保留摘要同步；新版 Worker 才同步独立审批记录。两条链路使用单调版本，局域网版本不会落后于已上传的云端投影。

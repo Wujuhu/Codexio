@@ -255,7 +255,7 @@ func (m *MobileHost) message(message Row) Row {
 			cloud = mobileOrigin
 		}
 		m.mu.Unlock()
-		return Row{"action": "sync", "known": revisions, "datasets": envelopes, "seen": float64(time.Now().UnixMilli()) / 1000, "supportsAck": true, "cloud": cloud, "capabilities": []string{"request-kinds-v1", "request-details-v1", "request-images-v1"}, "detailVersions": versions}
+		return Row{"action": "sync", "known": revisions, "datasets": envelopes, "seen": float64(time.Now().UnixMilli()) / 1000, "supportsAck": true, "cloud": cloud, "capabilities": []string{"request-kinds-v1", "request-metrics-v1", "request-details-v1", "request-images-v1"}, "detailVersions": versions}
 	}
 	if action == "pair" && readerIDString && readerNameString && localSecretString && cloudSecretString && m.ticket != nil && mobileEqual(ValueString(message["ticket"]), ValueString(m.ticket["ticket"])) && mobileUUID.MatchString(ValueString(reader["id"])) && len([]rune(ValueString(reader["name"]))) <= 40 && mobileSecretPattern.MatchString(ValueString(reader["localSecret"])) && mobileSecretPattern.MatchString(ValueString(reader["cloudSecret"])) && (m.pending == nil || ValueString(m.pending["id"]) == ValueString(reader["id"])) {
 		// Copy only protocol credentials, so a phone cannot add arbitrary fields to

@@ -132,6 +132,14 @@ func (m *MobileHost) retainContentLocked() bool {
 			m.sent["recent"] = 0
 		}
 	}
+	if m.cloudLive != nil {
+		old := ValueString(m.cloudLive["digest"])
+		m.cloudLive = retain("live", m.cloudLive)
+		if old != ValueString(m.cloudLive["digest"]) {
+			m.cloudLiveNeedsUpload = true
+			m.sent["live"] = 0
+		}
+	}
 	for id, detail := range m.details {
 		if detail.Expires <= float64(now) {
 			delete(m.details, id)

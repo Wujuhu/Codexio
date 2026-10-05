@@ -11,6 +11,7 @@ import (
 	"image/jpeg"
 	_ "image/png"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -55,6 +56,20 @@ func mobileRequest(r Row) Row {
 		duration = n / 1000
 	}
 	result := Row{"id": HashString(ValueString(r["id"])), "started": mobileUnixSeconds(t), "status": status, "preview": mobilePrefix(string(preview), 240), "model": requestModelName(r["model"]), "effort": requestEffortName(r["reasoning_effort"]), "speed": requestSpeed(r["service_tier"]), "tokens": r["total_tokens"], "cost": r["cost_usd"], "duration": duration, "durationStarted": nil, "durationBase": nil}
+	if ValueString(r["request_status"]) == "completed" && !ValueBool(r["duration_running"]) {
+		output, validOutput := ValueFloat(r["output_tokens"])
+		seconds, validDuration := duration.(float64)
+		_, booleanOutput := r["output_tokens"].(bool)
+		if validOutput && !booleanOutput && output >= 0 && math.Trunc(output) == output && validDuration && seconds > 0 {
+			rate := output / seconds
+			if !math.IsNaN(rate) && !math.IsInf(rate, 0) {
+				result["tps"] = rate
+			}
+		}
+	}
+	if milliseconds, valid := recordedTTFTMilliseconds(r); valid {
+		result["ttft"] = milliseconds / 1000
+	}
 	if status == "running" && ValueBool(r["duration_running"]) {
 		start, validStart := ParseStamp(r["duration_started_at"])
 		base, validBase := ValueFloat(r["duration_base_ms"])

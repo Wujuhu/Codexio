@@ -128,6 +128,8 @@ func (m *MobileHost) enroll(invite string) error {
 	m.sent, m.sentDetails, m.cloudReaders = map[string]int64{}, map[string]string{}, map[string]bool{}
 	m.cloudRecent = nil
 	m.cloudRecentNeedsUpload = true
+	m.cloudLive = nil
+	m.cloudLiveNeedsUpload = true
 	e := m.saveLocked()
 	if e == nil {
 		m.status = "云端已启用"
@@ -162,7 +164,7 @@ func (m *MobileHost) removeCloud() error {
 	m.sentDetails = map[string]string{}
 	m.cloudReaders = map[string]bool{}
 	m.nextCapability = time.Time{}
-	m.cloudImages, m.cloudDetails, m.cloudRequestKinds = false, false, false
+	m.cloudImages, m.cloudDetails, m.cloudRequestKinds, m.cloudRequestMetrics = false, false, false, false
 	m.cloudDetailStamps = map[string]Row{}
 	m.cloudError, m.cloudErrorTemporary = "", false
 	m.uploadRetry, m.uploadFailures = time.Time{}, 0
@@ -193,7 +195,7 @@ func (m *MobileHost) upload() {
 			needed = needed || d.Generation == generation && d.Expires > float64(time.Now().Unix()) && m.sentDetails[id] != ValueString(d.Envelope["digest"]) && m.detailDeferred[id] <= time.Now().Unix()
 		}
 	}
-	needed = needed || m.cloudImages && m.imagesPending || m.cloudDetails && m.parentsPending || m.cloudRecentNeedsUpload
+	needed = needed || m.cloudImages && m.imagesPending || m.cloudDetails && m.parentsPending || m.cloudRecentNeedsUpload || m.cloudLiveNeedsUpload
 	if !needed {
 		m.mu.Unlock()
 		return
@@ -287,29 +289,30 @@ func (m *MobileHost) uploadWork() {
 	}
 	m.mu.Lock()
 	probe := time.Now().After(m.nextCapability)
-	supports, kinds, images := m.cloudDetails, m.cloudRequestKinds, m.cloudImages
+	supports, kinds, metrics, images := m.cloudDetails, m.cloudRequestKinds, m.cloudRequestMetrics, m.cloudImages
 	previousImageSupport := images
 	m.mu.Unlock()
 	var probeError error
 	if probe {
 		capability, e := request(base+"/capabilities", "GET", nil, false)
 		if e == nil {
-			supports, kinds, images = false, false, false
+			supports, kinds, metrics, images = false, false, false, false
 			for _, c := range ValueStrings(capability["capabilities"]) {
 				supports = supports || c == "request-details-v1"
 				kinds = kinds || c == "request-kinds-v1"
+				metrics = metrics || c == "request-metrics-v1"
 				images = images || c == "request-images-v1"
 			}
 		} else {
 			var failure *mobileHTTPError
 			if errors.As(e, &failure) && (failure.status == 404 || failure.reason == "NOT_FOUND") {
-				supports, kinds, images = false, false, false
+				supports, kinds, metrics, images = false, false, false, false
 			} else {
 				probeError = e
 			}
 		}
 		m.mu.Lock()
-		m.cloudDetails, m.cloudRequestKinds, m.cloudImages = supports, kinds, supports && images
+		m.cloudDetails, m.cloudRequestKinds, m.cloudRequestMetrics, m.cloudImages = supports, kinds, metrics, supports && images
 		images = m.cloudImages
 		if images != previousImageSupport {
 			m.sentDetails = map[string]string{}
@@ -326,26 +329,48 @@ func (m *MobileHost) uploadWork() {
 		revision := ValueInt(envelope["revision"])
 		sent := m.sent[name]
 		m.mu.Unlock()
-		if revision > 0 && (sent != revision || name == "recent" && probe) {
+		if revision > 0 && (sent != revision || (name == "recent" || name == "live") && probe) {
 			localDigest := ValueString(envelope["digest"])
-			if name == "recent" {
-				// Mac keeps a separate bounded projection for older Workers. Digest
-				// and revision belong to the exact submitted payload, including kinds.
-				var recent []Row
-				if e := json.Unmarshal([]byte(ValueString(envelope["payload"])), &recent); e != nil {
-					m.cloudFailure(e)
-					return
-				}
-				if !kinds {
-					filtered := []Row{}
-					for _, r := range recent {
-						if ValueString(r["kind"]) != "approval_review" && !strings.EqualFold(ValueString(r["model"]), "codex-auto-review") {
-							filtered = append(filtered, r)
+			if name == "recent" || name == "live" {
+				// Keep the exact cloud payload/revision separate from local metrics
+				// so older Workers continue accepting the existing summary schema.
+				var value any
+				if name == "recent" {
+					var recent []Row
+					if e := json.Unmarshal([]byte(ValueString(envelope["payload"])), &recent); e != nil {
+						m.cloudFailure(e)
+						return
+					}
+					if !kinds {
+						filtered := []Row{}
+						for _, r := range recent {
+							if ValueString(r["kind"]) != "approval_review" && !strings.EqualFold(ValueString(r["model"]), "codex-auto-review") {
+								filtered = append(filtered, r)
+							}
+						}
+						recent = filtered
+					}
+					if !metrics {
+						for _, r := range recent {
+							delete(r, "tps")
+							delete(r, "ttft")
 						}
 					}
-					recent = filtered
+					value = recent
+				} else {
+					var live Row
+					if e := json.Unmarshal([]byte(ValueString(envelope["payload"])), &live); e != nil {
+						m.cloudFailure(e)
+						return
+					}
+					if !metrics {
+						task := ValueRow(live["task"])
+						delete(task, "tps")
+						delete(task, "ttft")
+					}
+					value = live
 				}
-				payload, e := mobileJSON(recent)
+				payload, e := mobileJSON(value)
 				if e != nil {
 					m.cloudFailure(e)
 					return
@@ -354,6 +379,9 @@ func (m *MobileHost) uploadWork() {
 				m.mu.Lock()
 				previous := CloneRow(m.cloudRecent)
 				mustUpload := m.cloudRecentNeedsUpload
+				if name == "live" {
+					previous, mustUpload = CloneRow(m.cloudLive), m.cloudLiveNeedsUpload
+				}
 				m.mu.Unlock()
 				if ValueString(previous["digest"]) == digest && !mustUpload {
 					m.mu.Lock()
@@ -361,7 +389,7 @@ func (m *MobileHost) uploadWork() {
 					m.mu.Unlock()
 					continue
 				}
-				envelope = Row{"dataset": "recent", "revision": max(revision, ValueInt(previous["revision"]), time.Now().UnixMilli()) + 1, "digest": digest, "payload": string(payload)}
+				envelope = Row{"dataset": name, "revision": max(revision, ValueInt(previous["revision"]), time.Now().UnixMilli()) + 1, "digest": digest, "payload": string(payload)}
 			}
 			ack, e := request(base+"/data/"+name, "PUT", envelope, false)
 			if e != nil {
@@ -371,9 +399,14 @@ func (m *MobileHost) uploadWork() {
 			m.mu.Lock()
 			m.sent[name] = revision
 			envelope["revision"] = max(ValueInt(envelope["revision"]), ValueInt(ack["revision"]))
-			if name == "recent" {
-				m.cloudRecent = CloneRow(envelope)
-				m.cloudRecentNeedsUpload = false
+			if name == "recent" || name == "live" {
+				if name == "recent" {
+					m.cloudRecent = CloneRow(envelope)
+					m.cloudRecentNeedsUpload = false
+				} else {
+					m.cloudLive = CloneRow(envelope)
+					m.cloudLiveNeedsUpload = false
+				}
 				if current := m.datasets[name]; current != nil && ValueInt(current["revision"]) <= ValueInt(envelope["revision"]) {
 					current["revision"] = ValueInt(envelope["revision"]) + 1
 					if ValueString(current["digest"]) == localDigest {

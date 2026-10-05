@@ -30,7 +30,7 @@ enum MobileFormat {
         switch value?.trimmingCharacters(in:.whitespacesAndNewlines).lowercased() {
         case "default", "standard": return "Standard"
         case "priority", "fast": return "Fast"
-        case "ultrafast": return "Ultrafast"
+        case "ultrafast", "ultra_fast", "ultra-fast": return "Ultra Fast"
         case "mixed": return "Mixed"
         default: return "—"
         }
@@ -41,6 +41,14 @@ enum MobileFormat {
         if value >= 3600 { return "\(value/3600) 小时 \(value%3600/60) 分 \(value%60) 秒" }
         if value >= 60 { return "\(value/60) 分 \(value%60) 秒" }
         return "\(value) 秒"
+    }
+    static func tps(_ item: MobileRequest) -> String {
+        guard item.status == "completed", let value = item.tps, value.isFinite, value >= 0 else { return "- tokens/s" }
+        return String(format:"%.0f tokens/s",value.rounded())
+    }
+    static func ttft(_ value: Double?) -> String {
+        guard let value, value.isFinite, value >= 0 else { return "— 秒" }
+        return String(format:"%.2f 秒",value)
     }
     static let update: DateFormatter = {let f=DateFormatter(); f.dateFormat="M.d HH:mm"; f.timeZone = .autoupdatingCurrent; return f}()
     static let requestDate: DateFormatter = {
@@ -362,6 +370,8 @@ struct RequestDetails: View {
                     LabeledContent("费用",value:MobileFormat.money(item.cost))
                     LabeledContent("Token",value:MobileFormat.tokens(item.tokens))
                     LabeledContent("耗时") { RequestDuration(item:item,active:store.tab == 2) }
+                    LabeledContent("TPS",value:MobileFormat.tps(item))
+                    LabeledContent("TTFT",value:MobileFormat.ttft(item.ttft))
                     LabeledContent("时间",value:MobileFormat.requestDate.string(from:Date(timeIntervalSince1970:item.started)))
                 }
             }

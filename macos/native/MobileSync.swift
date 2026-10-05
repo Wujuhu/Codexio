@@ -80,7 +80,9 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
     private var transientErrorRoute: String? // Main queue only.
     private var cloudDetails: Bool?
     private var cloudRequestKinds = false
+    private var cloudRequestMetrics = false
     private var cloudRecent: MobileEnvelope?
+    private var cloudLive: MobileEnvelope?
     private var nextCapabilityCheck = Date.distantPast
     private var host: MobileHostIdentity?
     private var listener: NWListener?
@@ -122,7 +124,8 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
     private var detailStateURL: URL { paths.data.appendingPathComponent("mobile-detail-revisions.json") }
     private var imageStateURL: URL { paths.data.appendingPathComponent("mobile-image-revisions.json") }
     private var cloudRecentURL: URL { paths.data.appendingPathComponent("mobile-cloud-recent.json") }
-    private var capabilities: [String] { [MobileProtocol.requestKindCapability] + (detailProvider == nil ? [] : [MobileProtocol.detailCapability,MobileProtocol.imageCapability]) }
+    private var cloudLiveURL: URL { paths.data.appendingPathComponent("mobile-cloud-live.json") }
+    private var capabilities: [String] { [MobileProtocol.requestKindCapability,MobileProtocol.requestMetricsCapability] + (detailProvider == nil ? [] : [MobileProtocol.detailCapability,MobileProtocol.imageCapability]) }
     private func saveDetailStamps() throws {
         try MobileProtocol.encode(detailStamps).write(to:detailStateURL,options:.atomic)
         try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:detailStateURL.path)
@@ -208,7 +211,8 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                 if let data = try? Data(contentsOf:self.stateURL) { self.datasets = try JSONDecoder().decode([String:MobileEnvelope].self,from:data) }
                 if let data = try? Data(contentsOf:self.detailStateURL) { self.detailStamps = (try? JSONDecoder().decode([String:MobileDetailStamp].self,from:data)) ?? [:] }
                 if let data = try? Data(contentsOf:self.cloudRecentURL) { self.cloudRecent = try? JSONDecoder().decode(MobileEnvelope.self,from:data) }
-                self.cloudDetails = nil; self.cloudImages = self.host?.imageCapability == true; self.nextCapabilityCheck = .distantPast
+                if let data = try? Data(contentsOf:self.cloudLiveURL) { self.cloudLive = try? JSONDecoder().decode(MobileEnvelope.self,from:data) }
+                self.cloudDetails = nil; self.cloudRequestMetrics = false; self.cloudImages = self.host?.imageCapability == true; self.nextCapabilityCheck = .distantPast
                 if let data = try? Data(contentsOf:self.imageStateURL), data.count <= 64*1024 { self.sentImages = (try? JSONDecoder().decode([String:MobileImageStamp].self,from:data)) ?? [:] }
                 self.sentImages = self.sentImages.filter {$0.value.expires > Date().timeIntervalSince1970}
                 self.exportRevision = nil; self.nextHistory = .distantPast
@@ -550,7 +554,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                     var preview = previews ? String(value.raw.string("prompt_preview").prefix(80)) : ""
                     while preview.utf8.count > 240 { preview.removeLast() }
                     let running = value.raw.flag("duration_running")
-                    return MobileRequest(id:MobileProtocol.hash(Data(value.id.utf8)),started:value.date?.timeIntervalSince1970 ?? 0,status:value.raw.string("status",running ? "running" : "completed"),preview:preview.isEmpty ? nil : preview,model:modelName(value.raw.string("model")),effort:logEffortName(value.raw.string("reasoning_effort")),speed:value.raw.string("service_tier"),tokens:value.tokens,cost:value.cost,duration:value.raw.number("duration_ms").map {$0/1000},kind:RequestClassification.isApproval(value.raw) ? RequestClassification.approval : nil,durationStarted:running ? value.runningSince?.timeIntervalSince1970 : nil,durationBase:running ? (value.raw.number("duration_base_ms") ?? 0)/1000 : nil)
+                    return MobileRequest(id:MobileProtocol.hash(Data(value.id.utf8)),started:value.date?.timeIntervalSince1970 ?? 0,status:value.raw.string("status",running ? "running" : "completed"),preview:preview.isEmpty ? nil : preview,model:modelName(value.raw.string("model")),effort:logEffortName(value.raw.string("reasoning_effort")),speed:value.raw.string("service_tier"),tokens:value.tokens,cost:value.cost,duration:value.raw.number("duration_ms").map {$0/1000},kind:RequestClassification.isApproval(value.raw) ? RequestClassification.approval : nil,durationStarted:running ? value.runningSince?.timeIntervalSince1970 : nil,durationBase:running ? (value.raw.number("duration_base_ms") ?? 0)/1000 : nil,tps:value.outputTokensPerSecond,ttft:value.firstTokenSeconds)
                 }
                 func window(_ value: QuotaWindow?) -> MobileQuota { MobileQuota(remaining:value?.remaining,reset:value?.reset?.timeIntervalSince1970,observed:quota.updated?.timeIntervalSince1970,retained:quota.retained) }
                 let sample = (observed ?? snapshot.updated).map {floor($0.timeIntervalSince1970/300)*300}
@@ -609,8 +613,12 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
         let allDetails = Array(details.values)
         imageCache.prune()
         let imageChanges = Array(imageCache.uploadRecords.lazy.filter { self.sentImages[$0.id]?.digest != $0.digest && Date() >= (self.imageDeferred[$0.id] ?? .distantPast) }.prefix(2))
-        let knownKinds = cloudRequestKinds, previousRecent = cloudRecent
-        if probe, let recent = datasets["recent"], !changed.contains(where:{$0.dataset == "recent"}) { changed.append(recent) }
+        let knownKinds = cloudRequestKinds, knownMetrics = cloudRequestMetrics, previousRecent = cloudRecent, previousLive = cloudLive
+        if probe {
+            for name in ["live","recent"] {
+                if let value = datasets[name], !changed.contains(where:{$0.dataset == name}) { changed.append(value) }
+            }
+        }
         guard !changed.isEmpty || !readers.isEmpty || !host.revoked.isEmpty || probe || (support == true && !detailChanges.isEmpty) || (imageSupport && !imageChanges.isEmpty) else { return }
         sending = true; urgentPending = false; let generation = generation, transport = transport
         Task {
@@ -621,7 +629,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                     _ = try await transport.request("/v1/hosts/\(host.id)/readers",method:"PUT",token:host.writer,body:body)
                 }
                 var supported = support, uploaded: [MobileEnvelope] = [], capacityIDs: [String] = []
-                var detailFailure: String?, kinds = knownKinds, imagesSupported = imageSupport, probeFailed = false
+                var detailFailure: String?, kinds = knownKinds, metrics = knownMetrics, imagesSupported = imageSupport, probeFailed = false
                 var cloudSucceeded = !readers.isEmpty || !host.revoked.isEmpty, transientDetailFailure = false
                 var uploadedImages: [MobileImageCache.Stored] = [], deferredImages: [String] = []
                 if probe {
@@ -630,26 +638,37 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                         let message = try JSONDecoder().decode(MobileMessage.self,from:response)
                         supported = message.capabilities?.contains(MobileProtocol.detailCapability) == true
                         kinds = message.capabilities?.contains(MobileProtocol.requestKindCapability) == true
+                        metrics = message.capabilities?.contains(MobileProtocol.requestMetricsCapability) == true
                         imagesSupported = message.capabilities?.contains(MobileProtocol.imageCapability) == true
                         cloudSucceeded = true
                     } catch {
-                        if case MobileError.http(let code,_,let reason) = error, code == 404 || reason == "NOT_FOUND" { supported = false; kinds = false; imagesSupported = false }
+                        if case MobileError.http(let code,_,let reason) = error, code == 404 || reason == "NOT_FOUND" { supported = false; kinds = false; metrics = false; imagesSupported = false }
                         else { probeFailed = true; detailFailure = error.localizedDescription; transientDetailFailure = Self.temporaryNetworkFailure(error) }
                     }
                 }
-                // A separate bounded cloud projection preserves old Workers' field
-                // allow-list and revisions while the local link carries review kinds.
-                var sentRecent: MobileEnvelope?
+                // Keep two bounded projections so older Workers' allow-list stays
+                // compatible while local connections carry kinds and timing metrics.
+                var sentRecent: MobileEnvelope?, sentLive: MobileEnvelope?
                 for value in changed {
                     var cloudValue = value
-                    if value.dataset == "recent" {
-                        let requests = try value.decode([MobileRequest].self)
-                        let body = try MobileProtocol.encode(kinds ? requests : requests.filter {!$0.isApproval})
+                    if value.dataset == "recent" || value.dataset == "live" {
+                        let body: Data
+                        let previous = value.dataset == "recent" ? previousRecent : previousLive
+                        if value.dataset == "recent" {
+                            var requests = try value.decode([MobileRequest].self)
+                            if !kinds { requests.removeAll {$0.isApproval} }
+                            if !metrics { for index in requests.indices { requests[index].tps = nil; requests[index].ttft = nil } }
+                            body = try MobileProtocol.encode(requests)
+                        } else {
+                            var live = try value.decode(MobileLive.self)
+                            if !metrics { live.task?.tps = nil; live.task?.ttft = nil }
+                            body = try MobileProtocol.encode(live)
+                        }
                         let hash = MobileProtocol.hash(body)
-                        if previousRecent?.digest == hash, let previousRecent { cloudValue = previousRecent }
-                        else { cloudValue = MobileEnvelope(dataset:"recent",revision:max(previousRecent?.revision ?? 0,value.revision,Int64(Date().timeIntervalSince1970*1000))+1,digest:hash,payload:String(decoding:body,as:UTF8.self)) }
-                        sentRecent = cloudValue
-                        if cloudValue == previousRecent { continue }
+                        if previous?.digest == hash, let previous { cloudValue = previous }
+                        else { cloudValue = MobileEnvelope(dataset:value.dataset,revision:max(previous?.revision ?? 0,value.revision,Int64(Date().timeIntervalSince1970*1000))+1,digest:hash,payload:String(decoding:body,as:UTF8.self)) }
+                        if value.dataset == "recent" { sentRecent = cloudValue } else { sentLive = cloudValue }
+                        if cloudValue == previous { continue }
                     }
                     _ = try await transport.request("/v1/hosts/\(host.id)/data/\(value.dataset)",method:"PUT",token:host.writer,body:MobileProtocol.encode(cloudValue))
                     cloudSucceeded = true
@@ -697,11 +716,11 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                 }
                 let resolvedImages = imagesSupported, sentImageValues = uploadedImages, delayedImages = deferredImages, newDetailRevisions = submittedDetailRevisions
                 let resetCloudDetails = imageCapabilityChanged, didSynchronizeCloud = cloudSucceeded, temporaryDetailFailure = transientDetailFailure
-                let resolvedSupport = supported, resolvedKinds = kinds, resolvedRecent = sentRecent, failedProbe = probeFailed, sentDetails = uploaded, failure = detailFailure, deferred = capacityIDs, sentDatasets = changed
+                let resolvedSupport = supported, resolvedKinds = kinds, resolvedMetrics = metrics, resolvedRecent = sentRecent, resolvedLive = sentLive, failedProbe = probeFailed, sentDetails = uploaded, failure = detailFailure, deferred = capacityIDs, sentDatasets = changed
                 self.queue.async {
                     guard self.generation == generation else { return }
                     self.cloudDetails = resolvedSupport
-                    self.cloudRequestKinds = resolvedKinds; self.cloudImages = resolvedImages; self.host?.imageCapability = resolvedImages
+                    self.cloudRequestKinds = resolvedKinds; self.cloudRequestMetrics = resolvedMetrics; self.cloudImages = resolvedImages; self.host?.imageCapability = resolvedImages
                     for image in sentImageValues {
                         self.sentImages[image.id] = MobileImageStamp(digest:image.digest,expires:image.expires)
                     }
@@ -714,12 +733,18 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                         try? MobileProtocol.encode(resolvedRecent).write(to:self.cloudRecentURL,options:.atomic)
                         try? FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:self.cloudRecentURL.path)
                     }
+                    if let resolvedLive, self.cloudLive != resolvedLive {
+                        self.cloudLive = resolvedLive
+                        try? MobileProtocol.encode(resolvedLive).write(to:self.cloudLiveURL,options:.atomic)
+                        try? FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:self.cloudLiveURL.path)
+                    }
                     if probe { self.nextCapabilityCheck = Date().addingTimeInterval(failedProbe ? 60 : 3_600) }
                     for value in sentDatasets { self.sent[value.dataset] = value.revision }
-                    if let resolvedRecent, var current = self.datasets["recent"], current.revision <= resolvedRecent.revision {
-                        let submitted = sentDatasets.first {$0.dataset == "recent"}
-                        current.revision = resolvedRecent.revision+1; self.datasets["recent"] = current
-                        if current.digest == submitted?.digest { self.sent["recent"] = current.revision }
+                    for resolved in [resolvedRecent,resolvedLive].compactMap({$0}) {
+                        guard var current = self.datasets[resolved.dataset], current.revision <= resolved.revision else { continue }
+                        let submitted = sentDatasets.first {$0.dataset == resolved.dataset}
+                        current.revision = resolved.revision+1; self.datasets[resolved.dataset] = current
+                        if current.digest == submitted?.digest { self.sent[resolved.dataset] = current.revision }
                         try? self.persist()
                         for (key,connection) in self.connections where self.authenticated[key] != nil {
                             MobileProtocol.send(MobileMessage(action:"sync",known:self.datasets.mapValues(\.revision),datasets:[current],seen:Date().timeIntervalSince1970,supportsAck:true,capabilities:self.capabilities,detailVersions:self.details.mapValues(\.revision)),over:connection)
