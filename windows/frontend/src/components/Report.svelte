@@ -175,7 +175,7 @@
               <div class="mac-report-rule mac-report-rhythm-rule"></div>
               <section class="mac-report-models">
                 <div class="mac-report-heading"><h2>{tr('模型使用')}</h2><small>{numeric(calls)} {tr('次调用')}</small></div>
-                {#each top as model}<div class="mac-report-model-row"><div><strong>{modelName(model.model)}</strong><small>{costLabel(model)} · {tokenLabel(model.tokens, model.tokens_complete !== false && Number(model.skipped?.tokens ?? 0) === 0)} Token</small></div><span>{numeric(model.call_count ?? model.calls ?? model.requests)} {tr('次')} · {sharePercent(model.call_count ?? model.calls ?? model.requests, calls)}%</span></div>{/each}
+                {#each top as model}<div class="mac-report-model-row"><div><strong>{modelName(model.model)}</strong><small>{numeric(model.call_count ?? model.calls ?? model.requests)} {tr('次')} · {sharePercent(model.call_count ?? model.calls ?? model.requests, calls)}%</small></div><span>{costLabel(model)} · {tokenLabel(model.tokens, model.tokens_complete !== false && Number(model.skipped?.tokens ?? 0) === 0)} Token</span></div>{/each}
                 {#if !top.length}<p>{tr('暂无模型调用')}</p>{/if}
               </section>
               <div class="mac-report-spacer"></div>
@@ -228,25 +228,25 @@
   .mac-report-metrics>div{position:relative;text-align:center;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0}
   .mac-report-metrics>div+div::before{content:'';position:absolute;left:0;top:50%;height:35px;width:1px;transform:translateY(-50%);background:color-mix(in srgb,var(--mac-secondary) 65%,transparent)}
   .mac-report-metrics strong{width:100%;height:36px;display:flex;align-items:flex-end;justify-content:center;font-family:var(--mac-editorial);font-size:27px;font-weight:600;white-space:nowrap;line-height:1.1}
-  .mac-report-metrics span{font-size:11px;color:var(--mac-muted)}
+  .mac-report-metrics span{font-size:13px;color:var(--mac-muted);white-space:nowrap}
   .mac-report-rhythm{padding-top:20px;flex:none;display:flex;flex-direction:column;gap:10px}
   .mac-report-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}
   .mac-report-heading h2{font-family:var(--mac-editorial);font-size:25px;font-weight:600;line-height:1.3}
-  .mac-report-heading>small{font-size:11px;color:var(--mac-accent);font-weight:500}
+  .mac-report-heading>small{font-size:12px;color:var(--mac-accent);font-weight:500}
   .mac-report-slices{height:82px;display:flex;align-items:flex-end;gap:14px}
   .mac-report-slices>div{flex:1;display:flex;flex-direction:column;align-items:stretch;gap:3px;text-align:center}
   .mac-report-slices strong{font-family:var(--mac-editorial);font-size:12px;font-weight:600}
   .mac-report-slices span{display:block;border-radius:5px}
-  .mac-report-slices small{font-size:11px;color:var(--mac-muted)}
-  .mac-report-times{display:flex;justify-content:space-between;gap:10px;font-size:10px}
+  .mac-report-slices small{font-size:13px;color:var(--mac-muted);white-space:nowrap}
+  .mac-report-times{display:flex;justify-content:space-between;gap:10px;font-size:12px}
   .mac-report-times>div{display:flex;flex-direction:column;gap:1px}
   .mac-report-times>div:last-child{text-align:right}
   .mac-report-times span{font-weight:500}
-  .mac-report-times small{color:var(--mac-muted);font-size:10px;white-space:nowrap}
+  .mac-report-times small{color:var(--mac-muted);font-size:12px;white-space:nowrap}
   .mac-report-rhythm-rule{margin-top:20px}
   .mac-report-models{display:flex;flex-direction:column;gap:16px;padding-top:18px;flex:none}
   .mac-report-models h2{font-size:26px}
-  .mac-report-models .mac-report-heading>small{color:var(--mac-muted);font-weight:400}
+  .mac-report-models .mac-report-heading>small{color:var(--mac-muted);font-size:11px;font-weight:400}
   .mac-report-model-row{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
   .mac-report-model-row>div{min-width:0;display:flex;flex-direction:column;gap:1px}
   .mac-report-model-row strong{font-size:15px;font-weight:500;line-height:1.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

@@ -223,7 +223,7 @@ private struct ReportArtTimeRhythm: View {
                 Spacer()
                 if let peak = data.peakTimeSlice {
                     Text(peak.name + L("最活跃", " was busiest"))
-                        .font(.system(size: 11, weight: .medium)).foregroundStyle(palette.accent)
+                        .font(.system(size: 12, weight: .medium)).foregroundStyle(palette.accent)
                 }
             }
             HStack(alignment: .bottom, spacing: 14) {
@@ -233,7 +233,7 @@ private struct ReportArtTimeRhythm: View {
                         RoundedRectangle(cornerRadius: 5)
                             .fill(slice.requests == data.peakTimeSlice?.requests ? palette.accent : palette.secondary)
                             .frame(height: slice.requests == 0 ? 1 : max(3, CGFloat(slice.requests) / CGFloat(max(1, data.peakTimeSlice?.requests ?? 1)) * 52))
-                        Text(slice.name).font(.system(size: 11)).foregroundStyle(palette.muted)
+                        Text(slice.name).font(.system(size: 13)).foregroundStyle(palette.muted).lineLimit(1)
                     }.frame(maxWidth: .infinity)
                 }
             }.frame(height: 82, alignment: .bottom)
@@ -252,8 +252,8 @@ private struct ReportArtTimeRhythm: View {
             : ((hour ?? 12) >= 22 || (hour ?? 12) < 5 ? L("辛苦啦，早点休息喵", "Rest a little earlier") : L("努力收好，好好放松喵", "Time to unwind"))
         return VStack(alignment: first ? .leading : .trailing, spacing: 1) {
             Text((first ? L("最早", "First") : L("最晚", "Last")) + " · " + (date.map { $0.formatted(.dateTime.hour().minute()) } ?? "—"))
-                .font(.system(size: 10, weight: .medium)).monospacedDigit()
-            if date != nil { Text(message).font(.system(size: 10)).foregroundStyle(palette.muted).lineLimit(1) }
+                .font(.system(size: 12, weight: .medium)).monospacedDigit()
+            if date != nil { Text(message).font(.system(size: 12)).foregroundStyle(palette.muted).lineLimit(1) }
         }
     }
 }
@@ -275,12 +275,12 @@ private struct ReportArtModelRows: View {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(modelName(model.name)).font(.system(size: 15, weight: .medium)).lineLimit(1)
-                        Text(model.costLabel + " · " + reportTokenLabel(model.tokens) + " Token")
+                        Text("\(model.calls) " + L("次", "calls") + " · \(data.percent(model.calls, of: data.modelCalls))%")
                             .font(.system(size: 12)).foregroundStyle(palette.muted).lineLimit(1)
                     }
                     Spacer(minLength: 8)
-                    ReportArtNumber(value: "\(model.calls) " + L("次", "calls") + " · \(data.percent(model.calls, of: data.modelCalls))%")
-                        .font(.system(size: 13))
+                    ReportArtNumber(value: model.costLabel + " · " + reportTokenLabel(model.tokens) + " Token")
+                        .font(.system(size: 13)).lineLimit(1).minimumScaleFactor(0.85)
                 }
             }
         }.foregroundStyle(palette.ink)
@@ -431,7 +431,7 @@ struct ReportArtSmallMetric: View {
     var body: some View {
         VStack(spacing: 4) {
             ReportArtNumber(value: value).font(reportEditorial(27)).fontWeight(.semibold).lineLimit(1).minimumScaleFactor(0.65)
-            Text(label).font(.system(size: 11)).foregroundStyle(palette.muted)
+            Text(label).font(.system(size: 13)).foregroundStyle(palette.muted).lineLimit(1).minimumScaleFactor(0.85)
         }
         .foregroundStyle(palette.ink)
         .frame(maxWidth: .infinity)
