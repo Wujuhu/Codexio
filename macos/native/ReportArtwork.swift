@@ -268,19 +268,19 @@ private struct ReportArtModelRows: View {
                 Text(L("模型使用", "Model usage")).font(reportEditorial(26)).fontWeight(.semibold)
                 Spacer()
                 Text("\(data.modelCalls) " + L("次调用", "calls"))
-                    .font(.system(size: 11)).foregroundStyle(palette.muted)
+                    .font(.system(size: 13)).foregroundStyle(palette.muted)
             }
             if data.models.isEmpty { Text(L("暂无模型调用", "No model calls")).font(.system(size: 10)).foregroundStyle(palette.muted) }
             ForEach(Array(data.models.prefix(3))) { model in
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(modelName(model.name)).font(.system(size: 15, weight: .medium)).lineLimit(1)
+                        Text(modelName(model.name)).font(.system(size: 16, weight: .medium)).lineLimit(1)
                         Text("\(model.calls) " + L("次", "calls") + " · \(data.percent(model.calls, of: data.modelCalls))%")
-                            .font(.system(size: 12)).foregroundStyle(palette.muted).lineLimit(1)
+                            .font(.system(size: 14)).foregroundStyle(palette.muted).lineLimit(1)
                     }
                     Spacer(minLength: 8)
                     ReportArtNumber(value: model.costLabel + " · " + reportTokenLabel(model.tokens) + " Token")
-                        .font(.system(size: 13)).lineLimit(1).minimumScaleFactor(0.85)
+                        .font(.system(size: 18, weight: .medium)).lineLimit(1).minimumScaleFactor(0.9).layoutPriority(1)
                 }
             }
         }.foregroundStyle(palette.ink)

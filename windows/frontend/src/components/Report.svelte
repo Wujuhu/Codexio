@@ -246,12 +246,12 @@
   .mac-report-rhythm-rule{margin-top:20px}
   .mac-report-models{display:flex;flex-direction:column;gap:16px;padding-top:18px;flex:none}
   .mac-report-models h2{font-size:26px}
-  .mac-report-models .mac-report-heading>small{color:var(--mac-muted);font-size:11px;font-weight:400}
+  .mac-report-models .mac-report-heading>small{color:var(--mac-muted);font-size:13px;font-weight:400}
   .mac-report-model-row{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
   .mac-report-model-row>div{min-width:0;display:flex;flex-direction:column;gap:1px}
-  .mac-report-model-row strong{font-size:15px;font-weight:500;line-height:1.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .mac-report-model-row small{font-size:12px;color:var(--mac-muted);white-space:nowrap}
-  .mac-report-model-row>span{font-size:13px;white-space:nowrap}
+  .mac-report-model-row strong{font-size:16px;font-weight:500;line-height:24px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mac-report-model-row small{font-size:14px;line-height:16px;color:var(--mac-muted);white-space:nowrap}
+  .mac-report-model-row>span{font-size:18px;font-weight:500;white-space:nowrap;flex-shrink:0}
   .mac-report-models>p{font-size:10px;color:var(--mac-muted)}
   .mac-report-spacer{flex:1;min-height:20px}
   .mac-report-insight{display:flex;align-items:flex-start;gap:10px;padding:14px;background:var(--mac-surface);border-radius:18px;flex:none}
