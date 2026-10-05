@@ -2,11 +2,13 @@ import {compact, kind, number, percent, text, type Row, type Query} from '../lib
 import {isEnglish, tr} from '../lib/i18n';
 
 export function modelName(value: unknown): string {
-  return text(value).replace(/gpt-/gi, 'GPT-').replace(/-(astra|sol|luna|terra)\b/gi, (_, name: string) => ` ${name[0].toUpperCase()}${name.slice(1).toLowerCase()}`);
+  const raw=text(value,'').trim();
+  if(['','unknown','未知','-','–','—'].includes(raw.toLowerCase()))return'—';
+  return raw.replace(/gpt-/gi, 'GPT-').replace(/-(astra|sol|luna|terra)\b/gi, (_, name: string) => ` ${name[0].toUpperCase()}${name.slice(1).toLowerCase()}`);
 }
 
 export function effort(value: unknown): string {
-  const names: Record<string,string> = {none:'None',minimal:'Minimal',low:'Low',medium:'Medium',high:'High',xhigh:'Extra High','extra high':'Extra High',extra_high:'Extra High','extra-high':'Extra High',max:'Max',ultra:'Ultra',unknown:'Unknown',无:'None',最轻:'Minimal',轻度:'Low',中等:'Medium',高度:'High',极高:'Extra High',最高:'Max',超高:'Ultra',未知:'Unknown'};
+  const names: Record<string,string> = {none:'None',minimal:'Minimal',low:'Low',medium:'Medium',high:'High',xhigh:'Extra High','extra high':'Extra High',extra_high:'Extra High','extra-high':'Extra High',max:'Max',ultra:'Ultra',unknown:'—',auto:'—',无:'None',最轻:'Minimal',轻度:'Low',中等:'Medium',高度:'High',极高:'Extra High',最高:'Max',超高:'Ultra',未知:'—'};
   const raw = text(value, '').trim();
   return names[raw.toLowerCase()] ?? raw;
 }
@@ -36,8 +38,7 @@ export function preview(record: Row): string {
   if (!label && raw && !/external_codex_apps_open_page|^<(?:environment_context|permissions|INSTRUCTIONS|app-context)|^# AGENTS\.md instructions/i.test(raw)) label = tr('附件消息');
   if (!label) {
     const empty = record.submission_snapshot?.input_state === 'empty';
-    const running = (record.request_status ?? record.status) === 'running';
-    label = empty ? (isEnglish()?'Empty request':'空请求') : running ? (isEnglish()?'Reading request…':'正在读取请求…') : (isEnglish()?'Request content unavailable':'请求内容未记录');
+    label = empty ? (isEnglish()?'Empty request':'空请求') : '—';
   }
   label = label.replace(/\s+/g, ' ').trim();
   // The collector owns Mac's bounded 600-character request preview. The cell
@@ -83,7 +84,7 @@ export function durationMilliseconds(record:Row,now=Date.now()):number|null {
 }
 
 export function tpsLabel(record:Row,unit='TPS'):string {
-  const missing=`- ${unit}`;
+  const missing='—';
   if((record.request_status??record.status)!=='completed'||record.duration_running)return missing;
   const output=number(record.output_tokens),milliseconds=durationMilliseconds(record);
   if(typeof record.output_tokens==='boolean'||typeof record.duration_ms==='boolean'||output===null||!Number.isInteger(output)||output<0||milliseconds===null||milliseconds<=0)return missing;
@@ -93,7 +94,7 @@ export function tpsLabel(record:Row,unit='TPS'):string {
 
 export function ttftLabel(record:Row):string {
   const milliseconds=typeof record.ttft_ms==='boolean'?null:number(record.ttft_ms);
-  return (milliseconds!==null&&milliseconds>=0?(milliseconds/1000).toFixed(2):'—')+(isEnglish()?' s':' 秒');
+  return milliseconds!==null&&milliseconds>=0?(milliseconds/1000).toFixed(2)+(isEnglish()?' s':' 秒'):'—';
 }
 
 const pad=(value:number)=>String(value).padStart(2,'0');
@@ -126,8 +127,9 @@ export function fullTime(value:unknown):string {
 }
 
 export function requestStatus(record:Row):string {
-  const labels:Record<string,string>={running:'进行中',completed:'已完成',aborted:'已中止',unknown:'未知'};
-  return tr(labels[record.request_status??record.status]??'未知');
+  const labels:Record<string,string>={running:'进行中',completed:'已完成',aborted:'已中止',failed:'失败'};
+  const label=labels[record.request_status??record.status];
+  return label?tr(label):'—';
 }
 
 export function hitRate(record: Row): string {

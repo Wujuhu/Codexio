@@ -274,37 +274,37 @@ struct LogDetail: View {
                 field(L("费用", "Cost"),money(row.cost))
                 field(L("耗时", "Duration"),durationText(row.duration))
                 field("TPS",outputRateText(row.outputTokensPerSecond,unit:"tokens/s"))
-                field("TTFT",(row.firstTokenSeconds.map {String(format:"%.2f",$0)} ?? "—")+L(" 秒", " s"))
+                field("TTFT",row.firstTokenSeconds.map {String(format:"%.2f",$0)+L(" 秒", " s")} ?? "—")
                 field(L("输入 Token", "Input tokens"),compact(row.raw.number("input_tokens")))
                 field(L("缓存读取", "Cached input"),compact(row.raw.number("cached_input_tokens")))
                 field(L("输出 Token", "Output tokens"),compact(row.raw.number("output_tokens")))
                 field(L("推理输出", "Reasoning output"),compact(row.raw.number("reasoning_output_tokens")))
                 Divider()
                 Text(L("输入预览", "Prompt preview")).foregroundStyle(.secondary)
-                Text(row.raw.string("prompt_preview","—"))
+                Text(row.raw.string("prompt_preview").isEmpty ? "—" : row.raw.string("prompt_preview"))
                 Divider()
                 Text(L("回复预览", "Reply preview")).foregroundStyle(.secondary)
-                Text(row.raw.string("output_preview","—"))
+                Text(row.raw.string("output_preview").isEmpty ? "—" : row.raw.string("output_preview"))
                 if !members.isEmpty {
                     Divider()
                     DisclosureGroup(L("模型调用", "Model calls")+" (\(members.count))") {
                         ForEach(members) { member in
                             VStack(alignment:.leading,spacing:7) {
-                                Text(member.modelLabel).fontWeight(.medium)
+                                Text(requestValueText(member.modelLabel)).fontWeight(.medium)
                                 if member.raw.string("session_id") != row.raw.string("session_id") { Text(L("子代理", "Subagent")).foregroundStyle(.secondary) }
                                 Text(logEffortName(member.raw.string("reasoning_effort"))+" · "+detailSpeedName(member.raw.string("service_tier")))
-                                Text(compact(member.tokens.map(Double.init))+" Token · "+money(member.cost))
+                                Text((member.tokens.map {compact(Double($0))+" Token"} ?? "—")+" · "+money(member.cost))
                                 if !member.raw.string("output_preview").isEmpty { Text(member.raw.string("output_preview")).foregroundStyle(.secondary) }
                                 Divider()
                             }.padding(.vertical,6)
                         }
                     }
                 }
-                Divider(); Text(row.raw.string("session_id")).font(.caption).foregroundStyle(.secondary)
+                Divider(); Text(requestValueText(row.raw.string("session_id"))).font(.caption).foregroundStyle(.secondary)
             }.font(.system(size:12)).padding(20).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)
         }.frame(width:360,height:500)
     }
-    private func field(_ label: String,_ value: String) -> some View { HStack(alignment:.firstTextBaseline) { Text(label).foregroundStyle(.secondary); Spacer(minLength:12); Text(value).multilineTextAlignment(.trailing) } }
+    private func field(_ label: String,_ value: String) -> some View { HStack(alignment:.firstTextBaseline) { Text(label).foregroundStyle(.secondary); Spacer(minLength:12); Text(requestValueText(value)).multilineTextAlignment(.trailing) } }
 }
 
 struct DateRangeControls: View {

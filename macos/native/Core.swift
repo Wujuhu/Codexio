@@ -188,6 +188,10 @@ func planName(_ value: String) -> String {
 func modelName(_ value: String) -> String {
     value.replacingOccurrences(of: "gpt-", with: "GPT-").replacingOccurrences(of: "-astra", with: " Astra").replacingOccurrences(of: "-sol", with: " Sol").replacingOccurrences(of: "-luna", with: " Luna").replacingOccurrences(of: "-terra", with: " Terra")
 }
+func requestValueText(_ value: String) -> String {
+    let text = value.trimmingCharacters(in:.whitespacesAndNewlines)
+    return ["","unknown","auto","未知","-","–","—"].contains(text.lowercased()) ? "—" : text
+}
 func effortName(_ value: String) -> String {
     switch value {
     case "none": return L("无", "None")
@@ -212,7 +216,7 @@ func logEffortName(_ value: String) -> String {
     case "xhigh": return "Extra high"
     case "max": return "Max"
     case "ultra": return "Ultra"
-    case "": return "Unknown"
+    case "", "unknown", "未知", "auto": return "—"
     default: return value
     }
 }

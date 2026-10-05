@@ -36,7 +36,7 @@ struct UsageRow: Identifiable {
     }
     var modelLabel: String {
         let requested = raw.string("model"), observed = raw.string("upstream_model")
-        return modelName(requested)+(observed.isEmpty ? "" : " → "+modelName(observed))
+        return requestValueText(modelName(requested))+(observed.isEmpty ? "" : " → "+requestValueText(modelName(observed)))
     }
     private static func tokenCount(_ raw: Object) -> Int? {
         guard let total = raw.integer("total_tokens"), !raw.string("quality").hasPrefix("invalid") else { return nil }
@@ -71,7 +71,8 @@ func recordedTTFTMilliseconds(_ raw: Object) -> Double? {
     return nil
 }
 func outputRateText(_ rate: Double?,unit: String = "TPS") -> String {
-    (rate.map {String(format:"%.0f",$0.rounded())} ?? "-")+" "+unit
+    guard let rate, rate.isFinite, rate >= 0 else { return "—" }
+    return String(format:"%.0f",rate.rounded())+" "+unit
 }
 
 struct UsageSummary {
@@ -276,7 +277,7 @@ enum Analytics {
             let prompt = ([own]+displayMembers).map { requestPreview($0.string("prompt_preview")) }.first { !$0.isEmpty }
                 ?? displayCalls.map { $0.raw.string("prompt_preview") }.first { !$0.isEmpty }
             let maintenance = own.string("record_kind") == "context_compaction"
-            row["prompt_preview"] = approval ? L("自动审批审查", "Automatic approval review") : maintenance ? L("上下文压缩", "Context compaction") : prompt ?? L("任务记录", "Task record")
+            row["prompt_preview"] = approval ? L("自动审批审查", "Automatic approval review") : maintenance ? L("上下文压缩", "Context compaction") : prompt ?? "—"
             let summary = UsageSummary(rows:calls)
             row["id"] = id; row["record_kind"] = approval ? RequestClassification.approval : maintenance ? "context_compaction" : "user_request"
             let ownCalls = calls.filter {$0.raw.string("session_id") == own.string("session_id")}

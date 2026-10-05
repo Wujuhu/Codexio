@@ -44,11 +44,11 @@
         <div class="field-pair"><span class="muted">{tr('时间')}</span><span>{fullTime(request.timestamp)}</span></div>
       </section>
       <section><div class="row between"><h3>{tr('原始请求')}</h3><button class="quiet" aria-label={tr('复制')} disabled={!body(data.user)} onclick={()=>copy(body(data.user),'user')}><Icon name={copied==='user'?'check':'copy'} size={15}/></button></div>
-        {#if body(data.user)}<Markdown content={body(data.user)} requestId={currentId} images={rows(data.images).filter(image=>image.placement!=='final')} {onerror}/>{:else}<p class="muted">{tr('暂无原始请求')}</p>{/if}
+        {#if body(data.user)}<Markdown content={body(data.user)} requestId={currentId} images={rows(data.images).filter(image=>image.placement!=='final')} {onerror}/>{:else}<p class="muted">—</p>{/if}
         {#if data.user_complete===false}<small class="warning">{tr('正文未完整保留')}</small>{/if}
       </section>
       <section><div class="row between"><h3>{tr('最终回复')}</h3><button class="quiet" aria-label={tr('复制')} disabled={!body(data.final)} onclick={()=>copy(body(data.final),'final')}><Icon name={copied==='final'?'check':'copy'} size={15}/></button></div>
-        {#if body(data.final)}<Markdown content={body(data.final)} requestId={currentId} images={rows(data.images).filter(image=>image.placement==='final')} {onerror}/>{:else}<p class="muted">{tr('暂无最终回复')}</p>{/if}
+        {#if body(data.final)}<Markdown content={body(data.final)} requestId={currentId} images={rows(data.images).filter(image=>image.placement==='final')} {onerror}/>{:else}<p class="muted">—</p>{/if}
         {#if data.final_complete===false}<small class="warning">{tr('正文未完整保留')}</small>{/if}
       </section>
       {#if rows(data.attachments).length}<section><h3>{tr('附件')}</h3>{#each rows(data.attachments) as attachment}<div class="attachment"><Icon name="file" size={14}/><span>{text(attachment.name)}</span></div>{/each}</section>{/if}

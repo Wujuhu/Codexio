@@ -336,7 +336,7 @@ enum LogFields {
             case "time": return GridText(main:logDateText(row.date,timeOnly:timeOnly,showYear:showYear))
             case "model":
                 let upstream = raw.string("upstream_model"), requested = raw.string("model")
-                return GridText(main:modelName(requested),upstream:modelName(upstream),upstreamMismatch:raw.flag("upstream_mismatched",!upstream.isEmpty && !requested.isEmpty && upstream != requested))
+                return GridText(main:requestValueText(modelName(requested)),upstream:modelName(upstream),upstreamMismatch:raw.flag("upstream_mismatched",!upstream.isEmpty && !requested.isEmpty && upstream != requested))
             case "input": return GridText(main:compact(raw.number("input_tokens")))
             case "output": return GridText(main:compact(raw.number("output_tokens")))
             case "total": return GridText(main:compact(row.tokens.map(Double.init)))
@@ -347,13 +347,13 @@ enum LogFields {
                 return GridText(main:percent(rate.map {$0*100},digits:1))
             case "cost": return GridText(main:money(row.cost))
             case "duration":
-                guard let seconds = row.duration, seconds >= 0, seconds < Double(Int.max) else { return GridText(main:"—",secondary:"- TPS") }
+                guard let seconds = row.duration, seconds >= 0, seconds < Double(Int.max) else { return GridText(main:"—",secondary:"—") }
                 let value = Int(seconds)
                 return GridText(main:String(format:"%02d:%02d:%02d",value/3600,value%3600/60,value%60),secondary:outputRateText(row.outputTokensPerSecond))
             case "effort": return GridText(main:logEffortName(raw.string("reasoning_effort")))
-            case "speed": return GridText(main:normalizedTier(raw.string("service_tier")) == "priority" ? "Fast" : normalizedTier(raw.string("service_tier")) == "default" ? L("标准", "Standard") : L("未知", "Unknown"))
+            case "speed": return GridText(main:detailSpeedName(raw.string("service_tier")))
             case "context": return GridText(main:compact(raw.number("model_context_window")))
-            case "status": return GridText(main:raw.string("status") == "running" ? L("进行中", "In progress") : raw.string("status") == "completed" ? L("已完成", "Completed") : L("未知", "Unknown"))
+            case "status": return GridText(main:raw.string("status") == "running" ? L("进行中", "In progress") : raw.string("status") == "completed" ? L("已完成", "Completed") : raw.string("status") == "aborted" ? L("已中止", "Aborted") : "—")
             default: return GridText(main:"—")
             }
         },dynamic:row.raw.flag("duration_running"),detail:{(row,details())})

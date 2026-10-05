@@ -18,14 +18,35 @@ private enum MobileBrand {
     }
 }
 enum MobileFormat {
-    static func tokens(_ value: Int?) -> String {
-        guard let value else { return "—" }
-        if value >= 1_000_000 { return String(format:"%.2fM",Double(value)/1_000_000) }
-        if value >= 1_000 { return String(format:"%.1fK",Double(value)/1_000) }
-        return String(value)
+    static func tokens(_ value: Int?, unit: String = "") -> String {
+        guard let value, value >= 0 else { return "—" }
+        let number = value >= 1_000_000 ? String(format:"%.2fM",Double(value)/1_000_000) : value >= 1_000 ? String(format:"%.1fK",Double(value)/1_000) : String(value)
+        return number+(unit.isEmpty ? "" : " "+unit)
     }
-    static func money(_ value: Double?) -> String { value.map {String(format:"$%.2f",$0)} ?? "—" }
-    static func model(_ value: String) -> String { value.capitalized.replacingOccurrences(of:"Gpt-",with:"GPT-") }
+    static func text(_ value: String?) -> String {
+        guard let value, !value.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else { return "—" }
+        return value
+    }
+    static func money(_ value: Double?) -> String {
+        guard let value, value.isFinite, value >= 0 else { return "—" }
+        return String(format:"$%.2f",value)
+    }
+    static func model(_ value: String) -> String {
+        let name = text(value).trimmingCharacters(in:.whitespacesAndNewlines)
+        guard !["unknown","未知","-","–"].contains(name.lowercased()) else { return "—" }
+        return name.capitalized.replacingOccurrences(of:"Gpt-",with:"GPT-")
+    }
+    static func effort(_ value: String?) -> String {
+        let name = text(value).trimmingCharacters(in:.whitespacesAndNewlines)
+        return ["unknown","auto","未知","-","–"].contains(name.lowercased()) ? "—" : name.capitalized
+    }
+    static func status(_ value: String) -> String {
+        ["running":"进行中","completed":"已完成","aborted":"已中断","failed":"失败"][value] ?? "—"
+    }
+    static func requestTime(_ value: Double, full: Bool = false) -> String {
+        guard value.isFinite, value > 0 else { return "—" }
+        return (full ? requestDate : update).string(from:Date(timeIntervalSince1970:value))
+    }
     static func speed(_ value: String?) -> String {
         switch value?.trimmingCharacters(in:.whitespacesAndNewlines).lowercased() {
         case "default", "standard": return "Standard"
@@ -43,11 +64,11 @@ enum MobileFormat {
         return "\(value) 秒"
     }
     static func tps(_ item: MobileRequest) -> String {
-        guard item.status == "completed", let value = item.tps, value.isFinite, value >= 0 else { return "- tokens/s" }
+        guard item.status == "completed", let value = item.tps, value.isFinite, value >= 0 else { return "—" }
         return String(format:"%.0f tokens/s",value.rounded())
     }
     static func ttft(_ value: Double?) -> String {
-        guard let value, value.isFinite, value >= 0 else { return "— 秒" }
+        guard let value, value.isFinite, value >= 0 else { return "—" }
         return String(format:"%.2f 秒",value)
     }
     static let update: DateFormatter = {let f=DateFormatter(); f.dateFormat="M.d HH:mm"; f.timeZone = .autoupdatingCurrent; return f}()
@@ -152,13 +173,13 @@ struct OverviewPage: View {
                         }
                         if let task = store.overviewTask {
                             if task.status == "running", Date().timeIntervalSince1970-(store.live?.observed ?? 0) > 900 { Text("任务状态待更新").font(.caption).foregroundStyle(.orange) }
-                            Text(task.preview ?? "请求预览未同步").font(.title3.weight(.semibold)).lineLimit(3)
+                            Text(MobileFormat.text(task.preview)).font(.title3.weight(.semibold)).lineLimit(3)
                             HStack(alignment:.firstTextBaseline) {
-                                Text([MobileFormat.model(task.model),task.effort?.capitalized ?? ""].filter {!$0.isEmpty}.joined(separator:" · ")).lineLimit(1)
+                                Text([MobileFormat.model(task.model),MobileFormat.effort(task.effort)].joined(separator:" · ")).lineLimit(1)
                                 Spacer(minLength:8)
                                 RequestDuration(item:task,active:store.tab == 0).fixedSize()
                             }.font(.caption).foregroundStyle(.secondary)
-                            HStack {Text(MobileFormat.tokens(task.tokens)+" Token"); Spacer();Text(MobileFormat.money(task.cost))}.monospacedDigit()
+                            HStack {Text(MobileFormat.tokens(task.tokens,unit:"Token")); Spacer();Text(MobileFormat.money(task.cost))}.monospacedDigit()
                         } else { Text("暂无运行或已完成的任务").foregroundStyle(.secondary).padding(.vertical,10) }
                     }
                 }.buttonStyle(.plain).disabled(store.overviewTask == nil)
@@ -273,9 +294,9 @@ struct RequestSummary: View {
     let active: Bool
     var body: some View {
         VStack(alignment:.leading,spacing:7) {
-            Text(item.isApproval ? "自动审批审查" : item.preview ?? "请求预览未同步").font(.subheadline.weight(.medium)).lineLimit(2).foregroundStyle(.primary)
-            HStack {Text([MobileFormat.model(item.model),item.effort?.capitalized ?? ""].filter {!$0.isEmpty}.joined(separator:" · ")).lineLimit(1);Spacer();Text(MobileFormat.money(item.cost)).fixedSize()}.font(.caption).foregroundStyle(.secondary)
-            HStack {Text(MobileFormat.update.string(from:Date(timeIntervalSince1970:item.started)));Text("·");RequestDuration(item:item,active:active);Spacer();Text(MobileFormat.tokens(item.tokens)+" Token").fixedSize()}.font(.caption2).foregroundStyle(.secondary)
+            Text(item.isApproval ? "自动审批审查" : MobileFormat.text(item.preview)).font(.subheadline.weight(.medium)).lineLimit(2).foregroundStyle(.primary)
+            HStack {Text([MobileFormat.model(item.model),MobileFormat.effort(item.effort)].joined(separator:" · ")).lineLimit(1);Spacer();Text(MobileFormat.money(item.cost)).fixedSize()}.font(.caption).foregroundStyle(.secondary)
+            HStack {Text(MobileFormat.requestTime(item.started));Text("·");RequestDuration(item:item,active:active);Spacer();Text(MobileFormat.tokens(item.tokens,unit:"Token")).fixedSize()}.font(.caption2).foregroundStyle(.secondary)
         }.padding(.vertical,3)
     }
 }
@@ -333,7 +354,7 @@ struct RequestDetails: View {
                     if let preview = item?.preview, !preview.isEmpty, item?.isApproval != true {
                         Text("请求摘要").font(.caption).foregroundStyle(.secondary)
                         Text(preview)
-                    } else if detailNotice == nil { Text("暂无原文").foregroundStyle(.secondary) }
+                    } else if detailNotice == nil { Text("—").foregroundStyle(.secondary) }
                 }
             }
             }
@@ -344,7 +365,7 @@ struct RequestDetails: View {
                     if expandFinal, detail.full, !detail.finalComplete { Text("回复不完整").font(.caption).foregroundStyle(.secondary) }
                     if !detail.final.isEmpty { expandButton(finalTitle,expanded:$expandFinal) }
                 } else if store.detailLoading.contains(id) { ProgressView("正在读取回复") }
-                else if detailNotice == nil, legacyImages.isEmpty { Text(item?.status == "running" ? "任务进行中" : "暂无最终回复").foregroundStyle(.secondary) }
+                else if detailNotice == nil, legacyImages.isEmpty { Text("—").foregroundStyle(.secondary) }
                 ForEach(legacyImages) { attachment in
                     MobileLegacyImageView(attachment:attachment,expires:legacyImageExpiry) { if detail?.full != true { store.loadDetail(id,full:true) } }
                 }
@@ -364,15 +385,15 @@ struct RequestDetails: View {
             if let item {
                 Section("请求信息") {
                     LabeledContent("模型",value:MobileFormat.model(item.model))
-                    LabeledContent("思考强度",value:item.effort?.capitalized ?? "—")
+                    LabeledContent("思考强度",value:MobileFormat.effort(item.effort))
                     LabeledContent("速度",value:MobileFormat.speed(item.speed))
-                    LabeledContent("状态",value:["running":"进行中","completed":"已完成","aborted":"已中断"][item.status] ?? item.status)
+                    LabeledContent("状态",value:MobileFormat.status(item.status))
                     LabeledContent("费用",value:MobileFormat.money(item.cost))
                     LabeledContent("Token",value:MobileFormat.tokens(item.tokens))
                     LabeledContent("耗时") { RequestDuration(item:item,active:store.tab == 2) }
                     LabeledContent("TPS",value:MobileFormat.tps(item))
                     LabeledContent("TTFT",value:MobileFormat.ttft(item.ttft))
-                    LabeledContent("时间",value:MobileFormat.requestDate.string(from:Date(timeIntervalSince1970:item.started)))
+                    LabeledContent("时间",value:MobileFormat.requestTime(item.started,full:true))
                 }
             }
             Section { Text("云端文字最多保留 7 天，图片最多保留 3 天；容量不足时，部分记录可能尚未同步或已被移除。").font(.caption).foregroundStyle(.secondary) }
