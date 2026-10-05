@@ -96,6 +96,7 @@ final class UsageReportController: NSObject, NSWindowDelegate {
         panel.title = L("AI 使用报告", "AI usage report"); panel.titleVisibility = .hidden; panel.titlebarAppearsTransparent = true
         panel.standardWindowButton(.closeButton)?.isHidden = true
         panel.isReleasedWhenClosed = false; panel.delegate = self
+        panel.preventsApplicationTerminationWhenModal = false
         panel.contentView = NSHostingView(rootView: UsageReportReader(model: model))
         panel.setContentSize(size)
         self.panel = panel; self.parent = window

@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
 STAGING = BUILD / "staging/macos"
 DESTINATION = BUILD / "dev/macos"
-WIDGET_VERSION = 24  # Allow normal quit from the update sheet before installer handoff.
+WIDGET_VERSION = 25  # Allow normal quit while the usage report sheet is open.
 
 
 def run(*args, **kwargs):

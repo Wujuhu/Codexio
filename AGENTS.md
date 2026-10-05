@@ -5,6 +5,7 @@
 - Windows 主机上的项目目录为 `C:\CodeWJH\Projects\Codexio`。每次通过局域网 SSH 完成 Windows 构建后，必须在该电脑的 `C:\CodeWJH\Projects\Codexio\build\dev\windows` 保留经验证的 `Codexio.exe` 和配套清单；需要回传本机时使用复制，保留 Windows 上的产物。
 - SSH 处于 Windows Session 0 时，通过临时、按需的计划任务在已登录用户的交互会话中执行现有构建入口及三项隔离模拟冒烟；结束后删除该临时任务，保留构建日志和校验结果。
 - 开发构建与交付默认静默完成。三项隔离冒烟仍执行，模拟窗口在屏幕外运行，不抢焦点，不显示 Dock、任务栏或托盘图标；正常用户启动的窗口行为照常。交付通过现有原子替换／暂存流程完成，不自动启动已安装应用。
+- Mac 报告及信息型 sheet 必须允许 ⌘Q 走正常退出清理流程，设置 `preventsApplicationTerminationWhenModal = false`，无需先手动关闭报告。
 - **只有局域网 Windows 主机无法连接时，才向用户请求允许使用云端构建 Windows；取得用户针对本次云端构建的明确许可后才能执行。** 不自动回退到 GitHub Actions 或其他云端构建服务；用户要求 Windows 开发或构建，不等于授权云端构建。
 - **自 2026-10-04 起，日常功能开发、修复与适用的界面改动默认同时覆盖 Mac 和 Windows，并分别完成必要验证与开发打包，无需用户逐次点名 Windows。** 用户明确限定平台，或功能仅适用于某个平台时，按实际范围处理；iOS 按需求开发。版本调整、正式发布及云端构建继续遵守各自的明确授权规则，发布时遵守下述 IPA 必传规则。
 - **以后每次 Release 都必须上传 iOS IPA。** 默认正式版本目录为 `Codexio.app.zip`、`Codexio.ipa`、`latest.json` 三个文件；缺少或过期的 IPA 必须阻止发布，不能再只发布 Mac。ZIP 内保留完整的 `Codexio.app`，不生成 DMG。只有用户明确要求 Windows 并适配联合流程后才额外包含 EXE；历史版本及其附件不自动补传或覆盖。
