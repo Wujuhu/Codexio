@@ -253,9 +253,17 @@ def sync_local_release(version, tag, staging, include_windows=False, include_ios
     return destination
 
 
-def publish(version, *, resume_draft=False, sync_only=False, include_windows=False, notes=""):
+def publish(version, *, resume_draft=False, sync_only=False, include_windows=False, notes=None):
     version = ".".join(map(str, version_tuple(version)))
     tag = "v" + version
+    if not sync_only:
+        notes_path = ROOT / "build/staging/release-notes" / (tag + ".md")
+        if notes is None:
+            if not notes_path.is_file():
+                raise UpdateError("请先准备简短、重要内容在前的 Release 正文：" + str(notes_path))
+            notes = notes_path.read_text(encoding="utf-8")
+        if not notes.strip():
+            raise UpdateError("新 Release 正文不能为空；请先准备本次实际功能与修复的简短说明")
     if (ROOT / "release" / version).exists():
         raise UpdateError("正式版本目录已存在，不自动覆盖：" + str(ROOT / "release" / version))
     staging = ROOT / "build/staging/release-coordinator" / uuid.uuid4().hex
@@ -264,6 +272,8 @@ def publish(version, *, resume_draft=False, sync_only=False, include_windows=Fal
         commit = validate_repository(version, include_windows)
         if sync_only:
             previous = gh_release(tag)
+            if notes is None:
+                notes = str((previous or {}).get("body") or "")
             has_ios = any(asset.get("name") == IPA_NAME for asset in (previous or {}).get("assets") or [])
             verify_published(tag, commit, include_windows, include_ios=has_ios, notes=notes)
             return sync_local_release(version, tag, staging, include_windows, include_ios=has_ios)
@@ -327,7 +337,7 @@ def main():
     parser.add_argument("--prepare-only", action="store_true",
                         help="仅准备并验证追加 Windows 附件的候选文件，不推送或上传")
     parser.add_argument("--notes-file", type=Path,
-                        help="仅在用户明确要求正文时读取 UTF-8 说明文件；默认仍为空正文")
+                        help="读取 UTF-8 Release 正文；新发布默认读取 build/staging/release-notes/v<版本>.md，不能为空")
     args = parser.parse_args()
     if not args.confirm_publish and not args.sync_only and not (args.append_windows and args.prepare_only):
         parser.error("发布必须显式提供 --confirm-publish")
@@ -340,7 +350,7 @@ def main():
             return
         if args.asset_only or args.prepare_only:
             raise UpdateError("--asset-only / --prepare-only 仅用于 --append-windows")
-        notes = args.notes_file.read_text(encoding="utf-8") if args.notes_file else ""
+        notes = args.notes_file.read_text(encoding="utf-8") if args.notes_file else None
         print(publish(args.version, resume_draft=args.resume_draft, sync_only=args.sync_only,
                       include_windows=args.include_windows, notes=notes))
     except (OSError, ValueError, UpdateError, subprocess.SubprocessError) as exc:

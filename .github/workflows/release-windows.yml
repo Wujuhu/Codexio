@@ -77,9 +77,12 @@ jobs:
               -or $Release.targetCommitish -ne $env:RELEASE_COMMIT) {
             throw "The matching draft release is missing or invalid."
           }
-          if (-not [string]::IsNullOrWhiteSpace([string]$Release.body)) {
-            throw "Release notes must be empty."
+          if ([string]::IsNullOrWhiteSpace([string]$Release.body)) {
+            throw "Release notes must be prepared before publishing."
           }
+          $NotesPath = Join-Path $env:RUNNER_TEMP "codexio-release-notes.txt"
+          [IO.File]::WriteAllText($NotesPath, [string]$Release.body, [Text.UTF8Encoding]::new($false))
+          "CODEXIO_RELEASE_NOTES_FILE=$NotesPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           $Names = @($Release.assets | ForEach-Object { $_.name })
           foreach ($Required in @("Codexio.app.zip", "Codexio.ipa", "latest.json")) {
             if ($Required -notin $Names) { throw "Draft release is missing $Required." }
@@ -148,8 +151,9 @@ jobs:
             if (-not $Release.isDraft -or $Release.tagName -ne $Tag -or $Release.name -ne $Tag) {
               throw "Draft release changed while assets were uploaded."
             }
-            if (-not [string]::IsNullOrWhiteSpace([string]$Release.body)) {
-              throw "Release notes are no longer empty."
+            $ExpectedNotes = Get-Content -LiteralPath $env:CODEXIO_RELEASE_NOTES_FILE -Encoding UTF8 -Raw
+            if (([string]$Release.body).Trim() -ne $ExpectedNotes.Trim()) {
+              throw "Release notes changed while assets were uploaded."
             }
             $Assets = @($Release.assets)
             $Names = @($Assets | ForEach-Object { $_.name } | Sort-Object)
@@ -173,9 +177,12 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $Tag = "v$env:RELEASE_VERSION"
-          $EmptyNotes = Join-Path $env:RUNNER_TEMP "empty-release-notes.txt"
-          [IO.File]::WriteAllBytes($EmptyNotes, [byte[]]@())
-          gh release edit $Tag --repo $env:GITHUB_REPOSITORY --title $Tag --notes-file $EmptyNotes --draft=false --latest
+          $ExpectedNotes = Get-Content -LiteralPath $env:CODEXIO_RELEASE_NOTES_FILE -Encoding UTF8 -Raw
+          $Release = gh release view $Tag --repo $env:GITHUB_REPOSITORY --json body | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or ([string]$Release.body).Trim() -ne $ExpectedNotes.Trim()) {
+            throw "Release notes changed before publication."
+          }
+          gh release edit $Tag --repo $env:GITHUB_REPOSITORY --title $Tag --draft=false --latest
           if ($LASTEXITCODE -ne 0) { throw "Could not publish the verified release." }
           git fetch --force origin "refs/tags/${Tag}:refs/tags/${Tag}"
           if ($LASTEXITCODE -ne 0) { throw "Could not fetch the published release tag." }
@@ -187,8 +194,8 @@ jobs:
           if ($Release.isDraft -or $Release.tagName -ne $Tag -or $Release.name -ne $Tag) {
             throw "Published release metadata is invalid."
           }
-          if (-not [string]::IsNullOrWhiteSpace([string]$Release.body)) {
-            throw "Published release notes are not empty."
+          if (([string]$Release.body).Trim() -ne $ExpectedNotes.Trim()) {
+            throw "Published release notes differ from the prepared text."
           }
           $Names = @($Release.assets | ForEach-Object { $_.name } | Sort-Object)
           $Expected = @("Codexio.app.zip", "Codexio.exe", "Codexio.ipa", "latest.json") | Sort-Object

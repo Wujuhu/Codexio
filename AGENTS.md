@@ -11,7 +11,7 @@
 - **以后每次 Release 都必须上传 iOS IPA。** 默认正式版本目录为 `Codexio.app.zip`、`Codexio.ipa`、`latest.json` 三个文件；缺少或过期的 IPA 必须阻止发布，不能再只发布 Mac。ZIP 内保留完整的 `Codexio.app`，不生成 DMG。只有用户明确要求 Windows 并适配联合流程后才额外包含 EXE；历史版本及其附件不自动补传或覆盖。
 - `build/dev/macos` 保存最新开发 APP、APP ZIP 和清单；`build/dev/windows` 保存最新开发 EXE 和清单。中间文件使用 `build/staging`，构建缓存使用 `build/cache`，检查结果使用 `build/checks`，日志使用 `build/logs`，同版本临时备份使用 `build/backups`。
 - Mac 使用 `build_macos.sh` 生成本地开发包；Windows 通过局域网 SSH 在指定项目目录执行 `build_exe.ps1`，故障排查脚本按需要使用。手动 CI 保留，调用时须满足上述云端构建授权条件。
-- 用户确认发布后执行 `.venv/bin/python scripts/publish_release_from_macos.py --version <确认的版本号> --confirm-publish`。先核验 Mac 包及最新 iOS IPA，再推送远程 `main`、创建空正文草稿，下载复核三附件后发布并原子归档。默认不触发 Windows CI；旧 Windows 三附件工作流尚不支持含 IPA 的集合，脚本会在推送前拒绝该分支，只有用户特别要求时才能另行适配。缺包、源码指纹过期、版本或哈希不符时不得发布。
+- 用户确认发布后执行 `.venv/bin/python scripts/publish_release_from_macos.py --version <确认的版本号> --confirm-publish`。先核验 Mac 包及最新 iOS IPA，再推送远程 `main`、创建带简短正文的草稿，下载复核三附件后发布并原子归档。默认不触发 Windows CI；旧 Windows 三附件工作流尚不支持含 IPA 的集合，脚本会在推送前拒绝该分支，只有用户特别要求时才能另行适配。缺包、源码指纹过期、版本或哈希不符时不得发布。
 - 目标被运行进程占用时保留原文件及暂存新版，不自动结束用户进程。整理 `build` 时也必须保留运行中应用的原路径；当前 `build/macos` 属于待应用退出后清理的旧路径。
 - 本机 Codexio APP 由用户自行启动；开发、打包和核验时不要代用户启动已安装的 APP，也不要启动后要求用户确认。既有隔离模拟数据的打包冒烟入口照常执行。
 - 读取文本文件显式指定 UTF-8。
@@ -86,16 +86,17 @@
 
 # GitHub Release 发布约定
 
-- 仅在用户明确授权发布后执行。Tag 和 Release 标题统一为 `v<版本号>`，例如 `v0.2.4`；正文留空，不添加更新说明或附件描述。
+- 仅在用户明确授权发布后执行。Tag 和 Release 标题统一为 `v<版本号>`，例如 `v0.2.4`；以后每次新 Release 默认包含正文，简短、重要内容在前。优先说明用户可感知的重要功能与修复，再列次要改进；按实际发布差异整理，合并重复项，不堆砌构建过程、技术流水账或附件描述。发布准备阶段先写好正文，正文缺失或空白时阻止发布；不自动改写历史 Release。
 - 默认附件为已验证的 `Codexio.app.zip`、`Codexio.ipa`、`latest.json`。清单顶层 Windows 字段保留历史正式版本信息；`macos` 记录 Mac 包，`ios` 记录 IPA 实际版本、当前 Release 下载 URL、大小、SHA-256、最低系统和未签名状态。iOS 包必须校验 Bundle／设备架构／ZIP 完整性与本机源码指纹；未签名 IPA 仍需用户自行重签。发布后下载同一组三附件到 `release/<版本号>/` 再次核验。
 - 先验证 Mac 开发包并提交，再在用户明确发布后由协调脚本推送 `main`，确认远程精确包含本次提交。新 Tag 基于远程 `main` 创建；已有 Tag 或正式 Release 不自动覆盖。
 - 发布协调命令（替换版本号）为 `.venv/bin/python scripts/publish_release_from_macos.py --version 0.3.2 --confirm-publish`。需要继续同一提交的失败草稿时必须显式加 `--resume-draft`；远程已成功而本地归档缺失时只可用 `--sync-only` 补齐。
-- 协调脚本用 UTF-8 零字节正文创建草稿并上传 Mac ZIP、iOS IPA 与清单，下载并核验版本、大小、SHA-256、Tag、标题、空正文和附件集合后才发布并标记 latest。默认不运行 Windows CI。v0.3.2 等历史版本保持原附件集合，除非用户明确要求补传。
-- 发布后协调脚本核验远程 Tag、标题、空正文与附件，下载本次平台附件到临时目录，通过相同校验后创建本地正式目录，并执行 `git fetch origin tag v<版本号>`。
+- 协调脚本默认读取 `build/staging/release-notes/v<版本号>.md` 中提前准备的 UTF-8 正文（也可显式传入 `--notes-file`），新发布的正文不能为空；用该正文创建草稿并上传 Mac ZIP、iOS IPA 与清单，下载并核验版本、大小、SHA-256、Tag、标题、正文与准备内容一致及附件集合后才发布并标记 latest。默认不运行 Windows CI。v0.3.2 等历史版本保持原附件集合，除非用户明确要求补传。
+- 发布后协调脚本核验远程 Tag、标题、正文与准备内容一致及附件，下载本次平台附件到临时目录，通过相同校验后创建本地正式目录，并执行 `git fetch origin tag v<版本号>`。
 - 用户明确要求向既有正式版本补充 Windows 时，从 Windows 构建主机执行 `.venv/Scripts/python.exe -X utf8 scripts/publish_release_from_macos.py --version <确认版本号> --append-windows --confirm-publish`。该分支核验本地 Go EXE、原有最小冒烟、源码指纹与已发布 Apple 附件，推送已合并的 `main`，仅新增 EXE 并更新共享清单的 Windows 字段；保留已有 Tag、发布正文和 Mac ZIP/IPA，不运行旧 Windows CI。补充后回读四附件并归档到 `release/<版本号>/`。
 
 ## 界面与数据展示补充
 
+- iOS 概览右上角的设备菜单使用原生单选勾选，标记当前选中的电脑，与设置页已有勾选保持一致；本次仅增加选中标识，不增加设备连通标识或在线心跳。
 - Mac 与 Windows 耗时列复用请求的双行样式，下方显示平均输出 TPS；仅任务明确完成且输出 Token、正数耗时有效时，按输出 Token 除以该栏对应的实际秒数并四舍五入为整数，格式为 `12 TPS`。其他状态、零耗时或数据缺失统一显示 `—`，不新增采集或刷新任务。
 - 请求／时间与耗时／TPS 两列共用紧凑双行排版：主行沿用现有字号，副行统一 9 号字，两行分别对齐，不增加额外段间距。详情显示 TPS（`tokens/s`）及 TTFT（秒，保留两位小数）；TTFT 仅采用源记录明确提供的首 Token 计时字段，缺失显示 `—`，不把回复完成时间、首条完整消息或总耗时当成 TTFT，不为补历史值重新扫描全部日志。
 - iOS、Mac、Windows 所有请求信息中的缺失值统一显示单独的长横杠 `—`，包括模型、思考强度、速度、状态、费用、Token、耗时、TPS、TTFT、时间及缺失的正文。缺失值不追加单位，不使用 `Unknown`、`未知`、`未定价`、`- TPS`、`- tokens/s`、`— 秒` 或空白；有效的零值仍显示 `0`，实际错误与同步状态提示保留。

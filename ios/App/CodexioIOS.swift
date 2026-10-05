@@ -135,7 +135,9 @@ struct MobileRoot: View {
         }.sharedBackgroundVisibility(.hidden)
         ToolbarItem(placement:.topBarTrailing) {
             Menu {
-                ForEach(store.devices) { device in Button(device.code.name) {store.select(device.id)} }
+                Picker("电脑",selection:Binding(get:{store.selected},set:{store.select($0)})) {
+                    ForEach(store.devices) { device in Text(device.code.name).tag(device.id) }
+                }.pickerStyle(.inline).labelsHidden()
                 Button("添加电脑",systemImage:"qrcode.viewfinder") {scanner=true}
             } label: {Label(store.live?.name ?? "电脑",systemImage:"laptopcomputer").font(.subheadline)}
         }
