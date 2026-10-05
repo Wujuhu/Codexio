@@ -1,5 +1,7 @@
 # 手机阅读与同步协议
 
+**2026-10-05 已部署请求 TPS／TTFT：** 用户确认云端部署后，已上线 `request-metrics-v1` 和可选 `tps`、`ttft` 字段。生产端上传／读回、旧摘要兼容及无效数值拒绝已核验，临时记录已清理；部署前后配置与清理计划完全一致，无数据库迁移。详见文末本次部署记录。
+
 **2026-10-02 已部署实际运行耗时字段：** 用户确认云端部署后，已上线 `durationStarted` 与 `durationBase` 的可选字段支持及数值校验。运行中和完成后的摘要已通过生产环境模拟往返同步核验，临时记录已清理；没有数据库迁移，原有绑定、预算、图片能力与清理计划保持不变。详见文末本次部署记录。
 
 **2026-10-01 已部署：** 用户明确要求“完成云端部署”后，已执行 `0003_request_images.sql` 并部署本目录 Worker，生产端开启 `request-images-v1`、独立图片存储、三天图片/七天消息保留与每 15 分钟清理。生产协议核验及实际定时清理均通过，详见文末的 2026-10-01 记录；2026-09-30 记录保留为历史。没有推送 Git、发布安装包或更改客户端版本。
@@ -17,7 +19,7 @@
 
 `live.task` 与 `recent` 的请求摘要新增可选 `durationStarted`（当前执行段的 Unix 开始时间，秒）和 `durationBase`（此前已完成执行区间的累计秒数）。`started` 仍表示原始请求时间，用于列表和详情日期。iOS 运行中显示 `durationBase + max(0, now - durationStarted)`，与 Mac `UsageRow.duration` 一致，排除续接之间的等待；结束后使用 Mac 从实际结束记录计算的 `duration`。这些时间锚点不随每秒计时改写或重传。
 
-请求计时能力为 `request-metrics-v1`，在 `live.task` 与 `recent` 中携带可选 `tps`（平均输出 tokens/s）及 `ttft`（秒）。Mac 复用 `Analytics.swift` 的 `UsageRow.outputTokensPerSecond`／`firstTokenSeconds`；Windows 复用 `request_duration.go` 的显式 TTFT 解析及现有请求实际耗时。TPS 仅在明确完成且输出 Token、正数耗时有效时计算；TTFT 缺失不推算。iOS 将 TPS 四舍五入为整数，TTFT 保留两位小数。两端协商到该能力前从云端投影省略新增字段，局域网仍传输完整值；协商能力变化时沿用独立投影的摘要、单调 revision 与有界缓存，不新增采集或计时刷新。此能力的 Worker 改动尚待明确部署授权，无数据库迁移。
+请求计时能力为 `request-metrics-v1`，在 `live.task` 与 `recent` 中携带可选 `tps`（平均输出 tokens/s）及 `ttft`（秒）。Mac 复用 `Analytics.swift` 的 `UsageRow.outputTokensPerSecond`／`firstTokenSeconds`；Windows 复用 `request_duration.go` 的显式 TTFT 解析及现有请求实际耗时。TPS 仅在明确完成且输出 Token、正数耗时有效时计算；TTFT 缺失不推算。iOS 将 TPS 四舍五入为整数，TTFT 保留两位小数。两端协商到该能力前从云端投影省略新增字段，局域网仍传输完整值；协商能力变化时沿用独立投影的摘要、单调 revision 与有界缓存，不新增采集或计时刷新。此能力的 Worker 改动已于 2026-10-05 按明确授权部署，无数据库迁移。
 
 旧手机忽略新增字段；新手机读取旧缓存时忽略此前的 `runningStarts`，缺少执行段锚点时不猜测计时起点。Worker 只扩展这两个字段的白名单与数值检查，不需要数据库迁移。此次已先完成 Worker 部署，新版 Mac 与 iOS 可在下一次同步获取执行段锚点；局域网同步不依赖云端部署。后续回滚时需要同时考虑旧 Worker 会拒绝包含新字段的摘要。
 
@@ -134,3 +136,12 @@ Windows 系统代理已单项核验：独立诊断进程清空代理环境变量
 - 11 次生产协议请求覆盖健康响应、既有能力、临时 reader、运行中 `live`/`recent` 上传及读回、非法累计耗时与开始时间拒绝、完成后省略可选字段的兼容上传及最终耗时读回。模拟记录使用“此前执行 90 秒＋当前段 120 秒”，读回两字段与最终 210 秒均一致，原始请求时间与中间等待没有混入执行耗时。
 - 模拟 host、reader、摘要及保留元数据已清理，剩余计数均为 0。未读取真实用户正文，未启动或重启真实 Mac/iPhone App，也未做 iPhone 真机验收。
 - 完整核验记录位于 `build/checks/cloud-active-duration-20261002/deployment.json`；同目录保留上传响应、线上源码/配置回读与协议核验明细。本次只部署 Worker 和提交本地文档，没有 Git 推送或 GitHub Release。
+
+## 生产请求 TPS／TTFT 部署核验 · 2026-10-05
+
+- 用户本次明确确认部署云端。部署前确认线上源码与本地提交 `7dcef27` 的修改前版本一致，并保存源码、设置、部署及计划，备份位于 `build/backups/cloudflare/20261005T045007Z-request-metrics/`。
+- 于 **2026-10-05 12:50:54（Asia/Shanghai）** 通过 [Cloudflare 仅替换脚本内容接口](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/content/methods/update/) 上线。Worker 版本为 `04cd8747-1111-41b7-acac-5540437e1f51`，部署 ID 为 `c08385fd-b853-4807-b7d7-56d77807b9d0`，接收 100% 流量。源码来自 `7dcef27`，线上回读 SHA-256 为 `b29326a95fb938c0d62bf7da2fe6d0e2ec0a1ec638fb44bc53d0c117f1d51cd4`，与本地完全一致。
+- 部署前后所有设置及清理计划完全一致：保留 DB、RATE、每日 20,000 请求预算、正文与图片能力及 `*/15 * * * *` 清理。没有数据库迁移。
+- 9 次隔离模拟协议请求核对健康响应、临时 host／reader、`request-metrics-v1` 与既有三项能力、完成请求的 `30 tokens/s`／`3.28 秒` 上传和读回、运行请求的 TTFT 与缺失 TPS、旧摘要省略计时字段的兼容，以及运行中 TPS／负数 TTFT 的拒绝。`live`、`recent` 的 SHA-256 与完整 payload 均一致。
+- 临时 host、reader、摘要及保留元数据已清理，剩余计数均为 0。未读取真实用户正文，未启动或重启真实客户端；该协议核验不等于 iPhone 真机验收。
+- 完整记录位于 `build/checks/cloud-request-metrics-20261005/deployment.json`，同目录保存上传响应、线上源码／设置／计划回读和协议明细。现有能力缓存最多保留一小时，需要立即重新协商时，用户可自行关闭后重新开启电脑端同步，再在手机刷新。使用包含本次字段的开发客户端，旧客户端不会提供新计时值。
