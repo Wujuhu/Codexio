@@ -135,10 +135,12 @@ struct MobileRoot: View {
         }.sharedBackgroundVisibility(.hidden)
         ToolbarItem(placement:.topBarTrailing) {
             Menu {
-                Picker("电脑",selection:Binding(get:{store.selected},set:{store.select($0)})) {
-                    ForEach(store.devices) { device in Text(device.code.name).tag(device.id) }
-                }.pickerStyle(.inline).labelsHidden()
-                Button("添加电脑",systemImage:"qrcode.viewfinder") {scanner=true}
+                ForEach(store.devices) { device in
+                    Toggle(device.code.name,isOn:Binding(get:{store.selected == device.id},set:{selected in
+                        if selected { store.select(device.id) }
+                    }))
+                }
+                Button("添加设备",systemImage:"qrcode.viewfinder") {scanner=true}
             } label: {Label(store.live?.name ?? "电脑",systemImage:"laptopcomputer").font(.subheadline)}
         }
     }
@@ -433,7 +435,7 @@ struct MobileSettings: View {
                             .foregroundStyle(device.invalid == true ? Color.red : Color.primary)
                     }
                 }
-                Button(action:scan) {Label("添加电脑",systemImage:"qrcode.viewfinder")}
+                Button(action:scan) {Label("添加设备",systemImage:"qrcode.viewfinder")}
             }
             Section("外观") {Picker("主题",selection:$theme) {Text("跟随系统").tag("system");Text("浅色").tag("light");Text("深色").tag("dark")}}
             Section("此 iPhone") {TextField("设备名称",text:$phoneName).onSubmit {store.renamePhone(phoneName)}}
