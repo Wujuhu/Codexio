@@ -175,7 +175,7 @@
               <div class="mac-report-rule mac-report-rhythm-rule"></div>
               <section class="mac-report-models">
                 <div class="mac-report-heading"><h2>{tr('模型使用')}</h2><small>{numeric(calls)} {tr('次调用')}</small></div>
-                {#each top as model}<div class="mac-report-model-row"><div><strong>{modelName(model.model)}</strong><small>{numeric(model.call_count ?? model.calls ?? model.requests)} {tr('次')} · {sharePercent(model.call_count ?? model.calls ?? model.requests, calls)}%</small></div><span>{costLabel(model)} · {tokenLabel(model.tokens, model.tokens_complete !== false && Number(model.skipped?.tokens ?? 0) === 0)} Token</span></div>{/each}
+                {#each top as model}<div class="mac-report-model-row"><div><strong>{modelName(model.model)}</strong><small>{numeric(model.call_count ?? model.calls ?? model.requests)} {tr('次')} · {sharePercent(model.call_count ?? model.calls ?? model.requests, calls)}%</small></div><div class="mac-report-model-values"><span class="model-tokens">{tokenLabel(model.tokens, model.tokens_complete !== false && Number(model.skipped?.tokens ?? 0) === 0)} Token</span><span class="model-cost">{costLabel(model)}</span></div></div>{/each}
                 {#if !top.length}<p>{tr('暂无模型调用')}</p>{/if}
               </section>
               <div class="mac-report-spacer"></div>
@@ -249,11 +249,12 @@
   .mac-report-models .mac-report-heading>small{color:var(--mac-muted);font-size:13px;font-weight:400}
   .mac-report-model-row{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
   .mac-report-model-row>div{min-width:0;display:flex;flex-direction:column;gap:1px}
-  .mac-report-model-row strong{font-size:16px;font-weight:500;line-height:24px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mac-report-model-row strong{font-size:18px;font-weight:500;line-height:24px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .mac-report-model-row small{font-size:14px;line-height:16px;color:var(--mac-muted);white-space:nowrap}
-  .mac-report-model-row>span{font-size:18px;font-weight:500;white-space:nowrap;flex-shrink:0}
+  .mac-report-model-values{font-size:18px;font-weight:500;white-space:nowrap;flex-shrink:0;align-items:flex-end;text-align:right}
+  .model-tokens{line-height:24px}.model-cost{line-height:20px}
   .mac-report-models>p{font-size:10px;color:var(--mac-muted)}
-  .mac-report-spacer{flex:1;min-height:20px}
+  .mac-report-spacer{flex:1;min-height:8px}
   .mac-report-insight{display:flex;align-items:flex-start;gap:10px;padding:14px;background:var(--mac-surface);border-radius:18px;flex:none}
   .mac-report-insight>svg{color:var(--mac-warm);flex:none}
   .mac-report-insight>p{font-size:13px;line-height:1.5}

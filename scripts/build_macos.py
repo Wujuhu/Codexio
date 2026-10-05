@@ -170,6 +170,7 @@ def prepare_mock_bundle(bundle, destination):
     shutil.copytree(bundle / "Contents/Resources", contents / "Resources")
     info = plistlib.loads((bundle / "Contents/Info.plist").read_bytes())
     info["CFBundleIdentifier"] = "com.wujuhu.codexio.mock"
+    info["LSUIElement"] = True
     info.pop("CFBundleURLTypes", None)
     (contents / "Info.plist").write_bytes(plistlib.dumps(info))
     run("codesign", "--force", "--sign", "-", "--timestamp=none", destination)

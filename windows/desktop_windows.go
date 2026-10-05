@@ -153,5 +153,33 @@ func desktopOpenPath(path string) error {
 }
 func desktopError(message string) { w32.MessageBox(0, message, "Codexio", w32.MB_OK|w32.MB_ICONERROR) }
 func desktopWindowVisible(w *application.WebviewWindow) bool {
-	return w != nil && w.NativeWindow() != unsafe.Pointer(nil) && w.IsVisible()
+    return w != nil && w.NativeWindow() != unsafe.Pointer(nil) && w.IsVisible()
+}
+
+func desktopSmokePosition(width int) (int, int) {
+	span := max(width, int(w32.GetSystemMetrics(w32.SM_CXVIRTUALSCREEN)))
+	return int(w32.GetSystemMetrics(w32.SM_XVIRTUALSCREEN)) - span - 128, int(w32.GetSystemMetrics(w32.SM_YVIRTUALSCREEN))
+}
+
+// Wails beta.26 uses SW_SHOW for the native container. Prevent activation before
+// invoking it, and keep the actual visible WebView outside every desktop screen.
+func desktopShowSmokeWindow(w *application.WebviewWindow) {
+	if w == nil || w.NativeWindow() == unsafe.Pointer(nil) {
+		return
+	}
+	application.InvokeSync(func() {
+		hwnd := w32.HWND(uintptr(w.NativeWindow()))
+		style := w32.GetWindowLongPtr(hwnd, w32.GWL_EXSTYLE)
+		w32.SetWindowLongPtr(hwnd, w32.GWL_EXSTYLE, style|w32.WS_EX_NOACTIVATE|w32.WS_EX_TOOLWINDOW)
+		width, _ := w.Size()
+		dpi := w32.GetDpiForWindow(hwnd)
+		if dpi == 0 {
+			dpi = 96
+		}
+		width = (width*int(dpi) + 95) / 96
+		x, y := desktopSmokePosition(width)
+		w32.SetWindowPos(hwnd, w32.HWND_BOTTOM, x, y, 0, 0, w32.SWP_NOSIZE|w32.SWP_NOACTIVATE)
+		w.Show()
+		w32.ShowWindow(hwnd, w32.SW_SHOWNOACTIVATE)
+	})
 }

@@ -34,7 +34,7 @@ enum CodexioMain {
                 DistributedNotificationCenter.default().postNotificationName(.init("com.wujuhu.codexio.show"),object:nil,userInfo:nil,deliverImmediately:true); return
             }
             let application = NSApplication.shared
-            application.setActivationPolicy(.regular)
+            application.setActivationPolicy(smoke == nil ? .regular : .accessory)
             let delegate = try ApplicationDelegate(paths:paths,lease:lease,smoke:smoke)
             self.delegate = delegate; application.delegate = delegate; application.run()
         } catch {
@@ -134,7 +134,15 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             }
             self.window = window
         }
-        window?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps:true)
+        if smoke != nil, let window {
+            // Keep the original visible-window checks while leaving the desktop
+            // and foreground app alone during isolated build verification.
+            let left = NSScreen.screens.map { $0.frame.minX }.min() ?? 0
+            window.setFrameOrigin(NSPoint(x:left-window.frame.width-128,y:0))
+            window.orderBack(nil)
+        } else {
+            window?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps:true)
+        }
         state.mainWindowVisible = true; state.refreshVisibleReports()
         if let window { usageReports?.windowOpened(window); presentPendingWindowContent() }
     }

@@ -63,6 +63,9 @@ func (h *desktopHost) brandIcon(id string) []byte {
 	return b
 }
 func (h *desktopHost) setupTray() {
+	if h.smoke != nil {
+		return
+	}
 	h.tray = h.app.SystemTray.New()
 	// ICO carries pre-rendered small sizes; scaling the app PNG loses tray detail.
 	light, _ := fs.ReadFile(h.assets, "brand/tray-light.ico")
@@ -93,6 +96,10 @@ func (h *desktopHost) openMain() {
 	saved := backend.CloneRow(h.savedMain)
 	h.mu.Unlock()
 	if current != nil {
+		if h.smoke != nil {
+			desktopShowSmokeWindow(current)
+			return
+		}
 		current.Show()
 		current.UnMinimise()
 		current.Focus()
@@ -126,12 +133,19 @@ func (h *desktopHost) openMain() {
 		options.X = int(backend.ValueInt(saved["x"]))
 		options.Y = int(backend.ValueInt(saved["y"]))
 	}
+	if h.smoke != nil {
+		options.Hidden = true
+		options.InitialPosition = application.WindowXY
+		options.X, options.Y = desktopSmokePosition(options.Width)
+		options.StartState = application.WindowStateNormal
+		options.Windows.HiddenOnTaskbar = true
+	}
 	w := h.app.Window.NewWithOptions(options)
 	h.mu.Lock()
 	h.main = w
 	h.mainReady = false
 	h.mu.Unlock()
-	if saved["x"] != nil && saved["y"] != nil {
+	if h.smoke == nil && saved["x"] != nil && saved["y"] != nil {
 		w.SetPosition(int(backend.ValueInt(saved["x"])), int(backend.ValueInt(saved["y"])))
 		h.clampVisible(w)
 	}
@@ -166,9 +180,13 @@ func (h *desktopHost) openMain() {
 		}
 		// Runtime readiness precedes NavigationCompleted in beta.26. Show the
 		// native container now; a hidden STARTUPINFO may suppress its first show.
-		w.Show()
-		if !w.IsVisible() {
+		if h.smoke != nil {
+			desktopShowSmokeWindow(w)
+		} else {
 			w.Show()
+			if !w.IsVisible() {
+				w.Show()
+			}
 		}
 		h.clampVisible(w)
 		h.applyWindowAppearance(w)
@@ -185,7 +203,9 @@ func (h *desktopHost) openMain() {
 		}
 		h.mu.Unlock()
 	})
-	w.Show()
+	if h.smoke == nil {
+		w.Show()
+	}
 }
 func desktopWindowName(kind string, id uint) string {
 	return "Codexio-" + kind + "-" + backend.ValueString(int(id))
@@ -259,6 +279,9 @@ func (h *desktopHost) workArea(w *application.WebviewWindow) application.Rect {
 	return application.Rect{X: 0, Y: 0, Width: 1280, Height: 800}
 }
 func (h *desktopHost) clampVisible(w *application.WebviewWindow) {
+	if h.smoke != nil {
+		return
+	}
 	r := w.Bounds()
 	a := h.workArea(w)
 	if r.X+r.Width < a.X+80 || r.X > a.X+a.Width-80 || r.Y+r.Height < a.Y+40 || r.Y > a.Y+a.Height-40 {
@@ -579,7 +602,7 @@ func (h *desktopHost) applySettings() {
 	floating := h.floating
 	h.mu.Unlock()
 	c := h.service.Config()
-	visible := backend.ValueBool(c["widget_visible"]) && backend.ValueString(c["display_mode"]) != "tray"
+	visible := h.smoke == nil && backend.ValueBool(c["widget_visible"]) && backend.ValueString(c["display_mode"]) != "tray"
 	if visible {
 		if floating == nil {
 			h.openFloating()

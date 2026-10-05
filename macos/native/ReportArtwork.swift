@@ -163,7 +163,7 @@ private struct ReportArtCompactReport: View {
             ReportArtTimeRhythm(data: data, palette: palette).padding(.top, 20)
             ReportArtFineRule(color: palette.accent).padding(.top, 20)
             ReportArtModelRows(data: data, palette: palette).padding(.top, 18)
-            Spacer(minLength: 20)
+            Spacer(minLength: 8)
             ReportArtCatInsight(text: data.activityInsight, palette: palette)
             Text(L("专注 · 与 AI 共成长", "Focus · Grow with AI"))
                 .font(.system(size: 10)).tracking(3).foregroundStyle(palette.muted)
@@ -274,13 +274,16 @@ private struct ReportArtModelRows: View {
             ForEach(Array(data.models.prefix(3))) { model in
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(modelName(model.name)).font(.system(size: 16, weight: .medium)).lineLimit(1)
+                        Text(modelName(model.name)).font(.system(size: 18, weight: .medium)).lineLimit(1)
                         Text("\(model.calls) " + L("次", "calls") + " · \(data.percent(model.calls, of: data.modelCalls))%")
                             .font(.system(size: 14)).foregroundStyle(palette.muted).lineLimit(1)
                     }
                     Spacer(minLength: 8)
-                    ReportArtNumber(value: model.costLabel + " · " + reportTokenLabel(model.tokens) + " Token")
-                        .font(.system(size: 18, weight: .medium)).lineLimit(1).minimumScaleFactor(0.9).layoutPriority(1)
+                    VStack(alignment: .trailing, spacing: 1) {
+                        ReportArtNumber(value: reportTokenLabel(model.tokens) + " Token")
+                        ReportArtNumber(value: model.costLabel).frame(height: 20)
+                    }
+                    .font(.system(size: 18, weight: .medium)).lineLimit(1).minimumScaleFactor(0.9).layoutPriority(1)
                 }
             }
         }.foregroundStyle(palette.ink)
@@ -430,7 +433,7 @@ struct ReportArtSmallMetric: View {
     let palette: ReportArtCardPalette
     var body: some View {
         VStack(spacing: 4) {
-            ReportArtNumber(value: value).font(reportEditorial(27)).fontWeight(.semibold).lineLimit(1).minimumScaleFactor(0.65)
+            ReportArtNumber(value: value).font(reportEditorial(27)).fontWeight(.semibold).lineLimit(1).minimumScaleFactor(0.65).fixedSize(horizontal: false, vertical: true)
             Text(label).font(.system(size: 13)).foregroundStyle(palette.muted).lineLimit(1).minimumScaleFactor(0.85)
         }
         .foregroundStyle(palette.ink)
