@@ -18,8 +18,8 @@ struct SubscriptionView: View {
             VStack(alignment:.leading,spacing:23) {
                 Text(accountLine).font(.system(size:14,weight:.medium)).foregroundStyle(.secondary).lineLimit(1).help(accountLine).textSelection(.enabled)
                 AdaptiveRow(spacing:12) {
-                    QuotaCard(window:state.quota.five,title:L("5 小时额度", "5-hour limit"),fresh:state.quota.fresh)
-                    QuotaCard(window:state.quota.week,title:L("周额度", "Weekly limit"),fresh:state.quota.fresh)
+                    QuotaCard(window:state.quota.five,title:L("5 小时额度", "5-hour limit"),fresh:state.quota.fresh,compactLayout:true)
+                    QuotaCard(window:state.quota.week,title:L("周额度", "Weekly limit"),fresh:state.quota.fresh,compactLayout:true)
                 }
                 if let error = state.quota.error { StatusNote(text:error) }
                 planHistory
