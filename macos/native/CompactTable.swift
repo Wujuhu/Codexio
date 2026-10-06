@@ -290,7 +290,9 @@ struct CompactTable: NSViewRepresentable {
         }
         private func resizeDocument() {
             guard let table, let scroll else { return }
-            let total = table.tableColumns.reduce(CGFloat(0)) {$0+$1.width}
+            // Native column rects include the table style's insets and spacing.
+            // Keep the last resize boundary inside the scrollable document.
+            let total = table.numberOfColumns > 0 ? table.rect(ofColumn:table.numberOfColumns-1).maxX+12 : 0
             let size = NSSize(width:max(scroll.contentSize.width,total),height:max(scroll.contentSize.height,CGFloat(parent.rows.count)*(parent.rowHeight+1)))
             if table.frame.size != size { table.setFrameSize(size) }
         }
