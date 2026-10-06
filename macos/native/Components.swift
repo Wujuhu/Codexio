@@ -66,6 +66,7 @@ struct SegmentedMeter: View {
     var value: Double?
     var color: Color = .blue
     var count = 45
+    var height: CGFloat = 12
     var body: some View {
         GeometryReader { geometry in
             Canvas { context,size in
@@ -75,7 +76,7 @@ struct SegmentedMeter: View {
                     context.fill(Path(roundedRect:CGRect(x:Double(index)*(width+gap),y:0,width:width,height:size.height),cornerRadius:1),with:.color(filled ? color : Color.secondary.opacity(0.16)))
                 }
             }.frame(width:geometry.size.width)
-        }.frame(height:12).accessibilityLabel(L("剩余额度", "Remaining allowance")+" "+percent(value))
+        }.frame(height:height).accessibilityLabel(L("剩余额度", "Remaining allowance")+" "+percent(value))
     }
 }
 
@@ -85,28 +86,37 @@ struct QuotaCard: View {
     let fresh: Bool
     var size: CGFloat = 34
     var stacked = false
+    var compactLayout = false
+    private var resetText: String {
+        guard compactLayout else { return dateText(window?.reset,timeOnly:window?.minutes == 300) }
+        let showYear = window?.reset.map { !Calendar.current.isDate($0,equalTo:Date(),toGranularity:.year) } ?? false
+        return logDateText(window?.reset,timeOnly:window?.minutes == 300,showYear:showYear)
+    }
     var body: some View {
-        VStack(alignment:.leading,spacing:13) {
+        VStack(alignment:.leading,spacing:compactLayout ? 10 : 13) {
             if stacked { Text(title).font(.system(size:14,weight:.medium)) }
-            HStack(alignment:.firstTextBaseline) {
+            HStack(alignment:compactLayout ? .center : .firstTextBaseline) {
                 if !stacked { Text(title).font(.system(size:14,weight:.medium)); Spacer(minLength:16) }
-                Text(percent(fresh ? window?.remaining : nil)).font(.system(size:size,weight:.semibold)).monospacedDigit()
-                Text(L("剩余", "remaining")).font(.system(size:12)).foregroundStyle(.secondary)
+                HStack(alignment:.firstTextBaseline,spacing:compactLayout ? 7 : nil) {
+                    Text(percent(fresh ? window?.remaining : nil)).font(.system(size:compactLayout ? 30 : size,weight:.semibold)).monospacedDigit()
+                    Text(L("剩余", "remaining")).font(.system(size:12)).foregroundStyle(.secondary)
+                }
             }
-            SegmentedMeter(value:fresh ? window?.remaining : nil)
+            SegmentedMeter(value:fresh ? window?.remaining : nil,height:compactLayout ? 10 : 12)
             HStack {
                 Text(L("已用", "Used")+" "+percent(fresh ? window?.used : nil))
                 Spacer(minLength:12)
-                Text(L("重置", "Resets")+" "+dateText(window?.reset,timeOnly:window?.minutes == 300))
+                Text(L("重置", "Resets")+" "+resetText)
                     .help(dateText(window?.reset))
-            }.font(.system(size:11)).foregroundStyle(.secondary).lineLimit(1)
-        }.frame(maxWidth:.infinity,alignment:.leading).modifier(BubbleCard())
+            }.font(.system(size:compactLayout ? 12 : 11)).foregroundStyle(.secondary).lineLimit(1)
+        }.frame(maxWidth:.infinity,alignment:.leading).modifier(BubbleCard(verticalPadding:compactLayout ? 14 : 18))
     }
 }
 
 struct BubbleCard: ViewModifier {
+    var verticalPadding: CGFloat = 18
     func body(content: Content) -> some View {
-        content.padding(18).background(Color.primary.opacity(0.025),in:RoundedRectangle(cornerRadius:18))
+        content.padding(.horizontal,18).padding(.vertical,verticalPadding).background(Color.primary.opacity(0.025),in:RoundedRectangle(cornerRadius:18))
             .overlay(RoundedRectangle(cornerRadius:18).stroke(.secondary.opacity(0.16),lineWidth:1))
     }
 }

@@ -33,7 +33,7 @@ struct MainView: View {
                     if state.selectedPage == "pricing" {
                         Button(L("立即同步", "Sync now")) { state.syncPrices() }
                     }
-                }.padding(.horizontal,PageLayout.inset).padding(.top,PageLayout.inset).padding(.bottom,10)
+                }.padding(.horizontal,PageLayout.inset).padding(.top,state.selectedPage == "overview" ? 24 : PageLayout.inset).padding(.bottom,state.selectedPage == "overview" ? 4 : 10)
                 page.frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading)
                 if let error = state.errorMessage {
                     HStack { Text(error).font(.caption).foregroundStyle(.secondary).textSelection(.enabled); Spacer(); Button { state.errorMessage = nil } label: { Image(systemName:"xmark") }.buttonStyle(.plain) }.padding(12).background(.thinMaterial)
@@ -168,11 +168,10 @@ struct OverviewView: View {
         ScrollView {
             VStack(alignment:.leading,spacing:22) {
                 AdaptiveRow(spacing:12) {
-                    QuotaCard(window:state.quota.five,title:L("5 小时额度", "5-hour limit"),fresh:state.quota.fresh)
-                    QuotaCard(window:state.quota.week,title:L("周额度", "Weekly limit"),fresh:state.quota.fresh)
+                    QuotaCard(window:state.quota.five,title:L("5 小时额度", "5-hour limit"),fresh:state.quota.fresh,compactLayout:true)
+                    QuotaCard(window:state.quota.week,title:L("周额度", "Weekly limit"),fresh:state.quota.fresh,compactLayout:true)
                 }
                 if let error = state.quota.error { StatusNote(text:error) }
-                Divider()
                 HStack { SectionHeading(title:L("用量", "Usage")); Spacer(); PeriodPicker(selection:$period).fixedSize() }
                 SummaryMetrics(summary:projection.value.summary)
                 VStack(alignment:.leading,spacing:16) { SectionHeading(title:L("详情", "Details")); TrendChart(days:projection.value.days) }.padding(18).overlay(RoundedRectangle(cornerRadius:13).stroke(.secondary.opacity(0.15)))
