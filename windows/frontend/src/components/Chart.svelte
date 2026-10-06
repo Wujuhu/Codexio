@@ -3,7 +3,7 @@
  import {tr} from '../lib/i18n';
  import GlassHover from './GlassHover.svelte';
  export let data:Row[]=[];
- export let title='趋势';
+ export let title='详情';
  export let onselect:(r:Row)=>void=()=>{};
 
  let hover:{row:Row,index:number,x:number,y:number}|null=null;

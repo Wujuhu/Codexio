@@ -6,7 +6,7 @@ struct UsageView: View {
     var body: some View {
         VStack(alignment:.leading,spacing:0) {
             HStack(spacing:28) {
-                tab("activity",L("活动", "Activity")); tab("trend",L("趋势", "Trend")); tab("threads",L("聊天排行", "Top chats"))
+                tab("activity",L("活动", "Activity")); tab("trend",L("详情", "Details")); tab("threads",L("聊天排行", "Top chats"))
                 Spacer()
             }.padding(.horizontal,PageLayout.inset)
             Divider().padding(.horizontal,PageLayout.inset)

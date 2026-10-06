@@ -175,7 +175,7 @@ struct OverviewView: View {
                 Divider()
                 HStack { SectionHeading(title:L("用量", "Usage")); Spacer(); PeriodPicker(selection:$period).fixedSize() }
                 SummaryMetrics(summary:projection.value.summary)
-                VStack(alignment:.leading,spacing:16) { SectionHeading(title:L("趋势", "Trend")); TrendChart(days:projection.value.days) }.padding(18).overlay(RoundedRectangle(cornerRadius:13).stroke(.secondary.opacity(0.15)))
+                VStack(alignment:.leading,spacing:16) { SectionHeading(title:L("详情", "Details")); TrendChart(days:projection.value.days) }.padding(18).overlay(RoundedRectangle(cornerRadius:13).stroke(.secondary.opacity(0.15)))
                 ModelShareCard(projection:projection.value)
                 HStack { SectionHeading(title:L("最近请求", "Recent requests")); Button(L("查看全部", "View all")) { state.selectedPage = "logs" }.buttonStyle(.plain).foregroundStyle(.secondary) }
                 if !projection.value.recent.isEmpty {

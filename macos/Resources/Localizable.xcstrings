@@ -16033,22 +16033,6 @@
         }
       }
     },
-    "趋势": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Trend"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "趋势"
-          }
-        }
-      }
-    },
     "跟随系统": {
       "localizations": {
         "en": {

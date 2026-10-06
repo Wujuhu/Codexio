@@ -29,7 +29,7 @@
 </script>
 
 <div class="usage-tabs" role="tablist" aria-label={tr('用量')}>
- {#each [['activity','活动'],['trend','趋势'],['chats','聊天排行']] as [key,label]}<button id={`usage-tab-${key}`} role="tab" aria-controls={`usage-panel-${key}`} aria-selected={tab===key} class:selected={tab===key} onclick={()=>changeTab(key)}>{tr(label)}</button>{/each}
+ {#each [['activity','活动'],['trend','详情'],['chats','聊天排行']] as [key,label]}<button id={`usage-tab-${key}`} role="tab" aria-controls={`usage-panel-${key}`} aria-selected={tab===key} class:selected={tab===key} onclick={()=>changeTab(key)}>{tr(label)}</button>{/each}
 </div>
 {#if tab==='activity'}
  <div class="usage-section" role="tabpanel" id="usage-panel-activity" aria-labelledby="usage-tab-activity">
