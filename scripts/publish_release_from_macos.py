@@ -1,4 +1,4 @@
-"""Publish a confirmed Apple release containing the Mac ZIP, iOS IPA and manifest.
+"""Publish verified Mac, iOS and local Windows artifacts after confirmation.
 
 This command is intentionally inert unless --confirm-publish is supplied. It
 never creates or overwrites an existing local formal release directory.
@@ -6,13 +6,13 @@ never creates or overwrites an existing local formal release directory.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import plistlib
 import re
 import shutil
 import subprocess
 import sys
-import time
 import uuid
 from pathlib import Path
 
@@ -20,15 +20,22 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from codexio import __version__
 from codexio.app_archive import APP_ARCHIVE_NAME
-from codexio.updates import UpdateError, file_sha256, version_tuple
+from codexio.updates import UpdateError, file_sha256, release_from_manifest, version_tuple
 from verify_release import verify_release
 from ios_release import IPA_NAME, desktop_version, source_digest, validate_ipa
 
 REPOSITORY = "Wujuhu/Codexio"
-WORKFLOW = "release-windows.yml"
 APPLE_ASSETS = (APP_ARCHIVE_NAME, IPA_NAME, "latest.json")
+WINDOWS_HOSTS = ("192.168.1.16", "100.82.100.123")
+WINDOWS_SSH_OPTIONS = ("-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
+                       "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2",
+                       "-o", "StrictHostKeyChecking=yes", "-o", "HostKeyAlias=192.168.1.16",
+                       "-i", "/Users/wjh/.ssh/windows_ed25519")
+
+
+def release_assets(include_windows):
+    return APPLE_ASSETS + (("Codexio.exe",) if include_windows else ())
 
 
 def run(*args, capture=False, check=True):
@@ -180,11 +187,90 @@ def prepare_ios(version, directory):
     verify_release(directory, version, platform="macos", include_ios=True)
 
 
+def preserve_published_windows(directory, staging):
+    """Carry the published Windows fields, never an unshipped development EXE."""
+    published = json.loads(output("gh", "api", f"repos/{REPOSITORY}/releases/latest"))
+    tag = str(published.get("tag_name") or "")
+    if published.get("draft") or published.get("prerelease") or not tag.startswith("v"):
+        raise UpdateError("无法确认上一份正式发布清单")
+    version_tuple(tag[1:])
+    previous = staging / "published-windows-manifest"
+    previous.mkdir()
+    run("gh", "release", "download", tag, "--repo", REPOSITORY,
+        "--pattern", "latest.json", "--dir", previous)
+    path = previous / "latest.json"
+    asset = next((item for item in published.get("assets", []) if item.get("name") == "latest.json"), {})
+    if (asset.get("state") != "uploaded" or asset.get("size") != path.stat().st_size
+            or asset.get("digest") != "sha256:" + file_sha256(path)):
+        raise UpdateError("上一份正式清单与 GitHub 附件校验不一致")
+    manifest = json.loads(path.read_text(encoding="utf-8-sig"))
+    if release_from_manifest(manifest, "0.0.0") is None:
+        raise UpdateError("上一份正式清单缺少有效的 Windows 版本")
+    destination = directory / "latest.json"
+    candidate = json.loads(destination.read_text(encoding="utf-8"))
+    for platform in ("macos", "ios"):
+        if platform in candidate:
+            manifest[platform] = candidate[platform]
+    destination.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def prepare_windows(version, commit, directory):
+    """Validate on the build host, then reuse or copy its exact verified EXE."""
+    code = "\n".join((
+        "import json, sys",
+        "from pathlib import Path",
+        "sys.path.insert(0, 'scripts')",
+        "from append_windows_release import ROOT, run, validate_windows",
+        f"if run('git', 'rev-parse', 'HEAD') != {commit!r}: raise RuntimeError('Windows checkout is not the confirmed commit')",
+        "if run('git', 'status', '--porcelain'): raise RuntimeError('Windows checkout is not clean')",
+        f"delivery = json.loads((ROOT / 'build/checks/v{version}/delivery.json').read_text(encoding='utf-8-sig'))",
+        f"validate_windows({version!r}, Path(delivery['executable']), delivery)",
+        "print(json.dumps(delivery))",
+    ))
+    encoded_code = base64.b64encode(code.encode("utf-8")).decode("ascii")
+    shell = ("$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';"
+             "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);"
+             "Set-Location 'C:\\CodeWJH\\Projects\\Codexio';"
+             f"$Code=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded_code}'));"
+             "& .\\.venv\\Scripts\\python.exe -X utf8 -c $Code;exit $LASTEXITCODE")
+    encoded_shell = base64.b64encode(shell.encode("utf-16le")).decode("ascii")
+    for address in WINDOWS_HOSTS:
+        response = run("ssh", *WINDOWS_SSH_OPTIONS, "WJH@" + address, "powershell.exe",
+                       "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded_shell,
+                       capture=True, check=False)
+        if response.returncode == 0:
+            break
+        if response.returncode != 255:
+            raise UpdateError("Windows 构建主机预检失败：" + (response.stderr or response.stdout).strip())
+    else:
+        raise UpdateError("Windows 局域网和备用地址均无法连接；未推送或发布，也不会自动使用云端构建")
+    delivery = json.loads(response.stdout)
+    remote_path = str(delivery.get("executable") or "").replace("\\", "/")
+    if (delivery.get("version") != version
+            or not re.fullmatch(r"C:/CodeWJH/Projects/Codexio/build/dev/windows/(?:pending/)?Codexio\.exe", remote_path, re.IGNORECASE)):
+        raise UpdateError("Windows 产物版本或保留路径不符合交付约定")
+    package = directory / "Codexio.exe"
+    local = ROOT / "build/dev/windows/Codexio.exe"
+    if local.is_file() and file_sha256(local) == delivery["sha256"]:
+        shutil.copy2(local, package)
+    else:
+        run("scp", "-C", *WINDOWS_SSH_OPTIONS, "WJH@" + address + ":" + remote_path, package)
+    if file_sha256(package) != delivery["sha256"] or package.stat().st_size != delivery["size"]:
+        raise UpdateError("Windows 回传产物与已验证构建不一致")
+    manifest_path = directory / "latest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.update(version=version, url=f"https://github.com/{REPOSITORY}/releases/download/v{version}/Codexio.exe",
+                    sha256=delivery["sha256"], size=delivery["size"], notes="Codexio " + version)
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    verify_release(directory, version, platform="both", include_ios=True)
+    return {"host": address, "sha256": delivery["sha256"], "source_sha256": delivery["source_sha256"]}
+
+
 def validate_repository(version, include_windows=False):
     mac_version = (ROOT / "macos/VERSION").read_text(encoding="utf-8").strip()
     if mac_version != version:
         raise UpdateError("Mac 源码版本 %s 与确认发布版本 %s 不一致" % (mac_version, version))
-    if include_windows and __version__ != version:
+    if include_windows and (ROOT / "windows/VERSION").read_text(encoding="utf-8").strip() != version:
         raise UpdateError("Windows 源码版本与本次跨平台发布版本不一致")
     if output("git", "branch", "--show-current") != "main":
         raise UpdateError("正式发布只能从 main 分支执行")
@@ -210,22 +296,21 @@ def validate_draft(release, tag, commit, staging, mac_stage, include_windows=Fal
         raise UpdateError("现有同版本 Release 不是可继续的草稿")
     validate_notes(release, notes)
     names = sorted(str(item.get("name") or "") for item in release.get("assets") or [])
-    allowed = APPLE_ASSETS + (("Codexio.exe",) if include_windows else ())
+    allowed = release_assets(include_windows)
     if any(name not in allowed for name in names):
         raise UpdateError("草稿 Release 的附件集合不符合当前发布约定")
     downloaded = staging / "draft-macos"
     downloaded.mkdir()
     run("gh", "release", "upload", tag, "--repo", REPOSITORY, "--clobber",
-        *(mac_stage / name for name in APPLE_ASSETS))
-    run("gh", "release", "download", tag, "--repo", REPOSITORY, "--dir", downloaded,
-        "--pattern", APP_ARCHIVE_NAME, "--pattern", IPA_NAME, "--pattern", "latest.json", "--clobber")
-    verify_release(downloaded, tag.removeprefix("v"), platform="macos", include_ios=True)
-    for name in APPLE_ASSETS:
+        *(mac_stage / name for name in allowed))
+    run("gh", "release", "download", tag, "--repo", REPOSITORY, "--dir", downloaded, "--clobber")
+    verify_release(downloaded, tag.removeprefix("v"), platform="both" if include_windows else "macos", include_ios=True)
+    for name in allowed:
         if file_sha256(downloaded / name) != file_sha256(mac_stage / name):
             raise UpdateError("草稿中的 Mac 附件与本机已验证开发包不一致：" + name)
 
 
-def create_draft(tag, commit, mac_stage, staging, notes=""):
+def create_draft(tag, commit, mac_stage, staging, notes="", include_windows=False):
     if gh_release(tag) is not None or remote_ref("refs/tags/" + tag) is not None:
         raise UpdateError("同版本 Tag 或 Release 已存在，不自动覆盖")
     local_tag = run("git", "show-ref", "--verify", "--quiet", "refs/tags/" + tag, check=False)
@@ -234,37 +319,12 @@ def create_draft(tag, commit, mac_stage, staging, notes=""):
     notes_path = write_notes(staging, notes)
     run("gh", "release", "create", tag, "--repo", REPOSITORY, "--target", commit,
         "--title", tag, "--draft", "--notes-file", notes_path,
-        *(mac_stage / name for name in APPLE_ASSETS))
+        *(mac_stage / name for name in release_assets(include_windows)))
     release = gh_release(tag)
     if not release or release.get("isDraft") is not True or release.get("targetCommitish") != commit:
         raise UpdateError("未能确认 GitHub 草稿 Release")
     validate_notes(release, notes)
     return release
-
-
-def dispatch_and_wait(version, commit):
-    request_id = uuid.uuid4().hex
-    run("gh", "workflow", "run", WORKFLOW, "--repo", REPOSITORY, "--ref", "main",
-        "-f", "version=" + version, "-f", "commit=" + commit, "-f", "request_id=" + request_id)
-    deadline = time.monotonic() + 120
-    selected = None
-    while time.monotonic() < deadline:
-        raw = output("gh", "run", "list", "--repo", REPOSITORY, "--workflow", WORKFLOW,
-                     "--event", "workflow_dispatch", "--limit", "30",
-                     "--json", "databaseId,displayTitle,headSha,status,conclusion,url")
-        try:
-            rows = json.loads(raw)
-        except ValueError as exc:
-            raise UpdateError("无法解析 GitHub Actions 运行列表") from exc
-        selected = next((row for row in rows if request_id in str(row.get("displayTitle") or "")
-                         and row.get("headSha") == commit), None)
-        if selected:
-            break
-        time.sleep(3)
-    if not selected:
-        raise UpdateError("未找到刚触发的 Windows 发布工作流")
-    print("Windows 构建：" + str(selected.get("url") or selected["databaseId"]))
-    run("gh", "run", "watch", str(selected["databaseId"]), "--repo", REPOSITORY, "--exit-status")
 
 
 def verify_published(tag, commit=None, include_windows=False, include_ios=True, notes=""):
@@ -281,19 +341,20 @@ def verify_published(tag, commit=None, include_windows=False, include_ios=True, 
     return release
 
 
-def finalize_mac_draft(tag, commit, staging, mac_stage, notes=""):
+def finalize_draft(tag, commit, staging, mac_stage, notes="", include_windows=False):
     release = gh_release(tag)
     if (not release or release.get("isDraft") is not True or release.get("tagName") != tag
             or release.get("name") != tag or release.get("targetCommitish") != commit):
-        raise UpdateError("Mac 草稿状态不符合发布条件")
+        raise UpdateError("草稿状态不符合发布条件")
     validate_notes(release, notes)
-    if sorted(item.get("name") for item in release.get("assets") or []) != sorted(APPLE_ASSETS):
-        raise UpdateError("草稿必须且只能有 Mac ZIP、iOS IPA 与 latest.json")
+    assets = release_assets(include_windows)
+    if sorted(item.get("name") for item in release.get("assets") or []) != sorted(assets):
+        raise UpdateError("草稿附件集合与本次确认的平台不一致")
     downloaded = staging / "verified-mac-draft"
     downloaded.mkdir()
     run("gh", "release", "download", tag, "--repo", REPOSITORY, "--dir", downloaded)
-    verify_release(downloaded, tag.removeprefix("v"), platform="macos", include_ios=True)
-    for name in APPLE_ASSETS:
+    verify_release(downloaded, tag.removeprefix("v"), platform="both" if include_windows else "macos", include_ios=True)
+    for name in assets:
         if file_sha256(downloaded / name) != file_sha256(mac_stage / name):
             raise UpdateError("草稿附件与已验证本地文件不一致：" + name)
     tag_commit = remote_ref("refs/tags/" + tag)
@@ -316,7 +377,7 @@ def sync_local_release(version, tag, staging, include_windows=False, include_ios
     return destination
 
 
-def publish(version, *, resume_draft=False, sync_only=False, include_windows=False, notes=None):
+def publish(version, *, resume_draft=False, sync_only=False, include_windows=True, notes=None):
     version = ".".join(map(str, version_tuple(version)))
     tag = "v" + version
     sections = {}
@@ -334,16 +395,21 @@ def publish(version, *, resume_draft=False, sync_only=False, include_windows=Fal
     staging = ROOT / "build/staging/release-coordinator" / uuid.uuid4().hex
     staging.mkdir(parents=True)
     try:
-        commit = validate_repository(version, include_windows)
+        commit = validate_repository(version, include_windows and not sync_only)
         if sync_only:
             previous = gh_release(tag)
             if notes is None:
                 notes = str((previous or {}).get("body") or "")
             has_ios = any(asset.get("name") == IPA_NAME for asset in (previous or {}).get("assets") or [])
-            verify_published(tag, commit, include_windows, include_ios=has_ios, notes=notes)
-            return sync_local_release(version, tag, staging, include_windows, include_ios=has_ios)
+            has_windows = any(asset.get("name") == "Codexio.exe" for asset in (previous or {}).get("assets") or [])
+            verify_published(tag, commit, has_windows, include_ios=has_ios, notes=notes)
+            return sync_local_release(version, tag, staging, has_windows, include_ios=has_ios)
         mac_stage = validate_mac(version, staging)
         prepare_ios(version, mac_stage)
+        if include_windows:
+            prepare_windows(version, commit, mac_stage)
+        else:
+            preserve_published_windows(mac_stage, staging)
         validate_ios_notes(sections, staging)
         existing = gh_release(tag)
         if existing is not None:
@@ -371,11 +437,8 @@ def publish(version, *, resume_draft=False, sync_only=False, include_windows=Fal
                 existing = gh_release(tag)
             validate_draft(existing, tag, commit, staging, mac_stage, include_windows, notes=notes)
         else:
-            create_draft(tag, commit, mac_stage, staging, notes=notes)
-        if include_windows:
-            dispatch_and_wait(version, commit)
-        else:
-            finalize_mac_draft(tag, commit, staging, mac_stage, notes=notes)
+            create_draft(tag, commit, mac_stage, staging, notes=notes, include_windows=include_windows)
+        finalize_draft(tag, commit, staging, mac_stage, notes=notes, include_windows=include_windows)
         release = verify_published(tag, commit, include_windows, notes=notes)
         destination = sync_local_release(version, tag, staging, include_windows)
         print("已发布：" + str(release.get("url") or tag))
@@ -393,9 +456,11 @@ def main():
     parser.add_argument("--resume-draft", action="store_true",
                         help="继续同一版本、同一提交且附件匹配的失败草稿")
     parser.add_argument("--sync-only", action="store_true",
-                        help="只下载并核验本平台已发布附件，补齐本地 release 归档")
+                        help="只下载并核验已发布的完整附件集合，补齐本地 release 归档")
     parser.add_argument("--include-windows", action="store_true",
-                        help="仅在用户明确要求本次也发布 Windows 时使用；默认不触发 Windows CI")
+                        help="兼容参数；新发布默认已包含在本地 Windows 主机验证过的 EXE")
+    parser.add_argument("--apple-only", action="store_true",
+                        help="仅在用户明确要求时只发布 Mac/iOS，保留已发布的 Windows 清单字段")
     parser.add_argument("--append-windows", action="store_true",
                         help="从 Windows 构建主机向既有正式 Release 补充已验证 EXE，保留 Tag/正文/Apple 附件")
     parser.add_argument("--asset-only", action="store_true",
@@ -409,16 +474,18 @@ def main():
         parser.error("发布必须显式提供 --confirm-publish")
     try:
         if args.append_windows:
-            if args.resume_draft or args.include_windows or args.notes_file or args.sync_only and args.prepare_only:
+            if args.resume_draft or args.include_windows or args.apple_only or args.notes_file or args.sync_only and args.prepare_only:
                 raise UpdateError("追加 Windows 附件不能同时创建/改写草稿、正文或触发旧 CI")
             from append_windows_release import append_windows
             print(append_windows(args.version, asset_only=args.asset_only, prepare_only=args.prepare_only, sync_only=args.sync_only))
             return
         if args.asset_only or args.prepare_only:
             raise UpdateError("--asset-only / --prepare-only 仅用于 --append-windows")
+        if args.include_windows and args.apple_only:
+            raise UpdateError("--include-windows 不能与 --apple-only 同时使用")
         notes = args.notes_file.read_text(encoding="utf-8") if args.notes_file else None
         print(publish(args.version, resume_draft=args.resume_draft, sync_only=args.sync_only,
-                      include_windows=args.include_windows, notes=notes))
+                      include_windows=not args.apple_only, notes=notes))
     except (OSError, ValueError, UpdateError, subprocess.SubprocessError) as exc:
         parser.exit(1, "发布未完成：%s\n" % exc)
 
