@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -23,7 +24,7 @@ from codexio import __version__
 from codexio.app_archive import APP_ARCHIVE_NAME
 from codexio.updates import UpdateError, file_sha256, version_tuple
 from verify_release import verify_release
-from ios_release import IPA_NAME, source_digest, validate_ipa
+from ios_release import IPA_NAME, desktop_version, source_digest, validate_ipa
 
 REPOSITORY = "Wujuhu/Codexio"
 WORKFLOW = "release-windows.yml"
@@ -74,6 +75,66 @@ def write_notes(staging, notes):
     return path
 
 
+def platform_notes(notes):
+    """Use the same fenced-code-aware H2 boundaries as iOS UpdateChecker."""
+    sections = {}
+    current = None
+    fence = None
+    for line in notes.splitlines():
+        marker = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
+        if marker:
+            token, tail = marker.groups()
+            if fence is None:
+                fence = token
+            elif token[0] == fence[0] and len(token) >= len(fence) and not tail.strip():
+                fence = None
+        elif fence is None:
+            heading = re.match(r"^ {0,3}(#{1,2})(?:[ \t]+(.*)|$)", line)
+            if heading:
+                name = (heading.group(2) or "").strip().rstrip("#").strip().lower()
+                canonical = {"mac": "Mac", "windows": "Windows", "ios": "iOS"}.get(name)
+                if heading.group(1) != "##" or canonical is None:
+                    raise UpdateError("Release 正文请使用 ## Mac、## Windows、## iOS 平台分段")
+                if canonical in sections:
+                    raise UpdateError("Release 正文包含重复平台段落：" + canonical)
+                sections[canonical] = []
+                current = canonical
+                continue
+        if current is None:
+            if line.strip():
+                raise UpdateError("Release 更新条目必须放在对应平台标题下面")
+        else:
+            sections[current].append(line)
+    values = {name: "\n".join(lines).strip() for name, lines in sections.items()}
+    if not values or any(not value for value in values.values()) or fence is not None:
+        raise UpdateError("Release 平台段落不能为空，Markdown 代码块必须完整")
+    return values
+
+
+def validate_ios_notes(sections, staging):
+    if sections.get("iOS"):
+        return
+    # Mac-only changes may omit iOS notes when the carried IPA version has
+    # already shipped. Compare the actual published manifest before any push.
+    response = run("gh", "api", f"repos/{REPOSITORY}/releases/latest", capture=True, check=False)
+    if response.returncode:
+        raise UpdateError("无法确认已发布的 iOS 版本，请提供非空的 ## iOS 更新说明")
+    latest = json.loads(response.stdout)
+    tag = str(latest.get("tag_name") or "")
+    if not tag.startswith("v"):
+        raise UpdateError("最新正式 Release 的版本标记无效")
+    version_tuple(tag[1:])
+    directory = staging / "previous-ios-manifest"
+    directory.mkdir()
+    run("gh", "release", "download", tag, "--repo", REPOSITORY,
+        "--pattern", "latest.json", "--dir", directory)
+    manifest = json.loads((directory / "latest.json").read_text(encoding="utf-8-sig"))
+    previous = str((manifest.get("ios") or {}).get("version") or "")
+    current = (ROOT / "ios/VERSION").read_text(encoding="utf-8").strip()
+    if not previous or version_tuple(current) > version_tuple(previous):
+        raise UpdateError("iOS 升版必须提供非空的 ## iOS 更新说明")
+
+
 def validate_mac(version, staging):
     mac = ROOT / "build/dev/macos"
     app = mac / "Codexio.app"
@@ -100,6 +161,8 @@ def prepare_ios(version, directory):
     package = ios / IPA_NAME
     info = json.loads((ios / "build-info.json").read_text(encoding="utf-8"))
     ios_version = (ROOT / "ios/VERSION").read_text(encoding="utf-8").strip()
+    if ios_version != desktop_version(ROOT):
+        raise UpdateError("iOS 版本未跟随 Mac/Windows 的最新版本，请先运行 scripts/build_ios.py")
     if (info.get("version") != ios_version or info.get("source_sha256") != source_digest(ROOT)
             or info.get("size") != package.stat().st_size or info.get("sha256") != file_sha256(package)
             or info.get("signed") is not False):
@@ -256,6 +319,7 @@ def sync_local_release(version, tag, staging, include_windows=False, include_ios
 def publish(version, *, resume_draft=False, sync_only=False, include_windows=False, notes=None):
     version = ".".join(map(str, version_tuple(version)))
     tag = "v" + version
+    sections = {}
     if not sync_only:
         notes_path = ROOT / "build/staging/release-notes" / (tag + ".md")
         if notes is None:
@@ -264,6 +328,7 @@ def publish(version, *, resume_draft=False, sync_only=False, include_windows=Fal
             notes = notes_path.read_text(encoding="utf-8")
         if not notes.strip():
             raise UpdateError("新 Release 正文不能为空；请先准备本次实际功能与修复的简短说明")
+        sections = platform_notes(notes)
     if (ROOT / "release" / version).exists():
         raise UpdateError("正式版本目录已存在，不自动覆盖：" + str(ROOT / "release" / version))
     staging = ROOT / "build/staging/release-coordinator" / uuid.uuid4().hex
@@ -279,6 +344,7 @@ def publish(version, *, resume_draft=False, sync_only=False, include_windows=Fal
             return sync_local_release(version, tag, staging, include_windows, include_ios=has_ios)
         mac_stage = validate_mac(version, staging)
         prepare_ios(version, mac_stage)
+        validate_ios_notes(sections, staging)
         existing = gh_release(tag)
         if existing is not None:
             if not resume_draft:

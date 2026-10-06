@@ -8,12 +8,16 @@ private enum MobileBrand {
 
 @main struct CodexioIOSApp: App {
     @StateObject private var store = MobileStore()
+    @StateObject private var updates = IOSUpdateChecker()
     @Environment(\.scenePhase) private var phase
     @AppStorage("theme") private var theme = "system"
     var body: some Scene {
         WindowGroup {
-            MobileRoot().environmentObject(store).preferredColorScheme(theme == "light" ? .light : theme == "dark" ? .dark : nil)
-                .onChange(of:phase,initial:true) { _,value in if value == .active { store.activate() } else { store.deactivate() } }
+            MobileRoot().environmentObject(store).environmentObject(updates).preferredColorScheme(theme == "light" ? .light : theme == "dark" ? .dark : nil)
+                .onChange(of:phase,initial:true) { _,value in
+                    if value == .active { store.activate(); updates.activate() }
+                    else { store.deactivate(); updates.deactivate() }
+                }
         }
     }
 }
@@ -108,23 +112,64 @@ struct MobileCard<Content: View>: View {
     @ViewBuilder var content: Content
     var body: some View { VStack(alignment:.leading,spacing:16) {content}.frame(maxWidth:.infinity,alignment:.leading).padding(20).background(Color(uiColor:.secondarySystemGroupedBackground),in:RoundedRectangle(cornerRadius:24)) }
 }
+private enum MobileRootSheet: Identifiable {
+    case scanner
+    case update(IOSUpdateRelease)
+    var id: String {
+        switch self { case .scanner: return "scanner"; case .update(let release): return "update:"+release.id }
+    }
+}
 struct MobileRoot: View {
     @EnvironmentObject var store: MobileStore
-    @State private var scanner = false
+    @EnvironmentObject private var updates: IOSUpdateChecker
+    @Environment(\.scenePhase) private var phase
+    @State private var sheet: MobileRootSheet?
+    @State private var presentationTask: Task<Void,Never>?
     var body: some View {
         TabView(selection:$store.tab) {
-            NavigationStack { OverviewPage(scan:{scanner=true}).navigationTitle("").toolbar {header} }.tabItem {Label("概览",systemImage:"square.grid.2x2")}.tag(0)
+            NavigationStack { OverviewPage(scan:{sheet = .scanner}).navigationTitle("").toolbar {header} }.tabItem {Label("概览",systemImage:"square.grid.2x2")}.tag(0)
             NavigationStack(path:$store.recordPath) { RecordsPage().navigationTitle("记录").navigationDestination(for:String.self) { RequestDetails(id:$0) } }.tabItem {Label("记录",systemImage:"list.bullet")}.tag(2)
             NavigationStack { UsagePage().navigationTitle("用量").navigationBarTitleDisplayMode(.large) }.tabItem {Label("用量",systemImage:"chart.xyaxis.line")}.tag(1)
-            NavigationStack { MobileSettings(scan:{scanner=true}).navigationTitle("设置") }.tabItem {Label("设置",systemImage:"slider.horizontal.3")}.tag(3)
+            NavigationStack { MobileSettings(scan:{sheet = .scanner},onDialogDismissed:queueUpdatePresentation).navigationTitle("设置") }.tabItem {Label("设置",systemImage:"slider.horizontal.3")}.tag(3)
         }
-        .sheet(isPresented:$scanner) { NavigationStack { QRScanner { value in scanner=false; store.beginPair(value) }.ignoresSafeArea(edges:.bottom).navigationTitle("扫描电脑配对二维码").navigationBarTitleDisplayMode(.inline).toolbar {ToolbarItem(placement:.cancellationAction) { Button("取消") {scanner=false} }} } }
+        .sheet(item:$sheet,onDismiss:queueUpdatePresentation) { content in
+            switch content {
+            case .scanner:
+                NavigationStack { QRScanner { value in sheet=nil; store.beginPair(value) }.ignoresSafeArea(edges:.bottom).navigationTitle("扫描电脑配对二维码").navigationBarTitleDisplayMode(.inline).toolbar {ToolbarItem(placement:.cancellationAction) { Button("取消") {sheet=nil} }} }
+            case .update(let release):
+                IOSUpdateNotice(release:release,currentVersion:updates.currentVersion).onAppear {updates.didPresent(release)}
+            }
+        }
         .alert(store.revokedPrompt != nil ? "电脑配对已失效" : "同步提示",isPresented:Binding(get:{store.revokedPrompt != nil || store.error != nil},set:{if !$0 {store.error=nil;store.revokedPrompt=nil}})) {
             if let id = store.revokedPrompt {
                 Button("稍后",role:.cancel) {store.revokedPrompt=nil}
                 Button("删除",role:.destructive) {store.remove(id)}
             } else {Button("知道了") {store.error=nil}}
         } message: {Text(store.revokedPrompt != nil ? "电脑已撤销这部 iPhone 的配对。是否删除这台电脑及其手机缓存？" : store.error ?? "")}
+        .onAppear(perform:queueUpdatePresentation)
+        .onChange(of:updates.presentationRequest?.id) {_,_ in queueUpdatePresentation()}
+        .onChange(of:store.pairing) {_,_ in queueUpdatePresentation()}
+        .onChange(of:store.error) {_,_ in queueUpdatePresentation()}
+        .onChange(of:store.revokedPrompt) {_,_ in queueUpdatePresentation()}
+        .onChange(of:store.tab) {_,_ in queueUpdatePresentation()}
+        .onChange(of:store.recordPath) {_,_ in queueUpdatePresentation()}
+        .onChange(of:phase) {_,_ in queueUpdatePresentation()}
+        .onDisappear {presentationTask?.cancel()}
+    }
+    private func queueUpdatePresentation() {
+        presentationTask?.cancel()
+        guard updates.presentationRequest != nil else { return }
+        presentationTask = Task { @MainActor in
+            // Let a dismissed scanner/alert finish its native transition first.
+            try? await Task.sleep(for:.milliseconds(400))
+            guard !Task.isCancelled, phase == .active, sheet == nil, !store.pairing,
+                  store.tab != 2 || store.recordPath.isEmpty,
+                  store.error == nil, store.revokedPrompt == nil else { return }
+            let window = UIApplication.shared.connectedScenes.compactMap {$0 as? UIWindowScene}.flatMap(\.windows).first {$0.isKeyWindow}
+            guard let root = window?.rootViewController, root.presentedViewController == nil,
+                  let release = updates.takePresentation() else { return }
+            sheet = .update(release)
+        }
     }
     @ToolbarContentBuilder private var header: some ToolbarContent {
         ToolbarItem(placement:.topBarLeading) {
@@ -140,7 +185,7 @@ struct MobileRoot: View {
                         if selected { store.select(device.id) }
                     }))
                 }
-                Button("添加设备",systemImage:"qrcode.viewfinder") {scanner=true}
+                Button("添加设备",systemImage:"qrcode.viewfinder") {sheet = .scanner}
             } label: {Label(store.live?.name ?? "电脑",systemImage:"laptopcomputer").font(.subheadline)}
         }
     }
@@ -422,10 +467,12 @@ struct RequestDetails: View {
 }
 struct MobileSettings: View {
     @EnvironmentObject var store: MobileStore
+    @EnvironmentObject private var updates: IOSUpdateChecker
     @AppStorage("theme") private var theme = "system"
     @State private var remove = false
     @State private var phoneName = ""
     let scan: () -> Void
+    var onDialogDismissed: () -> Void = {}
     var body: some View {
         Form {
             Section("我的电脑") {
@@ -441,6 +488,23 @@ struct MobileSettings: View {
             Section("此 iPhone") {TextField("设备名称",text:$phoneName).onSubmit {store.renamePhone(phoneName)}}
             Section("连接") {LabeledContent("当前连接",value:store.connectionLabel);Button("立即刷新") {store.refresh()}.disabled(store.device == nil)}
             if store.device != nil {Section {Button("移除此电脑",role:.destructive) {remove=true}}}
-        }.onAppear {phoneName=store.phoneName}.onDisappear {store.renamePhone(phoneName)}.confirmationDialog("移除此电脑并清除手机缓存？",isPresented:$remove,titleVisibility:.visible) {Button("移除",role:.destructive) {store.remove()}}
+            Section {
+                LabeledContent("版本号",value:updates.currentVersion)
+                if let release = updates.available {
+                    HStack {
+                        Text("有新版本")
+                        Spacer()
+                        Button(release.version) {updates.showAvailable()}.buttonStyle(.borderless)
+                    }
+                }
+                Button {updates.check(manual:true)} label: {
+                    HStack {Text("检查更新"); Spacer(); if updates.checking {ProgressView().controlSize(.small)}}
+                }.disabled(updates.checking)
+            } footer: {
+                if let status = updates.status {Text(status)}
+            }
+        }.onAppear {phoneName=store.phoneName}.onDisappear {store.renamePhone(phoneName)}
+            .onChange(of:remove) {_,visible in if !visible {onDialogDismissed()}}
+            .confirmationDialog("移除此电脑并清除手机缓存？",isPresented:$remove,titleVisibility:.visible) {Button("移除",role:.destructive) {store.remove()}}
     }
 }

@@ -7,7 +7,7 @@ import plistlib
 import shutil
 import subprocess
 import zipfile
-from ios_release import source_digest, validate_ipa
+from ios_release import desktop_version, source_digest, validate_ipa
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
@@ -19,7 +19,10 @@ def run(*args):
     subprocess.run([str(arg) for arg in args], env=ENV, check=True)
 
 def main():
-    version = (ROOT / "ios/VERSION").read_text(encoding="utf-8").strip()
+    version = desktop_version(ROOT)
+    version_file = ROOT / "ios/VERSION"
+    if version_file.read_text(encoding="utf-8").strip() != version:
+        version_file.write_text(version+"\n", encoding="utf-8")
     if APP.exists():
         shutil.rmtree(APP)
     APP.mkdir(parents=True)

@@ -10,6 +10,16 @@ from pathlib import Path, PurePosixPath
 IPA_NAME = "Codexio.ipa"
 
 
+def desktop_version(root: Path) -> str:
+    versions = []
+    for platform in ("macos", "windows"):
+        value = (root / platform / "VERSION").read_text(encoding="utf-8").strip()
+        if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", value):
+            raise ValueError("Invalid desktop version: " + platform)
+        versions.append(tuple(map(int, value.split("."))))
+    return ".".join(map(str, max(versions)))
+
+
 def source_digest(root: Path) -> str:
     paths = sorted((root / "apple/shared").glob("*.swift")) + sorted((root / "ios/App").glob("*.swift"))
     paths += [root / name for name in ("ios/VERSION", "scripts/build_ios.py", "scripts/ios_release.py", "src/codexio/icons/wordmark.png", "src/codexio/icons/app-light.png")]
