@@ -245,8 +245,10 @@ enum Analytics {
                 guard seen.insert(cursor).inserted, let row = turnMap[cursor] else { break }
                 var parent = ""
                 if !row.string("alias_of").isEmpty { parent = reference(row.string("alias_of"),session:row.string("session_id")) }
-                else if !row.string("continuation_of").isEmpty { parent = reference(row.string("continuation_of"),session:row.string("session_id")) }
-                else { parent = scopedRoot(row) }
+                else if !RequestResume.ownsMainMessage(row) {
+                    if !row.string("continuation_of").isEmpty { parent = reference(row.string("continuation_of"),session:row.string("session_id")) }
+                    else { parent = scopedRoot(row) }
+                }
                 if parent.isEmpty, row.flag("is_subagent") || RequestClassification.isApproval(row), !row.string("parent_session_id").isEmpty, !row.string("parent_turn_id").isEmpty { parent = reference(row.string("parent_turn_id"),session:row.string("parent_session_id")) }
                 if parent.isEmpty || turnMap[parent] == nil { break }
                 cursor = parent

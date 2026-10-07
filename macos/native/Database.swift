@@ -167,12 +167,17 @@ final class Database {
         var value = row
         if let existing = try query("SELECT data FROM usage_turns WHERE id=?",[row.string("id")]).first {
             let old = jsonObject(Data(existing.string("data").utf8))
+            if old.flag("has_main_message"), !value.flag("has_main_message") {
+                // A pre-upgrade cursor may still carry the overwritten preview.
+                value["prompt_preview"] = old["prompt_preview"]
+            }
             for (key,field) in old where value[key] == nil { value[key] = field }
             for key in ["prompt_preview","output_preview","ended_at"] where value.string(key).isEmpty { value[key] = old[key] }
         }
         if let message = try query("SELECT digest,revision FROM usage_request_messages WHERE id=?",[row.string("id")]).first {
             value["message_digest"] = message["digest"]; value["message_revision"] = message["revision"]
         }
+        RequestResume.preserveMainOwnership(&value)
         try run("INSERT INTO usage_turns VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data WHERE data<>excluded.data",[value.string("id"),jsonString(value)])
         try registerRequestID(value.string("id"))
     }
@@ -186,6 +191,10 @@ final class Database {
         for key in ["cwd","session_cwd","prompt_source_turn_id","resume_kind","continuation_of","context_compaction_item_id","parent_session_id","parent_turn_id"] where !evidence.string(key).isEmpty { row[key] = evidence[key] }
         for key in ["has_user_message","has_final_message","context_compaction_observed","explicit_task_start","context_compaction_completed","model_switch_continuation","request_resume_continuation","is_approval_review"] where evidence.flag(key) { row[key] = true }
         for key in ["prompt_preview","output_preview"] where row.string(key).isEmpty && !evidence.string(key).isEmpty { row[key] = evidence[key] }
+        if evidence.flag("has_main_message"), !evidence.string("prompt_preview").isEmpty {
+            row["has_main_message"] = true; row["prompt_preview"] = evidence["prompt_preview"]
+            RequestResume.preserveMainOwnership(&row)
+        }
         if RequestClassification.isApproval(row) { row["record_kind"] = RequestClassification.approval }
         else if row.flag("has_user_message") || !row.string("continuation_of").isEmpty { row["record_kind"] = "user_request" }
         else if evidence.string("record_kind") == "context_compaction", row.string("prompt_preview").isEmpty, row.string("resume_kind").isEmpty, !row.flag("has_final_message") { row["record_kind"] = "context_compaction" }
@@ -314,7 +323,7 @@ final class Database {
             let key = current.string("id"), turn = current.string("turn_id")
             let related = try query("SELECT data FROM usage_turns WHERE json_extract(data,'$.session_id')=? AND (json_extract(data,'$.continuation_of') IN (?,?) OR json_extract(data,'$.root_turn_id') IN (?,?)) LIMIT 65",[session,key,turn,key,turn]).map {jsonObject(Data($0.string("data").utf8))}
             let additions = related.filter { row in
-                !row.flag("is_subagent") && !RequestClassification.isApproval(row) && row.string("alias_of").isEmpty && !ids.contains(row.string("id")) &&
+                !row.flag("is_subagent") && !RequestClassification.isApproval(row) && !RequestResume.ownsMainMessage(row) && row.string("alias_of").isEmpty && !ids.contains(row.string("id")) &&
                 [row.string("continuation_of"),row.string("root_turn_id")].contains(where:{!$0.isEmpty && ids.contains($0)})
             }
             for row in additions.prefix(max(0,64-result.count)) { result.append(row); ids.insert(row.string("id")); ids.insert(row.string("turn_id")) }

@@ -89,8 +89,10 @@ func resumeObserve(entry, state Row) Row {
 		text, attachments, _ := requestUserInput(content)
 		if (text != "" || len(attachments) > 0) && dataString(current, "id") != "" {
 			resumed := ValueBool(current["resumed"])
+			if !ValueBool(current["has_user"]) {
+				context["input"] = Row{"turn": id, "preview": requestMessagePreview(text, attachments)}
+			}
 			current["source"], current["has_user"], current["resumed"] = id, true, false
-			context["input"] = Row{"turn": id, "preview": requestMessagePreview(text, attachments)}
 			context["current"] = current
 			if resumed {
 				return Row{"turn": id, "clear": true}

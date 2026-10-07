@@ -9,6 +9,7 @@ final class UsageIndexer {
     private var fileLists: [URL:FileList] = [:]
     private var titleInputs: [URL:[URL:FileStamp]] = [:]
     private var resumeRepairSessions: Set<String>?
+    private var mainOwnershipRepaired = false
     private var detailTargets: Set<String>?
     private var metadataOnly = false
     private var recoveryLegacyMessage: (String,Object)?
@@ -32,6 +33,7 @@ final class UsageIndexer {
     }
     func scan(_ roots: [URL], progress: (Int,Int)->Void = {_,_ in}) throws {
         cancelled = false
+        try repairMainOwnership()
         if resumeRepairSessions == nil {
             resumeRepairSessions = Set(try database.query("SELECT DISTINCT json_extract(data,'$.session_id') AS session FROM usage_turns WHERE COALESCE(json_extract(data,'$.prompt_preview'),'')='' AND COALESCE(json_extract(data,'$.is_subagent'),0)=0").map {$0.string("session")})
         }
@@ -276,6 +278,23 @@ final class UsageIndexer {
         progress["done"] = Array(accounted).sorted()
         progress["unavailable"] = Array(Set(progress["unavailable"] as? [String] ?? []).union(recovered.unavailable)).sorted()
         progress["complete"] = ids.allSatisfy { accounted.contains($0) }
+        try database.put("usage_meta",key:key,value:progress)
+    }
+    private func repairMainOwnership() throws {
+        guard !mainOwnershipRepaired, !cancelled else { return }
+        let key = "main-message-ownership-v1"
+        var progress = database.object("usage_meta",key:key)
+        if progress.flag("complete") { mainOwnershipRepaired = true; return }
+        var pending = progress["pending"] as? [String] ?? []
+        if pending.isEmpty {
+            let rows = try database.query("SELECT id FROM usage_turns WHERE id>? AND COALESCE(json_extract(data,'$.continuation_of'),'')<>'' AND COALESCE(json_extract(data,'$.has_user_message'),0)=1 AND COALESCE(json_extract(data,'$.has_main_message'),0)=0 AND COALESCE(json_extract(data,'$.is_subagent'),0)=0 ORDER BY id LIMIT 12",[progress.string("after")])
+            pending = rows.map {$0.string("id")}
+            if let last = pending.last { progress["after"] = last }
+            else { progress["complete"] = true; mainOwnershipRepaired = true }
+        }
+        // Reuse indexed, bounded metadata recovery; never replay token records.
+        let recovered = try database.recoverRecentRequestMetadata(pending,maximumFiles:4)
+        progress["pending"] = pending.filter {!recovered.done.contains($0)}
         try database.put("usage_meta",key:key,value:progress)
     }
     private func applyResume(_ patch: Object,state: inout Object) throws {
@@ -523,16 +542,25 @@ final class UsageIndexer {
                 state["previous_turn_id"] = state["turn_id"]; state["turn_id"] = "legacy-user:"+identity([stamp,content]); state["root_turn_id"] = nil
             }
             if !metadataOnly, detail.integer("media_schema") != RequestMedia.schema { detail = messageDetail(content,user:true,state:state,stamp:stamp) }
-            if !text.isEmpty { state["prompt_preview"] = text }
             let previous = state.string("previous_turn_id")
-            let messageKey = paired ? previousInput.string("message_key",identity([state.string("turn_id"),fingerprint])) : identity([state.string("turn_id"),messageID,stamp,fingerprint])
-            state["request_last_input"] = ["fingerprint":fingerprint,"fingerprint_version":2,"message_id":messageID,"representation":representation,"turn_id":state.string("turn_id"),"message_key":messageKey]
-            try saveTurn(&state,stamp:stamp) { row in
-                if !text.isEmpty { row["prompt_preview"] = text }
-                row["has_user_message"] = true
-                if reply && !previous.isEmpty { row["continuation_of"] = previous }
+            let active = state.object("turns").object(state.string("turn_id"))
+            if reply {
+                // A reply inside an active main request is subordinate content,
+                // not evidence that the entire request continues yesterday's turn.
+                if !RequestResume.ownsMainMessage(active), !previous.isEmpty {
+                    try saveTurn(&state,stamp:stamp) { $0["continuation_of"] = previous }
+                }
+            } else if !RequestResume.ownsMainMessage(active) || paired {
+                if !text.isEmpty { state["prompt_preview"] = text }
+                let messageKey = paired ? previousInput.string("message_key",identity([state.string("turn_id"),fingerprint])) : identity([state.string("turn_id"),messageID,stamp,fingerprint])
+                state["request_last_input"] = ["fingerprint":fingerprint,"fingerprint_version":2,"message_id":messageID,"representation":representation,"turn_id":state.string("turn_id"),"message_key":messageKey]
+                try saveTurn(&state,stamp:stamp) { row in
+                    if !text.isEmpty { row["prompt_preview"] = text }
+                    row["has_user_message"] = true; row["has_main_message"] = true
+                    RequestResume.preserveMainOwnership(&row)
+                }
+                if !detail.isEmpty { try saveMessage(state,patch:["user":detail.string("text"),"user_complete":detail.flag("complete"),"attachments":detail.objects("attachments"),"user_message_key":messageKey,"user_media_schema":RequestMedia.schema]) }
             }
-            if !detail.isEmpty { try saveMessage(state,patch:["user":detail.string("text"),"user_complete":detail.flag("complete"),"attachments":detail.objects("attachments"),"user_message_key":messageKey,"user_media_schema":RequestMedia.schema]) }
         }
         if !inherited, !state.flag("is_subagent") {
             var context = state.object("resume_tracking")

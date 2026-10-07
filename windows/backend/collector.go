@@ -870,7 +870,7 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 				r["parent_session_id"] = p["parent_thread_id"]
 			}
 		}
-		if owner := dataString(state, "pending_question_owner"); owner != "" && owner != explicit {
+		if owner := dataString(state, "pending_question_owner"); owner != "" && owner != explicit && !ValueBool(r["has_user_message"]) {
 			r["continuation_of"] = turnKey(dataString(state, "session_id"), owner)
 		}
 		if kind == "event_msg" {
@@ -903,7 +903,7 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 	if message != nil && (inputThread == "" || inputThread == dataString(state, "session_id")) && (inputTurn == "" || inputTurn == dataString(state, "turn_id")) {
 		if ok, owner := questionReply(message, state); ok {
 			r := getTurn(state, dataString(state, "turn_id"), timestamp)
-			if r != nil && owner != "" && owner != dataString(r, "turn_id") {
+			if r != nil && owner != "" && owner != dataString(r, "turn_id") && !ValueBool(r["has_user_message"]) {
 				r["continuation_of"] = turnKey(dataString(state, "session_id"), owner)
 			}
 			if owner != "" && (r == nil || dataString(r, "ended_at") != "") {
@@ -955,6 +955,10 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 					r["synthetic"] = true
 				}
 				r["has_user_message"] = true
+				if !ValueBool(r["is_subagent"]) && !approvalRequest(r) {
+					r["continuation_of"] = nil
+					r["root_turn_id"] = r["turn_id"]
+				}
 				hashes := ValueStrings(r["input_hashes"])
 				present := false
 				for _, hash := range hashes {

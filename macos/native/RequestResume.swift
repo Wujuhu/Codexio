@@ -4,6 +4,19 @@ import Foundation
 // The continuation edge is consumed by the existing v0.2.10-style grouping.
 enum RequestResume {
     static let metadataVersion = 2
+    // Match Windows requests.go: a source-backed main input owns its request.
+    // Old Mac question replies also set has_user_message, so require a real
+    // preview and exclude inherited input before trusting that legacy flag.
+    static func ownsMainMessage(_ row: Object) -> Bool {
+        guard !row.flag("is_subagent"), !RequestClassification.isApproval(row) else { return false }
+        return row.flag("has_main_message") || (row.flag("has_user_message") && !row.string("prompt_preview").isEmpty
+            && row.string("resume_kind").isEmpty && row.string("prompt_source_turn_id").isEmpty)
+    }
+    static func preserveMainOwnership(_ row: inout Object) {
+        guard ownsMainMessage(row) else { return }
+        row["continuation_of"] = NSNull()
+        row["root_turn_id"] = row["turn_id"]
+    }
     static func isContextOnlyUser(_ entry: Object) -> Bool {
         let payload = entry.object("payload")
         guard entry.string("type") == "response_item", payload.string("role") == "user" else { return false }
@@ -41,8 +54,8 @@ enum RequestResume {
             let text = preview(content)
             if !text.isEmpty, !current.string("id").isEmpty {
                 let inherited = current.flag("resumed")
+                if !current.flag("has_user") { context["input"] = ["turn":current.string("id"),"preview":text] }
                 current["source"] = current["id"]; current["has_user"] = true; current["resumed"] = false
-                context["input"] = ["turn":current.string("id"),"preview":text]
                 context["current"] = current
                 return inherited ? ["turn":current.string("id"),"clear":true] : nil
             }
