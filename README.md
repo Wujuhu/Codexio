@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.app.zip"><strong>下载 macOS 版</strong></a> ·
-  <a href="https://github.com/Wujuhu/Codexio/releases/download/v0.3.6/Codexio.exe"><strong>下载 Windows 版</strong></a> ·
+  <a href="https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.exe"><strong>下载 Windows 版</strong></a> ·
   <a href="https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.ipa"><strong>下载 iPhone 版</strong></a> ·
   <a href="https://github.com/Wujuhu/Codexio/releases">所有版本</a> ·
   <a href="https://github.com/Wujuhu/Codexio/issues">反馈问题</a>
@@ -22,15 +22,15 @@ Codexio 是 Codex 的用量与任务看板。它读取本机日志，汇总 Toke
 
 ## 下载与安装
 
-当前正式 Release 为 **[v0.3.6](https://github.com/Wujuhu/Codexio/releases/tag/v0.3.6)**，各平台安装包独立管理版本：
+正式版本、各平台包版本与更新说明以 **[最新 Release](https://github.com/Wujuhu/Codexio/releases/latest)** 和其中的 `latest.json` 为准。当前 `main` 源码版本为 **0.3.8**；源码版本号不代表已经发布。
 
-| 平台 | 已发布包版本 | 系统要求 | 安装包 |
-| --- | --- | --- | --- |
-| macOS | 0.3.6 | macOS 15+ · Apple Silicon（arm64） | [Codexio.app.zip](https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.app.zip) |
-| Windows | 0.3.6 | Windows 10/11 x64 · WebView2 Runtime | [Codexio.exe](https://github.com/Wujuhu/Codexio/releases/download/v0.3.6/Codexio.exe) |
-| iPhone | 0.3.1 | iOS 26+ | [Codexio.ipa](https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.ipa) |
+| 平台 | 系统要求 | 安装包 |
+| --- | --- | --- |
+| macOS | macOS 15+ · Apple Silicon（arm64） | [Codexio.app.zip](https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.app.zip) |
+| Windows | Windows 10/11 x64 · WebView2 Runtime | [Codexio.exe](https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.exe) |
+| iPhone | iOS 26+ | [Codexio.ipa](https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.ipa) |
 
-**iPhone IPA 为未签名设备包，需要自行重签后安装。** 包版本、大小与 SHA-256 以 Release 中的 `latest.json` 为准。`main` 可能包含尚未发布的更改，源码版本号不代表已发布包版本；Windows 下载固定指向已发布的 EXE，因为 Apple Release 不一定附带 Windows 包。
+**iPhone IPA 为未签名设备包，需要自行重签后安装。** 包版本、大小与 SHA-256 以 Release 中的 `latest.json` 为准。后续正式发布默认同时提供 Mac ZIP、Windows EXE、iOS IPA 和共享清单；历史版本的附件保持原样。`main` 可能包含尚未发布的更改，以下功能介绍按当前源码说明，正式包以对应 Release 更新说明为准。
 
 ### macOS
 
@@ -47,6 +47,8 @@ Mac 使用 `/Applications/Codexio.app` 作为稳定安装位置。从其他目�
 2. 登录并使用本机 Codex；如目录未自动识别，在设置中配置数据路径。
 3. 根据需要启用悬浮窗。关闭主窗口后，可从系统托盘重新打开；退出应用使用托盘菜单。
 
+网络请求和额度查询组件使用 Windows 当前配置的手动系统代理，未配置时回退到环境变量；应用不固定代理地址或端口。运行期间变更代理后，重新打开 Codexio 可让额度查询组件立即采用新设置。
+
 ### iPhone
 
 1. 下载 IPA，使用重签工具安装到 iPhone。
@@ -61,17 +63,20 @@ Mac 使用 `/Applications/Codexio.app` 作为稳定安装位置。从其他目�
 | --- | --- |
 | **额度与任务** | 5 小时／周剩余额度、重置时间、当前任务与最近请求 |
 | **请求记录** | 按日期、模型、速度和状态筛选，查看 Token、费用、思考强度、耗时与可用正文 |
-| **用量分析** | 费用、总 Token、用户请求、命中率，以及趋势、活动热图、模型构成和聊天排行 |
+| **用量分析** | 费用、总 Token、用户请求、命中率，以及趋势、活动热图、模型构成；聊天排行按本地线程费用或 Token 排序 |
+| **执行行程** | 按项目、线程和用户请求查看模型调用、工具与命令、文件操作、子代理和中断／继续事件，支持返回 Codex 对话 |
 | **AI 使用报告** | 日报、周报与月报，回顾用量和模型偏好，并导出报告图片 |
 | **订阅与定价** | 订阅周期统计、模型基础价格与手动价格覆盖 |
 | **桌面集成** | Mac 菜单栏字段选择与排序、请求／额度小组件；Windows 托盘、悬浮窗与贴边停靠 |
 | **手机阅读** | 概览与趋势、用户消息和最终回复、可用图片预览，以及多台已配对电脑切换 |
 
-v0.3.6 加入 Mac／Windows 小猫报告入口和手机阅读改进：桌面 → iPhone 同步支持完整历史的聚合趋势，以及排除暂停等待的实际运行耗时；本次附带的 iPhone 包补充记录日期、时间和耗时。Windows 同时统一了请求模型、思考强度、速度及日期的显示格式。
+执行行程位于 Mac／Windows 的 **用量 → 活动** 底部。两栏分别显示执行过程与资源详情：按整个线程、当前用户请求和选中步骤查看费用、Token、模型调用、耗时及可用配置。已有项目保留归属，其余对话统一归入“聊天”。命令通过工具名旁的按钮打开，支持自动换行与复制；模型调用和用户引导使用不同的淡色区分。
+
+过程来自本机可读取的 Codex 记录，按需分页加载。单个工具通常没有独立的 Token 或费用数据，应用不会分摊模型调用的消耗；日志缺失的摘要、计时等字段显示 `—`，不重建不可见的思考过程。文件操作展示路径和类型，不展开文件差异或完整命令输出。此执行行程仅在桌面端展示。
 
 ## 数据与隐私
 
-**费用是按模型价格与应用规则折算的 API 等价值，不是实际账单、ChatGPT 订阅扣款或官方 Credits。** 基础价与 Codex 登录模式的 Fast／长上下文规则分别计算；第三方服务的实际计费可能不同，缺少价格时保留未定价状态。总 Token 为输入与输出之和，缓存与推理 Token 不重复累加；用户请求数与模型调用数分别统计。详见 [计价规则](docs/codex-pricing.md) 与 [数据口径](docs/v0.3.1/DATA_CAPABILITIES.md)。
+**费用是按模型价格与应用规则折算的 API 等价值，不是实际账单、ChatGPT 订阅扣款或官方 Credits。** 基础价与 Codex 登录模式的 Fast／长上下文规则分别计算；第三方服务的实际计费可能不同，缺少价格时显示 `—`，部分定价状态单独标记。总 Token 为输入与输出之和，缓存与推理 Token 不重复累加；用户请求数与模型调用数分别统计。详见 [计价规则](docs/codex-pricing.md) 与 [数据口径](docs/v0.3.1/DATA_CAPABILITIES.md)。
 
 Codexio 只读采集原始 Codex 日志，设置、账本和缓存保存在本机。**手机同步默认关闭，云同步需单独启用。** 启用后，配对手机可读取用量、额度、请求摘要、可用正文、最终回复与图片预览；云同步会将相应内容上传至 Cloudflare 服务，内容不会自动脱敏。
 
@@ -83,7 +88,7 @@ Codexio 只读采集原始 Codex 日志，设置、账本和缓存保存在本�
 
 保留期按源记录时间计算，重复上传不续期；容量限制可能使内容更早不可用。到期内容立即停止读取，实际删除由后台任务分批处理。云服务还受管理员配置、全局每日请求预算与 Cloudflare 平台限额约束，达到限制时手机保留已验证缓存。
 
-Mac／Windows v0.3.6 的手机趋势覆盖全部历史：近 30 天按日展示，更早数据合并为最多 60 个区间，周期统计提供近 7 天、近 30 天和全部历史。完整历史聚合不等于保存全部消息正文。协议、预算和容量细节见 [手机阅读与同步](cloudflare/README.md)。
+手机趋势覆盖全部历史：近 30 天按日展示，更早数据合并为最多 60 个区间，周期统计提供近 7 天、近 30 天和全部历史。完整历史聚合不等于保存全部消息正文。协议、预算和容量细节见 [手机阅读与同步](cloudflare/README.md)。
 
 局域网使用 TLS 并校验配对证书指纹，云端使用 HTTPS 和设备凭据鉴权。同步不上传原始日志文件、完整工具执行过程或 Codex 登录凭据，也不提供远程执行任务或任意文件下载。关闭同步会停止服务，已上传副本继续按保留规则清理；撤销授权不会抹除离线设备已经保存的内容。
 
@@ -93,7 +98,7 @@ Mac／Windows v0.3.6 的手机趋势覆盖全部历史：近 30 天按日展示�
 
 **为什么账户额度与本机用量不同，或者额度不可用？**
 
-账户额度可能由多台设备共同消耗，本机统计只来自当前电脑可读取的日志。ChatGPT 登录模式可查询订阅额度；API Key 或自定义 provider 模式保留本机用量统计，官方订阅额度显示为不适用。缺少日志、报告或价格时会显示未知状态。
+账户额度可能由多台设备共同消耗，本机统计只来自当前电脑可读取的日志。ChatGPT 登录模式可查询订阅额度；API Key 或自定义 provider 模式保留本机用量统计，官方订阅额度显示为不适用。缺少的请求信息显示 `—`，连接或同步错误保留具体提示。
 
 **关闭 Mac 窗口后还会继续运行吗？**
 
@@ -113,7 +118,7 @@ Mac 使用 Swift／SwiftUI／AppKit／WidgetKit，iPhone 使用 SwiftUI／Charts
 | iOS | `/Applications/Xcode.app`、iOS 26+ SDK、项目 Python 环境 | `.venv/bin/python scripts/build_ios.py` |
 | Windows | Windows x64、Go 1.26.1、Node.js/npm；脚本固定 Wails 版本 | `.\build_exe.ps1` |
 
-Mac 入口自动创建或复用 `.venv`；Python 仅参与构建与交付，原生 App 运行不依赖 Python。开发产物位于 `build/dev/<平台>`，打包不会自动推送或发布。修改前请阅读 [AGENTS.md](AGENTS.md)，遵守平台范围、最小冒烟与交付约定；Windows 开发需单独明确授权。
+Mac 入口自动创建或复用 `.venv`；Python 仅参与构建与交付，原生 App 运行不依赖 Python。开发产物位于 `build/dev/<平台>`，打包不会自动推送或发布。修改前请阅读 [AGENTS.md](AGENTS.md)，遵守平台范围、最小冒烟与交付约定。日常桌面功能与适用修复默认同时覆盖 Mac 和 Windows；源码在本机修改，Windows 通过 SSH 在本地 Windows 主机构建。正式发布需再次确认版本，并由发布协调脚本统一核验三端产物、推送、发布及归档；云端构建需要单独授权。
 
 欢迎通过 [Issues](https://github.com/Wujuhu/Codexio/issues) 反馈问题、建议功能或提交文档修正。问题报告请包含应用版本、系统版本与复现步骤，并移除个人请求内容和凭据。
 
