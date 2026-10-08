@@ -4,7 +4,9 @@ import Foundation
 // explicit Codex metadata; distinct projectless working directories stay Chats.
 final class JourneyCatalog {
     private let objects = ObjectFileCache()
+    private let sources = ReadOnlySource()
     private var cached: [String:([FileStamp],Object)] = [:]
+    func closeSources() { sources.clear() }
     static func database(_ root: URL,prefix: String) -> URL? {
         (try? FileManager.default.contentsOfDirectory(at:root,includingPropertiesForKeys:nil))?
             .filter {$0.lastPathComponent.hasPrefix(prefix) && $0.pathExtension == "sqlite"}
@@ -21,14 +23,14 @@ final class JourneyCatalog {
             let global = objects.read(root.appendingPathComponent(".codex-global-state.json"))
             for (id,value) in global.object("local-projects") { if let row = value as? Object { projects[id] = row.string("name","—") } }
             let assignments = global.object("thread-project-assignments"), projectless = Set(global["projectless-thread-ids"] as? [String] ?? [])
-            let db = try Database(file,readOnly:true)
-            let columns = Set(try db.query("PRAGMA table_info(threads)").map {$0.string("name")})
-            let time = columns.contains("recency_at_ms") ? "coalesce(recency_at_ms,updated_at_ms,updated_at*1000)" : columns.contains("recency_at") ? "coalesce(recency_at,updated_at)*1000" : "updated_at*1000"
-            let name = columns.contains("name") ? "coalesce(nullif(name,''),title,'')" : "coalesce(title,'')"
-            var visibleProjects:Object=[:]
-            for id in global.object("local-projects").keys {visibleProjects[id]=id}
-            for value in global.object("app-server-project-id-by-legacy-project-id-by-host").values {
-                for (legacy,server) in value as? Object ?? [:] where visibleProjects[legacy] != nil {if let server=server as? String {visibleProjects[server]=legacy}}
+            let page = try sources.read(file) { db -> [Object] in
+                let columns = Set(try db.query("PRAGMA table_info(threads)").map {$0.string("name")})
+                let time = columns.contains("recency_at_ms") ? "coalesce(recency_at_ms,updated_at_ms,updated_at*1000)" : columns.contains("recency_at") ? "coalesce(recency_at,updated_at)*1000" : "updated_at*1000"
+                let name = columns.contains("name") ? "coalesce(nullif(name,''),title,'')" : "coalesce(title,'')"
+                var visibleProjects:Object=[:]
+                for id in global.object("local-projects").keys {visibleProjects[id]=id}
+                for value in global.object("app-server-project-id-by-legacy-project-id-by-host").values {
+                    for (legacy,server) in value as? Object ?? [:] where visibleProjects[legacy] != nil {if let server=server as? String {visibleProjects[server]=legacy}}
             }
             let stored = columns.contains("project_id") ? "json_extract(?,'$.\"'||project_id||'\"')" : "NULL"
             var mapped: Object = [:]
@@ -41,7 +43,9 @@ final class JourneyCatalog {
             let filter = project.isEmpty ? "" : " AND project_key=?"
             if !project.isEmpty {args.append(project)}
             let sql = "SELECT * FROM (SELECT id,\(name) AS title,\(time) AS stamp,rollout_path,\(owner) AS project_key FROM threads WHERE archived=0 AND instr(source,'subagent')=0) WHERE (stamp<? OR (stamp=? AND id<?))\(filter) ORDER BY stamp DESC,id DESC LIMIT 51"
-            for row in try db.query(sql,args) {
+            return try db.query(sql,args)
+            }
+            for row in page {
                 var row=row;row["root"]=root.path;row["project_id"]=row["project_key"];row["title"]=requestValueText(requestPreview(row.string("title")))
                 threads.append(row)
             }

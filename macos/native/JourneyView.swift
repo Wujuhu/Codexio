@@ -64,8 +64,8 @@ final class JourneyModel: ObservableObject {
             } catch {let message=error.localizedDescription;DispatchQueue.main.async{if self?.catalogTicket==ticket{self?.error=message}}}
         }
     }
-    func chooseProject(_ state:AppState,_ id:String){cancel();error=nil;project=id;thread=[:];request=[:];selected=[:];blocks=[];requests=[];threads=[];catalog(state,project:id)}
-    func chooseThread(_ state:AppState,_ value:Object){error=nil;thread=value;request=[:];scope="";cursors=[""];flowTicket+=1;blocks=[];selected=[:];loadThread(state,page:1)}
+    func chooseProject(_ state:AppState,_ id:String){cancel();error=nil;project=id;thread=[:];request=[:];selected=[:];blocks=[];flowSignature="";requests=[];threads=[];catalogSignature="";catalog(state,project:id)}
+    func chooseThread(_ state:AppState,_ value:Object){error=nil;thread=value;request=[:];scope="";cursors=[""];flowTicket+=1;blocks=[];flowSignature="";selected=[:];loadThread(state,page:1)}
     func loadThread(_ state:AppState,page:Int?=nil){
         guard !thread.isEmpty else{return};let id=thread.string("id"),index=page ?? requestPage;threadTicket+=1;let ticket=threadTicket,snapshot=state.usage
         state.dataQueue.async{[weak self] in
@@ -85,8 +85,8 @@ final class JourneyModel: ObservableObject {
             }catch{let message=error.localizedDescription;DispatchQueue.main.async{if self?.threadTicket==ticket{self?.error=message}}}
         }
     }
-    func chooseRequest(_ state:AppState,_ row:Object){error=nil;request=row;scope="";cursors=[""];selected=[:];blocks=[];flow(state)}
-    func agent(_ state:AppState,_ id:String){scope=id;cursors=[""];selected=[:];blocks=[];flow(state)}
+    func chooseRequest(_ state:AppState,_ row:Object){error=nil;request=row;scope="";cursors=[""];selected=[:];blocks=[];flowSignature="";flow(state)}
+    func agent(_ state:AppState,_ id:String){scope=id;cursors=[""];selected=[:];blocks=[];flowSignature="";flow(state)}
     func flow(_ state:AppState,cursor:String=""){
         let id=request.string("id"),scope=scope,thread=thread,root=thread.string("root"),snapshot=state.usage
         guard !id.isEmpty else{return};flowTicket+=1;let ticket=flowTicket;loading=blocks.isEmpty

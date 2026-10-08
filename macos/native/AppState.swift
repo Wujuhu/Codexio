@@ -153,6 +153,7 @@ final class AppState: ObservableObject {
         stop()
         snapshotQueue.async { [self] in
             client.shutdown()
+            dataQueue.sync { journeyReader.closeSources(); journeyCatalog.closeSources() }
             do {
                 if !paths.mock {
                     try writeWidget(["schema":1,"updated_at":Date().timeIntervalSince1970,"host_running":false,"host_pid":NSNull(),"request":NSNull(),"quota":["applicable":true],"today":NSNull()])

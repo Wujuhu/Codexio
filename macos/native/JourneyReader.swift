@@ -5,9 +5,11 @@ import Foundation
 final class JourneyReader {
     struct Range {var file: URL;var segment: String;var user: String;var start: UInt64;var end: UInt64;var turn: String;var stamp: String}
     private let database: Database
+    private let sources = ReadOnlySource()
     private var cache: [String:([FileStamp],Object)] = [:]
     private var headers: [URL:(FileStamp,Object)] = [:]
     init(_ database: Database) {self.database=database}
+    func closeSources() { sources.clear() }
     private func segment(_ file: URL) -> String {
         let expression=try! NSRegularExpression(pattern:"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}")
         let name=file.lastPathComponent as NSString
@@ -18,34 +20,35 @@ final class JourneyReader {
     }
     func ranges(root: URL,thread: String,turns: Set<String>) throws -> [Range] {
         guard !turns.isEmpty,let stateFile=JourneyCatalog.database(root,prefix:"state_"),let historyFile=JourneyCatalog.database(root,prefix:"thread_history_") else {throw AppFailure(L("本地过程记录暂不可用", "Local process history is unavailable"))}
-        let state=try Database(stateFile,readOnly:true),history=try Database(historyFile,readOnly:true)
-        guard let head=try state.query("SELECT rollout_path FROM threads WHERE id=?",[thread]).first?.string("rollout_path"),!head.isEmpty else {return []}
-        var file=URL(fileURLWithPath:head).standardizedFileURL,cut=UInt64.max,ordinal=Int.max,seen=Set<String>(),result:[Range]=[]
-        for _ in 0..<128 {
-            let id=segment(file);guard allowed(file,root:root),seen.insert(id).inserted else {throw AppFailure(L("历史片段关联不完整", "Incomplete history segment chain"))}
-            let end=min(cut,FileStamp(file).size)
-            let slots=Array(repeating:"?",count:turns.count).joined(separator:",")
-            let sql="SELECT turn_id,first_user_item_id,rollout_byte_offset,rollout_end_byte_offset,started_at FROM thread_turns WHERE thread_id=? AND turn_id IN (\(slots)) AND rollout_ordinal<? ORDER BY rollout_ordinal"
-            var segmentRanges:[Range]=[]
-            for row in try history.query(sql,[id]+turns.sorted().map {$0 as Any}+[ordinal]) {
-                let begin=UInt64(max(0,row.integer("rollout_byte_offset") ?? 0)),finish=min(end,UInt64(max(0,row.integer("rollout_end_byte_offset") ?? Int(end))))
-                if finish>begin {segmentRanges.append(Range(file:file,segment:id,user:row.string("first_user_item_id"),start:begin,end:finish,turn:row.string("turn_id"),stamp:String(row.integer("started_at") ?? 0)))}
-            }
-            result.insert(contentsOf:segmentRanges,at:0)
-            let stamp=FileStamp(file),base:Object
-            if let saved=headers[file],saved.0==stamp {base=saved.1}
-            else {
-                let reader=try JourneyLines(file,offset:0,end:min(end,2_097_152))
-                base=reader.next().map {jsonObject($0.data).object("payload").object("history_base")} ?? [:]
-                if headers.count>=128{headers.removeAll(keepingCapacity:true)};headers[file]=(stamp,base)
-            }
-            if base.isEmpty {break}
-            let parent=base.string("thread_id");cut=UInt64(max(0,base.integer("end_byte_offset") ?? 0));ordinal=base.integer("end_ordinal_exclusive") ?? 0
-            let candidates=try database.query("SELECT path FROM usage_session_files WHERE root=? AND path LIKE ? ORDER BY path LIMIT 256",[root.path,"%"+parent+"%.jsonl"])
-            guard let previous=candidates.map({URL(fileURLWithPath:$0.string("path"))}).first(where:{segment($0)==parent}) else {throw AppFailure(L("历史片段关联不完整", "Incomplete history segment chain"))}
-            file=previous.standardizedFileURL
+        guard let head=try sources.read(stateFile,{db in try db.query("SELECT rollout_path FROM threads WHERE id=?",[thread]).first?.string("rollout_path")}),!head.isEmpty else {return []}
+        return try sources.read(historyFile) { history in
+            var file=URL(fileURLWithPath:head).standardizedFileURL,cut=UInt64.max,ordinal=Int.max,seen=Set<String>(),result:[Range]=[]
+            for _ in 0..<128 {
+                let id=segment(file);guard allowed(file,root:root),seen.insert(id).inserted else {throw AppFailure(L("历史片段关联不完整", "Incomplete history segment chain"))}
+                let end=min(cut,FileStamp(file).size)
+                let slots=Array(repeating:"?",count:turns.count).joined(separator:",")
+                let sql="SELECT turn_id,first_user_item_id,rollout_byte_offset,rollout_end_byte_offset,started_at FROM thread_turns WHERE thread_id=? AND turn_id IN (\(slots)) AND rollout_ordinal<? ORDER BY rollout_ordinal"
+                var segmentRanges:[Range]=[]
+                for row in try history.query(sql,[id]+turns.sorted().map {$0 as Any}+[ordinal]) {
+                    let begin=UInt64(max(0,row.integer("rollout_byte_offset") ?? 0)),finish=min(end,UInt64(max(0,row.integer("rollout_end_byte_offset") ?? Int(end))))
+                    if finish>begin {segmentRanges.append(Range(file:file,segment:id,user:row.string("first_user_item_id"),start:begin,end:finish,turn:row.string("turn_id"),stamp:String(row.integer("started_at") ?? 0)))}
+                }
+                result.insert(contentsOf:segmentRanges,at:0)
+                let stamp=FileStamp(file),base:Object
+                if let saved=headers[file],saved.0==stamp {base=saved.1}
+                else {
+                    let reader=try JourneyLines(file,offset:0,end:min(end,2_097_152))
+                    base=reader.next().map {jsonObject($0.data).object("payload").object("history_base")} ?? [:]
+                    if headers.count>=128{headers.removeAll(keepingCapacity:true)};headers[file]=(stamp,base)
+                }
+                if base.isEmpty {break}
+                let parent=base.string("thread_id");cut=UInt64(max(0,base.integer("end_byte_offset") ?? 0));ordinal=base.integer("end_ordinal_exclusive") ?? 0
+                let candidates=try database.query("SELECT path FROM usage_session_files WHERE root=? AND path LIKE ? ORDER BY path LIMIT 256",[root.path,"%"+parent+"%.jsonl"])
+                guard let previous=candidates.map({URL(fileURLWithPath:$0.string("path"))}).first(where:{segment($0)==parent}) else {throw AppFailure(L("历史片段关联不完整", "Incomplete history segment chain"))}
+                file=previous.standardizedFileURL
         }
         return result
+        }
     }
     func page(root: URL,thread: String,turns: Set<String>,meters: [String:Object],revision: String,cursor: String,child: Bool = false,resumes: Set<String> = []) throws -> Object {
         let spans=try ranges(root:root,thread:thread,turns:turns),inputs=spans.map {FileStamp($0.file)}

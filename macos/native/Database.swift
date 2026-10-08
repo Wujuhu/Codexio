@@ -13,11 +13,18 @@ final class Database {
     let url: URL
     let requestMedia: RequestMediaStore
 
-    init(_ url: URL, readOnly: Bool = false) throws {
+    init(_ url: URL, readOnly: Bool = false, immutableSnapshot: Bool = false) throws {
         self.url = url
         requestMedia = RequestMediaStore(database:url)
-        let flags = readOnly ? SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX : SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
-        guard sqlite3_open_v2(url.path, &handle, flags, nil) == SQLITE_OK else { throw AppFailure(L("无法打开用量数据库", "Cannot open the usage database")) }
+        precondition(!immutableSnapshot || readOnly)
+        // immutable is exclusively for our private, stable source copies. Never
+        // use it on a live Codex database: that would ignore its active WAL.
+        let name = immutableSnapshot ? url.absoluteString+"?mode=ro&immutable=1" : url.path
+        let flags = (readOnly ? SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX : SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX) | (immutableSnapshot ? SQLITE_OPEN_URI : 0)
+        guard sqlite3_open_v2(name, &handle, flags, nil) == SQLITE_OK else {
+            sqlite3_close(handle); handle=nil
+            throw AppFailure(L("无法打开用量数据库", "Cannot open the usage database"))
+        }
         sqlite3_busy_timeout(handle, 15000)
         if !readOnly {
             try script("""

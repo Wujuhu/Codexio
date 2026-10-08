@@ -11569,6 +11569,22 @@
         }
       }
     },
+    "本地记录正在更新，请稍后刷新": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local records are changing. Refresh shortly."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本地记录正在更新，请稍后刷新"
+          }
+        }
+      }
+    },
     "本地转发启动超时，已恢复原路由": {
       "localizations": {
         "en": {
