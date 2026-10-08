@@ -8145,6 +8145,22 @@
         }
       }
     },
+    "打开命令": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open command"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开命令"
+          }
+        }
+      }
+    },
     "打开报告": {
       "localizations": {
         "en": {
@@ -12125,22 +12141,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "查看子代理行程"
-          }
-        }
-      }
-    },
-    "查看完整命令": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "View full command"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "查看完整命令"
           }
         }
       }

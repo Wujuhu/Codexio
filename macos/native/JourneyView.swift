@@ -152,22 +152,22 @@ struct JourneyView:View{
                                     ForEach(model.blocks){block in
                                         VStack(alignment:.leading,spacing:0){
                                             if let call=block.model{
-                                                Button{model.selected=call;if !collapsed.insert(block.id).inserted{collapsed.remove(block.id)}}label:{HStack(spacing:8){Image(systemName:"cpu");Text(L("调用了 ","Called ")+modelName(call.string("model"))).lineLimit(1);Spacer(minLength:8);Text(money(call.number("cost_usd"))+" · "+compact(call.number("tokens"))+(call.number("tokens")==nil ? "" : " Token")).font(.system(size:12)).monospacedDigit();Image(systemName:collapsed.contains(block.id) ? "chevron.right":"chevron.down").font(.system(size:10))}.font(.system(size:13,weight:.medium)).padding(12).frame(maxWidth:.infinity).contentShape(Rectangle())}.buttonStyle(.plain).background(Color.primary.opacity(0.025))
+                                                Button{model.selected=call;if !collapsed.insert(block.id).inserted{collapsed.remove(block.id)}}label:{HStack(spacing:8){Image(systemName:"cpu");Text(L("调用了 ","Called ")+modelName(call.string("model"))).lineLimit(1);Spacer(minLength:8);Text(money(call.number("cost_usd"))+" · "+compact(call.number("tokens"))+(call.number("tokens")==nil ? "" : " Token")).font(.system(size:12)).monospacedDigit();Image(systemName:collapsed.contains(block.id) ? "chevron.right":"chevron.down").font(.system(size:10))}.font(.system(size:13,weight:.medium)).padding(12).frame(maxWidth:.infinity).contentShape(Rectangle())}.buttonStyle(.plain).background(Color.indigo.opacity(0.09))
                                             }
                                             if block.model==nil || !collapsed.contains(block.id){
                                                 if block.model != nil{Divider()}
                                                 ForEach(block.steps,id:\.journeyID){e in JourneyEventRow(event:e,selected:model.selected.string("id"),choose:{model.selected=$0},agent:{model.agent(state,$0)})}.padding(.horizontal,12).padding(.vertical,4)
                                             }
-                                        }.clipShape(RoundedRectangle(cornerRadius:10)).overlay(RoundedRectangle(cornerRadius:10).stroke(.secondary.opacity(0.17)))
+                                        }.clipShape(RoundedRectangle(cornerRadius:10)).overlay(RoundedRectangle(cornerRadius:10).stroke(block.model == nil ? Color.secondary.opacity(0.17) : Color.indigo.opacity(0.22)))
                                     }
                                     HStack{Button(L("上一页","Previous")){if model.cursors.count>1{model.cursors.removeLast();model.flow(state,cursor:model.cursors.last ?? "")}}.disabled(model.cursors.count<=1);Spacer();Button(L("下一页","Next")){model.cursors.append(model.next);model.flow(state,cursor:model.next)}.disabled(model.next.isEmpty)}.controlSize(.small)
-                                }.padding(14)
-                            }
+                                }.padding(14).padding(.bottom,10)
+                            }.frame(minHeight:0,maxHeight:.infinity)
                             Divider();HStack{Spacer();Button(L("在 Codex 中继续 ↗","Continue in Codex ↗")){open()}.buttonStyle(.bordered)}.padding(12)
-                        }.frame(minWidth:300,idealWidth:geometry.size.width*48/77,maxWidth:.infinity)
-                        JourneyInspector(thread:model.thread,request:model.request,summary:model.summary,event:model.selected).frame(minWidth:230,idealWidth:geometry.size.width*29/77,maxWidth:.infinity)
-                    }
-                }.frame(height:650).clipShape(RoundedRectangle(cornerRadius:14)).overlay(RoundedRectangle(cornerRadius:14).stroke(.secondary.opacity(0.18)))
+                        }.frame(minWidth:300,idealWidth:geometry.size.width*48/77,maxWidth:.infinity).frame(height:geometry.size.height)
+                        JourneyInspector(thread:model.thread,request:model.request,summary:model.summary,event:model.selected).frame(minWidth:230,idealWidth:geometry.size.width*29/77,maxWidth:.infinity).frame(height:geometry.size.height)
+                    }.frame(width:geometry.size.width,height:geometry.size.height)
+                }.containerRelativeFrame(.vertical){height,_ in max(320,min(650,height-140))}.clipShape(RoundedRectangle(cornerRadius:14)).overlay(RoundedRectangle(cornerRadius:14).stroke(.secondary.opacity(0.18)))
             }
         }.onAppear{model.catalog(state)}.onDisappear{model.cancel()}
         .onChange(of:state.usage.revision){_,_ in guard state.mainWindowVisible else{return};model.catalog(state);model.loadThread(state)}
@@ -214,13 +214,44 @@ private struct JourneyPicker:View{
     }
 }
 
+struct JourneyCommandButton:View{
+    let command:String,tool:String
+    @State private var open=false
+    var body:some View{
+        Button{open.toggle()}label:{Image(systemName:"chevron.left.forwardslash.chevron.right").font(.system(size:11)).padding(4).contentShape(Rectangle())}
+            .buttonStyle(.plain).foregroundStyle(.secondary).background(.primary.opacity(0.045),in:RoundedRectangle(cornerRadius:5))
+            .help(L("打开命令","Open command")).accessibilityLabel(L("打开命令","Open command"))
+            .popover(isPresented:$open,arrowEdge:.bottom){
+                VStack(spacing:12){
+                    HStack{Text(tool).font(.system(size:13,weight:.medium));Spacer();Button{open=false}label:{Image(systemName:"xmark")}.buttonStyle(.plain).accessibilityLabel(L("关闭","Close"))}
+                    Divider()
+                    ScrollView([.horizontal,.vertical]){Text(command).font(.system(size:12,design:.monospaced)).textSelection(.enabled).fixedSize(horizontal:true,vertical:true).frame(maxWidth:.infinity,alignment:.leading)}
+                }.padding(14).frame(width:520,height:320)
+            }
+    }
+}
+
 struct JourneyEventRow:View{
     let event:Object,selected:String,choose:(Object)->Void,agent:(String)->Void
-    @State private var commandOpen=false
+    private var guidance:Bool{event.string("kind")=="userMessage"}
+    private var fill:Color{guidance ? Color.blue.opacity(event.string("id")==selected ? 0.14:0.075) : event.string("id")==selected ? Color.primary.opacity(0.06):.clear}
     var body:some View{
         VStack(alignment:.leading,spacing:7){
-            Button{choose(event)}label:{HStack(alignment:.top,spacing:8){Image(systemName:journeySymbol(event.string("kind"))).frame(width:16);VStack(alignment:.leading,spacing:5){Text(journeyTitle(event)).font(.system(size:12));if !event.string("preview").isEmpty || event.string("kind")=="reasoning"{Text(requestValueText(event.string("preview"))).font(.system(size:11)).foregroundStyle(.secondary).lineLimit(4)};JourneyFiles(files:event.objects("files"))};Spacer(minLength:4);Text(event["duration_ms"] != nil ? journeyDuration(event.number("duration_ms")) : logDateText(parsedDate(event["time"]),timeOnly:true)).font(.system(size:10)).foregroundStyle(.secondary)}.padding(7).frame(maxWidth:.infinity,alignment:.leading).contentShape(Rectangle())}.buttonStyle(.plain).background(event.string("id")==selected ? Color.primary.opacity(0.06):.clear,in:RoundedRectangle(cornerRadius:7))
-            if !event.string("command").isEmpty{DisclosureGroup(L("查看完整命令","View full command"),isExpanded:$commandOpen){if commandOpen{ScrollView{Text(event.string("command")).font(.system(size:11,design:.monospaced)).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)}.frame(maxHeight:250)}}.font(.system(size:11)).padding(.leading,30)}
+            HStack(alignment:.top,spacing:8){
+                Image(systemName:journeySymbol(event.string("kind"))).frame(width:16).foregroundStyle(guidance ? Color.blue:Color.primary)
+                VStack(alignment:.leading,spacing:5){
+                    HStack(spacing:7){
+                        Button{choose(event)}label:{Text(journeyTitle(event)).font(.system(size:12,weight:guidance ? .medium:.regular))}.buttonStyle(.plain)
+                        if !event.string("command").isEmpty{JourneyCommandButton(command:event.string("command"),tool:journeyTitle(event))}
+                        Spacer(minLength:4)
+                        Text(event["duration_ms"] != nil ? journeyDuration(event.number("duration_ms")) : logDateText(parsedDate(event["time"]),timeOnly:true)).font(.system(size:10)).foregroundStyle(.secondary)
+                    }
+                    if !event.string("preview").isEmpty || event.string("kind")=="reasoning"{Text(requestValueText(event.string("preview"))).font(.system(size:11)).foregroundStyle(.secondary).lineLimit(4)}
+                    JourneyFiles(files:event.objects("files"))
+                }
+            }.padding(7).frame(maxWidth:.infinity,alignment:.leading).contentShape(Rectangle()).onTapGesture{choose(event)}
+                .background(fill,in:RoundedRectangle(cornerRadius:7))
+                .overlay(RoundedRectangle(cornerRadius:7).stroke(guidance ? Color.blue.opacity(0.16):.clear).allowsHitTesting(false))
             if !event.string("agent_id").isEmpty{Button(L("查看子代理行程","View subagent journey")){agent(event.string("agent_id"))}.buttonStyle(.plain).font(.system(size:11)).padding(.leading,30)}
             ForEach(event.objects("children"),id:\.journeyID){child in AnyView(JourneyEventRow(event:child,selected:selected,choose:choose,agent:agent)).padding(.leading,15)}
         }.padding(.vertical,5)
@@ -236,7 +267,7 @@ struct JourneyInspector:View{
                 LazyVGrid(columns:[GridItem(.flexible()),GridItem(.flexible())],spacing:8){metric(L("费用","Cost"),money(summary.number("cost_usd")));metric("Token",compact(summary.number("tokens")));metric(L("请求","Requests"),summary.integer("requests").map(String.init) ?? "—");metric(L("模型调用","Model calls"),summary.integer("calls").map(String.init) ?? "—")}
                 Divider();Text(requestValueText(request.string("prompt_preview"))).font(.system(size:13,weight:.medium)).lineLimit(4)
                 fields([(L("费用","Cost"),money(request.number("cost_usd"))),("Token",compact(request.number("total_tokens"))),(L("模型调用","Model calls"),request.integer("call_count").map(String.init) ?? "—"),(L("耗时","Duration"),journeyDuration(request.number("duration_ms"))),(L("模型","Model"),modelName(request.string("model"))),(L("推理强度","Reasoning"),logEffortName(request.string("reasoning_effort"))),(L("速度","Speed"),journeySpeed(request.string("service_tier"))),(L("状态","Status"),journeyStatus(request.string("status"))),(L("开始","Start"),logDateText(parsedDate(request["started_at"] ?? request["timestamp"]))),(L("结束","End"),logDateText(parsedDate(request["ended_at"])))])
-                if !event.isEmpty{Divider();Text(journeyTitle(event)).font(.system(size:13,weight:.medium));if !event.string("preview").isEmpty{Text(event.string("preview")).font(.system(size:12)).textSelection(.enabled)}
+                if !event.isEmpty{Divider();HStack(spacing:7){Text(journeyTitle(event)).font(.system(size:13,weight:.medium));if !event.string("command").isEmpty{JourneyCommandButton(command:event.string("command"),tool:journeyTitle(event))};Spacer(minLength:0)};if !event.string("preview").isEmpty{Text(event.string("preview")).font(.system(size:12)).textSelection(.enabled)}
                     if event.string("kind")=="model"{fields([(L("模型","Model"),modelName(event.string("model"))),(L("费用","Cost"),money(event.number("cost_usd"))),("Token",compact(event.number("tokens"))),(L("推理强度","Reasoning"),logEffortName(event.string("effort"))),(L("速度","Speed"),journeySpeed(event.string("speed"))),(L("耗时","Duration"),journeyDuration(event.number("duration_ms")))]+[("input_tokens",L("输入","Input")),("cached_input_tokens",L("缓存读取","Cache read")),("cache_write_input_tokens",L("缓存写入","Cache write")),("output_tokens",L("输出","Output")),("reasoning_output_tokens",L("推理输出","Reasoning output"))].map {($0.1,compact(event.object("usage").number($0.0)))})}
                     else{fields([(L("工具","Tool"),requestValueText(event.string("tool"))),(L("状态","Status"),journeyStatus(event.string("status"))),(L("耗时","Duration"),journeyDuration(event.number("duration_ms"))),(L("时间","Time"),logDateText(parsedDate(event["time"])))])}
                     if !event.string("agent_id").isEmpty{fields([(L("费用","Cost"),money(event.number("cost_usd"))),("Token",compact(event.number("tokens"))),(L("模型调用","Model calls"),event.integer("calls").map(String.init) ?? "—")])}
