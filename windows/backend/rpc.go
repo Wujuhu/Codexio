@@ -8,8 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,6 +22,32 @@ type systemRPCResult struct {
 	value Row
 	err   error
 }
+
+type systemRPCError struct {
+	code            int64
+	method, message string
+}
+
+func (e *systemRPCError) Error() string {
+	action := map[string]string{"initialize": "连接", "account/read": "读取账户", "account/rateLimits/read": "读取额度", "account/rateLimitResetCredit/consume": "使用重置券", "config/read": "读取配置", "config/value/write": "保存配置"}[e.method]
+	if action == "" {
+		action = "请求"
+	}
+	label := fmt.Sprintf("Codex %s失败（代码 %d）", action, e.code)
+	message := strings.Join(strings.Fields(e.message), " ")
+	if message == "workspace routing discovery failed" || strings.Contains(message, "error sending request for url") {
+		message = "无法连接 ChatGPT 服务，请检查网络或 Windows 系统代理"
+	}
+	if message != "" {
+		runes := []rune(message)
+		if len(runes) > 500 {
+			message = string(runes[:500]) + "…"
+		}
+		label += ": " + message
+	}
+	return label
+}
+
 type systemRPC struct {
 	cmd     *exec.Cmd
 	input   io.WriteCloser
@@ -43,7 +67,10 @@ func systemNewRPC(ctx context.Context, path, version, root string, notify func(s
 		return nil, e
 	}
 	c.Dir, _ = os.UserHomeDir()
-	c.Env = systemChildEnvironment(root)
+	c.Env, e = systemChildProxyEnvironment(systemChildEnvironment(root))
+	if e != nil {
+		return nil, e
+	}
 	systemConfigureCommand(c)
 	systemPrepareOwnedCommand(c)
 	in, e := c.StdinPipe()
@@ -105,6 +132,9 @@ func (r *systemRPC) request(ctx context.Context, method string, params Row) (Row
 	}
 	select {
 	case v := <-reply:
+		if rpcError, ok := v.err.(*systemRPCError); ok {
+			v.err = &systemRPCError{code: rpcError.code, method: method, message: rpcError.message}
+		}
 		return v.value, v.err
 	case <-ctx.Done():
 		return nil, errors.New("Codex 请求已取消或超时")
@@ -157,8 +187,8 @@ func (r *systemRPC) read(out io.Reader) {
 		}
 		result := systemRPCResult{value: ValueRow(v["result"])}
 		if errorRow, ok := v["error"]; ok {
-			code := ValueInt(ValueRow(errorRow)["code"])
-			result.err = fmt.Errorf("Codex 请求失败（代码 %d）", code)
+			detail := ValueRow(errorRow)
+			result.err = &systemRPCError{code: ValueInt(detail["code"]), message: ValueString(detail["message"])}
 		}
 		select {
 		case ch <- result:
@@ -209,34 +239,7 @@ func systemChildEnvironment(root string) []string {
 		env = systemSetEnv(env, "CODEX_HOME", root)
 	}
 	env = systemSetEnv(env, "RUST_LOG", "error")
-	for _, key := range []string{"HTTPS_PROXY", "HTTP_PROXY"} {
-		raw := os.Getenv(key)
-		u, e := url.Parse(raw)
-		if e != nil || raw == "" {
-			continue
-		}
-		host := u.Hostname()
-		if host != "localhost" && host != "127.0.0.1" && host != "::1" {
-			continue
-		}
-		port := u.Port()
-		if port == "" {
-			port = "80"
-			if u.Scheme == "https" {
-				port = "443"
-			}
-		}
-		conn, e := net.DialTimeout("tcp", net.JoinHostPort(host, port), 400*time.Millisecond)
-		if e == nil {
-			conn.Close()
-			break
-		}
-		for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"} {
-			env = systemRemoveEnv(env, k)
-		}
-		env = systemSetEnv(env, "NO_PROXY", "*")
-		break
-	}
+
 	return env
 }
 func systemRemoveEnv(env []string, key string) []string {
@@ -437,13 +440,7 @@ func systemDiscoverCLI(ctx context.Context, explicit string, excluded map[string
 			return v, nil
 		}
 	}
-	for _, n := range []string{"codex.exe", "codex.cmd", "codex"} {
-		if p, e := exec.LookPath(n); e == nil {
-			if v := hint(p); v != "" {
-				return v, nil
-			}
-		}
-	}
+
 	local := os.Getenv("LOCALAPPDATA")
 	for _, r := range []string{filepath.Join(local, "OpenAI", "Codex"), filepath.Join(local, "Programs", "OpenAI", "Codex"), filepath.Join(local, "Programs", "Codex"), filepath.Join(local, "OpenAI", "ChatGPT"), filepath.Join(local, "Programs", "ChatGPT")} {
 		if v := hint(r); v != "" {
@@ -466,6 +463,16 @@ func systemDiscoverCLI(ctx context.Context, explicit string, excluded map[string
 			return v, nil
 		}
 	}
+	// Match Mac discovery: use the desktop component before an unrelated npm CLI.
+	// Explicit user overrides still take precedence.
+	for _, n := range []string{"codex.exe", "codex.cmd", "codex"} {
+		if p, e := exec.LookPath(n); e == nil {
+			if v := hint(p); v != "" {
+				return v, nil
+			}
+		}
+	}
+
 	home, _ := os.UserHomeDir()
 	for _, r := range []string{filepath.Join(home, ".local", "bin"), filepath.Join(os.Getenv("APPDATA"), "npm")} {
 		for _, n := range []string{"codex.exe", "codex.cmd", "codex"} {
