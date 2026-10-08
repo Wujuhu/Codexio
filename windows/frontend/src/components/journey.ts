@@ -18,7 +18,9 @@ export function journeyTitle(e:Row):string{
  const names:Record<string,string>={reasoning:'思考摘要',fileChange:'文件改动',userMessage:'用户引导',agentInput:'代理指令',userInput:'AI 提问',userInputReply:'用户回答',subAgentActivity:'子代理',collabAgentToolCall:'子代理',imageView:'查看图片',imageGeneration:'生成图片',webSearch:'网页工具',contextCompaction:'上下文压缩',resume:'继续执行',pause:'执行中断',completed:'本轮完成',sleep:'等待',plan:'更新计划'};
  return tr(names[e.kind]??text(e.kind));
 }
-export function journeyIcon(kind:string):string{return ({model:'overview',reasoning:'settings',fileChange:'report',commandExecution:'logs',tool:'logs',userMessage:'account',userInputReply:'account',userInput:'account',subAgentActivity:'arrow',collabAgentToolCall:'arrow',imageView:'report',imageGeneration:'report',webSearch:'search',completed:'check',contextCompaction:'report'} as Record<string,string>)[kind]??'logs'}
+// These SVGs are also bundled into the Mac app; keep one source of artwork.
+const journeyIcons=new Set(['model','commandExecution','tool','reasoning','fileChange','userMessage','userInput','agentMessage','subAgentActivity','imageView','imageGeneration','webSearch','contextCompaction','pause','resume','completed','sleep','plan','mcpToolCall','command','close','chevronDown','chevronRight','userInputReply','agentInput','collabAgentToolCall','default']);
+export function journeyIcon(kind:string):string{return journeyIcons.has(kind)?kind:'default'}
 export function journeyDuration(value:any):string{const n=number(value);if(n===null||n<0)return'—';if(n===0)return'0 ms';if(n<1)return'<1 ms';if(n<1000)return Number(n.toFixed(2))+' ms';return duration(n)}
 export function fileAction(value:any):string{return tr(({add:'新增',delete:'删除',update:'修改',read:'读取',search:'搜索',listfiles:'列出',image:'生成',visualization:'可视化'} as Record<string,string>)[String(value??'').toLowerCase()]??'修改')}
 export function eventFields(e:Row):[string,string][]{

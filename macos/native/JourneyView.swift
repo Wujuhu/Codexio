@@ -152,7 +152,7 @@ struct JourneyView:View{
                                     ForEach(model.blocks){block in
                                         VStack(alignment:.leading,spacing:0){
                                             if let call=block.model{
-                                                Button{model.selected=call;if !collapsed.insert(block.id).inserted{collapsed.remove(block.id)}}label:{HStack(spacing:8){Image(systemName:"cpu");Text(L("调用了 ","Called ")+modelName(call.string("model"))).lineLimit(1);Spacer(minLength:8);Text(money(call.number("cost_usd"))+" · "+compact(call.number("tokens"))+(call.number("tokens")==nil ? "" : " Token")).font(.system(size:12)).monospacedDigit();Image(systemName:collapsed.contains(block.id) ? "chevron.right":"chevron.down").font(.system(size:10))}.font(.system(size:13,weight:.medium)).padding(12).frame(maxWidth:.infinity).contentShape(Rectangle())}.buttonStyle(.plain).background(Color.indigo.opacity(0.09))
+                                                Button{model.selected=call;if !collapsed.insert(block.id).inserted{collapsed.remove(block.id)}}label:{HStack(spacing:8){JourneyIcon(kind:"model");Text(L("调用了 ","Called ")+modelName(call.string("model"))).lineLimit(1);Spacer(minLength:8);Text(money(call.number("cost_usd"))+" · "+compact(call.number("tokens"))+(call.number("tokens")==nil ? "" : " Token")).font(.system(size:12)).monospacedDigit();JourneyIcon(kind:collapsed.contains(block.id) ? "chevronRight":"chevronDown",size:12)}.font(.system(size:13,weight:.medium)).padding(12).frame(maxWidth:.infinity).contentShape(Rectangle())}.buttonStyle(.plain).background(Color.indigo.opacity(0.09))
                                             }
                                             if block.model==nil || !collapsed.contains(block.id){
                                                 if block.model != nil{Divider()}
@@ -194,7 +194,7 @@ private struct JourneyPicker:View{
     var body:some View{
         GeometryReader{geometry in
             Button{open.toggle()}label:{
-                HStack(spacing:8){Text(preview(title)).lineLimit(1).truncationMode(.tail).frame(maxWidth:.infinity,alignment:.leading);Image(systemName:"chevron.down").font(.system(size:10)).foregroundStyle(.secondary)}.font(.system(size:13)).frame(maxWidth:.infinity).contentShape(Rectangle())
+                HStack(spacing:8){Text(preview(title)).lineLimit(1).truncationMode(.tail).frame(maxWidth:.infinity,alignment:.leading);JourneyIcon(kind:"chevronDown",size:12).foregroundStyle(.secondary)}.font(.system(size:13)).frame(maxWidth:.infinity).contentShape(Rectangle())
             }.buttonStyle(.bordered).controlSize(.regular).frame(maxWidth:.infinity,maxHeight:.infinity).disabled(items.isEmpty).accessibilityLabel(label)
                 .popover(isPresented:$open,arrowEdge:.bottom){
                     ScrollViewReader{reader in
@@ -214,20 +214,36 @@ private struct JourneyPicker:View{
     }
 }
 
+struct JourneyIcon:View{
+    let kind:String
+    var size:CGFloat=16
+    var body:some View{Image(nsImage:Branding.journeyIcon(kind)).resizable().renderingMode(.template).frame(width:size,height:size).accessibilityHidden(true)}
+}
+
 struct JourneyCommandButton:View{
     let command:String,tool:String
     @State private var open=false
     var body:some View{
-        Button{open.toggle()}label:{Image(systemName:"chevron.left.forwardslash.chevron.right").font(.system(size:11)).padding(4).contentShape(Rectangle())}
+        Button{open.toggle()}label:{JourneyIcon(kind:"command",size:14).frame(width:24,height:22).contentShape(Rectangle())}
             .buttonStyle(.plain).foregroundStyle(.secondary).background(.primary.opacity(0.045),in:RoundedRectangle(cornerRadius:5))
             .help(L("打开命令","Open command")).accessibilityLabel(L("打开命令","Open command"))
-            .popover(isPresented:$open,arrowEdge:.bottom){
-                VStack(spacing:12){
-                    HStack{Text(tool).font(.system(size:13,weight:.medium));Spacer();Button{open=false}label:{Image(systemName:"xmark")}.buttonStyle(.plain).accessibilityLabel(L("关闭","Close"))}
-                    Divider()
-                    ScrollView([.horizontal,.vertical]){Text(command).font(.system(size:12,design:.monospaced)).textSelection(.enabled).fixedSize(horizontal:true,vertical:true).frame(maxWidth:.infinity,alignment:.leading)}
-                }.padding(14).frame(width:520,height:320)
-            }
+            .popover(isPresented:$open,arrowEdge:.bottom){JourneyCommandContent(command:command,tool:tool,close:{open=false})}
+    }
+}
+
+struct JourneyCommandContent:View{
+    let command:String,tool:String,close:()->Void
+    @State private var commandHeight:CGFloat=18
+    var body:some View{
+        VStack(spacing:8){
+            HStack{Text(tool).font(.system(size:12,weight:.medium));Spacer();Button(action:close){JourneyIcon(kind:"close",size:14)}.buttonStyle(.plain).accessibilityLabel(L("关闭","Close"))}
+            Divider()
+            ScrollView(.vertical){
+                Text(command).font(.system(size:12,design:.monospaced)).textSelection(.enabled)
+                    .frame(maxWidth:.infinity,alignment:.leading).fixedSize(horizontal:false,vertical:true)
+                    .onGeometryChange(for:CGFloat.self){$0.size.height}action:{height in if abs(commandHeight-height)>0.5{commandHeight=height}}
+            }.frame(height:min(360,max(18,commandHeight)))
+        }.padding(12).frame(width:520)
     }
 }
 
@@ -237,18 +253,16 @@ struct JourneyEventRow:View{
     private var fill:Color{guidance ? Color.blue.opacity(event.string("id")==selected ? 0.14:0.075) : event.string("id")==selected ? Color.primary.opacity(0.06):.clear}
     var body:some View{
         VStack(alignment:.leading,spacing:7){
-            HStack(alignment:.top,spacing:8){
-                Image(systemName:journeySymbol(event.string("kind"))).frame(width:16).foregroundStyle(guidance ? Color.blue:Color.primary)
-                VStack(alignment:.leading,spacing:5){
-                    HStack(spacing:7){
-                        Button{choose(event)}label:{Text(journeyTitle(event)).font(.system(size:12,weight:guidance ? .medium:.regular))}.buttonStyle(.plain)
-                        if !event.string("command").isEmpty{JourneyCommandButton(command:event.string("command"),tool:journeyTitle(event))}
-                        Spacer(minLength:4)
-                        Text(event["duration_ms"] != nil ? journeyDuration(event.number("duration_ms")) : logDateText(parsedDate(event["time"]),timeOnly:true)).font(.system(size:10)).foregroundStyle(.secondary)
-                    }
-                    if !event.string("preview").isEmpty || event.string("kind")=="reasoning"{Text(requestValueText(event.string("preview"))).font(.system(size:11)).foregroundStyle(.secondary).lineLimit(4)}
-                    JourneyFiles(files:event.objects("files"))
-                }
+            VStack(alignment:.leading,spacing:5){
+                HStack(spacing:8){
+                    JourneyIcon(kind:event.string("kind")).foregroundStyle(guidance ? Color.blue:Color.primary)
+                    Button{choose(event)}label:{Text(journeyTitle(event)).font(.system(size:12,weight:guidance ? .medium:.regular)).lineLimit(1)}.buttonStyle(.plain).help(journeyTitle(event))
+                    if !event.string("command").isEmpty{JourneyCommandButton(command:event.string("command"),tool:journeyTitle(event))}
+                    Spacer(minLength:4)
+                    Text(event["duration_ms"] != nil ? journeyDuration(event.number("duration_ms")) : logDateText(parsedDate(event["time"]),timeOnly:true)).font(.system(size:10)).foregroundStyle(.secondary)
+                }.frame(minHeight:22)
+                if !event.string("preview").isEmpty || event.string("kind")=="reasoning"{Text(requestValueText(event.string("preview"))).font(.system(size:11)).foregroundStyle(.secondary).lineLimit(4).padding(.leading,24)}
+                JourneyFiles(files:event.objects("files")).padding(.leading,24)
             }.padding(7).frame(maxWidth:.infinity,alignment:.leading).contentShape(Rectangle()).onTapGesture{choose(event)}
                 .background(fill,in:RoundedRectangle(cornerRadius:7))
                 .overlay(RoundedRectangle(cornerRadius:7).stroke(guidance ? Color.blue.opacity(0.16):.clear).allowsHitTesting(false))
@@ -267,7 +281,7 @@ struct JourneyInspector:View{
                 LazyVGrid(columns:[GridItem(.flexible()),GridItem(.flexible())],spacing:8){metric(L("费用","Cost"),money(summary.number("cost_usd")));metric("Token",compact(summary.number("tokens")));metric(L("请求","Requests"),summary.integer("requests").map(String.init) ?? "—");metric(L("模型调用","Model calls"),summary.integer("calls").map(String.init) ?? "—")}
                 Divider();Text(requestValueText(request.string("prompt_preview"))).font(.system(size:13,weight:.medium)).lineLimit(4)
                 fields([(L("费用","Cost"),money(request.number("cost_usd"))),("Token",compact(request.number("total_tokens"))),(L("模型调用","Model calls"),request.integer("call_count").map(String.init) ?? "—"),(L("耗时","Duration"),journeyDuration(request.number("duration_ms"))),(L("模型","Model"),modelName(request.string("model"))),(L("推理强度","Reasoning"),logEffortName(request.string("reasoning_effort"))),(L("速度","Speed"),journeySpeed(request.string("service_tier"))),(L("状态","Status"),journeyStatus(request.string("status"))),(L("开始","Start"),logDateText(parsedDate(request["started_at"] ?? request["timestamp"]))),(L("结束","End"),logDateText(parsedDate(request["ended_at"])))])
-                if !event.isEmpty{Divider();HStack(spacing:7){Text(journeyTitle(event)).font(.system(size:13,weight:.medium));if !event.string("command").isEmpty{JourneyCommandButton(command:event.string("command"),tool:journeyTitle(event))};Spacer(minLength:0)};if !event.string("preview").isEmpty{Text(event.string("preview")).font(.system(size:12)).textSelection(.enabled)}
+                if !event.isEmpty{Divider();HStack(spacing:8){JourneyIcon(kind:event.string("kind"));Text(journeyTitle(event)).font(.system(size:13,weight:.medium));if !event.string("command").isEmpty{JourneyCommandButton(command:event.string("command"),tool:journeyTitle(event))};Spacer(minLength:0)};if !event.string("preview").isEmpty{Text(event.string("preview")).font(.system(size:12)).textSelection(.enabled)}
                     if event.string("kind")=="model"{fields([(L("模型","Model"),modelName(event.string("model"))),(L("费用","Cost"),money(event.number("cost_usd"))),("Token",compact(event.number("tokens"))),(L("推理强度","Reasoning"),logEffortName(event.string("effort"))),(L("速度","Speed"),journeySpeed(event.string("speed"))),(L("耗时","Duration"),journeyDuration(event.number("duration_ms")))]+[("input_tokens",L("输入","Input")),("cached_input_tokens",L("缓存读取","Cache read")),("cache_write_input_tokens",L("缓存写入","Cache write")),("output_tokens",L("输出","Output")),("reasoning_output_tokens",L("推理输出","Reasoning output"))].map {($0.1,compact(event.object("usage").number($0.0)))})}
                     else{fields([(L("工具","Tool"),requestValueText(event.string("tool"))),(L("状态","Status"),journeyStatus(event.string("status"))),(L("耗时","Duration"),journeyDuration(event.number("duration_ms"))),(L("时间","Time"),logDateText(parsedDate(event["time"])))])}
                     if !event.string("agent_id").isEmpty{fields([(L("费用","Cost"),money(event.number("cost_usd"))),("Token",compact(event.number("tokens"))),(L("模型调用","Model calls"),event.integer("calls").map(String.init) ?? "—")])}
@@ -285,4 +299,3 @@ func journeySpeed(_ value:String)->String{switch normalizedTier(value){case "pri
 func journeyStatus(_ value:String)->String{switch value{case "completed":return L("已完成","Completed");case "running","inProgress":return L("进行中","Running");case "failed":return L("失败","Failed");case "aborted","interrupted":return L("已中断","Interrupted");case "declined":return L("已拒绝","Declined");default:return "—"}}
 func journeyFileAction(_ value:String)->String{switch value.lowercased(){case "add":return L("新增","Added");case "delete":return L("删除","Deleted");case "read":return L("读取","Read");case "search":return L("搜索","Search");case "listfiles":return L("列出","List");case "visualization":return L("可视化","Visualization");case "image":return L("生成","Generated");default:return L("修改","Modified")}}
 func journeyTitle(_ e:Object)->String{switch e.string("kind"){case "model":return L("调用了 ","Called ")+modelName(e.string("model"));case "commandExecution","tool":return requestValueText(e.string("tool"));case "reasoning":return L("思考摘要","Reasoning summary");case "agentMessage":return e.string("phase")=="final_answer" ? L("返回回答","Answer") : L("进度说明","Progress");case "userMessage":return L("用户引导","User guidance");case "agentInput":return L("代理指令","Agent input");case "userInput":return L("AI 提问","AI question");case "userInputReply":return L("用户回答","User answer");case "fileChange":return L("文件改动","File changes");case "webSearch":return L("网页工具","Web tool");case "mcpToolCall":return "MCP · "+e.string("tool");case "subAgentActivity":return e.string("activity")=="started" ? L("启动子代理","Start subagent") : e.string("activity")=="completed" ? L("子代理完成","Subagent completed") : L("子代理","Subagent");case "collabAgentToolCall":return L("子代理 · ","Subagent · ")+e.string("tool");case "imageView":return L("查看图片","View image");case "imageGeneration":return L("生成图片","Generate image");case "contextCompaction":return L("上下文压缩","Context compaction");case "resume":return L("继续执行","Resumed");case "pause":return L("执行中断","Interrupted");case "completed":return L("本轮完成","Completed");case "sleep":return L("等待","Waiting");case "plan":return L("更新计划","Update plan");default:return requestValueText(e.string("kind"))}}
-func journeySymbol(_ kind:String)->String{switch kind{case "model":return "cpu";case "commandExecution","tool":return "terminal";case "reasoning":return "brain";case "fileChange":return "doc.text";case "userMessage","userInputReply":return "person";case "subAgentActivity","collabAgentToolCall":return "arrow.triangle.branch";case "imageView","imageGeneration":return "photo";case "webSearch":return "magnifyingglass";case "pause":return "pause";case "completed":return "checkmark";case "contextCompaction":return "archivebox";default:return "bubble"}}

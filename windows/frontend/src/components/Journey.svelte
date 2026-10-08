@@ -1,6 +1,6 @@
 <script lang="ts">
  import{onMount,onDestroy,tick}from'svelte';import{api,listen,rows,text,compact,cost,number,type Row}from'../lib/api';import{tr}from'../lib/i18n';
- import{modelName,effort,speed,requestStatus,fullTime}from'./logFormat';import{journeyBlocks,journeyTitle,journeyDuration,eventFields,fileAction}from'./journey';import JourneyEvent from './JourneyEvent.svelte';import JourneyPicker from './JourneyPicker.svelte';import JourneyCommand from './JourneyCommand.svelte';
+ import{modelName,effort,speed,requestStatus,fullTime}from'./logFormat';import{journeyBlocks,journeyTitle,journeyDuration,eventFields,fileAction}from'./journey';import JourneyEvent from './JourneyEvent.svelte';import JourneyPicker from './JourneyPicker.svelte';import JourneyCommand from './JourneyCommand.svelte';import JourneyIcon from './JourneyIcon.svelte';
  export let revision:any;export let onerror:((e:any)=>void)|undefined;
  let projects:Row[]=[],threads:Row[]=[],requests:Row[]=[],project='',thread:Row={},request:Row={},summary:Row={},selected:Row={},events:Row[]=[];
  let threadNext='',requestPage=1,requestPages=1,next='',scope='',cursors=[''],scopeLabel='',busy=false,error='',ready=false,lastRevision:any;
@@ -43,7 +43,7 @@
    <div class="flow-scroll" bind:this={flowScroll}>
     {#if busy}<p class="muted">{tr('正在加载')}</p>{/if}
     {#each blocks as block(block.id)}<div class="model-group" class:model-call={!!block.model}>
-     {#if block.model}<button class="model-heading" class:chosen={selected.id===block.model.id} aria-expanded={!collapsed.has(block.id)} onclick={()=>toggle(block.model!)}><strong>{journeyTitle(block.model)}</strong><span>{cost(block.model.cost_usd)} · {compact(block.model.tokens)}{number(block.model.tokens)===null?'':' Token'}</span><span class="model-chevron">{collapsed.has(block.id)?'›':'⌄'}</span></button>{/if}
+     {#if block.model}<button class="model-heading" class:chosen={selected.id===block.model.id} aria-expanded={!collapsed.has(block.id)} onclick={()=>toggle(block.model!)}><JourneyIcon kind="model"/><strong>{journeyTitle(block.model)}</strong><span>{cost(block.model.cost_usd)} · {compact(block.model.tokens)}{number(block.model.tokens)===null?'':' Token'}</span><span class="model-chevron"><JourneyIcon kind={collapsed.has(block.id)?'chevronRight':'chevronDown'} size={12}/></span></button>{/if}
      {#if !block.model||!collapsed.has(block.id)}<div class="model-children">{#each block.items as event(event.id)}<JourneyEvent {event} selected={String(selected.id??'')} onselect={e=>selected=e} onagent={chooseAgent}/>{/each}</div>{/if}
     </div>{/each}
     {#if !busy&&!blocks.length}<p class="muted">—</p>{/if}
@@ -54,7 +54,7 @@
   <button class="pane-handle" aria-label={tr('调整详情栏宽度')} onpointerdown={begin} onkeydown={resizeKey} ondblclick={()=>split=48/77}></button>
   <aside class="journey-inspector"><h4>{text(thread.title)}</h4><div class="metrics">{#each [[tr('费用'),cost(summary.cost_usd)],['Token',compact(summary.tokens)],[tr('请求'),text(summary.requests)],[tr('模型调用'),text(summary.calls)]] as [label,value]}<div><small>{label}</small><strong>{value}</strong></div>{/each}</div>
    <section><h4 class="request-title">{text(request.prompt_preview)}</h4><dl>{#each requestFields as [label,value]}<div><dt>{label}</dt><dd>{value}</dd></div>{/each}</dl></section>
-   {#if selected.id}<section><div class="step-heading"><h4>{journeyTitle(selected)}</h4>{#if selected.command}<JourneyCommand command={selected.command} tool={journeyTitle(selected)}/>{/if}</div>{#if selected.preview}<p class="event-preview">{selected.preview}</p>{/if}<dl>{#each eventFields(selected) as [label,value]}<div><dt>{label}</dt><dd>{value}</dd></div>{/each}</dl>{#each rows(selected.files) as file}<div class="file"><span>{fileAction(file.action)}</span><span>{text(file.path)}{file.destination?' → '+file.destination:''}</span></div>{/each}</section>{/if}
+   {#if selected.id}<section><div class="step-heading"><JourneyIcon kind={selected.kind}/><h4>{journeyTitle(selected)}</h4>{#if selected.command}<JourneyCommand command={selected.command} tool={journeyTitle(selected)}/>{/if}</div>{#if selected.preview}<p class="event-preview">{selected.preview}</p>{/if}<dl>{#each eventFields(selected) as [label,value]}<div><dt>{label}</dt><dd>{value}</dd></div>{/each}</dl>{#each rows(selected.files) as file}<div class="file"><span>{fileAction(file.action)}</span><span>{text(file.path)}{file.destination?' → '+file.destination:''}</span></div>{/each}</section>{/if}
   </aside>
  </div>{/if}
 </section>

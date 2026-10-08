@@ -1,6 +1,7 @@
 <script lang="ts">
  import {onMount,tick} from 'svelte';
  import {popover,viewportBounds} from '../lib/floating';
+ import JourneyIcon from './JourneyIcon.svelte';
  export let label='';export let title='—';export let value='';
  export let options:{id:string;title:string}[]=[];
  export let onselect:(id:string)=>void;
@@ -37,7 +38,7 @@
  onMount(()=>{document.addEventListener('scroll',place,true);const viewport=window.visualViewport;viewport?.addEventListener('resize',place);viewport?.addEventListener('scroll',place);return()=>{document.removeEventListener('scroll',place,true);viewport?.removeEventListener('resize',place);viewport?.removeEventListener('scroll',place)}});
 </script>
 <svelte:window onpointerdown={outside} onresize={place}/>
-<button bind:this={trigger} class="picker" aria-label={label} aria-haspopup="listbox" aria-controls={open?pickerID:undefined} aria-expanded={open} disabled={!options.length} onclick={toggle} onkeydown={key}><span>{preview(title)}</span><span class="chevron">⌄</span></button>
+<button bind:this={trigger} class="picker" aria-label={label} aria-haspopup="listbox" aria-controls={open?pickerID:undefined} aria-expanded={open} disabled={!options.length} onclick={toggle} onkeydown={key}><span>{preview(title)}</span><span class="chevron"><JourneyIcon kind="chevronDown" size={12}/></span></button>
 {#if open}
  <div bind:this={popup} id={pickerID} class="picker-options" popover="manual" use:popover style:left={`${left}px`} style:top={`${top}px`} style:width={`${width}px`} role="listbox" aria-label={label} aria-activedescendant={`${pickerID}-${active}`} tabindex="-1" onkeydown={key}>
   {#each options as option,index(option.id)}<button id={`${pickerID}-${index}`} role="option" aria-selected={value===option.id} tabindex="-1" data-index={index} class:highlight={index===active} onpointermove={()=>active=index} onclick={()=>select(index)}><span class="check">{value===option.id?'✓':''}</span><span class="option-title">{preview(option.title)}</span></button>{/each}

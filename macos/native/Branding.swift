@@ -24,6 +24,12 @@ enum Branding {
         for (name,width,extraWidths) in [("brand-mark",CGFloat(18),[CGFloat(28)]),("wordmark",CGFloat(170),[]),("c-dot-ring-static",MenuBarMetrics.taskSize,[]),("completed",MenuBarMetrics.taskSize,[])] {
             images[name] = smallTemplate(name,width:width,extraWidths:extraWidths)
         }
+        for file in Bundle.main.urls(forResourcesWithExtension:"svg",subdirectory:"journey-icons") ?? [] {
+            if let image=NSImage(contentsOf:file) {
+                image.isTemplate=true
+                images["journey-"+file.deletingPathExtension().lastPathComponent]=image
+            }
+        }
         smallImageLock.lock(); smallImages = images; smallImagesPrepared = true; smallImageLock.unlock()
     }
     private static func smallTemplate(_ name: String,width: CGFloat,extraWidths: [CGFloat]) -> NSImage? {
@@ -55,6 +61,7 @@ enum Branding {
     }
     static func logo(dark: Bool) -> NSImage { dark ? self.dark : light }
     static func sidebarWordmark() -> NSImage { smallImage("wordmark") ?? emptyWordmark }
+    static func journeyIcon(_ kind:String) -> NSImage { smallImage("journey-"+kind) ?? smallImage("journey-default") ?? emptyMark }
     static func iconID(_ value: String) -> String { iconIDs.contains(value) ? value : "main" }
     // Call from the branding queue. Only the selected full-size artwork is loaded.
     static func appIcon(_ id: String) throws -> NSImage {
