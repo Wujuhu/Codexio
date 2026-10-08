@@ -297,6 +297,8 @@ enum Analytics {
             row["local_origin"] = calls.contains(where:{$0.local}) || ownSources.contains {$0 == "local" || $0.hasPrefix("local:")}
             row["is_subagent"] = own.flag("is_subagent")
             row["member_ids"] = calls.map(\.id)
+            row["member_turn_keys"] = members.map {$0.string("id")}
+            row["resume_turn_ids"] = members.filter {!$0.string("continuation_of").isEmpty}.map {$0.string("turn_id")}
             for key in ["input_tokens","cached_input_tokens","cache_write_input_tokens","output_tokens","reasoning_output_tokens"] { row[key] = calls.reduce(0) {$0+($1.raw.integer(key) ?? 0)} }
             let models = Array(Set(displayCalls.map {$0.raw.string("model")}.filter {!$0.isEmpty})).sorted()
             row["model"] = models.count == 1 ? models[0] : models.isEmpty ? own.string("model") : models.joined(separator:" + ")

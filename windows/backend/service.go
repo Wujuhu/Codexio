@@ -39,6 +39,8 @@ type Service struct {
 	reportRead       time.Time
 	reportSignature  string
 	reportAccount    string
+	journeyOnce      sync.Once
+	journey          *localJourney
 }
 
 func NewService(directory, executable, version string, mock bool, callbacks DesktopCallbacks) (*Service, error) {
@@ -180,8 +182,7 @@ func (s *Service) GetTrends(q Query) (Row, error) {
 	if e != nil {
 		return nil, e
 	}
-	s.requestAccountReports(false)
-	return Row{"summary": summary, "chart": chart, "models": models, "insights": insights, "heatmap": insights["heatmap"], "activity": Row{"rows": insights["activity"]}, "chats": insights["chats"], "chat_page": insights["chat_page"], "chat_pages": insights["chat_pages"], "chat_total": insights["chat_total"], "chat_usage": s.GetChatRanking("weekly_limit_percent", 1)}, nil
+	return Row{"summary": summary, "chart": chart, "models": models, "insights": insights, "heatmap": insights["heatmap"], "activity": Row{"rows": insights["activity"]}, "chats": insights["chats"], "chat_page": insights["chat_page"], "chat_pages": insights["chat_pages"], "chat_total": insights["chat_total"], "generation": s.store.Generation()}, nil
 }
 func (s *Service) GetSubscription() Row { return s.subscription(true) }
 func (s *Service) GetTrayState() Row {

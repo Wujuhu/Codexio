@@ -8,6 +8,7 @@
  import Insights from './Insights.svelte';
  import ActivityCalendar from './ActivityCalendar.svelte';
  import ChatRanking from './ChatRanking.svelte';
+ import Journey from './Journey.svelte';
  export let data:Row={};
  export let query:Query;
  export let onchange:(q:Query)=>void;
@@ -37,6 +38,7 @@
   <ActivityCalendar data={data.heatmap??data.activity?.rows??[]} onselect={selectRange}/>
   <Insights stats={data.insights?.stats??{}} section="insights"/>
   <button class="ranking-link" onclick={()=>changeTab('chats')}><span>{tr('聊天用量排行')}</span><svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 10h13m-5-5 5 5-5 5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+  <Journey revision={data.generation} {onerror}/>
  </div>
 {:else if tab==='trend'}
  <div class="usage-section trend-section" role="tabpanel" id="usage-panel-trend" aria-labelledby="usage-tab-trend">

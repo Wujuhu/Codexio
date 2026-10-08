@@ -50,6 +50,8 @@ final class UsageSnapshotCache {
             let reuseCalls = input?.ledger == next.ledger && input?.prices == next.prices && input?.upstream == next.upstream
             let calls = reuseCalls ? cached?.calls ?? [] : try prepareCalls()
             result = Analytics.build(records:[],turns:turns,links:links,catalog:catalog,now:now,preparedCalls:calls)
+            try LocalChatRankingStore.update(result,database:database)
+            result.localChatRows = []
             let statusExpiry = turns.filter {$0.string("status") == "running"}.compactMap {parsedDate($0["observed_at"])?.addingTimeInterval(900)}.filter {$0 > now}.min()
             let futureRecord = result.calls.compactMap(\.date).filter {$0 > now}.min()
             let futureTurn = turns.compactMap {parsedDate($0["observed_at"])}.filter {$0 > now}.min()

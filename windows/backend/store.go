@@ -148,6 +148,7 @@ func (s *Store) schema() error {
  CREATE INDEX IF NOT EXISTS go_priced_calls_owner ON usage_priced_calls(session_id,turn_id,timestamp);
  CREATE TABLE IF NOT EXISTS usage_query_sources(record_id TEXT NOT NULL,source_id TEXT NOT NULL,PRIMARY KEY(record_id,source_id));
  CREATE TABLE IF NOT EXISTS usage_request_groups(id TEXT PRIMARY KEY,timestamp TEXT NOT NULL,record_kind TEXT NOT NULL,is_subagent INTEGER NOT NULL,subagent_count INTEGER NOT NULL,data TEXT NOT NULL);
+ CREATE INDEX IF NOT EXISTS journey_request_session ON usage_request_groups(json_extract(data,'$.session_id'),timestamp DESC);
  CREATE INDEX IF NOT EXISTS request_groups_time ON usage_request_groups(timestamp DESC,id DESC);
  CREATE TABLE IF NOT EXISTS usage_request_members(request_id TEXT NOT NULL,record_id TEXT NOT NULL,PRIMARY KEY(request_id,record_id));
  CREATE INDEX IF NOT EXISTS request_members_record ON usage_request_members(record_id,request_id);

@@ -72,6 +72,9 @@ func (s *Store) rebuildSessionRoots(tx *sql.Tx, metadata map[string]Row, links [
 	return nil
 }
 func (s *Store) localChatRows(q Query, page, size int) ([]Row, int, int, error) {
+	return s.localChatRowsSorted(q, page, size, "tokens")
+}
+func (s *Store) localChatRowsSorted(q Query, page, size int, metric string) ([]Row, int, int, error) {
 	q.Source = "local"
 	where, args := queryFilter(q, false)
 	where = strings.ReplaceAll(where, "usage_priced_calls.id", "p.id")
@@ -83,7 +86,11 @@ func (s *Store) localChatRows(q Query, page, size int) ([]Row, int, int, error) 
 	pages := max(1, (total+size-1)/size)
 	page = min(max(1, page), pages)
 	// The aggregate stays in SQLite; only the requested ranking page is decoded.
-	query := `SELECT coalesce(roots.root_session_id,p.session_id),coalesce(t.title,max(CASE WHEN roots.root_session_id=p.session_id OR roots.root_session_id IS NULL THEN json_extract(p.data,'$.session_title') END),''),sum(json_extract(p.metrics,'$.tokens')),sum(json_extract(p.metrics,'$.usd')),sum(coalesce(json_extract(p.metrics,'$.unpriced_calls'),0)) FROM usage_priced_calls p LEFT JOIN usage_query_session_roots roots ON roots.session_id=p.session_id LEFT JOIN usage_session_titles t ON t.session_id=coalesce(roots.root_session_id,p.session_id) WHERE ` + where + ` GROUP BY coalesce(roots.root_session_id,p.session_id) ORDER BY sum(json_extract(p.metrics,'$.tokens')) DESC,coalesce(roots.root_session_id,p.session_id) LIMIT ? OFFSET ?`
+	order := "tokens"
+	if metric == "cost_usd" {
+		order = "usd"
+	}
+	query := `SELECT coalesce(roots.root_session_id,p.session_id),coalesce(t.title,max(CASE WHEN roots.root_session_id=p.session_id OR roots.root_session_id IS NULL THEN json_extract(p.data,'$.session_title') END),''),sum(json_extract(p.metrics,'$.tokens')),sum(json_extract(p.metrics,'$.usd')),sum(coalesce(json_extract(p.metrics,'$.unpriced_calls'),0)) FROM usage_priced_calls p LEFT JOIN usage_query_session_roots roots ON roots.session_id=p.session_id LEFT JOIN usage_session_titles t ON t.session_id=coalesce(roots.root_session_id,p.session_id) WHERE ` + where + ` GROUP BY coalesce(roots.root_session_id,p.session_id) ORDER BY sum(json_extract(p.metrics,'$.` + order + `')) DESC,coalesce(roots.root_session_id,p.session_id) LIMIT ? OFFSET ?`
 	params := append(append([]any{}, args...), size, (page-1)*size)
 	rows, e := s.db.Query(query, params...)
 	if e != nil {
@@ -99,12 +106,16 @@ func (s *Store) localChatRows(q Query, page, size int) ([]Row, int, int, error) 
 			rows.Close()
 			return nil, 0, 0, e
 		}
-		r := Row{"session_id": session, "thread_id": session, "session_title": title, "name": title, "tokens": nil, "local_tokens": nil, "usd": nil, "cost_partial": unpriced > 0, "cost_complete": unpriced == 0}
+		r := Row{"session_id": session, "thread_id": session, "session_title": title, "name": title, "title": title, "tokens": nil, "local_tokens": nil, "usd": nil, "cost_usd": nil, "cost_partial": unpriced > 0, "cost_complete": unpriced == 0}
+		if unpriced > 0 {
+			r["data_status"] = "partial"
+		}
 		if tokens.Valid {
 			r["tokens"], r["local_tokens"] = tokens.Int64, tokens.Int64
 		}
 		if usd.Valid {
 			r["usd"] = usd.Float64
+			r["cost_usd"] = usd.Float64
 		}
 		chats = append(chats, r)
 	}

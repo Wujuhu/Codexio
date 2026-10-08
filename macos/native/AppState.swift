@@ -20,6 +20,8 @@ final class AppState: ObservableObject {
     private lazy var usageReportStore = UsageReportStore(directory: usageReportDirectory)
     private let brandingQueue = DispatchQueue(label:"com.wujuhu.codexio.branding",qos:.utility)
     private lazy var usageCache = UsageSnapshotCache(database:database,catalog:catalog)
+    lazy var journeyReader = JourneyReader(database)
+    let journeyCatalog = JourneyCatalog()
     private let objectFiles = ObjectFileCache()
     let overviewProjection = AsyncProjection(TrendProjection())
     let trendProjection = AsyncProjection(TrendProjection())
@@ -191,7 +193,7 @@ final class AppState: ObservableObject {
         if paths.snapshot != canonical, ProcessInfo.processInfo.environment["CODEXIO_DATA_DIR"] == nil { try atomicJSON(snapshot,to:canonical) }
         WidgetCenter.shared.reloadAllTimelines()
     }
-    func refresh() { refreshUsage(); refreshQuota(); if selectedPage == "subscription" || usageSection == "threads" { refreshReports(force:true) } }
+    func refresh() { refreshUsage(); refreshQuota(); if selectedPage == "subscription" { refreshReports(force:true) } }
     private var usageReportSourceKey: String { preferences.roots.map(\.path).sorted().joined(separator: "\n") + "\n" + accountRoot.path }
     func prepareUsageReports(completion: @escaping (Result<UsageReportCollection, Error>) -> Void) {
         let sourceKey = usageReportSourceKey
@@ -403,7 +405,7 @@ final class AppState: ObservableObject {
         if !planHistory.isEmpty { planHistory = [:] }; if !chatUsage.isEmpty { chatUsage = [:] }
         if reportError != nil { reportError = nil }; if reportsLoading { reportsLoading = false }
     }
-    private var reportsVisible: Bool { mainWindowVisible && (selectedPage == "subscription" || (selectedPage == "trends" && usageSection == "threads")) }
+    private var reportsVisible: Bool { mainWindowVisible && selectedPage == "subscription" }
     func refreshVisibleReports() { if reportsVisible { refreshReports() } }
     private func pendingResetOperations(account: String) -> [Object] {
         guard !account.isEmpty else { return [] }

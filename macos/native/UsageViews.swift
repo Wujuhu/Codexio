@@ -19,7 +19,7 @@ struct UsageView: View {
                     }
                 }.padding(PageLayout.inset)
             }
-        }.onChange(of:state.usageSection) { _,section in if section == "threads" { state.refreshReports() } }
+        }
     }
     private func tab(_ id: String,_ title: String) -> some View {
         Button { state.usageSection = id } label: {
@@ -78,6 +78,7 @@ struct LocalActivityView: View {
             }.font(.system(size:16))
             Divider()
             Button { state.usageSection = "threads" } label: { HStack { Text(L("聊天用量排行", "Chat usage ranking")); Spacer(); Image(systemName:"arrow.right") } }.buttonStyle(.plain)
+            JourneyView(state:state)
         }
     }
     @ViewBuilder private func activityMetrics(separators: Bool) -> some View {
@@ -191,35 +192,32 @@ struct UsageTrendsView: View {
 struct ChatRankingView: View {
     @ObservedObject var state: AppState
     @State private var expanded: Set<String> = []
-    @State private var localMode = false
-    @State private var sortMetric = "weekly_limit_percent"
+    @StateObject private var ranking = LocalChatRankingModel()
+    @State private var sortMetric = "cost_usd"
     @State private var page = 0
     @State private var visibleLimit = 5
     @State private var tableWidth: CGFloat = 700
     @State private var savedWidths: [String:CGFloat] = [:]
     @State private var resizeOrigin: [String:CGFloat]?
-    private var storageKey: String { localMode ? "usage-local-threads" : "usage-threads" }
+    private var storageKey: String { "usage-threads" }
     private var widths: [String:CGFloat] {
         let available = max(430,tableWidth-24)
-        let credits = min(available-200-(localMode ? 0 : 120),max(100,savedWidths["credits"] ?? 115))
-        let weekly = localMode ? 0 : min(available-200-credits,max(120,savedWidths["weekly"] ?? 180))
+        let credits = min(available-200-120,max(100,savedWidths["credits"] ?? 115))
+        let weekly = min(available-200-credits,max(120,savedWidths["weekly"] ?? 180))
         return ["chat":available-weekly-credits,"weekly":weekly,"credits":credits]
     }
-    private var rows: [Object] {
-        if localMode { return state.usage.localChatRows }
-        return state.chatUsage.objects("threads").sorted { ($0.decimal(sortMetric) ?? -1) > ($1.decimal(sortMetric) ?? -1) }
-    }
-    private var visible: [Object] { Array(rows.dropFirst(page*25).prefix(visibleLimit)) }
+    private var rows: [Object] { ranking.rows }
+    private var visible: [Object] { Array(rows.prefix(visibleLimit)) }
+    private func load() { ranking.load(state,metric:sortMetric,page:page) }
     var body: some View {
         VStack(alignment:.leading,spacing:20) {
             AdaptiveRow(spacing:8) {
-                SectionHeading(title:localMode ? L("本机 Token 排行", "Local token ranking") : L("聊天用量排行", "Chat usage ranking"))
-                Button { localMode.toggle(); expanded.removeAll(); page = 0; visibleLimit = 5 } label: { Text(localMode ? L("查看额度排行", "View allowance ranking") : L("本机 Token", "Local tokens")) }.buttonStyle(.plain).foregroundStyle(.secondary)
+                SectionHeading(title:L("聊天用量排行", "Chat usage ranking"))
+                Picker("",selection:$sortMetric) { Text(L("按费用排序", "Sort by cost")).tag("cost_usd"); Text(L("按 Token 排序", "Sort by tokens")).tag("tokens") }.labelsHidden().fixedSize()
             }
-            if state.reportsLoading && !localMode { ProgressView().controlSize(.small) }
-            if let error = state.reportError, !localMode, !rows.isEmpty { StatusNote(text:error) }
+            if let error = ranking.error { StatusNote(text:error) }
             if rows.isEmpty {
-                EmptyState(title:state.reportsLoading && !localMode ? L("正在读取", "Loading") : L("暂不可用", "Unavailable"),detail:localMode ? L("暂无本机聊天记录", "No local chat records") : state.reportError ?? L("当前账户尚未提供这项明细", "This account has not provided these details"))
+                EmptyState(title:L("暂不可用", "Unavailable"),detail:L("暂无本机聊天记录", "No local chat records"))
             } else {
                 ScrollView(.horizontal) {
                     VStack(spacing:0) {
@@ -229,33 +227,33 @@ struct ChatRankingView: View {
                 }.frame(minWidth:0,maxWidth:.infinity)
                     .onGeometryChange(for:CGFloat.self) { $0.size.width } action: { if abs(tableWidth-$0) > 0.5 { tableWidth = $0 } }
                     .clipShape(RoundedRectangle(cornerRadius:18)).overlay(RoundedRectangle(cornerRadius:18).stroke(.secondary.opacity(0.22)))
-                if min(25,rows.count-page*25) > visibleLimit {
+                if rows.count > visibleLimit {
                     Button(L("显示更多", "Show more")) { visibleLimit = min(25,visibleLimit+5) }.buttonStyle(.bordered).clipShape(Capsule())
                 }
                 HStack {
-                    if !localMode { Text(L("统计截至", "Usage as of")+" "+reportDateText(parsedDate(state.chatUsage["data_as_of"]))) }
+                    Text(L("统计截至", "Usage as of")+" "+reportDateText(state.usage.updated))
                     Spacer()
                     Button { page = max(0,page-1); visibleLimit = 5 } label: { Image(systemName:"chevron.left") }.disabled(page == 0)
-                    Text("\(page+1) / \(max(1,(rows.count+24)/25))")
-                    Button { page += 1; visibleLimit = 5 } label: { Image(systemName:"chevron.right") }.disabled((page+1)*25 >= rows.count)
+                    Text("\(page+1) / \(ranking.pages)")
+                    Button { page += 1; visibleLimit = 5 } label: { Image(systemName:"chevron.right") }.disabled(page+1 >= ranking.pages)
                 }.font(.system(size:11)).foregroundStyle(.secondary)
             }
         }.onAppear {
-            savedWidths = TableColumnWidths.load(state.preferences,key:storageKey)
+            savedWidths = TableColumnWidths.load(state.preferences,key:storageKey); load()
             if state.paths.mock && CommandLine.arguments.contains("--mock-gallery") { expanded.insert("mock-chat-0") }
-        }.onChange(of:localMode) { _,_ in savedWidths = TableColumnWidths.load(state.preferences,key:storageKey); resizeOrigin = nil }
+        }.onChange(of:sortMetric) { _,_ in page = 0; visibleLimit = 5; expanded = []; load() }
+        .onChange(of:page) { _,_ in load() }.onChange(of:state.usage.revision) { _,_ in expanded = []; load() }
+        .onChange(of:ranking.pages) { _,value in if page>=value {page=max(0,value-1)} }
     }
     private var rankingHeader: some View {
         let sizes = widths
         return HStack(spacing:0) {
             Text(L("聊天", "Chat")).padding(.leading,30).frame(width:sizes["chat"],height:54,alignment:.leading)
-            if !localMode {
-                Button { sortMetric = "weekly_limit_percent" } label: { Text(L("占每周限额的 %", "% of weekly limit")).frame(width:sizes["weekly"],height:54).contentShape(Rectangle()) }.buttonStyle(.plain)
-            }
-            Button { sortMetric = "balance_usage_credits" } label: { Text(localMode ? "Token" : L("已用额度", "Credits used")).frame(width:sizes["credits"],height:54).contentShape(Rectangle()) }.buttonStyle(.plain)
+            Button { sortMetric = "cost_usd" } label: { Text(L("费用", "Cost")).frame(width:sizes["weekly"],height:54).contentShape(Rectangle()) }.buttonStyle(.plain)
+            Button { sortMetric = "tokens" } label: { Text("Token").frame(width:sizes["credits"],height:54).contentShape(Rectangle()) }.buttonStyle(.plain)
         }.font(.system(size:12)).foregroundStyle(.secondary)
             .overlay(alignment:.leading) { divider("chat").offset(x:(sizes["chat"] ?? 0)-4) }
-            .overlay(alignment:.leading) { if !localMode { divider("weekly").offset(x:(sizes["chat"] ?? 0)+(sizes["weekly"] ?? 0)-4) } }
+            .overlay(alignment:.leading) { divider("weekly").offset(x:(sizes["chat"] ?? 0)+(sizes["weekly"] ?? 0)-4) }
             .padding(.horizontal,12)
     }
     private func divider(_ column: String) -> some View {
@@ -268,9 +266,9 @@ struct ChatRankingView: View {
         guard let origin = resizeOrigin else { return }
         let chat = origin["chat"] ?? 200, weekly = origin["weekly"] ?? 180, credits = origin["credits"] ?? 115
         if column == "chat" {
-            let next = localMode ? credits : weekly, minimum: CGFloat = localMode ? 100 : 120
+            let next = weekly, minimum: CGFloat = 120
             let movement = max(200-chat,min(next-minimum,delta))
-            savedWidths[localMode ? "credits" : "weekly"] = next-movement
+            savedWidths["weekly"] = next-movement
         } else {
             let movement = max(120-weekly,min(credits-100,delta))
             savedWidths["weekly"] = weekly+movement; savedWidths["credits"] = credits-movement
@@ -280,24 +278,22 @@ struct ChatRankingView: View {
         let id = row.string("thread_id"), isExpanded = expanded.contains(id)
         return VStack(spacing:0) {
             Divider()
-            Button { if !expanded.insert(id).inserted { expanded.remove(id) } } label: {
+            Button { if !expanded.insert(id).inserted { expanded.remove(id) } else { ranking.details(state,id:id) } } label: {
                 HStack(spacing:0) {
                     VStack(alignment:.leading,spacing:4) {
-                        Text(state.usage.chatTitles[id] ?? id).lineLimit(1)
+                        Text(row.string("title",state.usage.chatTitles[id] ?? id)).lineLimit(1)
                         if row.string("data_status") == "partial" { Text(L("部分数据", "Partial data")).font(.caption).foregroundStyle(.secondary) }
                     }.frame(maxWidth:.infinity,alignment:.leading).padding(.horizontal,30).frame(width:widths["chat"],alignment:.leading)
                         .overlay(alignment:.leading) { Image(systemName:isExpanded ? "chevron.down" : "chevron.right").font(.system(size:12)).foregroundStyle(.secondary).frame(width:24) }
-                    if !localMode { Text(precisePercent(row.number("weekly_limit_percent"))).monospacedDigit().frame(width:widths["weekly"]) }
-                    Text(localMode ? compact(row.number("local_tokens")) : creditsText(row.decimal("balance_usage_credits"))).monospacedDigit().frame(width:widths["credits"])
+                    Text(money(row.number("cost_usd"))).monospacedDigit().frame(width:widths["weekly"])
+                    Text(compact(row.number("tokens"))).monospacedDigit().frame(width:widths["credits"])
                 }.font(.system(size:14)).padding(.horizontal,12).padding(.vertical,16).contentShape(Rectangle())
             }.buttonStyle(.plain)
             if isExpanded {
                 VStack(alignment:.leading,spacing:17) {
-                    if !localMode {
-                        breakdown(row,key:"model",title:L("模型", "Model"))
-                        breakdown(row,key:"reasoning_effort",title:L("推理强度", "Reasoning"))
-                        breakdown(row,key:"speed",title:L("速度", "Speed"))
-                    }
+                    breakdown(row,key:"model",title:L("模型", "Model"))
+                    breakdown(row,key:"reasoning_effort",title:L("推理强度", "Reasoning"))
+                    breakdown(row,key:"speed",title:L("速度", "Speed"))
                     Button(L("打开聊天 ↗", "Open chat ↗")) { openChat(id) }.buttonStyle(.plain).padding(.top,3)
                 }.padding(.horizontal,53).padding(.bottom,24).frame(maxWidth:.infinity,alignment:.leading)
             }
@@ -306,14 +302,14 @@ struct ChatRankingView: View {
     private func breakdown(_ row: Object,key: String,title: String) -> some View {
         var groups: [String:Decimal] = [:]
         let total = row.decimal(sortMetric)
-        for group in row.objects("groups") { if let amount = group.decimal(sortMetric) { groups[group.string(key,L("未知", "Unknown")),default:0] += amount } }
+        for group in ranking.groups[row.string("thread_id")] ?? [] { if let amount = group.decimal(sortMetric) { groups[group.string(key,"—"),default:0] += amount } }
         let sorted = groups.sorted {$0.value > $1.value}
         return HStack(alignment:.top,spacing:15) {
             Text(title).foregroundStyle(.secondary).frame(width:100,alignment:.leading)
             if let total, total > 0, !sorted.isEmpty {
                 VStack(alignment:.leading,spacing:8) {
                     ForEach(sorted,id:\.key) { name,amount in
-                        HStack { Text(key == "model" ? modelName(name) : key == "reasoning_effort" ? effortName(name) : ["priority","fast"].contains(name) ? L("快速模式", "Fast mode") : ["standard","default"].contains(name) ? L("标准", "Standard") : name); Text(percent(NSDecimalNumber(decimal:amount/total*100).doubleValue,digits:1)).foregroundStyle(.secondary) }
+                        HStack { Text(key == "model" ? modelName(name) : key == "reasoning_effort" ? effortName(name) : ["priority","fast"].contains(name) ? "Fast" : ["standard","default"].contains(name) ? "Standard" : ["ultrafast","ultra_fast"].contains(name) ? "Ultra Fast" : name == "unknown" ? "—" : name); Text(percent(NSDecimalNumber(decimal:amount/total*100).doubleValue,digits:1)).foregroundStyle(.secondary) }
                     }
                     let rest = total-sorted.reduce(0) {$0+$1.value}
                     if rest > max(0.000001,total*0.0001) { Text(L("未归类", "Unattributed")+" "+percent(NSDecimalNumber(decimal:rest/total*100).doubleValue,digits:1)).foregroundStyle(.secondary) }

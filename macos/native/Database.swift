@@ -33,6 +33,9 @@ final class Database {
             CREATE TABLE IF NOT EXISTS usage_cursors(key TEXT PRIMARY KEY,data TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS usage_session_titles(session_id TEXT PRIMARY KEY,title TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS usage_session_context(session_id TEXT PRIMARY KEY,cwd TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS usage_local_chat_rank(thread_id TEXT PRIMARY KEY,tokens INTEGER,cost REAL,data TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS usage_journey_requests(id TEXT PRIMARY KEY,session_id TEXT NOT NULL,timestamp TEXT NOT NULL,data TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS journey_requests_session ON usage_journey_requests(session_id,timestamp DESC);
             CREATE TABLE IF NOT EXISTS usage_session_files(path TEXT PRIMARY KEY,session_id TEXT NOT NULL,root TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS usage_session_files_session ON usage_session_files(session_id);
             CREATE TABLE IF NOT EXISTS usage_request_sources(id TEXT PRIMARY KEY,path TEXT NOT NULL,root TEXT NOT NULL);

@@ -1,43 +1,66 @@
 package backend
 
-import "sort"
+import (
+	"database/sql"
+	"strconv"
+	"strings"
+)
 
-// Mac UsageViews sorts the service's allowance values and expands only visible
-// rows. The bridge keeps the same 25-row boundary rather than shipping history.
+// Reuse the v0.2.10-derived priced ledger, session roots and bounded query cache.
 func (s *Service) GetChatRanking(metric string, page int) Row {
-	if metric != "balance_usage_credits" {
-		metric = "weekly_limit_percent"
+	if metric != "tokens" {
+		metric = "cost_usd"
 	}
-	s.requestAccountReports(false)
-	reports := ValueRow(s.quota.Snapshot()["reports"])
-	chats := ValueRow(reports["chats"])
-	source := ValueRows(chats["threads"])
-	sort.SliceStable(source, func(i, j int) bool {
-		a, aok := ValueFloat(source[i][metric])
-		b, bok := ValueFloat(source[j][metric])
-		if aok != bok {
-			return aok
-		}
-		return a > b
-	})
-	pages := max(1, (len(source)+24)/25)
-	page = max(1, min(pages, page))
-	begin := min(len(source), (page-1)*25)
-	end := min(len(source), begin+25)
-	result := make([]Row, 0, end-begin)
-	for _, raw := range source[begin:end] {
-		row := CloneRow(raw)
-		id := ValueString(row["thread_id"])
-		var title string
-		_ = s.store.db.QueryRow("SELECT title FROM usage_session_titles WHERE session_id=?", id).Scan(&title)
-		if title == "" {
-			title = id
-		}
-		row["title"] = title
-		result = append(result, row)
+	q := Query{Period: "all", Source: "local", Page: max(1, page), PageSize: 25}
+	key, cached, ok := s.store.cachedQuery("chat-ranking:"+metric+":"+strconv.Itoa(q.Page), q)
+	if ok {
+		return cached
 	}
-	s.reportMu.Lock()
-	busy := s.reportBusy
-	s.reportMu.Unlock()
-	return Row{"threads": result, "page": page, "pages": pages, "total": len(source), "data_as_of": chats["data_as_of"], "error": reports["error"], "loading": busy}
+	rows, total, index, err := s.store.localChatRowsSorted(q, q.Page, 25, metric)
+	if err != nil {
+		return Row{"threads": []Row{}, "error": err.Error(), "pages": 1}
+	}
+	result := Row{"threads": rows, "page": index, "pages": max(1, (total+24)/25), "total": total, "data_as_of": s.store.Status()["updated_at"]}
+	s.store.cacheQuery(key, result)
+	return result
+}
+
+func (s *Service) GetChatRankingDetails(thread string) (Row, error) {
+	q := Query{Period: "all", Source: "local"}
+	key, cached, ok := s.store.cachedQuery("chat-ranking-details:"+thread, q)
+	if ok {
+		return cached, nil
+	}
+	where, args := queryFilter(q, false)
+	where = strings.ReplaceAll(where, "usage_priced_calls.id", "p.id")
+	args = append(args, thread)
+	query := `SELECT p.model,coalesce(json_extract(p.data,'$.reasoning_effort'),''),p.tier,sum(json_extract(p.metrics,'$.usd')),sum(json_extract(p.metrics,'$.tokens')) FROM usage_priced_calls p LEFT JOIN usage_query_session_roots roots ON roots.session_id=p.session_id WHERE ` + where + ` AND coalesce(roots.root_session_id,p.session_id)=? GROUP BY 1,2,3 ORDER BY 1,2,3`
+	records, err := s.store.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer records.Close()
+	groups := []Row{}
+	for records.Next() {
+		var model, effort, tier string
+		var cost sql.NullFloat64
+		var tokens sql.NullInt64
+		if err = records.Scan(&model, &effort, &tier, &cost, &tokens); err != nil {
+			return nil, err
+		}
+		row := Row{"model": model, "reasoning_effort": effort, "speed": requestSpeed(tier), "cost_usd": nil, "tokens": nil}
+		if cost.Valid {
+			row["cost_usd"] = cost.Float64
+		}
+		if tokens.Valid {
+			row["tokens"] = tokens.Int64
+		}
+		groups = append(groups, row)
+	}
+	if err = records.Err(); err != nil {
+		return nil, err
+	}
+	result := Row{"groups": groups}
+	s.store.cacheQuery(key, result)
+	return result, nil
 }
