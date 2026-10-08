@@ -277,7 +277,7 @@ def main():
     if collection.exists():
         shutil.rmtree(collection)
     print(f"\n开发包已验证，Codexio {version}: {DESTINATION}")
-    print("正式发布仅在第二次确认后执行 scripts/publish_release_from_macos.py --version <版本号> --confirm-publish。")
+    print("收到明确的推送并发布指令后执行 scripts/publish_release_from_macos.py --version <指定或最新源码版本号> --confirm-publish，无需二次确认。")
     return 0
 
 

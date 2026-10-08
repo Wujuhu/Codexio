@@ -1,6 +1,6 @@
 # 打包与交付
 
-- 日常功能开发、验证和 Mac 打包全部留在 `build`，不因一次开发构建写入或覆盖 `release`。仅在用户第二次明确确认发布及版本号后，才允许推送，并由发布协调脚本完成正式发布；成功后核验远程附件并归档到 `release/<确认的版本号>/`。
+- 日常功能开发、验证和 Mac 打包全部留在 `build`，不因一次开发构建写入或覆盖 `release`。用户说“推送并且发布”即为本次推送与正式发布的明确授权，无需第二次确认。未指定版本时，读取仓库现有 Mac／Windows／iOS 版本文件，按语义版本选择最新源码版本发布，不自行递增版本号；指定版本时使用用户指定版本。由发布协调脚本完成正式发布，成功后核验远程附件并归档到 `release/<发布版本号>/`。
 - **开发及源码修改统一在本机进行，Mac 与 iOS 在本机构建；Windows 构建通过 SSH 连接 Windows 主机，不默认使用云端构建。** Windows 名称为 `WJH`，优先使用局域网 IP `192.168.1.16`，无法连接时默认尝试备用地址 `100.82.100.123`；SSH 密钥路径为 `/Users/wjh/.ssh/windows_ed25519`。备用地址沿用已核验的同一 Windows 主机身份。
 - Windows 主机上的项目目录为 `C:\CodeWJH\Projects\Codexio`。每次通过局域网 SSH 完成 Windows 构建后，必须在该电脑的 `C:\CodeWJH\Projects\Codexio\build\dev\windows` 保留经验证的 `Codexio.exe` 和配套清单；需要回传本机时使用复制，保留 Windows 上的产物。
 - SSH 处于 Windows Session 0 时，通过临时、按需的计划任务在已登录用户的交互会话中执行现有构建入口及三项隔离模拟冒烟；结束后删除该临时任务，保留构建日志和校验结果。
@@ -11,7 +11,7 @@
 - **以后每次 Release 默认同时发布 Mac、iOS 和 Windows。** 默认正式版本目录固定包含 `Codexio.app.zip`、`Codexio.ipa`、`Codexio.exe`、`latest.json` 四个文件；任一平台产物缺失、过期或校验失败都阻止发布。ZIP 内保留完整的 `Codexio.app`，不生成 DMG。只有用户明确缩小本次平台范围时才使用例外流程；历史版本及其附件不自动补传或覆盖。
 - `build/dev/macos` 保存最新开发 APP、APP ZIP 和清单；`build/dev/windows` 保存最新开发 EXE 和清单。中间文件使用 `build/staging`，构建缓存使用 `build/cache`，检查结果使用 `build/checks`，日志使用 `build/logs`，同版本临时备份使用 `build/backups`。
 - Mac 使用 `build_macos.sh` 生成本地开发包；Windows 通过局域网 SSH 在指定项目目录执行 `build_exe.ps1`，故障排查脚本按需要使用。手动 CI 保留，调用时须满足上述云端构建授权条件。
-- 用户第二次确认发布及版本号后执行 `.venv/bin/python scripts/publish_release_from_macos.py --version <确认的版本号> --confirm-publish`。先核验 Mac 包和最新 iOS IPA，通过 SSH 在 Windows 构建主机核对同一提交、干净工作区、源码指纹、原有冒烟和 EXE 元数据，再复用本机哈希相同的 EXE 或复制回传。全部通过后才推送 `main`，创建包含简短分平台正文及四附件的草稿；下载复核全部附件后一次发布并原子归档。该入口不触发 Windows CI。缺包、源码指纹过期、版本或哈希不符时不得发布。
+- 收到用户“推送并且发布”或同等明确发布指令后，直接执行 `.venv/bin/python scripts/publish_release_from_macos.py --version <指定或最新源码版本号> --confirm-publish`，不再索要二次确认。先核验 Mac 包和最新 iOS IPA，通过 SSH 在 Windows 构建主机核对同一提交、干净工作区、源码指纹、原有冒烟和 EXE 元数据，再复用本机哈希相同的 EXE 或复制回传。全部通过后才推送 `main`，创建包含简短分平台正文及四附件的草稿；下载复核全部附件后一次发布并原子归档。该入口不触发 Windows CI。缺包、源码指纹过期、版本或哈希不符时不得发布。
 - 目标被运行进程占用时保留原文件及暂存新版，不自动结束用户进程。整理 `build` 时也必须保留运行中应用的原路径；当前 `build/macos` 属于待应用退出后清理的旧路径。
 - 本机 Codexio APP 由用户自行启动；开发、打包和核验时不要代用户启动已安装的 APP，也不要启动后要求用户确认。既有隔离模拟数据的打包冒烟入口照常执行。
 - 读取文本文件显式指定 UTF-8。
@@ -43,12 +43,12 @@
 
 # 当前开发流程
 
-- 当前 Mac 版本为 `0.3.8`，使用 Swift／SwiftUI／AppKit。Windows 已按用户明确授权迁移为 Wails + Go，版本由 `windows/VERSION` 独立管理，当前开发版本为 `0.3.8`，已发布版本为 `0.3.7`；旧 Python 版本号继续保留，Mac 与 Windows 的日常需求默认同步开发。iOS 版本由 `ios/VERSION` 记录，默认跟随 Mac／Windows 中较新的版本，当前为 `0.3.8`；以后每次 Release 必须附带经过核验、版本已对齐的最新 `Codexio.ipa`。
-- v0.3.2 已按当时授权完成 Mac ZIP 与清单双附件发布，保持原样。后续发布仍须新的验收及明确版本确认，默认必须包含 Mac ZIP、iOS IPA、Windows EXE 与清单；任何校验失败都保持草稿。
+- 当前 Mac 版本为 `0.3.8`，使用 Swift／SwiftUI／AppKit。Windows 已按用户明确授权迁移为 Wails + Go，版本由 `windows/VERSION` 独立管理，当前开发版本为 `0.3.8`，已发布版本以 GitHub 最新正式 Release 及其共享清单为准；旧 Python 版本号继续保留，Mac 与 Windows 的日常需求默认同步开发。iOS 版本由 `ios/VERSION` 记录，默认跟随 Mac／Windows 中较新的版本，当前为 `0.3.8`；以后每次 Release 必须附带经过核验、版本已对齐的最新 `Codexio.ipa`。
+- v0.3.2 已按当时授权完成 Mac ZIP 与清单双附件发布，保持原样。后续每次发布仍须用户新的明确发布指令；“推送并且发布”按上述规则直接授权，无需再次确认版本，默认必须包含 Mac ZIP、iOS IPA、Windows EXE 与清单；任何校验失败都保持草稿。
 - 每次修改完成并通过验证、开发打包后，提交到本地 Git；开发打包不等于确认正式发布。
 - 每次准备推送或发布时，默认检查仓库 `README.md` 是否需要同步更新，核对版本状态、各平台下载链接与系统要求、功能介绍、安装／更新说明、数据口径及开发流程。需要更新时在推送前完成并提交；无需更新时保持原文。明确区分已发布版本和开发版本，不把未发布的开发包写成已发布。
 - 可视化和 UI／UX 样板默认提供可直接打开的本地预览文件地址，不使用内嵌可视化指令代替地址；样板阶段保持应用代码不变，待用户确认后再实现。
-- 未经用户新的明确授权，不执行 `git push`、GitHub 发布或其他远程变更。
+- 未经用户新的明确授权，不执行 `git push`、GitHub 发布或其他远程变更；用户本次“推送并且发布”已构成授权，不重复询问。
 
 # 最小测试要求
 

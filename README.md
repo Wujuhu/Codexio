@@ -118,7 +118,7 @@ Mac 使用 Swift／SwiftUI／AppKit／WidgetKit，iPhone 使用 SwiftUI／Charts
 | iOS | `/Applications/Xcode.app`、iOS 26+ SDK、项目 Python 环境 | `.venv/bin/python scripts/build_ios.py` |
 | Windows | Windows x64、Go 1.26.1、Node.js/npm；脚本固定 Wails 版本 | `.\build_exe.ps1` |
 
-Mac 入口自动创建或复用 `.venv`；Python 仅参与构建与交付，原生 App 运行不依赖 Python。开发产物位于 `build/dev/<平台>`，打包不会自动推送或发布。修改前请阅读 [AGENTS.md](AGENTS.md)，遵守平台范围、最小冒烟与交付约定。日常桌面功能与适用修复默认同时覆盖 Mac 和 Windows；源码在本机修改，Windows 通过 SSH 在本地 Windows 主机构建。正式发布需再次确认版本，并由发布协调脚本统一核验三端产物、推送、发布及归档；云端构建需要单独授权。
+Mac 入口自动创建或复用 `.venv`；Python 仅参与构建与交付，原生 App 运行不依赖 Python。开发产物位于 `build/dev/<平台>`，打包不会自动推送或发布。修改前请阅读 [AGENTS.md](AGENTS.md)，遵守平台范围、最小冒烟与交付约定。日常桌面功能与适用修复默认同时覆盖 Mac 和 Windows；源码在本机修改，Windows 通过 SSH 在本地 Windows 主机构建。收到明确的推送并发布指令后，由发布协调脚本统一核验三端产物、推送、发布及归档；未指定版本时使用仓库现有最新源码版本，不自行递增版本号，无需二次确认。云端构建需要单独授权。
 
 欢迎通过 [Issues](https://github.com/Wujuhu/Codexio/issues) 反馈问题、建议功能或提交文档修正。问题报告请包含应用版本、系统版本与复现步骤，并移除个人请求内容和凭据。
 
