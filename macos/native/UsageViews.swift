@@ -74,7 +74,7 @@ struct LocalActivityView: View {
             SectionHeading(title:L("活动洞察", "Activity insights")).padding(.top,10)
             AdaptiveRow(spacing:isCompact ? 16 : 55) {
                 HStack { Text(L("快速模式", "Fast mode")).foregroundStyle(.secondary); Spacer(); Text(percent(stats.fastPercent)).monospacedDigit() }
-                HStack { Text(L("最常用的推理强度", "Most used reasoning")).foregroundStyle(.secondary); Spacer(); Text(effortName(stats.effort)+" · "+percent(stats.effortPercent)).monospacedDigit() }
+                HStack { Text(L("最常用的推理强度", "Most used reasoning")).foregroundStyle(.secondary); Spacer(); Text(logEffortName(stats.effort)+" · "+percent(stats.effortPercent)).monospacedDigit() }
             }.font(.system(size:16))
             Divider()
             Button { state.usageSection = "threads" } label: { HStack { Text(L("聊天用量排行", "Chat usage ranking")); Spacer(); Image(systemName:"arrow.right") } }.buttonStyle(.plain)
@@ -309,7 +309,7 @@ struct ChatRankingView: View {
             if let total, total > 0, !sorted.isEmpty {
                 VStack(alignment:.leading,spacing:8) {
                     ForEach(sorted,id:\.key) { name,amount in
-                        HStack { Text(key == "model" ? modelName(name) : key == "reasoning_effort" ? effortName(name) : ["priority","fast"].contains(name) ? "Fast" : ["standard","default"].contains(name) ? "Standard" : ["ultrafast","ultra_fast"].contains(name) ? "Ultra Fast" : name == "unknown" ? "—" : name); Text(percent(NSDecimalNumber(decimal:amount/total*100).doubleValue,digits:1)).foregroundStyle(.secondary) }
+                        HStack { Text(key == "model" ? modelName(name) : key == "reasoning_effort" ? logEffortName(name) : ["priority","fast"].contains(name) ? "Fast" : ["standard","default"].contains(name) ? "Standard" : ["ultrafast","ultra_fast"].contains(name) ? "Ultra Fast" : name == "unknown" ? "—" : name); Text(percent(NSDecimalNumber(decimal:amount/total*100).doubleValue,digits:1)).foregroundStyle(.secondary) }
                     }
                     let rest = total-sorted.reduce(0) {$0+$1.value}
                     if rest > max(0.000001,total*0.0001) { Text(L("未归类", "Unattributed")+" "+percent(NSDecimalNumber(decimal:rest/total*100).doubleValue,digits:1)).foregroundStyle(.secondary) }

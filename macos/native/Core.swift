@@ -207,16 +207,17 @@ func effortName(_ value: String) -> String {
     }
 }
 func logEffortName(_ value: String) -> String {
-    switch value.lowercased() {
-    case "none": return "None"
-    case "minimal": return "Minimal"
-    case "low": return "Low"
-    case "medium": return "Medium"
-    case "high": return "High"
-    case "xhigh": return "Extra high"
-    case "max": return "Max"
-    case "ultra": return "Ultra"
-    case "", "unknown", "未知", "auto": return "—"
+    switch value.trimmingCharacters(in:.whitespacesAndNewlines).lowercased() {
+    case "none", "无": return "None"
+    case "minimal", "最轻": return "Minimal"
+    case "low", "轻度": return "Low"
+    case "medium", "中等": return "Medium"
+    case "high", "高度": return "High"
+    case "xhigh", "extra high", "extra_high", "extra-high", "极高": return "Extra High"
+    case "max", "最高": return "Max"
+    case "ultra", "超高": return "Ultra"
+    case "mixed", "混合": return "Mixed"
+    case "", "unknown", "未知", "auto", "-", "–", "—": return "—"
     default: return value
     }
 }

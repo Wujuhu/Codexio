@@ -64,8 +64,8 @@ final class JourneyModel: ObservableObject {
             } catch {let message=error.localizedDescription;DispatchQueue.main.async{if self?.catalogTicket==ticket{self?.error=message}}}
         }
     }
-    func chooseProject(_ state:AppState,_ id:String){cancel();project=id;thread=[:];request=[:];selected=[:];blocks=[];requests=[];threads=[];catalog(state,project:id)}
-    func chooseThread(_ state:AppState,_ value:Object){thread=value;request=[:];scope="";cursors=[""];flowTicket+=1;blocks=[];selected=[:];loadThread(state,page:1)}
+    func chooseProject(_ state:AppState,_ id:String){cancel();error=nil;project=id;thread=[:];request=[:];selected=[:];blocks=[];requests=[];threads=[];catalog(state,project:id)}
+    func chooseThread(_ state:AppState,_ value:Object){error=nil;thread=value;request=[:];scope="";cursors=[""];flowTicket+=1;blocks=[];selected=[:];loadThread(state,page:1)}
     func loadThread(_ state:AppState,page:Int?=nil){
         guard !thread.isEmpty else{return};let id=thread.string("id"),index=page ?? requestPage;threadTicket+=1;let ticket=threadTicket,snapshot=state.usage
         state.dataQueue.async{[weak self] in
@@ -85,7 +85,7 @@ final class JourneyModel: ObservableObject {
             }catch{let message=error.localizedDescription;DispatchQueue.main.async{if self?.threadTicket==ticket{self?.error=message}}}
         }
     }
-    func chooseRequest(_ state:AppState,_ row:Object){request=row;scope="";cursors=[""];selected=[:];blocks=[];flow(state)}
+    func chooseRequest(_ state:AppState,_ row:Object){error=nil;request=row;scope="";cursors=[""];selected=[:];blocks=[];flow(state)}
     func agent(_ state:AppState,_ id:String){scope=id;cursors=[""];selected=[:];blocks=[];flow(state)}
     func flow(_ state:AppState,cursor:String=""){
         let id=request.string("id"),scope=scope,thread=thread,root=thread.string("root"),snapshot=state.usage
@@ -126,21 +126,23 @@ struct JourneyView:View{
         VStack(alignment:.leading,spacing:16){
             SectionHeading(title:L("执行行程","Execution journey"))
             HStack(spacing:12){
-                Menu{ForEach(model.projects,id:\.journeyID){p in Button(p.string("name")){model.chooseProject(state,p.string("id"))}}}label:{filterLabel(model.projects.first(where:{$0.string("id")==model.project})?.string("name") ?? L("项目","Project"))}.frame(width:180)
-                Menu{ForEach(model.threads,id:\.journeyID){t in Button(t.string("title")){model.chooseThread(state,t)}};if !model.threadNext.isEmpty{Divider();Button(L("显示更多","Show more")){model.catalog(state,before:model.threadNext)}}}label:{filterLabel(model.thread.string("title",L("线程","Thread")))}.frame(maxWidth:420)
+                JourneyPicker(title:model.projects.first(where:{$0.string("id")==model.project})?.string("name") ?? L("项目","Project"),label:L("项目","Project"),selection:model.project,items:model.projects.map{JourneyPicker.Item(id:$0.string("id"),title:$0.string("name"))}){model.chooseProject(state,$0)}.frame(width:180)
+                JourneyPicker(title:model.thread.string("title",L("线程","Thread")),label:L("线程","Thread"),selection:model.thread.string("id"),items:threadOptions){id in
+                    if id=="__more"{model.catalog(state,before:model.threadNext)}else if let row=model.threads.first(where:{$0.string("id")==id}){model.chooseThread(state,row)}
+                }.frame(maxWidth:320)
                 Spacer(minLength:0)
-            }.menuStyle(.borderlessButton)
+            }
             if let error=model.error{StatusNote(text:error)}
             if model.thread.isEmpty{EmptyState(title:L("暂无本机聊天记录","No local chat records"),detail:"")}
             else{
                 GeometryReader{geometry in
                     HSplitView{
                         VStack(spacing:0){
-                            Menu{
-                                ForEach(model.requests,id:\.journeyID){r in Button(requestValueText(r.string("prompt_preview"))){collapsed=[];model.chooseRequest(state,r)}}
-                                if model.requestPage>1{Divider();Button(L("较新的请求","Newer requests")){model.loadThread(state,page:model.requestPage-1)}}
-                                if model.requestPage<model.requestPages{Button(L("较早的请求","Earlier requests")){model.loadThread(state,page:model.requestPage+1)}}
-                            }label:{filterLabel(requestValueText(model.request.string("prompt_preview")))}.menuStyle(.borderlessButton).padding(14)
+                            JourneyPicker(title:requestValueText(model.request.string("prompt_preview")),label:L("选择用户请求","Select request"),selection:model.request.string("id"),items:requestOptions){id in
+                                if id=="__newer"{model.loadThread(state,page:model.requestPage-1)}
+                                else if id=="__older"{model.loadThread(state,page:model.requestPage+1)}
+                                else if let row=model.requests.first(where:{$0.string("id")==id}){collapsed=[];model.chooseRequest(state,row)}
+                            }.padding(14)
                             Divider()
                             if !model.scope.isEmpty{Button(L("返回主行程","Back to main journey")){model.agent(state,"")}.buttonStyle(.plain).padding(10)}
                             ScrollView{
@@ -170,8 +172,46 @@ struct JourneyView:View{
         }.onAppear{model.catalog(state)}.onDisappear{model.cancel()}
         .onChange(of:state.usage.revision){_,_ in guard state.mainWindowVisible else{return};model.catalog(state);model.loadThread(state)}
     }
-    private func filterLabel(_ title:String)->some View{HStack{Text(title).lineLimit(2).frame(maxWidth:.infinity,alignment:.leading);Image(systemName:"chevron.down").font(.system(size:10)).foregroundStyle(.secondary)}.font(.system(size:13)).padding(.horizontal,10).padding(.vertical,8).background(.primary.opacity(0.025),in:RoundedRectangle(cornerRadius:8)).overlay(RoundedRectangle(cornerRadius:8).stroke(.secondary.opacity(0.18))).contentShape(Rectangle())}
+    private var threadOptions:[JourneyPicker.Item]{
+        model.threads.map{JourneyPicker.Item(id:$0.string("id"),title:$0.string("title"))} + (model.threadNext.isEmpty ? [] : [.init(id:"__more",title:L("显示更多","Show more"))])
+    }
+    private var requestOptions:[JourneyPicker.Item]{
+        model.requests.map{JourneyPicker.Item(id:$0.string("id"),title:requestValueText($0.string("prompt_preview")))} + (model.requestPage>1 ? [.init(id:"__newer",title:L("较新的请求","Newer requests"))] : []) + (model.requestPage<model.requestPages ? [.init(id:"__older",title:L("较早的请求","Earlier requests"))] : [])
+    }
     private func open(){let id=model.thread.string("id");guard UUID(uuidString:id) != nil,let url=URL(string:"codex://threads/"+id),NSWorkspace.shared.urlForApplication(toOpen:url) != nil else{state.errorMessage=L("无法在本机定位此聊天","This chat cannot be opened locally");return};NSWorkspace.shared.open(url)}
+}
+
+// The native bordered control matches other filters; the anchored popover keeps
+// long prompts and paged options inside a ten-row scrolling viewport.
+private struct JourneyPicker:View{
+    struct Item:Identifiable{let id:String;let title:String}
+    let title:String,label:String,selection:String,items:[Item],choose:(String)->Void
+    @State private var open=false
+    private func preview(_ value:String)->String{
+        let text=value.split(whereSeparator:{$0.isWhitespace}).joined(separator:" ")
+        return text.count>80 ? String(text.prefix(80))+"…" : requestValueText(text)
+    }
+    var body:some View{
+        GeometryReader{geometry in
+            Button{open.toggle()}label:{
+                HStack(spacing:8){Text(preview(title)).lineLimit(1).truncationMode(.tail).frame(maxWidth:.infinity,alignment:.leading);Image(systemName:"chevron.down").font(.system(size:10)).foregroundStyle(.secondary)}.font(.system(size:13)).frame(maxWidth:.infinity).contentShape(Rectangle())
+            }.buttonStyle(.bordered).controlSize(.regular).frame(maxWidth:.infinity,maxHeight:.infinity).disabled(items.isEmpty).accessibilityLabel(label)
+                .popover(isPresented:$open,arrowEdge:.bottom){
+                    ScrollViewReader{reader in
+                        ScrollView{
+                            LazyVStack(spacing:0){
+                                ForEach(items){item in
+                                    Button{open=false;choose(item.id)}label:{
+                                        HStack(spacing:8){Image(systemName:"checkmark").font(.system(size:10)).opacity(item.id==selection ? 1:0).frame(width:12);Text(preview(item.title)).lineLimit(1).truncationMode(.tail).frame(maxWidth:.infinity,alignment:.leading)}.font(.system(size:13)).padding(.horizontal,8).frame(height:30).contentShape(Rectangle())
+                                    }.buttonStyle(.plain).background(item.id==selection ? Color.primary.opacity(0.07):.clear,in:RoundedRectangle(cornerRadius:5)).id(item.id)
+                                }
+                            }
+                        }.frame(width:min(520,max(160,geometry.size.width)),height:CGFloat(min(10,items.count))*30).padding(4)
+                            .onAppear{if items.contains(where:{$0.id==selection}){reader.scrollTo(selection,anchor:.center)}}
+                    }
+                }
+        }.frame(height:30)
+    }
 }
 
 struct JourneyEventRow:View{
@@ -195,9 +235,9 @@ struct JourneyInspector:View{
                 Text(thread.string("title","—")).font(.system(size:14,weight:.medium))
                 LazyVGrid(columns:[GridItem(.flexible()),GridItem(.flexible())],spacing:8){metric(L("费用","Cost"),money(summary.number("cost_usd")));metric("Token",compact(summary.number("tokens")));metric(L("请求","Requests"),summary.integer("requests").map(String.init) ?? "—");metric(L("模型调用","Model calls"),summary.integer("calls").map(String.init) ?? "—")}
                 Divider();Text(requestValueText(request.string("prompt_preview"))).font(.system(size:13,weight:.medium)).lineLimit(4)
-                fields([(L("费用","Cost"),money(request.number("cost_usd"))),("Token",compact(request.number("total_tokens"))),(L("模型调用","Model calls"),request.integer("call_count").map(String.init) ?? "—"),(L("耗时","Duration"),journeyDuration(request.number("duration_ms"))),(L("模型","Model"),modelName(request.string("model"))),(L("推理强度","Reasoning"),effortName(request.string("reasoning_effort"))),(L("速度","Speed"),journeySpeed(request.string("service_tier"))),(L("状态","Status"),journeyStatus(request.string("status"))),(L("开始","Start"),logDateText(parsedDate(request["started_at"] ?? request["timestamp"]))),(L("结束","End"),logDateText(parsedDate(request["ended_at"])))])
+                fields([(L("费用","Cost"),money(request.number("cost_usd"))),("Token",compact(request.number("total_tokens"))),(L("模型调用","Model calls"),request.integer("call_count").map(String.init) ?? "—"),(L("耗时","Duration"),journeyDuration(request.number("duration_ms"))),(L("模型","Model"),modelName(request.string("model"))),(L("推理强度","Reasoning"),logEffortName(request.string("reasoning_effort"))),(L("速度","Speed"),journeySpeed(request.string("service_tier"))),(L("状态","Status"),journeyStatus(request.string("status"))),(L("开始","Start"),logDateText(parsedDate(request["started_at"] ?? request["timestamp"]))),(L("结束","End"),logDateText(parsedDate(request["ended_at"])))])
                 if !event.isEmpty{Divider();Text(journeyTitle(event)).font(.system(size:13,weight:.medium));if !event.string("preview").isEmpty{Text(event.string("preview")).font(.system(size:12)).textSelection(.enabled)}
-                    if event.string("kind")=="model"{fields([(L("模型","Model"),modelName(event.string("model"))),(L("费用","Cost"),money(event.number("cost_usd"))),("Token",compact(event.number("tokens"))),(L("推理强度","Reasoning"),effortName(event.string("effort"))),(L("速度","Speed"),journeySpeed(event.string("speed"))),(L("耗时","Duration"),journeyDuration(event.number("duration_ms")))]+[("input_tokens",L("输入","Input")),("cached_input_tokens",L("缓存读取","Cache read")),("cache_write_input_tokens",L("缓存写入","Cache write")),("output_tokens",L("输出","Output")),("reasoning_output_tokens",L("推理输出","Reasoning output"))].map {($0.1,compact(event.object("usage").number($0.0)))})}
+                    if event.string("kind")=="model"{fields([(L("模型","Model"),modelName(event.string("model"))),(L("费用","Cost"),money(event.number("cost_usd"))),("Token",compact(event.number("tokens"))),(L("推理强度","Reasoning"),logEffortName(event.string("effort"))),(L("速度","Speed"),journeySpeed(event.string("speed"))),(L("耗时","Duration"),journeyDuration(event.number("duration_ms")))]+[("input_tokens",L("输入","Input")),("cached_input_tokens",L("缓存读取","Cache read")),("cache_write_input_tokens",L("缓存写入","Cache write")),("output_tokens",L("输出","Output")),("reasoning_output_tokens",L("推理输出","Reasoning output"))].map {($0.1,compact(event.object("usage").number($0.0)))})}
                     else{fields([(L("工具","Tool"),requestValueText(event.string("tool"))),(L("状态","Status"),journeyStatus(event.string("status"))),(L("耗时","Duration"),journeyDuration(event.number("duration_ms"))),(L("时间","Time"),logDateText(parsedDate(event["time"])))])}
                     if !event.string("agent_id").isEmpty{fields([(L("费用","Cost"),money(event.number("cost_usd"))),("Token",compact(event.number("tokens"))),(L("模型调用","Model calls"),event.integer("calls").map(String.init) ?? "—")])}
                     JourneyFiles(files:event.objects("files"))

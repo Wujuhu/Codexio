@@ -8,7 +8,7 @@ export function modelName(value: unknown): string {
 }
 
 export function effort(value: unknown): string {
-  const names: Record<string,string> = {none:'None',minimal:'Minimal',low:'Low',medium:'Medium',high:'High',xhigh:'Extra High','extra high':'Extra High',extra_high:'Extra High','extra-high':'Extra High',max:'Max',ultra:'Ultra',unknown:'—',auto:'—',无:'None',最轻:'Minimal',轻度:'Low',中等:'Medium',高度:'High',极高:'Extra High',最高:'Max',超高:'Ultra',未知:'—'};
+  const names: Record<string,string> = {none:'None',minimal:'Minimal',low:'Low',medium:'Medium',high:'High',xhigh:'Extra High','extra high':'Extra High',extra_high:'Extra High','extra-high':'Extra High',max:'Max',ultra:'Ultra',mixed:'Mixed',混合:'Mixed',unknown:'—',auto:'—',无:'None',最轻:'Minimal',轻度:'Low',中等:'Medium',高度:'High',极高:'Extra High',最高:'Max',超高:'Ultra',未知:'—'};
   const raw = text(value, '').trim();
   return names[raw.toLowerCase()] ?? raw;
 }

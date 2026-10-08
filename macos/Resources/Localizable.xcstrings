@@ -17489,6 +17489,22 @@
         }
       }
     },
+    "选择用户请求": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select request"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择用户请求"
+          }
+        }
+      }
+    },
     "选择额度样式、窗口和外观": {
       "localizations": {
         "en": {
