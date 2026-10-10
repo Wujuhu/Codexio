@@ -97,6 +97,11 @@ func upstreamConfigPlan(snapshot, account Row) (Row, error) {
 		return nil, errors.New("该内置服务不支持 Responses 转发")
 	}
 	custom := ValueRow(ValueRow(config["model_providers"])[provider])
+	// Codex inserts configured providers only if the ID is not already built in.
+	// In particular, model_providers.openai cannot override the OpenAI provider.
+	if provider == "openai" {
+		custom = Row{}
+	}
 	if firstString(custom["wire_api"], "responses") != "responses" {
 		return nil, errors.New("上游检测仅支持 Responses API")
 	}
@@ -133,7 +138,17 @@ func upstreamConfigPlan(snapshot, account Row) (Row, error) {
 		present = false
 	}
 	file := ValueString(ValueRow(owner["name"])["file"])
-	return Row{"patch_path": file, "version": owner["version"], "locator": locator, "base_path": base, "origin": strings.TrimRight(origin, "/"), "provider": provider, "original_present": present, "original_endpoint": before}, nil
+	localPath := "/v1"
+	name := ValueString(custom["name"])
+	if provider == "openai" {
+		name = "OpenAI"
+	}
+	// Match ModelProviderInfo::supports_codex_backend_routes in Codex. Keep an
+	// existing backend capability; never infer it from a requested model or auth.
+	if name == "OpenAI" && strings.HasSuffix(strings.TrimRight(origin, "/"), "/backend-api/codex") {
+		localPath = "/backend-api/codex"
+	}
+	return Row{"patch_path": file, "version": owner["version"], "locator": locator, "base_path": base, "origin": strings.TrimRight(origin, "/"), "provider": provider, "local_path": localPath, "original_present": present, "original_endpoint": before}, nil
 }
 
 func (c *upstreamConfigClient) targets(locator []string, endpoint string) (bool, error) {

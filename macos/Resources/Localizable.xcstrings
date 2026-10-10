@@ -2417,6 +2417,22 @@
         }
       }
     },
+    "上游检测配置已更新；运行中的客户端是否已生效无法确认，请重新打开 Codex": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Detection configuration updated; the running client's route cannot be confirmed. Reopen Codex"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上游检测配置已更新；运行中的客户端是否已生效无法确认，请重新打开 Codex"
+          }
+        }
+      }
+    },
     "上游路由恢复记录无效，已保留转发": {
       "localizations": {
         "en": {
@@ -17757,6 +17773,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "配置字段路径为空"
+          }
+        }
+      }
+    },
+    "配置已更新；无法确认运行中的客户端是否已生效，请重新打开 Codex": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Configuration updated; the running client's route cannot be confirmed. Reopen Codex"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "配置已更新；无法确认运行中的客户端是否已生效，请重新打开 Codex"
           }
         }
       }

@@ -39,7 +39,7 @@ final class UpstreamCoordinator {
         let enabled = state.preferences.analytics.flag("upstream_detection_enabled")
         queue.async { [weak self] in
             guard let self, !self.quitting else { return }
-            do { try self.restore(); if enabled { try self.start(); DispatchQueue.main.async { self.state.onRestartCodex?({}) } } }
+            do { let previous = readObject(self.journalURL); try self.restore(); if enabled { try self.start(resuming:previous); DispatchQueue.main.async { self.state.onRestartCodex?({}) } } }
             catch { self.report(error.localizedDescription) }
         }
     }
@@ -48,20 +48,21 @@ final class UpstreamCoordinator {
         queue.async { [weak self] in
             guard let self, !self.quitting else { return }
             do {
-                if enabled { try self.restore(); try self.start() } else { try self.restore() }
+                if enabled { let previous = readObject(self.journalURL); try self.restore(); try self.start(resuming:previous) } else { try self.restore() }
                 DispatchQueue.main.async {
                     self.state.setPreference("upstream_detection_enabled",enabled)
-                    self.state.upstreamStatus = L("配置已更新；重新打开 Codex 后生效", "Configuration updated; reopen Codex to apply it")
+                    self.state.upstreamStatus = L("配置已更新；无法确认运行中的客户端是否已生效，请重新打开 Codex", "Configuration updated; the running client's route cannot be confirmed. Reopen Codex")
                     self.state.refreshQuota(); self.state.onRestartCodex?({})
                 }
             } catch { self.report(error.localizedDescription) }
         }
     }
     private func report(_ message: String) { DispatchQueue.main.async { self.state.upstreamStatus = message } }
-    private func start() throws {
+    private func start(resuming previous: Object = [:]) throws {
         let snapshot = try read(), config = snapshot.object("config"), provider = config.string("model_provider","openai")
         guard !["amazon-bedrock","ollama","lmstudio"].contains(provider) else { throw AppFailure(L("该内置服务不支持 Responses 转发", "This built-in provider does not support a Responses relay")) }
-        let custom = config.object("model_providers").object(provider)
+        // Configured providers do not override Codex's built-in OpenAI entry.
+        let custom = provider == "openai" ? Object() : config.object("model_providers").object(provider)
         guard custom.string("wire_api","responses") == "responses" else { throw AppFailure(L("上游检测仅支持 Responses API", "Upstream detection supports the Responses API only")) }
         let account = try client.request("account/read",["refreshToken":false]).object("account")
         let basePath = provider == "openai" ? ["openai_base_url"] : ["model_providers",provider,"base_url"]
@@ -69,28 +70,62 @@ final class UpstreamCoordinator {
         if origin.isEmpty && provider == "openai" { origin = config.string("forced_login_method") == "api" || account.string("type") == "apiKey" ? "https://api.openai.com/v1" : "https://chatgpt.com/backend-api/codex" }
         guard let components = URLComponents(string:origin), ["https","http"].contains(components.scheme ?? ""), components.host != nil, components.user == nil, components.password == nil, components.query == nil, components.fragment == nil else { throw AppFailure(L("模型服务地址无效", "Invalid provider URL")) }
         while origin.hasSuffix("/") { origin.removeLast() }
+        // Preserve the official predicate, including a custom provider already
+        // named OpenAI with this suffix. API and ordinary custom routes stay /v1.
+        let name = provider == "openai" ? "OpenAI" : custom.string("name")
+        let localPath = name == "OpenAI" && origin.hasSuffix("/backend-api/codex") ? "/backend-api/codex" : "/v1"
         let owner = try layer(snapshot), file = owner.object("name").string("file"), raw = owner.object("config")
         let profile = config.string("profile",raw.string("profile"))
         var locator = basePath
         if !profile.isEmpty && nested(raw,["profiles",profile]+basePath) != nil { locator = ["profiles",profile]+basePath }
         let before = nested(raw,locator)
         let nonce = UUID().uuidString.replacingOccurrences(of:"-",with:"").lowercased()
+        var token = nonce
+        var previousPort: Int?
+        if previous.string("origin") == origin, previous.string("provider_id") == provider,
+           previous.string("applied_digest") == identity([true,previous.string("applied_endpoint")]),
+           let old = URLComponents(string:previous.string("applied_endpoint")), old.scheme == "http", old.host == "127.0.0.1",
+           old.user == nil, old.password == nil, old.query == nil, old.fragment == nil,
+           let port = old.port, (1...65535).contains(port) {
+            let parts = old.percentEncodedPath.split(separator:"/",maxSplits:1).map(String.init)
+            if parts.count == 2, parts[0].range(of:#"^[0-9a-f]{32}$"#,options:.regularExpression) != nil,
+               ["v1","backend-api/codex"].contains(parts[1]) { token = parts[0]; previousPort = port }
+        }
         let runtime = directory.appendingPathComponent("native-"+nonce)
         try FileManager.default.createDirectory(at:runtime,withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
-        try atomicJSON(["origin":origin,"route_token":nonce,"database":state.paths.data.appendingPathComponent("upstream.sqlite").path],to:runtime.appendingPathComponent("job.json"))
-        let relay = try UpstreamRelay(directory:runtime); try relay.start(); self.relay = relay
-        let deadline = Date().addingTimeInterval(12), readyURL = runtime.appendingPathComponent("ready.json")
-        while !FileManager.default.fileExists(atPath:readyURL.path) && !FileManager.default.fileExists(atPath:runtime.appendingPathComponent("failed.json").path) && Date() < deadline { Thread.sleep(forTimeInterval:0.05) }
+        let jobURL = runtime.appendingPathComponent("job.json"), readyURL = runtime.appendingPathComponent("ready.json"), failedURL = runtime.appendingPathComponent("failed.json")
+        var job: Object = ["origin":origin,"route_token":token,"local_path":localPath,"database":state.paths.data.appendingPathComponent("upstream.sqlite").path]
+        if let previousPort { job["port"] = previousPort }
+        func launch() throws {
+            try atomicJSON(job,to:jobURL)
+            let relay = try UpstreamRelay(directory:runtime); try relay.start(); self.relay = relay
+            let deadline = Date().addingTimeInterval(12)
+            while !FileManager.default.fileExists(atPath:readyURL.path) && !FileManager.default.fileExists(atPath:failedURL.path) && Date() < deadline { Thread.sleep(forTimeInterval:0.05) }
+        }
+        do { try launch() }
+        catch {
+            guard previousPort != nil else { throw error }
+            self.relay?.stop(); self.relay = nil
+            try? FileManager.default.removeItem(at:failedURL)
+            job.removeValue(forKey:"port")
+            try launch()
+        }
+        if job["port"] != nil && !FileManager.default.fileExists(atPath:readyURL.path) {
+            self.relay?.stop(); self.relay = nil
+            try? FileManager.default.removeItem(at:failedURL)
+            job.removeValue(forKey:"port")
+            try launch()
+        }
         let ready = readObject(readyURL)
-        guard let port = ready.integer("port"), (1...65535).contains(port) else { relay.stop(); self.relay = nil; throw AppFailure(L("本机转发未能启动", "The local relay could not start")) }
-        let routed = "http://127.0.0.1:\(port)/\(nonce)/v1"
-        let journal: Object = ["route_version":3,"native":true,"embedded":true,"root_config":state.accountRoot.appendingPathComponent("config.toml").path,"config":file,"provider_id":provider,"locator":locator,"origin":origin,"original_present":before != nil,"original_endpoint":before ?? NSNull(),"applied_endpoint":routed,"original_digest":identity([before != nil,before ?? NSNull()]),"applied_digest":identity([true,routed]),"runtime":runtime.path,"pid":Int(getpid())]
+        guard let port = ready.integer("port"), (1...65535).contains(port) else { self.relay?.stop(); self.relay = nil; throw AppFailure(L("本机转发未能启动", "The local relay could not start")) }
+        let routed = "http://127.0.0.1:\(port)/\(token)\(localPath)"
+        let journal: Object = ["route_version":3,"native":true,"embedded":true,"root_config":state.accountRoot.appendingPathComponent("config.toml").path,"config":file,"provider_id":provider,"locator":locator,"base_path":basePath,"local_path":localPath,"origin":origin,"original_present":before != nil,"original_endpoint":before ?? NSNull(),"applied_endpoint":routed,"original_digest":identity([before != nil,before ?? NSNull()]),"applied_digest":identity([true,routed]),"runtime":runtime.path,"pid":Int(getpid())]
         do {
             try atomicJSON(journal,to:journalURL)
             try write(locator,value:routed,file:file,version:owner.string("version"))
             let effective = try read().object("config")
             guard nested(effective,basePath) as? String == routed else { throw AppFailure(L("路由未生效，正在恢复", "The route was not applied; restoring it")) }
-            report(L("上游检测已开启", "Upstream detection is enabled"))
+            report(L("上游检测配置已更新；运行中的客户端是否已生效无法确认，请重新打开 Codex", "Detection configuration updated; the running client's route cannot be confirmed. Reopen Codex"))
         } catch { try? restore(); throw error }
     }
     private func restore() throws {

@@ -1,49 +1,51 @@
-# 上游检测（0.2.10）
+# 上游检测（0.3.9 开发版）
 
-默认关闭。Mac 与 Windows 共用代理、响应记录和设置协调器；Mac 在本地开发打包，Windows 正式 EXE 只在第二次发布确认后的 CI 阶段构建。
+默认关闭。Mac 使用主 App 内的原生转发，Windows 使用主程序内的 Go ReverseProxy。采集随主程序退出而停止；关闭窗口可继续后台运行。开发包仅进入 `build`，Windows 在指定本机构建主机完成，正式发布仍需用户明确指令。
 
-## ChatGPT、API Key 与自定义 provider
+## 保留原客户端的提供者与路由
 
-ChatGPT 与 OpenAI API Key 继续使用内置 `openai` provider；自定义服务继续使用用户配置的 `model_providers.<id>`。开启检测时只把当前有效 provider 的 `openai_base_url` 或 `base_url` 临时改为本机回环地址，不更换 provider ID，不修改 `env_key`、`auth.command`、固定／环境请求头、`query_params`、WebSocket 能力、认证文件或钥匙串。
+开启检测只临时改写当前有效提供者的 endpoint：内置 `openai` 使用 `openai_base_url`，自定义服务使用 `model_providers.<id>.base_url`。由 Codex app-server 的 `config/read` 解析有效配置和可写用户层，以配置版本保护写入；不更换 provider ID，不改认证文件、账户、模型、工具或其他客户端设置。配置被高优先级覆盖或并发修改时拒绝声称接管成功。内置 Bedrock、Ollama、LM Studio 及非 Responses wire API 不接管。Codex 的配置合并不会让 `model_providers.openai` 覆盖内置提供者，因此检测也不采用该表中的假覆盖。
 
-解析器支持顶层配置、`[profiles.<name>]` 和独立 `<name>.config.toml`。桌面进程通过环境变量、`-c` 或多个不同 profile 覆盖路由时拒绝接管；内置 Amazon Bedrock、Ollama 和 LM Studio 没有可安全改写的 Responses base URL，也明确拒绝。自定义 provider 必须使用 Responses wire API。依据：[Codex 自定义 provider 配置](https://learn.chatgpt.com/docs/config-file/config-advanced)。
+启用前的实际地址为唯一上游：ChatGPT 默认 `https://chatgpt.com/backend-api/codex`；API Key 默认 `https://api.openai.com/v1`；显式 endpoint 保留原地址。账户模式由 `account/read` 的实际类型及有效配置确定，不按模型名称或环境变量中是否存在另一份 API Key 猜测。
 
-上游检测不维护模型白名单，继续沿用当前 provider 的模型目录。启动外部客户端或 CLI 时移除 Codexio 的 PyInstaller、Qt 和动态库环境，避免这些运行时路径进入客户端及其子进程。
+本机地址始终为 `http://127.0.0.1:<端口>/<随机令牌><本地后缀>`。本地后缀按官方 `ModelProviderInfo::supports_codex_backend_routes()` 的现有条件选择：提供者名称为 `OpenAI` 且原始地址去掉末尾 `/` 后以 `/backend-api/codex` 结尾时，保留这个后缀；其他地址使用 `/v1`。这也覆盖本来具有该语义的同名自定义提供者，不为其他自定义服务新增 ChatGPT 语义。
 
-依据：[官方配置参考](https://learn.chatgpt.com/docs/config-file/config-reference)。
+核对版本为安装的 Codex `0.162.0-alpha.17.2`（提交 `740e5af33c71225640e0c1c1555c514c2c93ab74`）及调查时的 main（`806d9732c974bc8a51b8317c1bd8985544fe627c`）。该谓词的五处调用涉及 Codex 附加 Responses 请求头、符合资格的 `guardian_credits_requested`、experimental context/history notes、ChatGPT 工作区路由及 Guardian classifier 模式，各调用仍有自身的认证和功能条件，不能推断所有请求功能都由 URL 后缀决定。
 
-## 转发与采集
+参考：[官方路由谓词与 provider 合并](https://github.com/openai/codex/blob/740e5af33c71225640e0c1c1555c514c2c93ab74/codex-rs/model-provider-info/src/lib.rs#L616-L733)、[Responses 请求设置](https://github.com/openai/codex/blob/740e5af33c71225640e0c1c1555c514c2c93ab74/codex-rs/core/src/client.rs#L1108-L1161)、[工作区路由](https://github.com/openai/codex/blob/740e5af33c71225640e0c1c1555c514c2c93ab74/codex-rs/model-provider/src/provider.rs#L216-L250)。工作区绑定还受官方 app-server 的检查约束；保留谓词不能保证所有工作区分支与远程直连完全相同。
 
-仅监听 `127.0.0.1`，本机地址包含随机路由令牌，控制接口使用独立令牌。目的地只可能来自启用前解析出的有效配置：ChatGPT 使用固定 Codex 服务，OpenAI API 使用原始 `openai_base_url` 或官方 API `/v1`，自定义 provider 使用其原始 `base_url`。客户端不能在请求中选择目的地；代理不跟随重定向。支持 HTTP/SSE 和 WebSocket，并转发 Bearer、`api-key`、`x-api-key` 及 provider 自定义认证头。
+路径只剥离一次本地前缀，再接到原始上游前缀。保留百分号编码、重复查询键与 `+`，不解码后重编码、不拼接两次上游路径；请求不能指定另一目的地。源地址含用户名、密码、query 或 fragment 时不接管。
 
-从响应事件的 `id` 与 `model` 提取上游型号；HTTP 根据内容识别 SSE／JSON，兼容缺失或为 `application/octet-stream` 的 Content-Type。WebSocket 原样转发消息，并观察上游返回的响应事件。观察缓冲有上限，落库不阻塞响应转发。不保存请求正文、响应正文、认证头或凭据；模型记录仍使用独立 `upstream.sqlite`。
+## HTTP/SSE 与 WebSocket
 
-恢复协议为 v3。私有恢复日志只保存配置文件位置、provider 字段路径、原始／临时 endpoint、模式与摘要，不再复制整份 `config.toml`。包含用户名、密码、查询串或 fragment 的 `base_url` 不接管，凭据应放在 provider 的认证字段、请求头或 `query_params`。旧 v2 官方路由在升级时先恢复并移除旧别名，再用同一端口与路径令牌安装 v3 路由。
+透传真实客户端提供的 Authorization、ChatGPT-Account-ID、User-Agent、originator、version、会话／线程标识和 `x-codex-*` 等业务头。不把桌面客户端改称 CLI，不伪造固定版本；正文中的模型、推理强度、速度、instructions、工具定义、previous_response_id、prompt_cache_key 均不重写。协议必须的 Host、长度及 hop-by-hop 头由传输层处理。上游状态、错误正文、限流和会话路由响应头继续交给客户端，重定向不由代理自动跟随。
 
-通过响应 ID 关联原始调用。上方小字显示响应型号，右侧箭头折回指向上方文字。每次调用分别比较型号；存在不一致时，文字和箭头标绿。费用和筛选仍使用原始请求信息。缺少返回型号或可关联编号时不猜测；服务端没有披露的内部调度无法推断。
+Windows 允许上游 HTTP/2 协商，关闭 Go 自动压缩，及时刷新 SSE，不自动追加 loopback 的 X-Forwarded-For。上游响应头等待时间为 10 分钟。已有客户端提供的 X-Forwarded-For 也被这个 nil-header 机制省略；它不是账户或会话标识。
 
-## 启停与重启选择
+Mac 使用无 Cookie、凭据存储和响应缓存的 ephemeral URLSession。HTTP 101 转换为 URLSessionStreamTask，禁用 HTTP pipelining，分别转发两个方向的原始字节；握手尾部已经收到的客户端首帧被保留。101 不使用普通 HTTP 的 chunked/close 包装；Windows 在 Hijack 后继续读取原预读缓冲，避免遗漏随请求头到达的首帧。分片、ping、pong、close 不重新编码，任一取消或异常会清理连接和任务；普通 HTTP/SSE 和尚未完成的 WebSocket 握手均有客户端断连监控，输出采用背压。Mac 普通 HTTP 使用 Connection: close，收到客户端 FIN 视为取消，不支持请求方向的半关闭或请求流水线；已建立的 WebSocket 支持双向 EOF 并先排空最后的字节。
 
-`upstream_detection_enabled` 保存用户偏好，实际运行状态单独管理。启动、退出、手动开启和关闭统一比较操作后的上游连接配置与当前客户端后台进程的配置基线：一致或客户端未运行时不提示；不一致时提供“稍后自行重启”和“现在重启”。缺少可靠基线时明确显示“无法确认配置是否已生效”，同一进程和目标配置仅提醒一次，不主动重启客户端。
+仍保留两项有意差异：`Accept-Encoding: identity`，以及不向上游协商 `Sec-WebSocket-Extensions`。观察器不能解释扩展压缩帧，保留这些限制避免响应损坏或误采型号。若上游仍返回 URLSession 支持的压缩编码，Mac 传输层会自动解压；转发有效的解压表示时移除原压缩头，并跳过该次压缩响应的型号观察。Windows 不自动解压，保留实际编码及字节并跳过压缩响应观察。代理不承诺 TLS、连接复用、HTTP 协议协商或网络特征与直连逐字节一致，也不能保证服务端无法识别代理。
 
-| 操作 | 行为 |
-| --- | --- |
-| 手动开启 | 应用检测配置，按配置比较结果决定是否提示，保存开启偏好 |
-| 手动关闭 | 恢复直连并停止代理；若客户端仍加载旧路由，提示重启并说明不重启可能无法正常运行；保存关闭偏好 |
-| 开启后未重启便关闭 | 当前配置恢复成客户端已加载的状态，不重复提示 |
-| 检测开启时退出 | 恢复配置、停止代理，按比较结果决定是否提示；两个按钮都继续退出，保留开启偏好 |
-| 检测关闭时退出 | 配置已一致时直接退出；尚未生效且未提醒过的改动仍可提示 |
-| 下次启动且偏好开启 | 自动应用检测配置，按比较结果决定是否提示；Mac 主窗口先显示 |
-| 只关闭主窗口 | 后台检测照常运行 |
-| 自更新 | 短暂交接代理，不重复重启客户端 |
-| 注销／系统退出 | 恢复配置，停止代理，不重新打开客户端 |
+Mac 的原生升级机制参考：[becomeStream](https://developer.apple.com/documentation/foundation/urlsession/responsedisposition/becomestream)、[didBecome streamTask](https://developer.apple.com/documentation/foundation/urlsessiondatadelegate/urlsession(_:datatask:didbecome:)-7nqzu)、[URLSessionStreamTask](https://developer.apple.com/documentation/foundation/urlsessionstreamtask)。已经用本机合成服务器核对 101 后立即到达的数据及先读后写的双向通信；不能据此代替真实账户的服务端验证。
 
-通过桌面客户端的进程树识别实际的 app-server，读取其 CODEX_HOME、配置方案与路由覆盖项，按上游连接字段计算摘要，忽略注释、空白和无关设置。私有状态文件仅保存进程身份和摘要；已有进程没有可靠基线时不把磁盘值当成已加载值。仅在观察到后台进程于配置稳定期间启动时建立基线，定期识别自行重启并清除过时提示。旧版仅记录路由 URL 的状态按未知处理。[官方 config/read 返回磁盘有效配置](https://learn.chatgpt.com/docs/app-server)，不能据此认定其他运行进程已加载。不会结束独立终端中的 Codex CLI。选择稍后重启时不保留纯转发：旧客户端若继续使用已关闭的本机地址，请用户自行重启。
+## 只读型号观察
 
-正常恢复保留无关配置与并发编辑，冲突时报告错误，不谎报已恢复。若整个进程树被强制结束或机器断电，下一次启动根据恢复记录修复；不添加登录项或系统守护任务。
+只从上游实际返回的响应事件或 Responses JSON 中提取 response ID 与 model，再按 response ID 关联本地计量调用。只接受明确的响应创建、完成、不完整或失败事件；缺少 ID 或 model 时不猜测。创建事件不能覆盖终态观察，相同观察不反复增加数据库 revision。费用、筛选及请求配置仍以本地请求记录为准。
 
-响应型号观察先在内存中合并短时间内同一响应的事件，再批量写入独立数据库。启动新版转发进程时只清理已确认未被进程使用的旧运行包，保留当前包与最近的备用包；运行中的旧代理路径不动。
+HTTP 的 SSE/JSON 单事件及 WebSocket 单消息观察上限为 2 MiB；Windows 帧片段缓存额外限制在 4 MiB 内，Mac 流式解析只保留有限帧头和单消息；异常、过大或无法解释的事件只丢弃观察，不改变转发字节。SSE 支持多行 data。Mac 后台观察队列最多 64 项／8 MiB，Windows 队列最多 64 项且仅保存已经提取的有限字段；数据库忙或队列满不阻塞网络转发。历史关联保存在独立 `upstream.sqlite`，不保存正文、认证头或凭据。事件正文只在有界内存中暂留，解析后释放。
 
-## 开发验证
+检测证明的是“服务端响应披露的型号”，不能证明服务端内部实际执行的模型、调度、蒸馏或转发方式。不同响应各自关联，不按聊天名或时间邻近合并。
 
-不新增测试文件或扩充固定测试项。仅保留程序启动、基本数据显示、主窗口关闭与重新打开三个基本检查；对已经发现的模型刷新和 WebSocket 采集缺陷进行必要的隔离诊断，不修改真实 Codex 配置，也不重启用户正在使用的客户端。
+Magpie 的订阅提供者适配会主动构造身份和正文，不能复用到此只读代理；其真正 Codex 客户端接入路径保留 `/backend-api/codex` 是可参考的语义，但它通过 426 回退 HTTP 的做法不能证明透明 WebSocket 已实现。参考调查提交 `f1fc8c65d3f50dc99032afe229544a6779c126bb` 的 `internal/provider/codex_request.go` 与 `internal/gateway/codex_backend.go`；本次实现优先复用 Codexio 原有转发、恢复和观察机制。
+
+## 配置恢复与旧地址
+
+恢复日志保留原 endpoint、临时 endpoint、字段位置、摘要和上游，不复制整份配置。Mac 保持 v3 恢复记录，Windows 保持 go-rpc-1，并继续读取已有旧格式；修改本地后缀不会使已有摘要失效。新记录另外记下 local_path。恢复时仍比较实际字段和原摘要，保留无关编辑；冲突则报告并保留恢复资料和转发。
+
+升级或重新开启时，先校验和恢复旧记录。原提供者及上游相同且旧 loopback 地址有效时尝试复用端口与令牌；端口不可用时保留占用者并选择新端口。新代理同时接受旧 `/<令牌>/v1` 别名，使仍加载旧地址的客户端可以继续转发；别名不会把客户端内存中的后端功能判断改成新值。旧端口不能复用、上游改变、检测被关闭或主 App 退出时，旧客户端仍需自行重新打开。
+
+`config/read` 确認的是磁盘有效配置，不能证明另一个运行进程已加载。状态明确区分检测配置已更新与客户端生效；沿用已有稍后自行重启／用户主动重启选择，不自动重启真实客户端。开发验证不读写真实配置、不启动已安装应用、不结束用户进程；强制退出后的恢复只在下次正常启动处理，不新增守护程序。
+
+## 本次开发验证边界
+
+不新增维护性测试文件，不运行全量回归。开发包仍只执行原有三个隔离基本冒烟事项：程序启动、基本数据显示、主窗口关闭与重新打开。另在 `build/checks` 保存一次性合成路由／协议核对，覆盖本次改变的前缀、编码、业务头、正文、SSE、WebSocket 及异常清理；不使用真实聊天或认证信息。Mac 必须在本机编译打包，Windows 必须在指定主机交互会话执行已有构建入口，结果和产物保留后再复制回本机。

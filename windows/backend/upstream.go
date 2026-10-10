@@ -3,6 +3,7 @@ package backend
 // This is a port of ManagedRoute/ResponseObserver: only the selected base_url
 // field is changed, authentication and the rest of the user's TOML are retained.
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -37,6 +38,7 @@ type UpstreamProxy struct {
 	server          *http.Server
 	listener        net.Listener
 	db              *sql.DB
+	transport       *http.Transport
 	journal         Row
 	status          string
 	lastError       string
@@ -111,6 +113,7 @@ func (p *UpstreamProxy) Toggle(enabled bool) (Row, error) {
 	if upstreamLegacyRouteBusy(p.directory) {
 		return nil, errors.New("旧版 Codexio 的上游转发仍在运行，请先退出旧版")
 	}
+	previous, _ := ReadJSON(p.journalPath())
 	if e := p.restoreJournal(); e != nil {
 		return Row{"enabled": false, "error": e.Error()}, e
 	}
@@ -127,21 +130,29 @@ func (p *UpstreamProxy) Toggle(enabled bool) (Row, error) {
 	if e != nil || target.Host == "" || target.User != nil || target.RawQuery != "" || target.Fragment != "" || (target.Scheme != "http" && target.Scheme != "https") {
 		return nil, errors.New("当前模型服务 base_url 无效")
 	}
-	ln, e := net.Listen("tcp", "127.0.0.1:0")
+	address, token := upstreamResumeRoute(previous, plan)
+	ln, e := net.Listen("tcp", address)
+	if e != nil && address != "127.0.0.1:0" {
+		ln, e = net.Listen("tcp", "127.0.0.1:0")
+		token = ""
+	}
 	if e != nil {
 		return nil, e
 	}
-	random := make([]byte, 32)
-	if _, e = rand.Read(random); e != nil {
-		ln.Close()
-		return nil, e
+	if token == "" {
+		random := make([]byte, 32)
+		if _, e = rand.Read(random); e != nil {
+			ln.Close()
+			return nil, e
+		}
+		token = base64.RawURLEncoding.EncodeToString(random)
 	}
-	token := base64.RawURLEncoding.EncodeToString(random)
-	endpoint := "http://" + ln.Addr().String() + "/" + token + "/v1"
+	localPath := ValueString(plan["local_path"])
+	endpoint := "http://" + ln.Addr().String() + "/" + token + localPath
 	path := ValueString(plan["patch_path"])
 	locator := ValueStrings(plan["locator"])
 	before, present := plan["original_endpoint"], ValueBool(plan["original_present"])
-	j := Row{"route_version": "go-rpc-1", "config": path, "locator": locator, "base_path": plan["base_path"], "original_present": present, "original_endpoint": before, "applied_endpoint": endpoint, "origin": plan["origin"], "provider_id": plan["provider"], "original_digest": upstreamDigest([]any{present, before}), "applied_digest": upstreamDigest([]any{true, endpoint})}
+	j := Row{"route_version": "go-rpc-1", "config": path, "locator": locator, "base_path": plan["base_path"], "original_present": present, "original_endpoint": before, "applied_endpoint": endpoint, "origin": plan["origin"], "provider_id": plan["provider"], "local_path": localPath, "original_digest": upstreamDigest([]any{present, before}), "applied_digest": upstreamDigest([]any{true, endpoint})}
 	db, e := sql.Open("sqlite", filepath.Join(p.directory, "upstream.sqlite"))
 	if e != nil {
 		ln.Close()
@@ -153,56 +164,7 @@ func (p *UpstreamProxy) Toggle(enabled bool) (Row, error) {
 		ln.Close()
 		return nil, e
 	}
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	basePath := strings.TrimRight(target.Path, "/")
-	proxy.Director = func(r *http.Request) {
-		escaped := r.URL.EscapedPath()
-		r.URL.Scheme = target.Scheme
-		r.URL.Host = target.Host
-		r.URL.Path = basePath + strings.TrimPrefix(r.URL.Path, "/"+token+"/v1")
-		r.URL.RawPath = strings.TrimRight(target.EscapedPath(), "/") + strings.TrimPrefix(escaped, "/"+token+"/v1")
-		r.Host = target.Host
-		r.Header.Del("Sec-WebSocket-Extensions")
-		r.Header.Del("X-Codexio-Route")
-		r.Header.Set("Accept-Encoding", "identity")
-	}
-	proxy.Transport = &http.Transport{Proxy: systemAccountProxy, ForceAttemptHTTP2: false, TLSHandshakeTimeout: 15 * time.Second, ResponseHeaderTimeout: 60 * time.Second, IdleConnTimeout: 90 * time.Second, MaxIdleConns: 16}
-	proxy.ModifyResponse = func(r *http.Response) error {
-		if r.StatusCode == 101 {
-			if rw, ok := r.Body.(io.ReadWriteCloser); ok {
-				connection := &upstreamDuplex{ReadWriteCloser: rw, observer: &upstreamFrameObserver{emit: p.observe}}
-				connection.closed = func() { p.mu.Lock(); delete(p.websockets, connection); p.mu.Unlock() }
-				p.mu.Lock()
-				active := p.server != nil
-				if active {
-					p.websockets[connection] = true
-				}
-				p.mu.Unlock()
-				if !active {
-					_ = rw.Close()
-					return errors.New("上游转发已经停止")
-				}
-				r.Body = connection
-			}
-			return nil
-		}
-		if r.StatusCode >= 200 && r.StatusCode < 300 && strings.Contains(r.Request.URL.Path, "/responses") && (r.Header.Get("Content-Encoding") == "" || r.Header.Get("Content-Encoding") == "identity") {
-			sse := strings.Contains(r.Header.Get("Content-Type"), "text/event-stream")
-			r.Body = &upstreamBody{ReadCloser: r.Body, observer: &upstreamLineObserver{emit: p.observe, sse: sse, determined: sse}}
-		}
-		return nil
-	}
-	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		http.Error(w, "Upstream service unavailable", http.StatusBadGateway)
-	}
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 3)
-		if len(parts) < 2 || parts[1] != "v1" || subtle.ConstantTimeCompare([]byte(parts[0]), []byte(token)) != 1 {
-			http.NotFound(w, r)
-			return
-		}
-		proxy.ServeHTTP(w, r)
-	})
+	handler := p.relayHandler(target, token, localPath)
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 1 << 20}
 	ctx, cancel := context.WithCancel(context.Background())
 	p.server = server
@@ -248,6 +210,131 @@ func (p *UpstreamProxy) Toggle(enabled bool) (Row, error) {
 	}
 	return p.publicLocked(), nil
 }
+
+// upstreamResumeRoute reuses only a validated recovery record for the same
+// provider/origin. An old client can keep /token/v1 until it reloads its config.
+func upstreamResumeRoute(j, plan Row) (string, string) {
+	fallback := "127.0.0.1:0"
+	if ValueString(j["origin"]) != ValueString(plan["origin"]) || ValueString(j["provider_id"]) != ValueString(plan["provider"]) || ValueString(j["applied_digest"]) != upstreamDigest([]any{true, j["applied_endpoint"]}) {
+		return fallback, ""
+	}
+	u, err := url.Parse(ValueString(j["applied_endpoint"]))
+	if err != nil || u.Scheme != "http" || u.Hostname() != "127.0.0.1" || u.Port() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fallback, ""
+	}
+	parts := strings.SplitN(strings.TrimPrefix(u.EscapedPath(), "/"), "/", 2)
+	if len(parts) != 2 || !regexp.MustCompile(`^[A-Za-z0-9_-]{32,64}$`).MatchString(parts[0]) || (parts[1] != "v1" && parts[1] != "backend-api/codex") {
+		return fallback, ""
+	}
+	return u.Host, parts[0]
+}
+func upstreamRouteMatches(path, token, localPath string) bool {
+	for _, suffix := range []string{localPath, "/v1"} {
+		prefix := "/" + token + suffix
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	return false
+}
+func suffixPath(path, token, localPath string) string {
+	// Handler validates the escaped prefix first. Strip it once; do not clean
+	// or decode the suffix, so %2F, percent signs and queries survive intact.
+	for _, suffix := range []string{localPath, "/v1"} {
+		prefix := "/" + token + suffix
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return strings.TrimPrefix(path, prefix)
+		}
+	}
+	return path
+}
+func (p *UpstreamProxy) relayHandler(target *url.URL, token, localPath string) http.Handler {
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	basePath := strings.TrimRight(target.Path, "/")
+	proxy.Director = func(r *http.Request) {
+		escaped := r.URL.EscapedPath()
+		r.URL.Scheme = target.Scheme
+		r.URL.Host = target.Host
+		r.URL.Path = basePath + suffixPath(r.URL.Path, token, localPath)
+		r.URL.RawPath = strings.TrimRight(target.EscapedPath(), "/") + suffixPath(escaped, token, localPath)
+		r.Host = target.Host
+		// Local observation must not append a proxy-generated loopback address.
+		// nil is ReverseProxy's documented opt-out (same as the prior repair).
+		r.Header["X-Forwarded-For"] = nil
+		r.Header.Del("Sec-WebSocket-Extensions")
+		r.Header.Del("X-Codexio-Route")
+		r.Header.Set("Accept-Encoding", "identity")
+	}
+	p.transport = &http.Transport{Proxy: systemAccountProxy, ForceAttemptHTTP2: true, DisableCompression: true, TLSHandshakeTimeout: 15 * time.Second, ResponseHeaderTimeout: 600 * time.Second, IdleConnTimeout: 90 * time.Second, MaxIdleConns: 16}
+	proxy.Transport = p.transport
+	proxy.FlushInterval = -1
+	proxy.ModifyResponse = func(r *http.Response) error {
+		if r.StatusCode == 101 {
+			if rw, ok := r.Body.(io.ReadWriteCloser); ok {
+				connection := &upstreamDuplex{ReadWriteCloser: rw, observer: &upstreamFrameObserver{emit: p.observe}}
+				connection.closed = func() { p.mu.Lock(); delete(p.websockets, connection); p.mu.Unlock() }
+				p.mu.Lock()
+				active := p.server != nil
+				if active {
+					p.websockets[connection] = true
+				}
+				p.mu.Unlock()
+				if !active {
+					_ = rw.Close()
+					return errors.New("上游转发已经停止")
+				}
+				r.Body = connection
+			}
+			return nil
+		}
+		if r.StatusCode >= 200 && r.StatusCode < 300 && strings.Contains(r.Request.URL.Path, "/responses") && (r.Header.Get("Content-Encoding") == "" || r.Header.Get("Content-Encoding") == "identity") {
+			sse := strings.Contains(r.Header.Get("Content-Type"), "text/event-stream")
+			r.Body = &upstreamBody{ReadCloser: r.Body, observer: &upstreamLineObserver{emit: p.observe, sse: sse, determined: sse}}
+		}
+		return nil
+	}
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		http.Error(w, "Upstream service unavailable", http.StatusBadGateway)
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		escaped := r.URL.EscapedPath()
+		parts := strings.SplitN(strings.TrimPrefix(escaped, "/"), "/", 2)
+		if len(parts) < 2 || subtle.ConstantTimeCompare([]byte(parts[0]), []byte(token)) != 1 || !upstreamRouteMatches(escaped, token, localPath) {
+			http.NotFound(w, r)
+			return
+		}
+		proxy.ServeHTTP(upstreamResponseWriter{w}, r)
+	})
+
+}
+
+// Go's Upgrade copier reads the Hijack connection directly, bypassing bytes
+// already buffered by net/http with the request headers. Read through that
+// original reader so an early client frame is not lost.
+type upstreamBufferedConn struct {
+	net.Conn
+	reader *bufio.Reader
+}
+
+func (c *upstreamBufferedConn) Read(data []byte) (int, error) { return c.reader.Read(data) }
+func (c *upstreamBufferedConn) CloseWrite() error {
+	if connection, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return connection.CloseWrite()
+	}
+	return c.Conn.Close()
+}
+
+type upstreamResponseWriter struct{ http.ResponseWriter }
+
+func (w upstreamResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+func (w upstreamResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	connection, buffered, err := http.NewResponseController(w.ResponseWriter).Hijack()
+	if err != nil {
+		return nil, nil, err
+	}
+	return &upstreamBufferedConn{Conn: connection, reader: buffered.Reader}, buffered, nil
+}
+
 func (p *UpstreamProxy) Stop() error {
 	if p.mock {
 		return nil
@@ -307,6 +394,10 @@ func (p *UpstreamProxy) closeRelayLocked() {
 	if p.db != nil {
 		_ = p.db.Close()
 		p.db = nil
+	}
+	if p.transport != nil {
+		p.transport.CloseIdleConnections()
+		p.transport = nil
 	}
 	p.listener = nil
 	p.journal = nil
@@ -543,17 +634,37 @@ func (p *UpstreamProxy) observe(data []byte) {
 		return
 	}
 	response := ValueRow(r["response"])
-	id, model := ValueString(response["id"]), ValueString(response["model"])
-	if id == "" {
-		id = firstString(r["response_id"], r["id"])
+	nested := len(response) > 0
+	if !nested {
+		response = r
 	}
-	if model == "" {
-		model = ValueString(r["model"])
-	}
+	// Outer metadata cannot fill holes in a nested response. Only actual
+	// strings from one response object are evidence of an id and model.
+	id, _ := response["id"].(string)
+	model, _ := response["model"].(string)
 	if id == "" || model == "" || len(id) > 256 || len(model) > 256 {
 		return
 	}
 	event := ValueString(r["type"])
+	if event == "" || event == "response" {
+		if ValueString(r["object"]) != "response" && !nested && event != "response" {
+			return
+		}
+		status, _ := response["status"].(string)
+		switch status {
+		case "in_progress", "queued":
+			event = "response.created"
+		case "failed":
+			event = "response.failed"
+		case "incomplete":
+			event = "response.incomplete"
+		default:
+			event = "response.completed"
+		}
+	}
+	if !systemContains([]string{"response.created", "response.completed", "response.incomplete", "response.failed"}, event) {
+		return
+	}
 	rank := 2
 	if event == "response.created" {
 		rank = 1
@@ -577,7 +688,7 @@ func (p *UpstreamProxy) writeObservations(ctx context.Context) {
 			}
 			var oldModel string
 			var oldRank int
-			e := db.QueryRow(`SELECT model,rank FROM observations WHERE response_id=?`, r["id"]).Scan(&oldModel, &oldRank)
+			e := db.QueryRowContext(ctx, `SELECT model,rank FROM observations WHERE response_id=?`, r["id"]).Scan(&oldModel, &oldRank)
 			rank := int(ValueInt(r["rank"]))
 			if e == nil && (oldRank > rank || oldRank == rank && oldModel == r["model"]) {
 				continue
@@ -603,15 +714,54 @@ func (p *UpstreamProxy) writeObservations(ctx context.Context) {
 }
 
 type upstreamLineObserver struct {
-	emit       func([]byte)
-	sse        bool
-	determined bool
-	buffer     []byte
-	dropping   bool
+	emit         func([]byte)
+	sse          bool
+	determined   bool
+	buffer       []byte
+	event        []byte
+	dropping     bool
+	lineDropping bool
+	disabled     bool
 }
 
+func (o *upstreamLineObserver) line() {
+	if o.lineDropping {
+		o.dropping = true
+		o.lineDropping = false
+		o.buffer = nil
+		return
+	}
+	line := bytes.TrimSuffix(o.buffer, []byte("\r"))
+	o.buffer = nil
+	if len(line) == 0 {
+		if !o.dropping && len(o.event) > 0 {
+			o.emit(o.event)
+		}
+		o.event = nil
+		o.dropping = false
+	} else if bytes.HasPrefix(line, []byte("data:")) && !o.dropping {
+		data := bytes.TrimPrefix(line[5:], []byte(" "))
+		if len(o.event)+len(data)+1 > 2<<20 {
+			o.event = nil
+			o.dropping = true
+			return
+		}
+		if len(o.event) > 0 {
+			o.event = append(o.event, '\n')
+		}
+		o.event = append(o.event, data...)
+	}
+}
 func (o *upstreamLineObserver) feed(b []byte, eof bool) {
+	if o.disabled {
+		return
+	}
 	if !o.determined {
+		if len(o.buffer)+len(b) > 2<<20 {
+			o.buffer = nil
+			o.disabled = true
+			return
+		}
 		prefix := append(append([]byte{}, o.buffer...), b...)
 		trim := bytes.TrimSpace(prefix)
 		if len(trim) == 0 && !eof {
@@ -635,38 +785,35 @@ func (o *upstreamLineObserver) feed(b []byte, eof bool) {
 		b = prefix
 	}
 	if !o.sse {
-		if len(o.buffer)+len(b) <= 2<<20 {
-			o.buffer = append(o.buffer, b...)
-		} else {
-			o.dropping = true
+		if len(o.buffer)+len(b) > 2<<20 {
 			o.buffer = nil
+			o.disabled = true
+			return
 		}
-		if eof && !o.dropping {
+		o.buffer = append(o.buffer, b...)
+		if eof {
 			o.emit(o.buffer)
+			o.buffer = nil
 		}
 		return
 	}
 	for _, c := range b {
 		if c == '\n' {
-			if !o.dropping && bytes.HasPrefix(o.buffer, []byte("data:")) {
-				o.emit(bytes.TrimSpace(o.buffer[5:]))
-			}
-			o.buffer = nil
-			o.dropping = false
-			continue
-		}
-		if !o.dropping {
+			o.line()
+		} else if !o.lineDropping {
 			if len(o.buffer) >= 2<<20 {
-				o.dropping = true
+				o.lineDropping = true
 				o.buffer = nil
 			} else {
 				o.buffer = append(o.buffer, c)
 			}
 		}
 	}
-	if eof && !o.dropping && bytes.HasPrefix(o.buffer, []byte("data:")) {
-		o.emit(bytes.TrimSpace(o.buffer[5:]))
-		o.buffer = nil
+	if eof {
+		if len(o.buffer) > 0 || o.lineDropping {
+			o.line()
+		}
+		o.line()
 	}
 }
 
@@ -708,20 +855,16 @@ type upstreamFrameObserver struct {
 	emit       func([]byte)
 	buffer     []byte
 	message    []byte
-	skip       uint64
 	compressed bool
+	disabled   bool
 }
 
 func (o *upstreamFrameObserver) feed(b []byte) {
-	if o.skip > 0 {
-		n := min(uint64(len(b)), o.skip)
-		b = b[n:]
-		o.skip -= n
-		if len(b) == 0 {
-			return
-		}
+	if o.disabled {
+		return
 	}
 	if len(o.buffer)+len(b) > 4<<20 {
+		o.disabled = true
 		o.buffer = nil
 		o.message = nil
 		return
@@ -751,13 +894,10 @@ func (o *upstreamFrameObserver) feed(b []byte) {
 			return
 		}
 		if length > 2<<20 {
-			o.skip = length
-			rest := o.buffer[header:]
-			n := min(uint64(len(rest)), o.skip)
-			o.skip -= n
-			o.buffer = rest[n:]
+			o.disabled = true
+			o.buffer = nil
 			o.message = nil
-			continue
+			return
 		}
 		if uint64(len(o.buffer)) < uint64(header)+length {
 			return
@@ -771,7 +911,13 @@ func (o *upstreamFrameObserver) feed(b []byte) {
 			o.message = nil
 			o.compressed = first&64 != 0
 		}
-		if opcode <= 2 && !o.compressed && len(o.message)+len(payload) <= 2<<20 {
+		if opcode <= 2 && !o.compressed {
+			if len(o.message)+len(payload) > 2<<20 {
+				o.disabled = true
+				o.buffer = nil
+				o.message = nil
+				return
+			}
 			o.message = append(o.message, payload...)
 		}
 		if first&128 != 0 && opcode <= 2 {
