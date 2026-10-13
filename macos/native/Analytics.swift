@@ -303,6 +303,9 @@ enum Analytics {
             let models = Array(Set(displayCalls.map {$0.raw.string("model")}.filter {!$0.isEmpty})).sorted()
             row["model"] = models.count == 1 ? models[0] : models.isEmpty ? own.string("model") : models.joined(separator:" + ")
             for key in ["reasoning_effort","service_tier"] {
+                // The main request owns its captured effort; child calls keep
+                // their individual settings in the member details.
+                if key == "reasoning_effort", requestValueText(own.string(key)) != "—" { continue }
                 let values = Set(displayCalls.map {$0.raw.string(key)}.filter {!$0.isEmpty})
                 row[key] = values.count == 1 ? values.first : values.isEmpty ? own[key] : nil
             }
