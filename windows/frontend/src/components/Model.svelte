@@ -5,18 +5,21 @@
   export let align:'left'|'center'|'right'='center';
   export let showEffort=true;
   export let showUpstream=true;
+  export let useReturnedModel=false;
   $: observed=rows(record.upstream_observations??record.observations);
   $: upstream=!showUpstream ? [] : observed.length
     ? observed.map(row=>text(row.upstream_model??row.response_model??row.model,'')).filter(Boolean)
     : Array.isArray(record.upstream_models) ? record.upstream_models.map((value:any)=>text(value,'')).filter(Boolean) : record.upstream_model ? [String(record.upstream_model)] : [];
   $: requested=text(record.model??record.models?.join(', '));
+  $: returnedModels=[...new Set([record.returned_model,record.upstream_model,...(Array.isArray(record.upstream_models)?record.upstream_models:[])].map((value:unknown)=>typeof value==='string'?value.trim():'').filter(Boolean))];
+  $: requestedLabel=useReturnedModel?(returnedModels.join(' · ')||'—'):modelName(requested);
   $: mismatch=record.upstream_mismatched_calls!=null ? Number(record.upstream_mismatched_calls)>0 : record.upstream_mismatched!=null ? !!record.upstream_mismatched : !['—','unknown','mixed'].includes(requested)&&upstream.some((model:string)=>model!==requested);
   $: upstreamLabel=[...new Set(upstream)].map(modelName).join(' · ');
   $: effortLabel=showEffort?effort(record.reasoning_effort):'';
 </script>
 <div class="model-lines" class:has-upstream={upstream.length>0} style:--model-alignment={align}>
   {#if upstream.length}<div class="observed" class:mismatch title={upstreamLabel}><small>{upstreamLabel}</small></div>{/if}
-  <span class="requested" title={[modelName(requested),effortLabel].filter(Boolean).join(' · ')}><span class="requested-name">{modelName(requested)}</span>{#if effortLabel}<small class="effort">{effortLabel}</small>{/if}</span>
+  <span class="requested" title={[requestedLabel,effortLabel].filter(Boolean).join(' · ')}><span class="requested-name">{requestedLabel}</span>{#if effortLabel}<small class="effort">{effortLabel}</small>{/if}</span>
   {#if upstream.length}<svg class:mismatch viewBox="0 0 24 30" width="18" height="25" role="img" aria-label="Observed upstream model"><path d="M3 25h15V6H8m4-4-4 4 4 4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/></svg>{/if}
 </div>
 <style>

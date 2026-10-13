@@ -101,16 +101,16 @@ struct ClaudeLogsView: View {
                 PeriodPicker(selection:$period,custom:true,condensed:true)
                 if period == "custom" {Button {datesOpen = true} label:{Image(systemName:"calendar")}.popover(isPresented:$datesOpen) {DateRangeControls(from:$from,through:$through).padding(18).frame(width:360)}}
                 Spacer()
-                Picker("",selection:$mode) {Text(L("用户请求", "User requests")).tag("requests"); Text(L("模型调用", "Model calls")).tag("calls")}.labelsHidden().pickerStyle(.menu).fixedSize()
+                CompactFilterPicker(title:mode == "requests" ? L("用户请求", "User requests") : L("模型调用", "Model calls"),label:L("日志类型", "Log type"),selection:mode,items:[.init(id:"requests",title:L("用户请求", "User requests")),.init(id:"calls",title:L("模型调用", "Model calls"))],choose:{mode = $0}).frame(width:140)
             }
             HStack(spacing:10) {
-                Picker("",selection:$model) {Text(L("全部模型", "All models")).tag("all"); ForEach(state.claudeModels,id:\.self) {Text($0).tag($0)}}.labelsHidden().frame(width:140)
-                Picker("",selection:$status) {Text(L("全部状态", "All statuses")).tag("all"); Text(L("已完成", "Completed")).tag("completed"); Text(L("失败", "Failed")).tag("failed"); Text("—").tag("")}.labelsHidden().frame(width:112)
-                TextField(L("搜索正文或摘要", "Search content or summaries"),text:$query).textFieldStyle(.roundedBorder).focused($searchFocused)
+                CompactFilterPicker(title:model == "all" ? L("全部模型", "All models") : model,label:L("模型", "Model"),selection:model,items:[.init(id:"all",title:L("全部模型", "All models"))]+state.claudeModels.map {.init(id:$0,title:$0)},choose:{model = $0}).frame(width:170)
+                CompactFilterPicker(title:status == "all" ? L("全部状态", "All statuses") : status == "completed" ? L("已完成", "Completed") : status == "failed" ? L("失败", "Failed") : "—",label:L("状态", "Status"),selection:status,items:[.init(id:"all",title:L("全部状态", "All statuses")),.init(id:"completed",title:L("已完成", "Completed")),.init(id:"failed",title:L("失败", "Failed")),.init(id:"",title:"—")],choose:{status = $0}).frame(width:140)
+                TextField(L("搜索正文或摘要", "Search content or summaries"),text:$query).textFieldStyle(.roundedBorder).focused($searchFocused).frame(maxWidth:.infinity).frame(height:30)
                 Menu {ForEach(LogFields.all.filter {$0 != "content" && $0 != "details"},id:\.self) {field in Toggle(LogFields.title(field),isOn:Binding(get:{fields.contains(field)},set:{enabled in
                     var values = Set(fields); if enabled {values.insert(field)} else {values.remove(field)}
                     state.setPreference("native_log_columns",LogFields.all.filter {values.contains($0)})
-                }))}} label:{Image(systemName:"slider.horizontal.3")}.menuStyle(.borderlessButton).fixedSize()
+                }))}} label:{Image(systemName:"slider.horizontal.3")}.menuStyle(.borderlessButton).fixedSize().frame(width:30,height:30)
             }
             if let warning = state.claudeWarning {StatusNote(text:warning)}
             CompactTable(columns:LogFields.columns(fields),rows:projection.value.rows.map {claudeGridRow($0,state:state,showYear:projection.value.showYear,timeOnly:period == "today")},revision:key,preferences:state.preferences,storageKey:"claude-logs",scrollResetKey:filterKey+String(page))
@@ -175,7 +175,7 @@ struct ClaudeTrendsView: View {
             ScrollView(.horizontal) {HStack(spacing:12) {
                 PeriodPicker(selection:$period,custom:true,condensed:true)
                 if period == "custom" {Button {datesOpen = true} label:{Image(systemName:"calendar")}.popover(isPresented:$datesOpen) {DateRangeControls(from:$from,through:$through).padding(18).frame(width:360)}}
-                Picker("",selection:$model) {Text(L("全部模型", "All models")).tag("all"); ForEach(state.claudeModels,id:\.self) {Text($0).tag($0)}}.labelsHidden().frame(width:140)
+                CompactFilterPicker(title:model == "all" ? L("全部模型", "All models") : model,label:L("模型", "Model"),selection:model,items:[.init(id:"all",title:L("全部模型", "All models"))]+state.claudeModels.map {.init(id:$0,title:$0)},choose:{model = $0}).frame(width:170)
                 Picker("",selection:$granularity) {Text(L("每小时", "Hourly")).tag("hour"); Text(L("每天", "Daily")).tag("day"); Text(L("每周", "Weekly")).tag("week")}.labelsHidden().pickerStyle(.segmented).fixedSize()
             }}.scrollIndicators(.hidden).frame(height:30)
             SummaryMetrics(summary:projection.value.summary)

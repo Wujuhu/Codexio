@@ -30,6 +30,7 @@ type QuotaService struct {
 	cancel         context.CancelFunc
 	done           chan struct{}
 	wake           chan struct{}
+	refreshMu      sync.Mutex
 	reset          chan systemResetCommand
 	client         *systemRPC
 	clientMu       sync.Mutex
@@ -87,9 +88,21 @@ func systemQuotaProjection(r Row, interval int) Row {
 	return r
 }
 func (q *QuotaService) Refresh() {
+	q.refreshMu.Lock()
+	defer q.refreshMu.Unlock()
 	select {
 	case q.wake <- struct{}{}:
 	default:
+	}
+	if q.opts.RefreshChanged != nil {
+		q.opts.RefreshChanged(true)
+	}
+}
+func (q *QuotaService) refreshActivity(active bool) {
+	q.refreshMu.Lock()
+	defer q.refreshMu.Unlock()
+	if q.opts.RefreshChanged != nil && (active || len(q.wake) == 0) {
+		q.opts.RefreshChanged(active)
 	}
 }
 func (q *QuotaService) Close() error {
@@ -152,6 +165,9 @@ func (q *QuotaService) publish(r Row) {
 }
 func (q *QuotaService) run() {
 	defer close(q.done)
+	if q.opts.RefreshChanged != nil {
+		defer q.opts.RefreshChanged(false)
+	}
 	defer func() {
 		q.clientMu.Lock()
 		if q.client != nil {
@@ -164,6 +180,7 @@ func (q *QuotaService) run() {
 		if q.ctx.Err() != nil {
 			return
 		}
+		q.refreshActivity(true)
 		err := q.cycle()
 		if err != nil {
 			q.failures++
@@ -182,6 +199,7 @@ func (q *QuotaService) run() {
 		} else {
 			q.failures = 0
 		}
+		q.refreshActivity(false)
 		delay := time.Duration(max(1, q.interval())) * time.Second
 		if q.failures > 0 {
 			delay = time.Duration(min(300, 1<<min(q.failures, 8))) * time.Second

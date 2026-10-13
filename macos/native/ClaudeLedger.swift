@@ -110,7 +110,7 @@ final class ClaudeLedger {
         for file in available {
             if isCancelled { return }
             do { try scanFile(file) }
-            catch { warning = L("部分 Claude 记录暂不可读，已保存的历史保留", "Some Claude records are temporarily unreadable; saved history is retained") }
+            catch { warning = L("部分 Claude 数据导入失败，已保存的历史保留", "Some Claude data could not be imported; saved history is retained")+"："+error.localizedDescription }
         }
         // A failed read is not deletion. Confirm ENOENT before marking absent.
         for row in try database.query("SELECT path FROM claude_sources WHERE present=1") where !FileStamp(URL(fileURLWithPath:row.string("path"))).exists {
@@ -481,7 +481,7 @@ final class ClaudeLedger {
         try database.run("INSERT INTO claude_calls VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET request_id=excluded.request_id,session_id=excluded.session_id,input=excluded.input,cache_read=excluded.cache_read,cache_write=excluded.cache_write,output=excluded.output,total=excluded.total,model=excluded.model,data=excluded.data WHERE data<>excluded.data",[raw.string("id"),raw.string("request_id"),raw.string("session_id"),parsedDate(raw["timestamp"])?.timeIntervalSince1970 as Any? ?? NSNull(),raw.string("model"),raw["input_tokens"] ?? NSNull(),raw["cached_input_tokens"] ?? NSNull(),raw["cache_write_input_tokens"] ?? NSNull(),raw["output_tokens"] ?? NSNull(),raw["total_tokens"] ?? NSNull(),jsonString(raw)])
     }
     private func saveRequest(_ raw: Object) throws {
-        try database.run("INSERT INTO claude_requests VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET model=excluded.model,status=excluded.status,input=excluded.input,cache_read=excluded.cache_read,cache_write=excluded.cache_write,output=excluded.output,total=excluded.total,data=excluded.data WHERE data<>excluded.data",[raw.string("id"),raw.string("session_id"),parsedDate(raw["timestamp"])?.timeIntervalSince1970 as Any? ?? NSNull(),raw.string("model"),raw.string("status"),raw["input_tokens"] ?? NSNull(),raw["cached_input_tokens"] ?? NSNull(),raw["cache_write_input_tokens"] ?? NSNull(),raw["output_tokens"] ?? NSNull(),raw["total_tokens"] ?? NSNull(),jsonString(raw)])
+        try database.run("INSERT INTO claude_requests(id,session_id,timestamp,model,status,input,cache_read,cache_write,output,total,data) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET model=excluded.model,status=excluded.status,input=excluded.input,cache_read=excluded.cache_read,cache_write=excluded.cache_write,output=excluded.output,total=excluded.total,data=excluded.data WHERE data<>excluded.data",[raw.string("id"),raw.string("session_id"),parsedDate(raw["timestamp"])?.timeIntervalSince1970 as Any? ?? NSNull(),raw.string("model"),raw.string("status"),raw["input_tokens"] ?? NSNull(),raw["cached_input_tokens"] ?? NSNull(),raw["cache_write_input_tokens"] ?? NSNull(),raw["output_tokens"] ?? NSNull(),raw["total_tokens"] ?? NSNull(),jsonString(raw)])
     }
     private func updateRequest(_ id: String,fields: Object) throws {
         guard let row = try database.query("SELECT data FROM claude_requests WHERE id=?",[id]).first else {return}

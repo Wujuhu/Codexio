@@ -38,3 +38,6 @@ body,button,input,select,textarea{font-family:"Codexio Inter","Microsoft YaHei U
 .page-header.overview-header{padding-top:24px;padding-bottom:16px}
 
 .client-switch{display:flex;align-items:center;gap:4px;margin-right:9px}.client-button{display:flex;align-items:center;justify-content:center;width:30px;height:30px;padding:5px!important;border-radius:7px}.client-button.selected{background:var(--hover);box-shadow:inset 0 0 0 1px var(--control)}.client-logo{display:block;width:19px;height:19px;background:currentColor;mask-repeat:no-repeat;mask-position:center;mask-size:contain}
+
+.refresh-icon{display:flex;align-items:center;justify-content:center;transform-origin:center}.refresh-icon.rotating{animation:refresh-turn .9s linear infinite}@keyframes refresh-turn{to{transform:rotate(360deg)}}
+.claude-filters.log-filters .filter-fields{display:grid;grid-template-columns:minmax(140px,180px) 125px minmax(130px,1fr);align-items:center}.claude-filters.log-filters .filter-fields>input,.claude-filters.log-filters .filter-fields>select{width:100%;min-width:0;max-width:none;height:28px;margin:0}

@@ -38,17 +38,19 @@ type DataOptions struct {
 	Config            Row
 	ScanUpdated       func(string)
 	ClientScanUpdated func(string, string)
+	RefreshChanged    func(bool)
 }
 
 type SystemOptions struct {
-	Directory  string
-	Executable string
-	Version    string
-	Mock       bool
-	Config     func() Row
-	Changed    func()
-	Sample     func(Row)
-	Exit       func()
+	Directory      string
+	Executable     string
+	Version        string
+	Mock           bool
+	Config         func() Row
+	Changed        func()
+	RefreshChanged func(bool)
+	Sample         func(Row)
+	Exit           func()
 }
 
 type DesktopCallbacks struct {

@@ -126,8 +126,8 @@ struct JourneyView:View{
         VStack(alignment:.leading,spacing:16){
             SectionHeading(title:L("执行行程","Execution journey"))
             HStack(spacing:12){
-                JourneyPicker(title:model.projects.first(where:{$0.string("id")==model.project})?.string("name") ?? L("项目","Project"),label:L("项目","Project"),selection:model.project,items:model.projects.map{JourneyPicker.Item(id:$0.string("id"),title:$0.string("name"))}){model.chooseProject(state,$0)}.frame(width:180)
-                JourneyPicker(title:model.thread.string("title",L("线程","Thread")),label:L("线程","Thread"),selection:model.thread.string("id"),items:threadOptions){id in
+                CompactFilterPicker(title:model.projects.first(where:{$0.string("id")==model.project})?.string("name") ?? L("项目","Project"),label:L("项目","Project"),selection:model.project,items:model.projects.map{CompactFilterPicker.Item(id:$0.string("id"),title:$0.string("name"))}){model.chooseProject(state,$0)}.frame(width:180)
+                CompactFilterPicker(title:model.thread.string("title",L("线程","Thread")),label:L("线程","Thread"),selection:model.thread.string("id"),items:threadOptions){id in
                     if id=="__more"{model.catalog(state,before:model.threadNext)}else if let row=model.threads.first(where:{$0.string("id")==id}){model.chooseThread(state,row)}
                 }.frame(maxWidth:320)
                 Spacer(minLength:0)
@@ -138,7 +138,7 @@ struct JourneyView:View{
                 GeometryReader{geometry in
                     HSplitView{
                         VStack(spacing:0){
-                            JourneyPicker(title:requestValueText(model.request.string("prompt_preview")),label:L("选择用户请求","Select request"),selection:model.request.string("id"),items:requestOptions){id in
+                            CompactFilterPicker(title:requestValueText(model.request.string("prompt_preview")),label:L("选择用户请求","Select request"),selection:model.request.string("id"),items:requestOptions){id in
                                 if id=="__newer"{model.loadThread(state,page:model.requestPage-1)}
                                 else if id=="__older"{model.loadThread(state,page:model.requestPage+1)}
                                 else if let row=model.requests.first(where:{$0.string("id")==id}){collapsed=[];model.chooseRequest(state,row)}
@@ -172,18 +172,18 @@ struct JourneyView:View{
         }.onAppear{model.catalog(state)}.onDisappear{model.cancel()}
         .onChange(of:state.usage.revision){_,_ in guard state.mainWindowVisible else{return};model.catalog(state);model.loadThread(state)}
     }
-    private var threadOptions:[JourneyPicker.Item]{
-        model.threads.map{JourneyPicker.Item(id:$0.string("id"),title:$0.string("title"))} + (model.threadNext.isEmpty ? [] : [.init(id:"__more",title:L("显示更多","Show more"))])
+    private var threadOptions:[CompactFilterPicker.Item]{
+        model.threads.map{CompactFilterPicker.Item(id:$0.string("id"),title:$0.string("title"))} + (model.threadNext.isEmpty ? [] : [.init(id:"__more",title:L("显示更多","Show more"))])
     }
-    private var requestOptions:[JourneyPicker.Item]{
-        model.requests.map{JourneyPicker.Item(id:$0.string("id"),title:requestValueText($0.string("prompt_preview")))} + (model.requestPage>1 ? [.init(id:"__newer",title:L("较新的请求","Newer requests"))] : []) + (model.requestPage<model.requestPages ? [.init(id:"__older",title:L("较早的请求","Earlier requests"))] : [])
+    private var requestOptions:[CompactFilterPicker.Item]{
+        model.requests.map{CompactFilterPicker.Item(id:$0.string("id"),title:requestValueText($0.string("prompt_preview")))} + (model.requestPage>1 ? [.init(id:"__newer",title:L("较新的请求","Newer requests"))] : []) + (model.requestPage<model.requestPages ? [.init(id:"__older",title:L("较早的请求","Earlier requests"))] : [])
     }
     private func open(){let id=model.thread.string("id");guard UUID(uuidString:id) != nil,let url=URL(string:"codex://threads/"+id),NSWorkspace.shared.urlForApplication(toOpen:url) != nil else{state.errorMessage=L("无法在本机定位此聊天","This chat cannot be opened locally");return};NSWorkspace.shared.open(url)}
 }
 
 // The native bordered control matches other filters; the anchored popover keeps
 // long prompts and paged options inside a ten-row scrolling viewport.
-private struct JourneyPicker:View{
+struct CompactFilterPicker:View{
     struct Item:Identifiable{let id:String;let title:String}
     let title:String,label:String,selection:String,items:[Item],choose:(String)->Void
     @State private var open=false

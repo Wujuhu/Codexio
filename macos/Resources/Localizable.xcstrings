@@ -9697,6 +9697,22 @@
         }
       }
     },
+    "日志类型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Log type"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "日志类型"
+          }
+        }
+      }
+    },
     "日报": {
       "localizations": {
         "en": {
@@ -17805,6 +17821,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "速度未知 %d 次"
+          }
+        }
+      }
+    },
+    "部分 Claude 数据导入失败，已保存的历史保留": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Some Claude data could not be imported; saved history is retained"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "部分 Claude 数据导入失败，已保存的历史保留"
           }
         }
       }

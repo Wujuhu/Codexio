@@ -31,6 +31,7 @@ type Store struct {
 	priceStatus             Row
 	generation              atomic.Int64
 	refresh                 chan bool
+	refreshMu               sync.Mutex
 	closed                  chan struct{}
 	closeOnce               sync.Once
 	directories             map[string]directorySnapshot
@@ -216,12 +217,19 @@ func (s *Store) Configure(r Row) {
 	}
 }
 func (s *Store) Refresh() {
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
 	select {
 	case s.refresh <- false:
 	default:
 	}
+	if s.options.RefreshChanged != nil {
+		s.options.RefreshChanged(true)
+	}
 }
 func (s *Store) Rescan() {
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
 	select {
 	case <-s.refresh:
 	default:
@@ -230,6 +238,16 @@ func (s *Store) Rescan() {
 	case s.refresh <- true:
 	default:
 	}
+	if s.options.RefreshChanged != nil {
+		s.options.RefreshChanged(true)
+	}
+}
+func (s *Store) refreshActivity(active bool) {
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+	if s.options.RefreshChanged != nil && (active || len(s.refresh) == 0) {
+		s.options.RefreshChanged(active)
+	}
 }
 func (s *Store) Close() error {
 	var e error
@@ -237,6 +255,9 @@ func (s *Store) Close() error {
 	return e
 }
 func (s *Store) Run(ctx context.Context, changed func()) {
+	if s.options.RefreshChanged != nil {
+		defer s.options.RefreshChanged(false)
+	}
 	tick := time.NewTimer(time.Millisecond)
 	defer tick.Stop()
 	force := false
@@ -249,6 +270,7 @@ func (s *Store) Run(ctx context.Context, changed func()) {
 		case force = <-s.refresh:
 		case <-tick.C:
 		}
+		s.refreshActivity(true)
 		s.work.Lock()
 		before := s.Generation()
 		var e error
@@ -309,6 +331,7 @@ func (s *Store) Run(ctx context.Context, changed func()) {
 		if (before != s.Generation() || statusChanged) && changed != nil {
 			changed()
 		}
+		s.refreshActivity(false)
 		force = false
 		if interval < 5 {
 			interval = 10

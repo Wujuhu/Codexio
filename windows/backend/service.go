@@ -41,6 +41,8 @@ type Service struct {
 	reportAccount    string
 	journeyOnce      sync.Once
 	journey          *localJourney
+	refreshActivity  map[string]bool
+	refreshRevision  int64
 }
 
 func NewService(directory, executable, version string, mock bool, callbacks DesktopCallbacks) (*Service, error) {
@@ -65,7 +67,7 @@ func NewService(directory, executable, version string, mock bool, callbacks Desk
 		if callbacks.Changed != nil {
 			callbacks.Changed("codexio:clock", Row{"updated_at": stamp})
 		}
-	}})
+	}, RefreshChanged: func(active bool) { s.setRefreshActivity("usage", active) }})
 	if err != nil {
 		cancel()
 		return nil, err
@@ -86,7 +88,9 @@ func NewService(directory, executable, version string, mock bool, callbacks Desk
 			s.estimate.Sample(r)
 		}
 	}
+	opts.RefreshChanged = func(active bool) { s.setRefreshActivity("quota", active) }
 	s.quota = NewQuota(opts)
+	opts.RefreshChanged = nil
 	opts.Sample = nil
 	opts.Changed = func() { s.notify("update") }
 	s.updater = NewUpdater(opts)
@@ -97,6 +101,23 @@ func NewService(directory, executable, version string, mock bool, callbacks Desk
 }
 
 func (s *Service) Config() Row { s.mu.RLock(); defer s.mu.RUnlock(); return PublicConfig(s.config) }
+func (s *Service) setRefreshActivity(scope string, active bool) {
+	s.mu.Lock()
+	if s.refreshActivity == nil {
+		s.refreshActivity = map[string]bool{}
+	}
+	if s.refreshActivity[scope] == active {
+		s.mu.Unlock()
+		return
+	}
+	s.refreshActivity[scope] = active
+	s.refreshRevision++
+	event := Row{"scope": "refresh", "refreshing": s.refreshActivity["usage"] || s.refreshActivity["quota"] || s.refreshActivity["reports"], "refresh_revision": s.refreshRevision}
+	s.mu.Unlock()
+	if s.callbacks.Changed != nil {
+		s.callbacks.Changed("codexio:changed", event)
+	}
+}
 func (s *Service) notify(scope string) {
 	if s.callbacks.Changed != nil {
 		event := Row{"scope": scope, "generation": s.store.Generation()}
@@ -157,7 +178,14 @@ func (s *Service) GetOverview(q Query) (Row, error) {
 	return Row{"summary": summary, "chart": chart, "recent": recent, "models": models, "quota": quota, "state": s.store.ClientStatus(q.ClientKind), "generation": s.store.Generation()}, nil
 }
 func (s *Service) GetLogs(q Query) (PageResult, error) { return s.store.Page(q) }
-func (s *Service) GetState() Row                       { return s.store.Status() }
+func (s *Service) GetState() Row {
+	state := s.store.Status()
+	s.mu.RLock()
+	state["refreshing"] = s.refreshActivity["usage"] || s.refreshActivity["quota"] || s.refreshActivity["reports"]
+	state["refresh_revision"] = s.refreshRevision
+	s.mu.RUnlock()
+	return state
+}
 func (s *Service) GetDetails(id string, page int) (Row, error) {
 	raw, err := s.store.Detail(id, page)
 	if err != nil {
@@ -541,7 +569,7 @@ func metricSkipped(row Row, field string) int64 {
 }
 func (s *Service) requestAccountReports(force bool) {
 	quota := s.quota.Snapshot()
-	if s.mock || !ValueBool(quota["applicable"]) {
+	if s.mock || s.ctx.Err() != nil || !ValueBool(quota["applicable"]) {
 		return
 	}
 	account := ValueString(quota["account_key"])
@@ -552,6 +580,7 @@ func (s *Service) requestAccountReports(force bool) {
 		return
 	}
 	s.reportBusy = true
+	s.setRefreshActivity("reports", true)
 	s.reportMu.Unlock()
 	go func() {
 		defer func() {
@@ -560,8 +589,12 @@ func (s *Service) requestAccountReports(force bool) {
 			s.reportGeneration = gen
 			s.reportAccount = account
 			s.reportRead = time.Now()
+			s.setRefreshActivity("reports", false)
 			s.reportMu.Unlock()
 		}()
+		if s.ctx.Err() != nil {
+			return
+		}
 		threads := s.reportThreads()
 		signature := HashString(rowJSON(threads))
 		s.reportMu.Lock()
