@@ -41,6 +41,7 @@ final class ClaudeLedger {
         CREATE INDEX IF NOT EXISTS claude_calls_time ON claude_calls(timestamp DESC);
         CREATE INDEX IF NOT EXISTS claude_calls_request ON claude_calls(request_id);
         CREATE INDEX IF NOT EXISTS claude_calls_session ON claude_calls(session_id);
+        CREATE INDEX IF NOT EXISTS claude_timing_pending ON claude_calls(id) WHERE COALESCE(json_extract(data,'$.call_timing_checked'),0)=0 AND COALESCE(json_extract(data,'$.is_subagent'),0)=0;
         CREATE TABLE IF NOT EXISTS claude_requests(id TEXT PRIMARY KEY,session_id TEXT NOT NULL,timestamp REAL,model TEXT NOT NULL,status TEXT NOT NULL,input INTEGER,cache_read INTEGER,cache_write INTEGER,output INTEGER,total INTEGER,data TEXT NOT NULL);
         CREATE INDEX IF NOT EXISTS claude_requests_time ON claude_requests(timestamp DESC);
         CREATE INDEX IF NOT EXISTS claude_requests_session ON claude_requests(session_id);
@@ -125,6 +126,7 @@ final class ClaudeLedger {
             }
         }
         if changedFiles || ownershipNeedsRepair {ownershipNeedsRepair = try repairOwnership()}
+        try recoverCallTiming()
         if !affected.isEmpty || !affectedSessions.isEmpty {
             try database.transaction {
                 for id in affected { try materializeRequest(id) }
@@ -143,6 +145,9 @@ final class ClaudeLedger {
         let handle = try FileHandle(forReadingFrom:file); defer {try? handle.close()}
         let source = try database.query("SELECT data FROM claude_sources WHERE path=?",[file.path]).first.map {jsonObject(Data($0.string("data").utf8))} ?? [:]
         sourceGeneration = source.integer("generation") ?? 0; sourceStamp = stamp
+        if !source.isEmpty, let previous = try database.query("SELECT present FROM claude_sources WHERE path=?",[file.path]).first, previous.integer("present") != 1 {
+            try database.run("UPDATE claude_calls SET data=json_set(data,'$.call_timing_checked',json('false')) WHERE json_extract(data,'$.call_timing_incomplete')=1 AND id IN(SELECT id FROM claude_locations WHERE path=?)",[file.path])
+        }
         let priorSize = cursor.integer("file_size") ?? source.integer("size")
         let priorModified = cursor.number("modified") ?? source.number("modified")
         let inPlaceRewrite = priorSize == Int(stamp.size) && priorModified != stamp.modified?.timeIntervalSince1970
@@ -229,7 +234,7 @@ final class ClaudeLedger {
         state["session"] = sessionRaw
         let entry = row.string("entrypoint",state.string("entrypoint")); if !entry.isEmpty {state["entrypoint"] = entry}
         let uuid = row.string("uuid"), nodeID = namespaced(uuid), type = row.string("type"), message = row.object("message")
-        let child = file.pathComponents.contains("subagents") || row.flag("isSidechain")
+        let child = file.pathComponents.contains("subagents") || row.flag("isSidechain") || !row.string("agentId").isEmpty
         let ownContext = try canonicalContext(nodeID), parentContext = try canonicalContext(namespaced(row.string("parentUuid")))
         let mainHuman = type == "user" && row.object("origin").string("kind") == "human" && !child && !row.flag("isMeta") && !row.flag("turnCompanion") && !(row["turnCompanion"] is Object) && row.string("turnCompanion").isEmpty && row.string("continuationOfPromptId").isEmpty
         if let ownContext {session = ownContext.session}
@@ -302,6 +307,8 @@ final class ClaudeLedger {
                 }
                 raw["reasoning_output_tokens"] = usage.integer("thinking_tokens") as Any? ?? usage.object("output_tokens_details").integer("thinking_tokens") as Any? ?? NSNull()
                 let terminal = !message.string("stop_reason").isEmpty
+                raw["call_timing"] = ClaudeTiming.observation(row)
+                raw["call_timing_checked"] = true
                 raw["terminal_usage"] = terminal
                 raw["usage_evidence_terminal"] = terminal && raw.integer("total_tokens") != nil
                 raw["usage_read_state"] = raw.integer("total_tokens") == nil ? "partial" : terminal ? "terminal" : "provisional"
@@ -391,6 +398,9 @@ final class ClaudeLedger {
         result["usage_evidence_terminal"] = preferIncoming ? newFinal : oldFinal
         result["status"] = result.flag("terminal_usage") ? "completed" : ""
         result["timestamp"] = old["timestamp"] ?? incoming["timestamp"]
+        result["call_timing"] = ClaudeTiming.merge(old.object("call_timing"),incoming.object("call_timing"))
+        result["call_timing_checked"] = old.flag("call_timing_checked") && incoming.flag("call_timing_checked") && !old.flag("call_timing_incomplete")
+        result["call_timing_incomplete"] = old.flag("call_timing_incomplete") || incoming.flag("call_timing_incomplete")
         for key in ["model","reasoning_effort","upstream_model"] where result.string(key).isEmpty {result[key] = old[key] ?? incoming[key]}
         let conflict = old.flag("usage_conflict") || incoming.flag("usage_conflict") || terminalConflict
         result["usage_conflict"] = conflict
@@ -421,7 +431,7 @@ final class ClaudeLedger {
             try database.run("INSERT OR IGNORE INTO claude_locations(id,path,offset,length,uuid,generation,line_hash,device,inode) SELECT ?,path,offset,length,uuid,generation,line_hash,device,inode FROM claude_locations WHERE id=?",[request,namespaced("event:"+event.string("uuid"))])
             try database.run("INSERT INTO claude_locations(id,path,offset,length,uuid,generation,line_hash,device,inode) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id,path,offset) DO UPDATE SET generation=excluded.generation,line_hash=excluded.line_hash,device=excluded.device,inode=excluded.inode",[request,event.string("path"),event.integer("offset") ?? 0,event.integer("length") ?? 0,event.string("uuid"),event.integer("generation") ?? 0,event.string("line_hash"),event.string("device"),event.string("inode")])
         } else if let ms = event.number("duration_ms"), ms >= 0 {
-            var fields: Object = ["duration_ms":ms,"ended_at":event["timestamp"] ?? NSNull()]
+            var fields: Object = ["duration_ms":ms,"ended_at":event["timestamp"] ?? NSNull(),"duration_source":"turn_duration","explicit_duration_ms":ms,"explicit_ended_at":event["timestamp"] ?? NSNull()]
             if !["failed","aborted"].contains(parent.string("status")) {fields["status"] = "completed"}
             try updateRequest(request,fields:fields)
         }
@@ -501,6 +511,14 @@ final class ClaudeLedger {
         let context = try database.query("SELECT input FROM claude_calls WHERE request_id=? AND COALESCE(json_extract(data,'$.is_subagent'),0)=0 ORDER BY timestamp DESC,id DESC LIMIT 1",[id]).first
         fields["context_input_tokens"] = context?["input"] ?? NSNull()
         fields["call_count"] = sums["calls"] ?? 0
+        fields["upstream_models"] = try database.query("SELECT DISTINCT json_extract(data,'$.upstream_model') AS model FROM claude_calls WHERE request_id=? AND COALESCE(json_extract(data,'$.upstream_model'),'')<>'' ORDER BY model",[id]).map {$0.string("model")}
+        if let stored = try database.query("SELECT data FROM claude_requests WHERE id=?",[id]).first {
+            let request = jsonObject(Data(stored.string("data").utf8))
+            var main = try database.query("SELECT data FROM claude_calls WHERE request_id=? AND COALESCE(json_extract(data,'$.is_subagent'),0)=0 AND COALESCE(json_extract(data,'$.agent_id'),'')='' ORDER BY COALESCE(json_extract(data,'$.call_timing.first'),json_extract(data,'$.timestamp')) DESC,id DESC LIMIT 2",[id]).map {jsonObject(Data($0.string("data").utf8))}
+            let pending = try database.query("SELECT EXISTS(SELECT 1 FROM claude_calls WHERE request_id=? AND COALESCE(json_extract(data,'$.is_subagent'),0)=0 AND (COALESCE(json_extract(data,'$.call_timing_checked'),0)=0 OR COALESCE(json_extract(data,'$.call_timing_incomplete'),0)=1)) AS pending",[id]).first?.integer("pending") == 1
+            if pending, !main.isEmpty {main[0]["call_timing_incomplete"] = true}
+            for (key,value) in ClaudeTiming.requestFields(request,main:main) {fields[key] = value}
+        }
         try updateRequest(id,fields:fields)
     }
     private func materializeRanking(_ session: String) throws {
@@ -620,6 +638,38 @@ final class ClaudeLedger {
         guard id.hasPrefix(scope) else {return []}
         return try database.query("SELECT data FROM claude_calls WHERE request_id=? ORDER BY timestamp,id LIMIT 60 OFFSET ?",[id,max(0,page)*60]).map {UsageRow(raw:jsonObject(Data($0.string("data").utf8)))}
     }
+    private func recoverCallTiming() throws {
+        guard !isCancelled else {return}
+        let calls = try database.query("SELECT id,data FROM claude_calls WHERE id LIKE ? AND COALESCE(json_extract(data,'$.call_timing_checked'),0)=0 AND COALESCE(json_extract(data,'$.is_subagent'),0)=0 ORDER BY id LIMIT 32",[scope+"%"])
+        var remainingBytes = 32_000_000
+        for call in calls {
+            if remainingBytes <= 0 {break}
+            if isCancelled {return}
+            let id = call.string("id"); var raw = jsonObject(Data(call.string("data").utf8))
+            if !raw.flag("call_timing_checked") {
+                let locations = try database.query("SELECT l.*,s.present,COALESCE(json_extract(s.data,'$.generation'),0) AS source_generation FROM claude_locations l LEFT JOIN claude_sources s ON s.path=l.path WHERE l.id=? ORDER BY l.path,l.offset LIMIT 65",[id])
+                var timing: Object = [:], complete = !locations.isEmpty && locations.count <= 64, bytes = 0
+                for location in locations.prefix(64) {
+                    guard location.integer("present") == 1, location.integer("generation") == location.integer("source_generation"), let length = location.integer("length"), length <= 8_000_000, bytes+length <= 32_000_000 else {complete = false; continue}
+                    bytes += length; remainingBytes -= length
+                    let file = URL(fileURLWithPath:location.string("path")), stamp = FileStamp(file)
+                    guard stamp.exists, String(stamp.device) == location.string("device"), String(stamp.inode) == location.string("inode"), let handle = try? FileHandle(forReadingFrom:file) else {complete = false; continue}
+                    defer {try? handle.close()}
+                    do {
+                        try handle.seek(toOffset:UInt64(location.integer("offset") ?? 0))
+                        let line = try handle.read(upToCount:length) ?? Data(), row = jsonObject(line)
+                        guard digest(line) == location.string("line_hash"), row.string("uuid") == location.string("uuid"), row.string("type") == "assistant", row.object("message").string("id") == raw.string("response_id"), !row.flag("isSidechain"), row.string("agentId").isEmpty else {complete = false; continue}
+                        timing = ClaudeTiming.merge(timing,ClaudeTiming.observation(row))
+                    } catch {complete = false}
+                }
+                raw["call_timing"] = timing; raw["call_timing_checked"] = true; raw["call_timing_incomplete"] = !complete
+                try saveCall(raw)
+            }
+            if !raw.string("request_id").isEmpty {affected.insert(raw.string("request_id"))}
+            affectedSessions.insert(raw.string("session_id"))
+        }
+    }
+
     func original(_ id: String) throws -> [Object] {
         guard id.hasPrefix(scope) else {return []}
         // Never retain body/media caches. Each opening rechecks the live source.

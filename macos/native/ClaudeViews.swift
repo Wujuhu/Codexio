@@ -31,6 +31,11 @@ private func claudeGridRow(_ row: UsageRow,state: AppState,showYear: Bool,timeOn
             let suffix = [logDateText(row.date,timeOnly:timeOnly,showYear:showYear),logEffortName(row.raw.string("reasoning_effort")),row.raw.flag("is_subagent") ? L("子代理", "Subagent") : row.raw.string("record_kind") == "unassigned" ? L("未归属调用", "Unassigned call") : ""].filter {!$0.isEmpty}.joined(separator:" · ")
             return GridText(main:"—",secondary:suffix)
         }
+        if key == "model" {
+            let values = (row.raw["upstream_models"] as? [String] ?? [])+[row.raw.string("upstream_model")]
+            let labels = Array(Set(values.filter {!$0.isEmpty})).sorted()
+            return GridText(main:labels.isEmpty ? "—" : labels.joined(separator:" · "))
+        }
         if key == "cache_rate" {
             let rate = row.raw.number("input_tokens").flatMap {input in input > 0 ? row.raw.number("cached_input_tokens").map {$0/input*100} : nil}
             return GridText(main:percent(rate,digits:1))
