@@ -16,6 +16,8 @@ final class PricingCatalog {
     private(set) var warning: String?
     private(set) var version = ""
     private var ratesByModel: [String:[PriceRow]] = [:]
+    private var basesByModel: [String:Object] = [:]
+    private var billingPolicies: Object = [:]
     init(_ directory: URL) {
         self.directory = directory
         cache = readObject(directory.appendingPathComponent("pricing_cache.json"))
@@ -24,6 +26,7 @@ final class PricingCatalog {
     }
     func rebuild() {
         let seed = Bundle.main.url(forResource:"pricing_seed",withExtension:"json").map(readObject) ?? [:]
+        billingPolicies = seed.object("billing_policies")
         var merged: [String:Object] = [:]
         for raw in seed.objects("rows") + cache.objects("rows") where raw.integer("threshold") ?? 0 == 0 && ["default","standard"].contains(raw.string("service_tier","default")) {
             guard raw.number("input") != nil, raw.number("output") != nil else { continue }
@@ -39,8 +42,14 @@ final class PricingCatalog {
             row["model"] = model; row["locked"] = true; merged[model] = row
         }
         bases = merged.values.sorted { $0.string("model") < $1.string("model") }
+        basesByModel = Dictionary(bases.map { ($0.string("model"),$0) },uniquingKeysWith:{$1})
         rows = bases.flatMap { base -> [PriceRow] in
             let model = base.string("model").replacingOccurrences(of:#"-\d{4}-\d{2}-\d{2}$"#,with:"",options:.regularExpression)
+            if model == "gpt-6.1-sol", !billingPolicies.object(model).isEmpty {
+                return ["default","priority","ultrafast"].compactMap { tier in
+                    solRates(base:base,mode:"subscription",tier:tier,inputTokens:0).map { PriceRow(raw:$0) }
+                }
+            }
             let modern = ["gpt-6.1-sol","gpt-6-sol","gpt-6-luna","gpt-5.6","gpt-5.6-sol","gpt-5.6-terra","gpt-5.6-luna","gpt-5.5"].contains(model)
             let fast: Double? = model == "gpt-5.4" ? 2 : (modern || model == "gpt-6-astra" ? 2.5 : nil)
             let thresholds = modern || model == "gpt-5.4" ? [0,272000] : [0]
@@ -57,30 +66,81 @@ final class PricingCatalog {
             }
         }
         ratesByModel = Dictionary(grouping:rows,by: { $0.model })
-        version = identity(["rule":3,"rows":rows.map { row -> Object in
-            var value = row.raw; value.removeValue(forKey:"updated_at"); return value
-        }] as Object)
+        func signature(_ raw: Object) -> Object { var value = raw; value.removeValue(forKey:"updated_at"); return value }
+        let policyContent: Object = billingPolicies.mapValues { raw -> Any in
+            guard var policy = raw as? Object else { return raw }
+            policy.removeValue(forKey:"sources"); policy.removeValue(forKey:"verified_at")
+            return policy
+        }
+        version = identity(["rule":4,"billing_policies":policyContent,"standard_rows":bases.map(signature),"rows":rows.map { signature($0.raw) }] as Object)
         updated = parsedDate(cache["updated_at"])
     }
     func price(_ raw: Object) -> Object {
         var value = raw; value["cost_usd"] = NSNull(); value["pricing_status"] = "unpriced"; value["price_version"] = version
+        for key in ["price_rates","pricing_mode","pricing_identity_estimated","assumed_billing_source"] { value.removeValue(forKey:key) }
         let keys = ["input_tokens","cached_input_tokens","cache_write_input_tokens","output_tokens","reasoning_output_tokens"]
         let values = keys.map { raw.integer($0) ?? (raw[$0] == nil ? 0 : -1) }
         guard raw["input_tokens"] != nil, raw["output_tokens"] != nil, values.allSatisfy({$0 >= 0}), values[1]+values[2] <= values[0], values[4] <= values[3], !raw.string("quality").hasPrefix("invalid") else { value["pricing_status"] = "invalid"; return value }
         let provider = raw.string("provider","unknown"), official = ["openai","codexio-upstream"].contains(provider)
         guard provider != "unknown", !provider.isEmpty else { return value }
         let model = official ? raw.string("model").replacingOccurrences(of:"openai/",with:"") : raw.string("model")
-        let candidates = ratesByModel[model] ?? []
         let tier = normalizedTier(raw.string("service_tier"))
-        let threshold = candidates.map { $0.raw.integer("threshold") ?? 0 }.filter { values[0] > $0 }.max() ?? 0
-        guard let selected = candidates.first(where: { $0.raw.string("service_tier") == (tier == "unknown" ? "default" : tier) && $0.raw.integer("threshold") == threshold }) else { return value }
+        let rawTier = raw.string("service_tier").trimmingCharacters(in:.whitespacesAndNewlines).lowercased()
+        let missingTier = rawTier.isEmpty || rawTier == "auto"
+        let selectedTier = missingTier ? "default" : tier
+        let normalizedModel = model.replacingOccurrences(of:#"-\d{4}-\d{2}-\d{2}$"#,with:"",options:.regularExpression)
+        let identity = BillingIdentity.resolve(raw)
+        var identityEstimated = false
+        var assumedSource: String?
+        let selected: Object
+        if normalizedModel == "gpt-6.1-sol", !billingPolicies.object(normalizedModel).isEmpty {
+            let policy = billingPolicies.object(normalizedModel)
+            let mode: String
+            if identity.mode == "unknown" {
+                mode = official ? policy.string("unknown_official_mode","subscription") : "legacy"
+                assumedSource = mode
+            } else { mode = identity.mode }
+            identityEstimated = identity.mode == "unknown" && official ? policy.flag("unknown_official_estimated",true) : identity.estimated
+            guard let base = basesByModel[model], var derived = solRates(base:base,mode:mode,tier:selectedTier,inputTokens:values[0]) else { return value }
+            if identityEstimated { derived["pricing_identity_estimated"] = true }
+            else { derived.removeValue(forKey:"pricing_identity_estimated") }
+            if let assumedSource { derived["assumed_billing_source"] = assumedSource; value["assumed_billing_source"] = assumedSource }
+            selected = derived
+            value["pricing_mode"] = mode
+            if identityEstimated { value["pricing_identity_estimated"] = true }
+        } else {
+            let candidates = ratesByModel[model] ?? []
+            let threshold = candidates.map { $0.raw.integer("threshold") ?? 0 }.filter { values[0] > $0 }.max() ?? 0
+            guard let candidate = candidates.first(where: { $0.raw.string("service_tier") == selectedTier && $0.raw.integer("threshold") == threshold }) else { return value }
+            selected = candidate.raw
+        }
         let parts = [values[0]-values[1]-values[2],values[1],values[2],values[3]]
-        let rates = ["input","cache_read","cache_write","output"].map { selected.raw.number($0) }
+        let rates = ["input","cache_read","cache_write","output"].map { selected.number($0) }
         guard zip(parts,rates).allSatisfy({$0.0 == 0 || $0.1 != nil}) else { return value }
         value["cost_usd"] = zip(parts,rates).reduce(0.0) { $0 + Double($1.0) * ($1.1 ?? 0) / 1e6 }
-        value["pricing_status"] = tier == "unknown" || raw.string("quality").hasPrefix("cumulative") || !official ? "estimated" : "priced"
-        value["price_rates"] = selected.raw
+        value["pricing_status"] = tier == "unknown" || raw.string("quality").hasPrefix("cumulative") || !official || identityEstimated ? "estimated" : "priced"
+        value["price_rates"] = selected
         return value
+    }
+    private func solRates(base: Object, mode: String, tier: String, inputTokens: Int) -> Object? {
+        let policy = billingPolicies.object("gpt-6.1-sol"), selected = policy.object(mode)
+        guard !selected.isEmpty, let speed = selected.object("speeds").number(tier), speed >= 0 else { return nil }
+        let threshold = selected.integer("long_context_threshold") ?? 0
+        let long = threshold > 0 && inputTokens > threshold
+        let inputMultiplier = speed * (long ? 2 : 1), outputMultiplier = speed * (long ? 1.5 : 1)
+        let basis = selected.string("cache_write_basis","legacy")
+        var row = base
+        row["service_tier"] = tier; row["threshold"] = long ? threshold : 0
+        row["long_context_threshold"] = threshold; row["pricing_mode"] = mode
+        row["speed_multiplier"] = speed; row["input_multiplier"] = inputMultiplier; row["output_multiplier"] = outputMultiplier
+        row["cache_write_basis"] = basis; row["rule_version"] = policy.string("rule_version")
+        row["base_rates"] = Dictionary(uniqueKeysWithValues:["input","cache_read","cache_write","output"].map { ($0,base[$0] ?? NSNull()) })
+        row["multipliers"] = ["input":inputMultiplier,"cache_read":inputMultiplier,"cache_write":inputMultiplier,"output":outputMultiplier]
+        for key in ["input","cache_read","cache_write","output"] {
+            let baseKey = key == "cache_write" && (basis == "input" || (basis == "legacy" && (tier != "default" || long))) ? "input" : key
+            row[key] = base.number(baseKey).map { $0 * (key == "output" ? outputMultiplier : inputMultiplier) } as Any?
+        }
+        return row
     }
     func setOverride(model: String, rates: Object?) throws {
         if var rates {
@@ -94,7 +154,7 @@ final class PricingCatalog {
     private func archive() throws {
         let destination = directory.appendingPathComponent("versions/\(version).json")
         guard !FileManager.default.fileExists(atPath:destination.path) else { return }
-        try atomicJSON(["price_version":version,"created_at":iso(),"standard_rows":bases,"rows":rows.map(\.raw),"unit":"USD per million tokens"],to:destination)
+        try atomicJSON(["price_version":version,"created_at":iso(),"standard_rows":bases,"billing_policies":billingPolicies,"rows":rows.map(\.raw),"unit":"USD per million tokens"],to:destination)
     }
     func sync(force: Bool = false) throws {
         let retry: TimeInterval = cache.string("status") == "offline" ? 3600 : 86400

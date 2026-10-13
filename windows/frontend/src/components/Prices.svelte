@@ -8,12 +8,12 @@
  $: selectedModel=selected||'';
  $: base=rows(data.rows).find(row=>row.model===selectedModel&&String(row.service_tier??'default')==='default'&&Number(row.threshold??0)===0);
  function select(row:Row){selected=String(row.model??'');}
- function edit(){if(!base)return;draft=Object.fromEntries(fields.map(key=>[key,base[key]??'']));editing=true;}
+ function edit(){if(!base)return;const rates=base.base_rates??base;draft=Object.fromEntries(fields.map(key=>[key,rates[key]??'']));editing=true;}
  async function save(){if(!selectedModel)return;busy=true;try{await api('SavePrice',selectedModel,Object.fromEntries(fields.map(key=>[key,draft[key]===''?null:Number(draft[key])])));editing=false;onreload()}catch(e){onerror(e)}finally{busy=false}}
  async function restore(){if(!selectedModel)return;busy=true;try{await api('SavePrice',selectedModel,{});onreload()}catch(e){onerror(e)}finally{busy=false}}
  async function sync(){busy=true;try{await api('SyncPrices');onreload()}catch(e){onerror(e)}finally{busy=false}}
  function price(value:any){const n=number(value);return n===null?'—':'$'+n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}
- function condition(row:Row){return (String(row.service_tier??'default')==='priority'?'Fast':'Standard')+(Number(row.threshold??0)>0?' >272K':'')}
+ function condition(row:Row){return (String(row.service_tier??'default')==='priority'?'Fast':String(row.service_tier??'default')==='ultrafast'?'Ultra Fast':'Standard')+(Number(row.threshold??0)>0?' >272K':'')}
 </script>
 
 <div class="price-meta"><p class="muted">{tr('美元 / 1M Token')}</p><span class="muted">{data.status?.updated_at?tr('上次更新：')+updatedStamp(data.status.updated_at):''}</span></div>

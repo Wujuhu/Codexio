@@ -706,7 +706,7 @@ func inheritedEntry(entry, state Row) bool {
 // Settings notifications describe the next request. Keep them separate from
 // the active turn, including when a stopped request remains the current ID.
 func applyRequestSettings(state, settings Row) {
-	for _, key := range []string{"model", "reasoning_effort", "service_tier", "model_context_window", "auth_mode", "cwd", "provider"} {
+	for _, key := range []string{"model", "reasoning_effort", "service_tier", "model_context_window", "auth_mode", "billing_source", "usage_source", "cwd", "provider"} {
 		if value, exists := settings[key]; exists {
 			state[key] = value
 		}
@@ -721,6 +721,98 @@ func applyRequestSettings(state, settings Row) {
 func activateRequestSettings(state Row) {
 	applyRequestSettings(state, ValueRow(state["pending_request_settings"]))
 	delete(state, "pending_request_settings")
+}
+
+var requestPricingIdentityFields = []string{"auth_mode", "billing_source", "usage_source"}
+
+func beginRequestSettings(state Row) {
+	// A new request cannot inherit the previous request's funding identity.
+	for _, key := range requestPricingIdentityFields {
+		delete(state, key)
+	}
+	delete(state, "pricing_recent")
+	delete(state, "pricing_recent_order")
+	delete(state, "last_record")
+	activateRequestSettings(state)
+}
+
+func copyRequestPricingIdentity(target, source Row) {
+	for _, key := range requestPricingIdentityFields {
+		if value, exists := source[key]; exists {
+			target[key] = value
+		}
+	}
+}
+
+func rememberPricingRecord(state, record Row) {
+	if !ValueBool(record["context_owner_verified"]) {
+		return
+	}
+	id := dataString(record, "id")
+	if id == "" {
+		return
+	}
+	recent := ValueRow(state["pricing_recent"])
+	order := ValueStrings(state["pricing_recent_order"])
+	if recent[id] == nil {
+		order = append(order, id)
+	}
+	recent[id] = CloneRow(record)
+	for len(order) > 16 {
+		delete(recent, order[0])
+		order = order[1:]
+	}
+	state["pricing_recent"], state["pricing_recent_order"] = recent, order
+	state["last_record"] = CloneRow(record)
+}
+
+func (s *Store) fillRecentPricingIdentity(tx *sql.Tx, state, fields Row, source, file, generation string) error {
+	if ValueBool(state["_recovery"]) || len(fields) == 0 {
+		return nil
+	}
+	recent := ValueRow(state["pricing_recent"])
+	order := ValueStrings(state["pricing_recent_order"])
+	// Retain the already-existing single candidate when upgrading an old cursor.
+	for _, raw := range []Row{ValueRow(state["last_record"]), ValueRow(ValueRow(state["modern_candidate"])["record"])} {
+		if id := dataString(raw, "id"); id != "" && recent[id] == nil && ValueBool(raw["context_owner_verified"]) && dataString(raw, "session_id") == dataString(state, "session_id") && dataString(raw, "turn_id") == dataString(state, "turn_id") {
+			recent[id] = raw
+			order = append(order, id)
+		}
+	}
+	for len(order) > 16 {
+		delete(recent, order[0])
+		order = order[1:]
+	}
+	for id, raw := range recent {
+		record := CloneRow(ValueRow(raw))
+		if !ValueBool(record["context_owner_verified"]) || dataString(record, "session_id") != dataString(state, "session_id") || dataString(record, "turn_id") != dataString(state, "turn_id") {
+			continue
+		}
+		changed := false
+		for _, key := range requestPricingIdentityFields {
+			value, ok := fields[key].(string)
+			if ok && strings.TrimSpace(value) != "" && record[key] == nil {
+				record[key] = value
+				changed = true
+			}
+		}
+		if !changed {
+			continue
+		}
+		if err := s.saveRecord(tx, record, source, file, generation); err != nil {
+			return err
+		}
+		recent[id] = record
+		if dataString(ValueRow(state["last_record"]), "id") == id {
+			state["last_record"] = CloneRow(record)
+		}
+		candidate := ValueRow(state["modern_candidate"])
+		if dataString(ValueRow(candidate["record"]), "id") == id {
+			candidate["record"] = CloneRow(record)
+		}
+	}
+	state["pricing_recent"], state["pricing_recent_order"] = recent, order
+	return nil
 }
 func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generation string) error {
 	var submittedInput []any
@@ -759,6 +851,9 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 	}
 	inherited := inheritedEntry(entry, state)
 	if kind == "event_msg" && sub == "thread_settings_applied" {
+		if inherited || firstString(p["thread_id"], state["session_id"]) != dataString(state, "session_id") {
+			return nil
+		}
 		settings := ValueRow(p["thread_settings"])
 		if len(settings) == 0 {
 			settings = ValueRow(p["settings"])
@@ -768,16 +863,25 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 		state["pending_request_settings"] = pending
 		return nil
 	}
+	if (kind == "turn_context" || sub == "task_started" || sub == "turn_started") && firstString(p["thread_id"], state["session_id"]) != dataString(state, "session_id") {
+		return nil
+	}
 	explicit := ""
 	if kind == "turn_context" {
 		explicit = firstString(p["turn_id"], p["id"])
 	} else if sub == "task_started" || sub == "turn_started" {
 		explicit = firstString(p["turn_id"], p["id"])
 	}
-	if explicit != "" && explicit != dataString(state, "turn_id") {
-		activateRequestSettings(state)
+	if !inherited && explicit != "" && explicit != dataString(state, "turn_id") {
+		prior := ValueRow(ValueRow(state["turns"])[dataString(state, "turn_id")])
+		if ValueBool(prior["synthetic"]) && !ValueBool(prior["has_usage"]) && dataString(prior, "ended_at") == "" {
+			activateRequestSettings(state)
+		} else {
+			beginRequestSettings(state)
+		}
 	}
-	if kind == "turn_context" {
+	if !inherited && kind == "turn_context" {
+		copyRequestPricingIdentity(state, ValueRow(p["info"]))
 		applyRequestSettings(state, p)
 	}
 	// Preserve inherited turn IDs only as structural parent evidence, never user rows.
@@ -942,7 +1046,7 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 						}
 					}
 					state["turn_id"] = id
-					activateRequestSettings(state)
+					beginRequestSettings(state)
 					state["request_model"] = state["model"]
 					state["previous_turn_id"] = func() any {
 						if r != nil {
@@ -999,6 +1103,23 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 	messageMetadata := ValueRow(p["internal_chat_message_metadata_passthrough"])
 	eventOwner, eventTurn := firstString(p["thread_id"], messageMetadata["thread_id"]), firstString(p["turn_id"], messageMetadata["turn_id"])
 	ownsEvent := (eventOwner == "" || eventOwner == dataString(state, "session_id")) && (eventTurn == "" || eventTurn == dataString(state, "turn_id"))
+	if ownsEvent && explicit != "" && (kind == "turn_context" || sub == "task_started" || sub == "turn_started") {
+		fields := Row{}
+		if kind == "turn_context" {
+			copyRequestPricingIdentity(fields, ValueRow(p["info"]))
+		}
+		copyRequestPricingIdentity(fields, p)
+		if sub == "task_started" || sub == "turn_started" {
+			settings := ValueRow(p["thread_settings"])
+			if len(settings) == 0 {
+				settings = ValueRow(p["settings"])
+			}
+			copyRequestPricingIdentity(fields, settings)
+		}
+		if err := s.fillRecentPricingIdentity(tx, state, fields, source, file, generation); err != nil {
+			return err
+		}
+	}
 	if r != nil && ownsEvent && dataString(r, "ended_at") == "" {
 		// Capture configuration at the request boundary even without a meter.
 		// Explicit null clears a prior speed; absence must never invent Standard.
@@ -1006,6 +1127,7 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 			for _, key := range []string{"model", "reasoning_effort", "service_tier"} {
 				r[key] = state[key]
 			}
+			copyRequestPricingIdentity(r, state)
 			if !ValueBool(state["_recovery_skipped"]) {
 				r["request_settings_version"] = 1
 			}
@@ -1115,6 +1237,7 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 			if e = s.saveRecord(tx, record, source, file, generation); e != nil {
 				return e
 			}
+			rememberPricingRecord(state, record)
 			state["usage_since_input"] = true
 			if r != nil && ValueBool(record["context_owner_verified"]) {
 				r["has_usage"] = true
@@ -1420,7 +1543,7 @@ func (s *Store) accounting(entry, state Row, tx *sql.Tx) (Row, error) {
 	if response != "" {
 		id = "response:" + owner + ":" + response
 	}
-	r := Row{"id": id, "response_id": response, "session_id": owner, "turn_id": turn, "request_turn_id": turn, "timestamp": timestamp, "quality": quality, "model": state["model"], "provider": state["provider"], "service_tier": state["service_tier"], "reasoning_effort": state["reasoning_effort"], "model_context_window": state["model_context_window"], "auth_mode": state["auth_mode"]}
+	r := Row{"id": id, "response_id": response, "session_id": owner, "turn_id": turn, "request_turn_id": turn, "timestamp": timestamp, "quality": quality, "model": state["model"], "provider": state["provider"], "service_tier": state["service_tier"], "reasoning_effort": state["reasoning_effort"], "model_context_window": state["model_context_window"]}
 	r["limit_id"] = state["limit_id"]
 	if modern && dataString(p, "model") != "" {
 		r["model"] = p["model"]
@@ -1433,6 +1556,9 @@ func (s *Store) accounting(entry, state Row, tx *sql.Tx) (Row, error) {
 	owned := owner == dataString(state, "session_id") && (dataString(state, "turn_id") == "" || turn == dataString(state, "turn_id"))
 	r["context_owner_verified"] = owned
 	if owned {
+		copyRequestPricingIdentity(r, state)
+		copyRequestPricingIdentity(r, ValueRow(p["info"]))
+		copyRequestPricingIdentity(r, p)
 		meta := getTurn(state, turn, timestamp)
 		r["prompt_preview"] = meta["prompt_preview"]
 		r["output_preview"] = state["pending_output"]

@@ -379,7 +379,7 @@ final class UsageIndexer {
         if row.isEmpty {
             row = ["id":id,"session_id":state.string("session_id"),"turn_id":turn,"started_at":stamp,"started_inferred":true,"status":"unknown","prompt_preview":"","output_preview":"","verified":true,"is_subagent":state.flag("is_subagent"),"parent_session_id":state.string("parent_session_id"),"parent_turn_id":state.string("parent_turn_id"),"agent_path":state.string("agent_path"),"source_ids":["local"]]
         }
-        for key in ["model","reasoning_effort","service_tier","model_context_window","provider","root_turn_id","cwd","session_cwd","is_approval_review","parent_session_id","parent_turn_id"] {
+        for key in ["model","reasoning_effort","service_tier","model_context_window","provider","root_turn_id","cwd","session_cwd","is_approval_review","parent_session_id","parent_turn_id","auth_mode","billing_source","usage_source"] {
             if let value = state[key], !(value is NSNull) { row[key] = value }
         }
         if !["","unknown"].contains(state.string("request_model").lowercased()) { row["model"] = state["request_model"] }
@@ -396,11 +396,46 @@ final class UsageIndexer {
         state["turns"] = recent
         try persistTurn(row)
     }
+    private func resetBillingIdentity(_ state: inout Object, turn: String, owned: Bool = true) {
+        let saved = state.object("turns").object(turn)
+        for key in ["auth_mode","billing_source","usage_source"] { state[key] = nil }
+        let fields: Object
+        if saved.isEmpty {
+            fields = owned ? state.object("pending_billing_identity") : [:]
+            if owned { state["pending_billing_identity"] = nil }
+        } else { fields = BillingIdentity.explicitFields(saved) }
+        for (key,value) in fields { state[key] = value }
+    }
+    private func captureBillingIdentity(_ metadata: [Object], state: inout Object, owned: Bool) throws {
+        guard owned else { return }
+        var fields: Object = [:]
+        for raw in metadata { for (key,value) in BillingIdentity.explicitFields(raw) { fields[key] = value } }
+        guard !fields.isEmpty else { return }
+        for (key,value) in fields { state[key] = value }
+        guard !metadataOnly else { return }
+        // Late explicit context may fill only the bounded, already-indexed owned
+        // calls for this turn. Per-call explicit identity always wins; no rescan.
+        var recent = state.object("preview_recent"), written = Set<String>()
+        func patched(_ raw: Object) -> Object? {
+            guard raw.flag("context_owner_verified"), raw.string("session_id") == state.string("session_id"), raw.string("turn_id") == state.string("turn_id") else { return nil }
+            var value = raw, changed = false
+            for (key,item) in fields where value[key] == nil || value[key] is NSNull { value[key] = item; changed = true }
+            return changed ? value : nil
+        }
+        for (response,item) in recent {
+            guard let raw = item as? Object, let value = patched(raw) else { continue }
+            try database.writeRecord(value); written.insert(value.string("id")); recent[response] = value
+            if state.object("last_record").string("id") == value.string("id") { state["last_record"] = value }
+        }
+        state["preview_recent"] = recent
+        if let value = patched(state.object("last_record")), !written.contains(value.string("id")) { try database.writeRecord(value); state["last_record"] = value }
+    }
     private func activateTurn(_ id: String,state: inout Object,owned: Bool) throws {
         guard !id.isEmpty, id != state.string("turn_id") else { return }
         let previous = state.string("turn_id")
         var recent = state.object("turns"), old = recent.object(previous)
-        if owned, previous.hasPrefix("legacy-user:"), !old.isEmpty, !old.flag("has_usage"), old.string("ended_at").isEmpty {
+        let promoting = owned && previous.hasPrefix("legacy-user:") && !old.isEmpty && !old.flag("has_usage") && old.string("ended_at").isEmpty
+        if promoting {
             let key = "turn:"+state.string("session_id")+":"+id
             var promoted = old; promoted["id"] = key; promoted["turn_id"] = id; promoted["synthetic"] = false
             old["alias_of"] = key; recent[previous] = old; recent[id] = promoted
@@ -414,6 +449,7 @@ final class UsageIndexer {
                 } else { try database.promoteRequestMessage(from:old.string("id"),to:key) }
             }
         }
+        if !promoting { resetBillingIdentity(&state,turn:id,owned:owned) }
         state["previous_turn_id"] = previous; state["turn_id"] = id
         state["request_model"] = state["model"]
         if state.flag("is_subagent"), !state.flag("is_approval_review"), state["session_parent_session_id"] == nil {
@@ -477,10 +513,19 @@ final class UsageIndexer {
         if let boundary = state.integer("history_start"), let ordinal = entry.integer("ordinal") { inherited = ordinal < boundary }
         else { inherited = !state.string("parent_id").isEmpty && !stamp.isEmpty && stamp < state.string("fork_timestamp") }
         if !inherited, detailTargets == nil { try agentEvent(entry,state:&state,stamp:stamp) }
+        if kind == "turn_context" || (kind == "event_msg" && ["thread_settings_applied","task_started","turn_started"].contains(subtype)) {
+            let owner = payload.string("thread_id")
+            if !owner.isEmpty && owner != state.string("session_id") { return }
+        }
         if kind == "event_msg" && subtype == "thread_settings_applied" {
             let settings = payload.object("thread_settings").isEmpty ? payload.object("settings") : payload.object("thread_settings")
             for key in ["model","reasoning_effort","service_tier","cwd"] { if let value = settings[key] { state[key] = value } }
             if let provider = settings["model_provider_id"] ?? settings["model_provider"] { state["provider"] = provider }
+            if !inherited {
+                var pending = state.object("pending_billing_identity")
+                for raw in [payload,settings] { for (key,value) in BillingIdentity.explicitFields(raw) { pending[key] = value } }
+                if !pending.isEmpty { state["pending_billing_identity"] = pending }
+            }
         }
         if kind == "turn_context" {
             if let cwd = payload["cwd"] { state["cwd"] = cwd }
@@ -490,6 +535,8 @@ final class UsageIndexer {
             state["model_context_window"] = payload["model_context_window"] ?? payload.object("info")["model_context_window"]
             let id = payload.string("turn_id",payload.string("id"))
             try activateTurn(id,state:&state,owned:!inherited)
+            let ownsBilling = !inherited && (payload.string("thread_id").isEmpty || payload.string("thread_id") == state.string("session_id"))
+            try captureBillingIdentity([payload.object("info"),payload],state:&state,owned:ownsBilling)
             if let model = payload["model"] ?? payload.object("info")["model"] { state["request_model"] = model }
             if let root = payload["root_turn_id"] { state["root_turn_id"] = root }
             if RequestClassification.isApproval(state) {
@@ -503,6 +550,8 @@ final class UsageIndexer {
             for key in ["model","reasoning_effort","service_tier","model_context_window","cwd"] { if let value = settings[key] ?? payload[key] { state[key] = value } }
             let id = payload.string("turn_id",payload.string("id"))
             try activateTurn(id,state:&state,owned:!inherited)
+            let ownsBilling = !inherited && (payload.string("thread_id").isEmpty || payload.string("thread_id") == state.string("session_id"))
+            try captureBillingIdentity([payload,settings],state:&state,owned:ownsBilling)
             if let model = settings["model"] ?? payload["model"] { state["request_model"] = model }
             if let root = payload["root_turn_id"] { state["root_turn_id"] = root }
             if RequestClassification.isApproval(state) {
@@ -539,7 +588,8 @@ final class UsageIndexer {
             let sameIdentity = !messageID.isEmpty && previousInput.string("message_id") == messageID && previousInput.string("turn_id") == state.string("turn_id")
             let paired = sameIdentity || (!conflictingIDs && (previousInput.string("fingerprint") == fingerprint || legacyFingerprint) && previousInput.string("representation") != representation && previousInput.string("turn_id") == state.string("turn_id") && !current.flag("has_usage") && current.string("ended_at").isEmpty)
             if state.string("turn_id").isEmpty || (!paired && (["completed","aborted"].contains(current.string("status")) || state.string("turn_id").hasPrefix("legacy-user:"))) {
-                state["previous_turn_id"] = state["turn_id"]; state["turn_id"] = "legacy-user:"+identity([stamp,content]); state["root_turn_id"] = nil
+                let next = "legacy-user:"+identity([stamp,content]); resetBillingIdentity(&state,turn:next)
+                state["previous_turn_id"] = state["turn_id"]; state["turn_id"] = next; state["root_turn_id"] = nil
             }
             if !metadataOnly, detail.integer("media_schema") != RequestMedia.schema { detail = messageDetail(content,user:true,state:state,stamp:stamp) }
             let previous = state.string("previous_turn_id")
@@ -671,6 +721,7 @@ final class UsageIndexer {
             guard !inherited else { return }
             let id = response.isEmpty ? "modern:"+identity([state.string("rollout_id"),stamp,usage,turn]) : "response:"+owner+":"+response
             var record = makeRecord(state,usage:usage,id:id,stamp:stamp,quality:"response",owner:owner,turn:turn)
+            if record.flag("context_owner_verified") { for (key,value) in BillingIdentity.explicitFields(payload) { record[key] = value } }
             record["response_id"] = response.isEmpty ? NSNull() : response as Any
             let preview = takeOutput(&state,response:response,turn:turn)
             if record.flag("context_owner_verified") { record["output_preview"] = preview }
@@ -717,6 +768,7 @@ final class UsageIndexer {
         if let model = info["model"] ?? info["model_name"] ?? payload["model"] { state["model"] = model }
         let id = "legacy:"+identity([state.string("rollout_id"),stamp,signature])
         var record = makeRecord(state,usage:amount,id:id,stamp:stamp,quality:quality,owner:state.string("session_id"),turn:state.string("turn_id"))
+        if record.flag("context_owner_verified") { for raw in [payload,info] { for (key,value) in BillingIdentity.explicitFields(raw) { record[key] = value } } }
         let response = state.object("modern_candidate").isEmpty ? state.string("active_response_id") : ""
         record["response_id"] = response.isEmpty ? NSNull() : response as Any
         let output = takeOutput(&state,response:response,turn:state.string("turn_id"))
@@ -732,7 +784,7 @@ final class UsageIndexer {
         record["context_owner_verified"] = owns
         record["model"] = owns ? state.string("model","unknown") : "unknown"
         if owns {
-            for key in ["reasoning_effort","service_tier","model_context_window","prompt_preview","cwd","session_cwd","is_approval_review","parent_session_id","parent_turn_id"] { record[key] = state[key] }
+            for key in ["reasoning_effort","service_tier","model_context_window","prompt_preview","cwd","session_cwd","is_approval_review","parent_session_id","parent_turn_id","auth_mode","billing_source","usage_source"] { record[key] = state[key] }
             if RequestClassification.isApproval(record) { record["record_kind"] = RequestClassification.approval }
         }
         if usage[1]+usage[2] > usage[0] || usage[4] > usage[3] { record["quality"] = quality+":invalid_subsets" }

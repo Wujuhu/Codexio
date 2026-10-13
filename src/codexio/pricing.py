@@ -26,7 +26,7 @@ MODELS_DEV_URL = "https://models.dev/api.json"
 RATE_KEYS = ("input", "cache_read", "cache_write", "output")
 _FIELDS = {"input": "input_cost_per_token", "cache_read": "cache_read_input_token_cost",
            "cache_write": "cache_creation_input_token_cost", "output": "output_cost_per_token"}
-PRICING_RULE_VERSION = "codex-api-base-2026-09-30-v6-gpt-6.1-sol-codex-multipliers"
+PRICING_RULE_VERSION = "codex-api-base-2026-10-13-v7-gpt-6.1-sol-funding"
 PRICING_BASIS = "standard_api_x_codex"
 PRICING_BASIS_LABEL = tr("标准 API 单价 × Codex 倍率")
 LONG_CONTEXT_THRESHOLD = 272000
@@ -40,7 +40,7 @@ def codex_policy(model):
     """Known Codex modifiers; unsupported Fast modes are not inferred from API tiers."""
     model = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", model.removeprefix("openai/"))
     if model == "gpt-6.1-sol":
-        return LONG_CONTEXT_THRESHOLD, 2.5
+        return 0, 2.5
     if model in ("gpt-6-sol", "gpt-6-luna"):
         return LONG_CONTEXT_THRESHOLD, 2.5
     if model in ("gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"):
@@ -62,8 +62,76 @@ def _scaled(value, multiplier):
     return None if value is None else float(Decimal(str(value)) * Decimal(str(multiplier)))
 
 
-def _codex_rows(base):
+def _pricing_text(value):
+    return value.strip().lower().replace("-", "_") if isinstance(value, str) else ""
+
+
+_API_MODES = {"api_key", "apikey", "api", "openai_api_key"}
+_CHATGPT_MODES = {"chatgpt", "chatgpt_auth_tokens", "chatgptauthtokens", "chatgpt_subscription", "chatgpt_oauth"}
+_SUBSCRIPTION_SOURCES = {"subscription", "subscription_allowance", "subscription_quota", "chatgpt_subscription", "included", "included_usage", "plan_allowance"}
+_CREDIT_SOURCES = {"credits", "credit", "paid_credits", "purchased_credits", "codex_credits", "prepaid", "pay_as_you_go", "payg"}
+
+
+def _pricing_identity(record, official, policy):
+    """Only explicit request evidence selects billing; never consult live accounts."""
+    auth = _pricing_text(record.get("auth_mode"))
+    if auth in _API_MODES:
+        return "api_key", False, False
+    for key in ("billing_source", "usage_source"):
+        source = _pricing_text(record.get(key))
+        if source in _API_MODES:
+            return "api_key", auth not in _API_MODES, False
+        if source in _SUBSCRIPTION_SOURCES:
+            return "subscription", auth not in _CHATGPT_MODES, False
+        if source in _CREDIT_SOURCES:
+            return "credits", auth not in _CHATGPT_MODES, False
+    mode = policy.get("unknown_official_mode", "legacy") if official else "legacy"
+    return (mode if mode in ("subscription", "legacy") else "unknown"), (policy.get("unknown_official_estimated", True) if official else True), True
+
+
+def _policy_content(policies):
+    # Provenance and verification dates do not change numerical pricing rules.
+    return {model: {key: value for key, value in policy.items()
+                    if key not in ("sources", "verified_at")}
+            for model, policy in policies.items() if isinstance(policy, dict)}
+
+
+def _sol_rates(base, policy, mode, tier, input_tokens):
+    rule = policy.get(mode, {})
+    speed = rule.get("speeds", {}).get(tier)
+    if speed is None:
+        return None
+    boundary = rule.get("long_context_threshold", 0)
+    threshold = boundary if input_tokens > boundary > 0 else 0
+    in_multiplier = speed * (2 if threshold else 1)
+    out_multiplier = speed * (1.5 if threshold else 1)
+    write_basis = rule.get("cache_write_basis", "api")
+    if write_basis == "legacy":
+        write_basis = "input" if tier != "default" or threshold else "api"
+    row = dict(base, service_tier=tier, threshold=threshold,
+               long_context_threshold=boundary, pricing_mode=mode,
+               speed_multiplier=speed, pricing_basis=PRICING_BASIS,
+               rule_version=PRICING_RULE_VERSION)
+    for key in RATE_KEYS:
+        source_key = "input" if key == "cache_write" and write_basis == "input" else key
+        row[key] = _scaled(base.get(source_key), out_multiplier if key == "output" else in_multiplier)
+    row["base_rates"] = {key: base.get(key) for key in RATE_KEYS}
+    row["multipliers"] = {key: out_multiplier if key == "output" else in_multiplier for key in RATE_KEYS}
+    row["cache_write_basis"] = write_basis
+    row["cache_write_surcharge"] = (None if base.get("cache_write") is None else max(0, base["cache_write"]-base["input"])) if write_basis == "api" else 0.0
+    row["condition"] = {"default": "Standard", "priority": "Fast", "ultrafast": "Ultra Fast"}.get(tier, tier)
+    return row
+
+
+def _codex_rows(base, policies=None):
     model = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", base["model"].removeprefix("openai/"))
+    policy = (policies or {}).get(model, {})
+    if model == "gpt-6.1-sol" and policy:
+        for tier in policy.get("subscription", {}).get("speeds", {}):
+            row = _sol_rates(base, policy, "subscription", tier, 0)
+            if row:
+                yield row
+        return
     threshold, fast = codex_policy(base["model"])
     contexts = (0, threshold) if threshold else (0,)
     tiers = (("default", 1.0), ("priority", fast)) if fast is not None else (("default", 1.0),)
@@ -134,10 +202,10 @@ def _validate_row(row):
                 updated_at=str(row.get("updated_at", "")), locked=bool(row.get("locked", False)))
 
 
-def _price_signature(rows):
+def _price_signature(rows, billing_policies=None):
     # Fetch timestamps do not change the price version when the prices did not change.
     values = [{k: v for k, v in row.items() if k != "updated_at"} for row in rows]
-    return hashlib.sha256(json.dumps([PRICING_RULE_VERSION, values], sort_keys=True, allow_nan=False).encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha256(json.dumps([PRICING_RULE_VERSION, values, _policy_content(billing_policies or {})], sort_keys=True, allow_nan=False).encode("utf-8")).hexdigest()[:16]
 
 
 def _litellm_rows(data, updated_at):
@@ -207,7 +275,9 @@ class PricingCatalog:
 
     def load(self):
         with self._lock:
-            self._seed = _read(Path(__file__).with_name("pricing_seed.json")).get("rows", [])
+            seed = _read(Path(__file__).with_name("pricing_seed.json"))
+            self._seed = seed.get("rows", [])
+            self._billing_policies = seed.get("billing_policies", {})
             self._cache = _read(self.cache_dir / "pricing_cache.json")
             self._overrides = _read(self.cache_dir / "pricing_overrides.json")
             self._rebuild()
@@ -254,8 +324,8 @@ class PricingCatalog:
                     row["service_tier"] = "default"
                     merged[_row_key(row)] = row
         self._standard_rows = sorted(merged.values(), key=_row_key)
-        self._rows = sorted((row for base in self._standard_rows for row in _codex_rows(base)), key=_row_key)
-        self.price_version = _price_signature(self._rows)
+        self._rows = sorted((row for base in self._standard_rows for row in _codex_rows(base, self._billing_policies)), key=_row_key)
+        self.price_version = _price_signature(self._rows, self._billing_policies)
 
     def _archive_version(self):
         """A content-addressed version is written once, including manual prices."""
@@ -336,8 +406,21 @@ class PricingCatalog:
         tier = "default" if missing_tier or raw_tier == "standard" else str(raw_tier)
         if tier == "fast":
             tier = "priority"
-        threshold = max((r["threshold"] for r in model_rows if counts["input_tokens"] > r["threshold"]), default=0)
-        rates = next((r for r in model_rows if r["service_tier"] == tier and r["threshold"] == threshold), None)
+        if tier in ("ultra_fast", "ultra-fast", "ultra fast"):
+            tier = "ultrafast"
+        canonical_model = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", model)
+        policy = self._billing_policies.get(canonical_model, {})
+        if canonical_model == "gpt-6.1-sol" and policy:
+            mode, identity_estimated, assumed = _pricing_identity(record, official, policy)
+            base = next((row for row in self._standard_rows if row["model"] == model), None)
+            rates = _sol_rates(base, policy, mode, tier, counts["input_tokens"]) if base else None
+            estimated = estimated or identity_estimated
+            result.update(pricing_mode=mode, pricing_identity_estimated=identity_estimated)
+            if assumed:
+                result["assumed_billing_source"] = mode
+        else:
+            threshold = max((r["threshold"] for r in model_rows if counts["input_tokens"] > r["threshold"]), default=0)
+            rates = next((r for r in model_rows if r["service_tier"] == tier and r["threshold"] == threshold), None)
         if rates is None:
             return dict(result, reason=tr("缺少该模型与服务档位的 Codex 换算规则"))
         # All components are disjoint; their selected rate owns the write policy.
@@ -354,6 +437,8 @@ class PricingCatalog:
         else:
             reasons = [PRICING_BASIS_LABEL + tr("；输入/缓存读取 ×%g，输出 ×%g；缓存创建按普通输入价，无写入附加费") %
                        (multipliers["input"], multipliers["output"])]
+        if result.get("pricing_identity_estimated"):
+            reasons.append(tr("认证或消费来源未明确记录；费用按所示口径估算"))
         if missing_tier:
             reasons.append(tr("原始记录未提供明确服务档位，按默认 Standard 标准价估计"))
         if aggregate:

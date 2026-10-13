@@ -17,21 +17,130 @@ import (
 //go:embed assets/pricing_seed.json
 var priceSeed []byte
 
-const priceRule = "codex-api-base-2026-09-30-v6-gpt-6.1-sol-codex-multipliers"
+const priceRule = "codex-api-base-2026-10-13-v7-gpt-6.1-sol-funding"
+
+var solBillingPolicy = func() Row {
+	seed, _ := DecodeRow(priceSeed)
+	return ValueRow(ValueRow(seed["billing_policies"])["gpt-6.1-sol"])
+}()
 
 var rateFields = []string{"input", "cache_read", "cache_write", "output"}
 var tokenFields = []string{"input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens", "total_tokens"}
 var datedModel = regexp.MustCompile(`-\d{4}-\d{2}-\d{2}$`)
 
 func normalizedTier(v any) string {
-	switch strings.ToLower(ValueString(v)) {
+	switch strings.ToLower(strings.TrimSpace(ValueString(v))) {
 	case "", "auto", "default", "standard":
 		return "default"
 	case "priority", "fast":
 		return "priority"
+	case "ultrafast", "ultra_fast", "ultra-fast", "ultra fast":
+		return "ultrafast"
 	default:
 		return "unknown"
 	}
+}
+
+func pricingIdentity(value any) string {
+	text, _ := value.(string)
+	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(text)), "-", "_")
+}
+
+func solFunding(record Row, official bool) (string, bool, bool) {
+	// Authentication evidence wins over a contradictory allowance marker.
+	authKnown := false
+	switch pricingIdentity(record["auth_mode"]) {
+	case "api", "api_key", "apikey", "openai_api_key":
+		return "api_key", false, false
+	case "chatgpt", "chatgpt_auth_tokens", "chatgptauthtokens", "chatgpt_subscription", "chatgpt_oauth":
+		authKnown = true
+	}
+	for _, key := range []string{"billing_source", "usage_source"} {
+		switch pricingIdentity(record[key]) {
+		case "api", "api_key", "apikey", "openai_api_key":
+			return "api_key", true, false
+		case "subscription", "subscription_allowance", "subscription_quota", "chatgpt_subscription", "included", "included_usage", "plan_allowance":
+			return "subscription", !authKnown, false
+		case "credits", "credit", "paid_credits", "purchased_credits", "codex_credits", "prepaid", "pay_as_you_go", "payg":
+			return "credits", !authKnown, false
+		}
+	}
+	if official {
+		mode := dataString(solBillingPolicy, "unknown_official_mode")
+		if (mode == "subscription" || mode == "legacy") && len(ValueRow(solBillingPolicy[mode])) > 0 {
+			estimated := true
+			if recorded, ok := solBillingPolicy["unknown_official_estimated"].(bool); ok {
+				estimated = recorded
+			}
+			return mode, estimated, true
+		}
+	}
+	return "legacy", true, true
+}
+
+func solPolicyContent() Row {
+	content := Row{"rule_version": solBillingPolicy["rule_version"], "unknown_official_mode": solBillingPolicy["unknown_official_mode"], "unknown_official_estimated": solBillingPolicy["unknown_official_estimated"]}
+	for _, mode := range []string{"subscription", "api_key", "credits", "legacy"} {
+		policy := ValueRow(solBillingPolicy[mode])
+		content[mode] = Row{"long_context_threshold": policy["long_context_threshold"], "speeds": policy["speeds"], "cache_write_basis": policy["cache_write_basis"]}
+	}
+	return content
+}
+
+func solPriceRates(base Row, mode, tier string, input int64) Row {
+	policy := ValueRow(solBillingPolicy[mode])
+	speed, ok := ValueFloat(ValueRow(policy["speeds"])[tier])
+	if !ok || speed <= 0 || math.IsNaN(speed) || math.IsInf(speed, 0) {
+		return nil
+	}
+	threshold := ValueInt(policy["long_context_threshold"])
+	long := threshold > 0 && input > threshold
+	inMultiplier, outMultiplier := speed, speed
+	if long {
+		inMultiplier *= 2
+		outMultiplier *= 1.5
+	}
+	rates := CloneRow(base)
+	rates["base_rates"] = Row{}
+	for _, key := range rateFields {
+		ValueRow(rates["base_rates"])[key] = base[key]
+		value, multiplier := base[key], inMultiplier
+		if key == "output" {
+			multiplier = outMultiplier
+		}
+		if key == "cache_write" {
+			basis := dataString(policy, "cache_write_basis")
+			if basis == "input" || basis == "legacy" && (tier != "default" || long) {
+				value = base["input"]
+			}
+		}
+		if n, valid := ValueFloat(value); valid {
+			rates[key] = n * multiplier
+		} else {
+			rates[key] = nil
+		}
+	}
+	rates["service_tier"] = tier
+	rates["condition"] = map[string]string{"default": "Standard", "priority": "Fast", "ultrafast": "Ultra Fast"}[tier]
+	rates["threshold"] = int64(0)
+	if long {
+		rates["threshold"] = threshold
+	}
+	rates["pricing_mode"] = mode
+	rates["long_context_threshold"] = threshold
+	rates["speed_multiplier"] = speed
+	rates["multipliers"] = Row{"input": inMultiplier, "cache_read": inMultiplier, "cache_write": inMultiplier, "output": outMultiplier}
+	basis := dataString(policy, "cache_write_basis")
+	if basis == "legacy" {
+		basis = "api"
+		if tier != "default" || long {
+			basis = "input"
+		}
+	}
+	rates["cache_write_basis"] = basis
+	rates["rule_version"] = priceRule
+	rates["pricing_basis"] = "standard_api_x_codex"
+	return rates
 }
 func knownCount(v any) (int64, bool) {
 	switch x := v.(type) {
@@ -127,6 +236,17 @@ func (s *Store) loadPrices() error {
 	sort.Strings(models)
 	for _, model := range models {
 		base := bases[model]
+		if datedModel.ReplaceAllString(strings.TrimPrefix(model, "openai/"), "") == "gpt-6.1-sol" {
+			for _, tier := range []string{"default", "priority", "ultrafast"} {
+				r := solPriceRates(base, "subscription", tier, 0)
+				if r == nil {
+					continue
+				}
+				r["condition"] = map[string]string{"default": "Standard", "priority": "Codex Fast", "ultrafast": "Codex Ultra Fast"}[tier]
+				result = append(result, r)
+			}
+			continue
+		}
 		threshold, fast := codexPolicy(model)
 		contexts := []int64{0}
 		if threshold > 0 {
@@ -182,11 +302,11 @@ func (s *Store) loadPrices() error {
 	content := make([]Row, len(result))
 	for i, r := range result {
 		content[i] = Row{}
-		for _, k := range append([]string{"model", "service_tier", "threshold"}, rateFields...) {
+		for _, k := range append([]string{"model", "service_tier", "threshold", "base_rates"}, rateFields...) {
 			content[i][k] = r[k]
 		}
 	}
-	version := HashString(priceRule + dataJSON(content))[:16]
+	version := HashString(priceRule + dataJSON([]any{content, solPolicyContent()}))[:16]
 	s.mu.Lock()
 	s.prices = result
 	s.priceVersion = version
@@ -194,7 +314,7 @@ func (s *Store) loadPrices() error {
 	s.mu.Unlock()
 	archive := filepath.Join(s.priceDirectory(), "versions", version+".json")
 	if _, e := os.Stat(archive); os.IsNotExist(e) {
-		if e = WriteJSON(archive, Row{"price_version": version, "created_at": UTCStamp(time.Now()), "rule_version": priceRule, "pricing_basis": "standard_api_x_codex", "rows": result}); e != nil {
+		if e = WriteJSON(archive, Row{"price_version": version, "created_at": UTCStamp(time.Now()), "rule_version": priceRule, "pricing_basis": "standard_api_x_codex", "rows": result, "billing_policies": Row{"gpt-6.1-sol": solBillingPolicy}}); e != nil {
 			return e
 		}
 	}
@@ -276,24 +396,46 @@ func (s *Store) price(r Row) Row {
 	}
 	tier := normalizedTier(r["service_tier"])
 	var selected Row
-	// API-key records must explicitly retain their authentication mode; Codex modifiers do not apply.
-	api := dataString(r, "auth_mode") == "api_key" || dataString(r, "auth_mode") == "apikey"
-	for _, p := range s.prices {
-		if dataString(p, "model") != model || dataString(p, "service_tier") != tier {
-			continue
+	fundingEstimated := false
+	if datedModel.ReplaceAllString(model, "") == "gpt-6.1-sol" {
+		mode, estimated, assumed := solFunding(r, official)
+		fundingEstimated = estimated
+		r["pricing_mode"] = mode
+		r["pricing_identity_estimated"] = estimated
+		delete(r, "assumed_billing_source")
+		if assumed {
+			r["assumed_billing_source"] = mode
 		}
-		threshold := ValueInt(p["threshold"])
-		if api && threshold > 0 {
-			continue
-		}
-		if threshold == 0 || counts["input_tokens"] > threshold {
-			if selected == nil || threshold > ValueInt(selected["threshold"]) {
-				selected = p
+		for _, row := range s.prices {
+			if dataString(row, "model") == model && dataString(row, "service_tier") == "default" && ValueInt(row["threshold"]) == 0 {
+				base := CloneRow(row)
+				for _, key := range rateFields {
+					base[key] = ValueRow(row["base_rates"])[key]
+				}
+				selected = solPriceRates(base, mode, tier, counts["input_tokens"])
+				break
 			}
 		}
-	}
-	if api && tier != "default" {
-		selected = nil
+	} else {
+		// API-key records must explicitly retain their authentication mode; Codex modifiers do not apply.
+		api := dataString(r, "auth_mode") == "api_key" || dataString(r, "auth_mode") == "apikey"
+		for _, p := range s.prices {
+			if dataString(p, "model") != model || dataString(p, "service_tier") != tier {
+				continue
+			}
+			threshold := ValueInt(p["threshold"])
+			if api && threshold > 0 {
+				continue
+			}
+			if threshold == 0 || counts["input_tokens"] > threshold {
+				if selected == nil || threshold > ValueInt(selected["threshold"]) {
+					selected = p
+				}
+			}
+		}
+		if api && tier != "default" {
+			selected = nil
+		}
 	}
 	if selected == nil {
 		r["pricing_reason"] = "缺少该模型与服务档位的明确计价规则"
@@ -311,10 +453,13 @@ func (s *Store) price(r Row) Row {
 	}
 	r["cost_usd"] = cost
 	r["pricing_status"] = "priced"
-	if !official || dataString(r, "service_tier") == "" || strings.HasPrefix(dataString(r, "quality"), "cumulative") {
+	if fundingEstimated || !official || dataString(r, "service_tier") == "" || strings.HasPrefix(dataString(r, "quality"), "cumulative") {
 		r["pricing_status"] = "estimated"
 	}
 	r["pricing_reason"] = "标准 API 基础价格及独立 Codex 换算规则"
+	if fundingEstimated {
+		r["pricing_reason"] = "认证或消费来源未完整记录，按参考规则估算"
+	}
 	r["rates"] = selected
 	return r
 }

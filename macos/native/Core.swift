@@ -222,9 +222,48 @@ func logEffortName(_ value: String) -> String {
     }
 }
 func normalizedTier(_ value: String) -> String {
-    if ["fast","priority"].contains(value.lowercased()) { return "priority" }
-    if ["standard","default"].contains(value.lowercased()) { return "default" }
-    return value.isEmpty || value == "auto" ? "unknown" : value
+    let tier = value.trimmingCharacters(in:.whitespacesAndNewlines).lowercased()
+    if ["fast","priority"].contains(tier) { return "priority" }
+    if ["standard","default"].contains(tier) { return "default" }
+    if ["ultrafast","ultra_fast","ultra-fast","ultra fast"].contains(tier) { return "ultrafast" }
+    return tier.isEmpty || tier == "auto" ? "unknown" : tier
+}
+
+// Historical pricing accepts only explicit request-local authentication/funding
+// metadata. Neither current account state nor creator/quota identifiers enter here.
+enum BillingIdentity {
+    private static func normalized(_ value: String) -> String {
+        value.trimmingCharacters(in:.whitespacesAndNewlines).lowercased().replacingOccurrences(of:"-",with:"_")
+    }
+    static func auth(_ value: String) -> String? {
+        let value = normalized(value)
+        if ["api_key","apikey","api","openai_api_key"].contains(value) { return "api_key" }
+        if ["chatgpt","chatgpt_auth_tokens","chatgptauthtokens","chatgpt_subscription","chatgpt_oauth"].contains(value) { return "chatgpt" }
+        return nil
+    }
+    static func funding(_ value: String) -> String? {
+        let value = normalized(value)
+        if ["subscription","subscription_allowance","subscription_quota","chatgpt_subscription","included","included_usage","plan_allowance"].contains(value) { return "subscription" }
+        if ["credits","credit","paid_credits","purchased_credits","codex_credits","prepaid","pay_as_you_go","payg"].contains(value) { return "credits" }
+        if ["api_key","apikey","api","openai_api_key"].contains(value) { return "api_key" }
+        return nil
+    }
+    static func resolve(_ raw: Object) -> (mode: String, estimated: Bool) {
+        let authentication = auth(raw.string("auth_mode"))
+        if authentication == "api_key" { return ("api_key",false) }
+        if let source = funding(raw.string("billing_source")) ?? funding(raw.string("usage_source")) {
+            return (source,source == "api_key" || authentication != "chatgpt")
+        }
+        return ("unknown",true)
+    }
+    static func explicitFields(_ raw: Object) -> Object {
+        var result: Object = [:]
+        for key in ["auth_mode","billing_source","usage_source"] {
+            let value = raw.string(key)
+            if !value.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty { result[key] = value }
+        }
+        return result
+    }
 }
 func detailSpeedName(_ value: String) -> String {
     switch value.trimmingCharacters(in:.whitespacesAndNewlines).lowercased() {

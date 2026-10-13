@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "verified_at": "2026-09-30",
+  "verified_at": "2026-10-13",
   "unit": "USD per million tokens",
-  "notes": "Published API Standard prices are only the base. Codex Fast and long-context multipliers apply separately; do not copy API tier multipliers. Codex Fast and long-context cache writes use ordinary input rates. Missing base prices remain null.",
+  "notes": "API Standard rates are the base. GPT-6.1 Sol subscription allowance has no long-context surcharge; API keys and purchased credits use separate speed/context rules. Per user policy, unidentified OpenAI records use subscription pricing without an identity-estimate label; raw historical identity stays missing. Rules and actual rates determine the price version.",
   "rows": [
     {
       "input": 1.5,
@@ -220,5 +220,53 @@
       "updated_at": "2026-09-07T00:00:00+00:00",
       "locked": false
     }
-  ]
+  ],
+  "billing_policies": {
+    "gpt-6.1-sol": {
+      "rule_version": "codex-api-base-2026-10-13-v7-gpt-6.1-sol-funding",
+      "unknown_official_mode": "subscription",
+      "subscription": {
+        "long_context_threshold": 0,
+        "speeds": {
+          "default": 1,
+          "priority": 2.5,
+          "ultrafast": 8
+        },
+        "cache_write_basis": "input"
+      },
+      "api_key": {
+        "long_context_threshold": 272000,
+        "speeds": {
+          "default": 1,
+          "priority": 2,
+          "ultrafast": 6
+        },
+        "cache_write_basis": "api"
+      },
+      "credits": {
+        "long_context_threshold": 272000,
+        "speeds": {
+          "default": 1,
+          "priority": 2,
+          "ultrafast": 6
+        },
+        "cache_write_basis": "input"
+      },
+      "legacy": {
+        "long_context_threshold": 272000,
+        "speeds": {
+          "default": 1,
+          "priority": 2.5,
+          "ultrafast": 8
+        },
+        "cache_write_basis": "legacy"
+      },
+      "sources": [
+        "https://x.com/thsottiaux/status/2109430894604026039",
+        "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
+        "https://learn.chatgpt.com/docs/agent-configuration/speed"
+      ],
+      "unknown_official_estimated": false
+    }
+  }
 }

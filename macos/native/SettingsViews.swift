@@ -26,7 +26,7 @@ struct PricingView: View {
                 GridColumn(id:"output",title:L("输出", "Output"),width:104,maximum:122,alignment:.center)
             ],rows:filtered.map { row in GridRow(id:row.id,text: { column in
                 if column == "model" { return GridText(main:row.model) }
-                if column == "condition" { return GridText(main:(row.raw.string("service_tier") == "priority" ? "Fast" : "Standard")+((row.raw.integer("threshold") ?? 0) > 0 ? " >272K" : "")) }
+                if column == "condition" { return GridText(main:(["default":"Standard","priority":"Fast","ultrafast":"Ultra Fast"][row.raw.string("service_tier")] ?? "—")+((row.raw.integer("threshold") ?? 0) > 0 ? " >272K" : "")) }
                 return GridText(main:money(row.raw.number(column)))
             }) },revision:state.pricesRevision+search+state.modelIDs.sorted().joined(separator:","),rowHeight:30,selection:$selected,preferences:state.preferences,storageKey:"pricing")
                 .overlay(RoundedRectangle(cornerRadius:10).stroke(.secondary.opacity(0.16)))
@@ -50,7 +50,7 @@ struct PriceEditor: View {
             if !error.isEmpty { Text(error).font(.caption).foregroundStyle(.red) }
             HStack { Spacer(); Button(L("取消", "Cancel")) { dismiss() }; Button(L("保存", "Save")) { save() }.keyboardShortcut(.defaultAction) }
         }.padding(26).frame(width:460).onAppear {
-            if let row = state.prices.first(where:{$0.model == model && $0.raw.string("service_tier") == "default" && $0.raw.integer("threshold") == 0}) { for key in Array(values.keys) { values[key] = row.raw.number(key).map {String($0)} ?? "" } }
+            if let row = state.prices.first(where:{$0.model == model && $0.raw.string("service_tier") == "default" && $0.raw.integer("threshold") == 0}) { let base = row.raw.object("base_rates").isEmpty ? row.raw : row.raw.object("base_rates"); for key in Array(values.keys) { values[key] = base.number(key).map {String($0)} ?? "" } }
         }
     }
     private func field(_ key: String,_ title: String) -> some View { TextField(title,text:Binding(get:{values[key] ?? ""},set:{values[key] = $0})) }

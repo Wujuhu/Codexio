@@ -1,57 +1,51 @@
 # Codexio 计价规则
 
-核对日期：2026-09-25。当前为本地开发版本 0.2.10。
+核对日期：2026-10-13。当前本地开发版本为 0.3.9。本次仅修改 Mac、Windows 与共用参考计价代码，版本不递增，不推送或发布。
 
-普通 **Standard 使用 OpenAI 官方 API 标准价**，直接保留输入、缓存读取、缓存创建和输出的已公布单价；Fast 和长上下文继续使用既有 Codex 换算规则。它们用美元表达应用的 API 等价值，不是实际账单、ChatGPT 订阅扣款或官方 credits。价格页与所有费用展示共用 `PricingCatalog` 的结果。
+费用是本地 Token 账本的美元参考估值，不是 ChatGPT 订阅实际扣款或官方额度百分比。普通输入、缓存读取、缓存写入、输出使用已核对的 API Standard 基础价，再按请求的认证与消费来源应用规则。上游额度百分比、重置时间仍直接读取，不由费用推算替代。
 
-第三方 provider 只有在原始模型 ID 与 OpenAI 目录中的 slug 完全一致时才复用同一套换算，并始终标记为“参考估值”，说明可能与第三方账单不同。不删除 provider 前缀、不猜测别名；无法精确匹配或未记录 provider 的调用保持未定价。API／第三方模式不参与 ChatGPT 周额度采样和估值。
+## GPT-6.1 Sol 的消费来源与倍率
 
-官方 Standard 普通上下文价格已核对：Astra 为 10.00 / 1.00 / 12.50 / 50.00，Sol 为 4.00 / 0.40 / 5.00 / 20.00，Terra 为 2.00 / 0.20 / 2.50 / 12.00，Luna 为 0.20 / 0.02 / 0.25 / 1.20，依次对应输入、缓存读取、缓存创建和输出，单位为美元／百万 Token。[OpenAI 官方定价](https://developers.openai.com/api/docs/pricing)
+API Standard 基础价（美元／百万 Token）为输入 2.00、缓存读取 0.10、缓存写入 2.50、输出 10.00。两个价格种子中的基础价相同，手工 Standard 基础价仍优先；接口、套餐、速度倍率不作为新的基础价。
 
-## 基础价与规则
+| 消费来源 | Standard | Fast | Ultrafast | 输入超过 272,000 Token |
+| --- | ---: | ---: | ---: | --- |
+| ChatGPT 订阅额度 | ×1 | ×2.5 | ×8 | 不加长上下文倍率 |
+| OpenAI API Key | ×1 | ×2 | ×6 | 输入／缓存 ×2，输出 ×1.5 |
+| 明确购买 credits | ×1 | ×2 | ×6 | 保留现行输入／缓存 ×2，输出 ×1.5 规则 |
 
-基础目录只接受 Standard、普通上下文的 API 单价。自动源的 Priority/Fast、Flex、长上下文价格不会参与派生。手工基础价继续优先；既有旧档位覆盖留在原配置文件中，不再用于换算。
+速度与适用的长上下文倍率各乘一次。阈值取单次计量调用的全部输入，包括缓存部分；恰好 272,000 使用普通档，超过阈值时作用于该次整份输入／输出，不用整个用户请求累计输入重复判断。订阅豁免仅适用于 GPT-6.1 Sol，不推广到其他模型或明确购买的 credits。
 
-| 模型 | Fast | 输入超过 272,000 Token 时 |
-|---|---:|---|
-| GPT-6 Astra | ×2.5 | 不增加长文倍率 |
-| GPT-5.6 Sol / Terra / Luna | ×2.5 | 输入、缓存读取 ×2；输出 ×1.5 |
-| GPT-5.5 | ×2.5 | 输入、缓存读取 ×2；输出 ×1.5 |
-| GPT-5.4 | ×2 | 输入、缓存读取 ×2；输出 ×1.5 |
+API 模式始终保留缓存写入的 API 单列基础价，按速度和长上下文输入倍率缩放。GPT-6.1 Sol 订阅／credits 的缓存写入按普通输入价口径，不叠加 API 缓存写入附加费。其他模型继续保留现有计价规则，不因本次变更改变单价。
 
-Fast 与长文倍率叠加一次。恰好 272,000 输入仍使用普通档。阈值按每次调用的完整输入量判断，包含缓存部分；整轮用户请求的费用是调用费用之和，不用整轮累计输入再次判定长文档。
+## 身份证据与历史记录
 
-没有明确 Codex 加速规则的模型仅提供 Standard 换算，不从 API Priority 价格反推倍率。缺失或空值档位在显示、筛选、分组和计价中统一默认 Standard；原始档位空值不改写，计价继续保留“参考估计”状态；聚合旧计量记录继续保留不能证明单次上下文的说明。
+分类只读取调用自身的可选 `auth_mode`、`billing_source` 与明确可识别的 `usage_source`。API Key 的明确认证证据优先，不能被相矛盾的 subscription 字段免除 API 倍率。`chatgpt` 认证本身不能证明消耗订阅还是购买 credits。
 
-## Token 计数与缓存创建
+官方常规 rollout 的 SessionMeta、TurnContext、TokenUsageRecord 不记录逐请求的认证／消费来源；线程创建身份不随 resume 更新，额度快照和余额也不是逐请求扣费证明。本次只在已有后台解析入口保留源记录明确提供的字段，按请求归属写入，缺失不继承前一请求，不新增采集或全量重扫。
 
-记 I 为输入总量，C 为缓存读取，W 为缓存创建，O 为输出：
+来源不明的 OpenAI／旧 codexio-upstream 记录按用户明确口径统一按订阅计价，不因认证／消费来源缺失标为 `estimated`；内部记录采用的 `pricing_mode`／`assumed_billing_source`，原始认证与消费字段保持缺失。这个默认规则是用户选择的统计口径，不表示从日志恢复了真实身份。明确 API Key／credits 的记录按自身规则计价。第三方 provider 继续按原有参考规则估算，只有模型 ID 与目录精确匹配时才有价格。缺失 Token 或基础价保持缺价，不用零费用代替。
+
+`billing_source` 是 Codexio 的可选归一化字段，不是声称官方日志已经提供该字段。只识别明确的 subscription／included allowance、credits／paid credits、API Key 值；`usage_source=local/cloud/codex`、账户余额或当前登录状态不能当消费来源。真实新请求清除上一请求的身份，后到的同轮上下文仍保留本轮明确身份，任务设置仅作用于后续请求。
+
+## 计算、目录与失效
 
 ```text
-普通输入 = I - C - W
-换算费用 = [(I-C-W) × 输入换算价
-           + C × 缓存读取换算价
-           + W × 缓存创建换算价
-           + O × 输出换算价] / 1,000,000
+普通输入 = 输入总量 I - 缓存读取 C - 缓存写入 W
+费用 = [(I-C-W)×输入价 + C×缓存读取价 + W×缓存写入价 + O×输出价] / 1,000,000
 ```
 
-普通 Standard 中，缓存创建使用官方单列价格；例如 Astra 为 12.50 美元／百万 Token，不能替换成普通输入的 10.00。未公布的单价保持未知，记录实际使用该类别时不猜测金额。Fast 与长上下文的既有 Codex 换算行继续令缓存创建价等于普通输入价，在这些条件下公式可简化为 `(I-C) × 输入价 + C × 缓存读取价 + O × 输出价` 后除以一百万。推理 Token 属于输出，不重复收费。
+推理 Token 已包含在输出 O 中，不重复计价。价格页中的 GPT-6.1 Sol 行展示订阅 Standard／Fast／Ultrafast 参考价，不再重复显示超过 272K 的订阅档位；逐调用 API／credits 计算从原始 Standard 基础价派生，不再从已经乘过倍率的目录行再次相乘。
 
-例如 300,000 输入、80,000 缓存读取、10,000 缓存创建、2,000 输出，在当前基础价下：
+共同种子中的 `billing_policies.gpt-6.1-sol` 保存各消费来源阈值、速度、缓存写入口径与未知来源默认值；Mac、Windows 和 Python 参考实现使用相同数值。实际基础价与规则进入价格版本，抓取时间、核验日期与来源链接不进入版本。相同单价同步不会重复计价或覆盖版本归档。
 
-- Astra Fast：输入／创建 25.00、缓存读取 2.50、输出 125.00，每次调用 **$5.95**。
-- GPT-5.6 Sol 长文 Fast：输入／创建 20.00、缓存读取 2.00、输出 75.00，每次调用 **$4.71**。
+价格版本变更复用现有已索引账本的派生统计失效与重新计价，原始 Token、请求归属和日志游标不变，不重新采集整个历史。金额、请求、模型汇总、趋势与桌面同步继续共用已有本地计价结果。
 
-## 展示与历史重算
+## 依据与验证边界
 
-一张表中只显示 Standard、Fast 和各适用上下文条件，普通 Standard 六列全部加粗。所有行均可选择模型，编辑入口始终修改该模型的基础价。搜索与更新按模型和条件保存选择，不会因行号变化而改错模型。所有金额和单价只显示两位小数；内部仍保留原始精度，未编辑字段不会在保存时被舍入。计价规则修订会使历史金额和依赖缓存按同一目录自动重算。
+- [Tibo 关于订阅长上下文费用的原帖](https://x.com/thsottiaux/status/2109430894604026039)：北京时间 2026-10-12 07:48，GPT-6.1 Sol 从订阅额度计量时不收长上下文附加费；通过 X 公开嵌入／syndication 接口核对原文。
+- [GPT-6.1 Sol 官方 API 模型页](https://developers.openai.com/api/docs/models/gpt-6.1-sol)：API Standard 基础价、272K 阈值及整次调用倍率。
+- [Codex / Work 速度说明](https://learn.chatgpt.com/docs/agent-configuration/speed)：订阅 Fast／Ultrafast 2.5／8，购买 credits 与 Enterprise pay-as-you-go 2／6；API Key 独立计价。
+- [官方 Codex 记录 schema](https://github.com/openai/codex/blob/740e5af33c71225640e0c1c1555c514c2c93ab74/codex-rs/protocol/src/protocol.rs)：已有缓存 0.162.0-alpha.17.2 的逐调用身份字段限制，不据此承诺所有客户端版本的字段覆盖。
 
-基础价和规则纳入价格版本。版本变化会触发 SQLite 展示索引的原子重建，重算调用、请求汇总、模型组成、概览、趋势、悬浮摘要和周额度估值。原始计量记录不变；缺价保持未定价，不填充零费用。
-
-## 官方依据与适用范围
-
-- [Codex / Work Fast 模式](https://learn.chatgpt.com/docs/agent-configuration/speed)：分模型 Fast 倍率及 API Key 与 ChatGPT credits 的区别。
-- [Enterprise 按 Token 计费表](https://help.openai.com/en/articles/20001415-chatgpt-rate-card-enterprise-token-based-pricing)：长上下文倍率、Astra 在 Codex 中的例外及缓存写入说明。
-- [GPT-5.6 Sol API 基础价](https://developers.openai.com/api/docs/models/gpt-5.6-sol)、[GPT-5.5 API 基础价](https://developers.openai.com/api/docs/models/gpt-5.5)：基础 Token 价格。
-
-该换算是应用采用的统一估值定义，不保证逐 Token 复现 Plus／Pro 套餐内五小时或周额度的后台算法。上游实际剩余百分比与重置时间仍直接读取，不由换算金额替代。
+不新增维护性测试文件或冒烟项，不运行 pytest／全量回归。使用原有三项隔离冒烟和交付核验，必要的算术检查仅针对本次规则，不读取真实配置、认证或聊天内容，不启动用户安装的应用。
