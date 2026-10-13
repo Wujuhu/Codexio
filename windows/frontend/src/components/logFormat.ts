@@ -46,9 +46,13 @@ export function preview(record: Row): string {
   return label;
 }
 
+export function contextTokens(record:Row):number|null {
+  return number(record.client_kind==='claude_code'?record.context_input_tokens:record.model_context_window);
+}
+
 export function requestMetadata(record: Row, query: Query, showYear?: boolean): string {
-  const context = number(record.model_context_window);
-  const tier = speed(record.service_tier);
+  const context = contextTokens(record);
+  const tier = record.client_kind==='claude_code'?'—':speed(record.service_tier);
   return [logTime(record.timestamp,query,showYear), effort(record.reasoning_effort), ['Fast','Ultra Fast'].includes(tier) ? tier : '', context !== null ? compact(context,0) : ''].filter(Boolean).join(' · ');
 }
 

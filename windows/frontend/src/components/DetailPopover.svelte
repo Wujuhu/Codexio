@@ -6,9 +6,9 @@
   import {type Row} from '../lib/api';
   import {popover,viewportBounds} from '../lib/floating';
   export let id=''; export let record:Row={}; export let onerror:(e:any)=>void;
-  let open=false, pinned=false, shown=false, returningFocus=false, left=0, top=0;
+  let open=false, pinned=false, returningFocus=false, left=0, top=0;
   let detailRevision='';
-  $: revision=JSON.stringify([id,record.model,record.models,record.reasoning_effort,record.service_tier,record.model_context_window,record.request_status??record.status,record.total_tokens,record.output_tokens,record.ttft_ms,record.cost_usd,record.duration_ms,record.duration_running,record.duration_started_at,record.duration_base_ms,record.prompt_preview,record.output_preview,record.call_count,record.upstream_observations??record.observations??record.upstream_models??record.upstream_model]);
+  $: revision=JSON.stringify([id,record.client_kind,record.source_exists,record.source_revision,record.availability,record.model,record.models,record.reasoning_effort,record.service_tier,record.model_context_window,record.context_input_tokens,record.request_status??record.status,record.total_tokens,record.output_tokens,record.ttft_ms,record.cost_usd,record.duration_ms,record.duration_running,record.duration_started_at,record.duration_base_ms,record.prompt_preview,record.output_preview,record.call_count,record.upstream_observations??record.observations??record.upstream_models??record.upstream_model]);
   $: if(open&&revision!==detailRevision)detailRevision=revision;
   let trigger:HTMLButtonElement, popup:HTMLDivElement;
   let timer:ReturnType<typeof setTimeout>;
@@ -23,7 +23,7 @@
     left=Math.max(viewport.left+edge,Math.min(viewport.right-width-edge,preferred>=viewport.left+edge?preferred:rect.right+gap));
     top=Math.max(viewport.top+edge,Math.min(viewport.bottom-height-edge,rect.top-12));
   }
-  async function show(){clearTimeout(timer);shown=true;open=true;await tick();place();}
+  async function show(){clearTimeout(timer);open=true;await tick();place();}
   function leave(){if(!pinned&&!popup?.contains(document.activeElement)){clearTimeout(timer);timer=setTimeout(()=>open=false,250)}}
   function close(){open=false;pinned=false;clearTimeout(timer)}
   function restoreFocus(){close();returningFocus=true;trigger.focus();queueMicrotask(()=>returningFocus=false)}
@@ -37,7 +37,7 @@
 </script>
 <svelte:window onpointerdown={outside} onkeydown={key} onresize={reposition}/>
 <button bind:this={trigger} class="quiet detail-trigger" aria-haspopup="dialog" aria-expanded={open} onmouseenter={show} onmouseleave={leave} onfocus={()=>{if(!returningFocus)show()}} onblur={leave} onclick={toggle}>{tr('详情')}</button>
-{#if shown}
+{#if open}
   <div bind:this={popup} class="detail-popover" popover="manual" use:popover={open} use:measure style:left={`${left}px`} style:top={`${top}px`} role="dialog" aria-label={tr('请求详情')} tabindex="-1" onmouseenter={()=>clearTimeout(timer)} onmouseleave={leave} onfocusin={()=>clearTimeout(timer)} onfocusout={event=>{if(!popup.contains(event.relatedTarget as Node)&&event.relatedTarget!==trigger)leave()}}>
     <button class="quiet popover-close" onclick={restoreFocus} aria-label={tr('关闭')}><Icon name="close" size={15}/></button>
     <Details {id} {onerror} reloadKey={detailRevision}/>

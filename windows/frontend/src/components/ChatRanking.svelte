@@ -1,19 +1,19 @@
 <script lang="ts">
- import{onDestroy}from'svelte';import{api,rows,text,number,compact,cost,utcReportStamp,type Row}from'../lib/api';
+ import{onDestroy}from'svelte';import{api,rows,text,number,compact,cost,utcReportStamp,type Row,type ClientKind}from'../lib/api';
  import{tr}from'../lib/i18n';import{modelName,effort,speed}from'./logFormat';
- export let data:Row={};export let settings:Row={};export let onsave:((r:Row)=>Promise<void>)|undefined;export let onerror:((e:any)=>void)|undefined;export let onpage:((direction:number)=>void)|undefined;
- let sort='cost_usd',page=0,visible=5;let expanded=new Set<string>();let ranking:Row={},sequence=0,details:Record<string,Row>={};
- $: void load(data.generation,sort,page);
+ export let data:Row={};export let clientKind:ClientKind='codex';export let settings:Row={};export let onsave:((r:Row)=>Promise<void>)|undefined;export let onerror:((e:any)=>void)|undefined;export let onpage:((direction:number)=>void)|undefined;
+ let sort=clientKind==='claude_code'?'tokens':'cost_usd',page=0,visible=5;let expanded=new Set<string>();let ranking:Row={},sequence=0,details:Record<string,Row>={};
+ $: void load(data.generation,sort,page,clientKind);
  $: candidates=rows(ranking.threads);
  $: pages=Math.max(1,Number(ranking.pages??1));
  $: page=Math.min(page,pages-1);
  $: shown=candidates.slice(0,visible);
  $: void settings; $: void onsave; $: void onpage;
  onDestroy(()=>sequence++);
- async function load(_source:any,metric:string,current:number){const ticket=++sequence;details={};expanded=new Set();try{const result=await api('GetChatRanking',metric,current+1);if(ticket===sequence)ranking=result}catch(e){if(ticket===sequence)onerror?.(e)}}
- function changeSort(next:string){sort=next;page=0;visible=5;expanded=new Set();}
+ async function load(_source:any,metric:string,current:number,client:ClientKind){const ticket=++sequence;details={};expanded=new Set();try{const result=await api('GetClientChatRanking',client,metric,current+1);if(ticket===sequence)ranking=result}catch(e){if(ticket===sequence)onerror?.(e)}}
+ function changeSort(next:string){if(clientKind==='claude_code'&&next!=='tokens')return;sort=next;page=0;visible=5;expanded=new Set();}
  function changePage(direction:number){visible=5;expanded=new Set();page+=direction;}
- async function toggle(id:string){const next=new Set(expanded);next.has(id)?next.delete(id):next.add(id);expanded=next;if(next.has(id)&&!details[id]){const ticket=sequence;try{const result=await api('GetChatRankingDetails',id);if(ticket===sequence)details={...details,[id]:result}}catch(e){if(ticket===sequence)onerror?.(e)}}}
+ async function toggle(id:string){const next=new Set(expanded);next.has(id)?next.delete(id):next.add(id);expanded=next;if(next.has(id)&&!details[id]){const ticket=sequence;try{const result=await api('GetClientChatRankingDetails',clientKind,id);if(ticket===sequence)details={...details,[id]:result}}catch(e){if(ticket===sequence)onerror?.(e)}}}
  function precise(value:any){const n=number(value);return n===null?'—':n.toLocaleString('en-US',{maximumFractionDigits:n>0&&n<.01?4:2})+'%'}
  function breakdown(row:Row,key:string){const total=number(row[sort]);const amounts=new Map<string,number>();for(const group of rows(details[String(row.thread_id)]?.groups)){const n=number(group[sort]);if(n!==null){const label=text(group[key]);amounts.set(label,(amounts.get(label)??0)+n)}}const result=Array.from(amounts,([label,value])=>({label,value})).sort((a,b)=>b.value-a.value);return total!==null&&total>0?result.map(item=>({...item,percent:item.value/total*100})):[]}
  function groupLabel(key:string,value:string){return key==='reasoning_effort'?effort(value)||'—':key==='speed'?speed(value):key==='model'?modelName(value):value}
@@ -21,13 +21,13 @@
 </script>
 
 <section class="chat-ranking">
- <div class="ranking-heading"><div><h3>{tr('聊天用量排行')}</h3><p class="muted">{tr('比较每个聊天的费用和 Token 用量')}</p></div><select aria-label={tr('排行排序')} value={sort} onchange={event=>changeSort(event.currentTarget.value)}><option value="cost_usd">{tr('按费用排序')}</option><option value="tokens">{tr('按 Token 排序')}</option></select></div>
+ <div class="ranking-heading"><div><h3>{tr('聊天用量排行')}</h3><p class="muted">{tr(clientKind==='claude_code'?'比较每个聊天的 Token 用量':'比较每个聊天的费用和 Token 用量')}</p></div><select aria-label={tr('排行排序')} value={sort} onchange={event=>changeSort(event.currentTarget.value)}>{#if clientKind!=='claude_code'}<option value="cost_usd">{tr('按费用排序')}</option>{/if}<option value="tokens">{tr('按 Token 排序')}</option></select></div>
  {#if ranking.error}<p class="ranking-note">{ranking.error}</p>{/if}
  {#if !shown.length}<div class="ranking-empty">{tr('暂不可用')}<small>{tr('暂无本机聊天记录')}</small></div>
  {:else}<div class="ranking-list">
-  <div class="ranking-header"><span>{tr('聊天')}</span><button class="sort-column" onclick={()=>changeSort('cost_usd')}>{tr('费用')}</button><button class="sort-column" onclick={()=>changeSort('tokens')}>Token</button></div>
-  {#each shown as row}{@const id=String(row.thread_id??row.session_id)}{@const openRow=expanded.has(id)}<article class:expanded={openRow} class="ranking-entry"><button class="ranking-row" onclick={()=>toggle(id)}><span class="chat-name"><span class="chevron">{openRow?'⌄':'›'}</span><span>{text(row.title??row.name??row.session_title??row.thread_id??row.session_id)}{#if row.data_status==='partial'}<small>{tr('部分数据')}</small>{/if}</span></span><span>{cost(row.cost_usd)}</span><span>{compact(row.tokens)}</span></button>
-   {#if openRow}<div class="ranking-details">{#each [['model','模型'],['reasoning_effort','推理强度'],['speed','速度']] as [key,label]}<div class="breakdown"><span>{tr(label)}</span><div>{#each breakdown(row,key) as group}<span>{groupLabel(key,group.label)} <small>{precise(group.percent)}</small></span>{:else}<span>—</span>{/each}</div></div>{/each}<button class="quiet open-chat" onclick={()=>open(id)}>{tr('打开聊天 ↗')}</button></div>{/if}
+  <div class="ranking-header"><span>{tr('聊天')}</span><button class="sort-column" disabled={clientKind==='claude_code'} onclick={()=>changeSort('cost_usd')}>{tr('费用')}</button><button class="sort-column" onclick={()=>changeSort('tokens')}>Token</button></div>
+  {#each shown as row}{@const id=String(row.thread_id??row.session_id)}{@const openRow=expanded.has(id)}<article class:expanded={openRow} class="ranking-entry"><button class="ranking-row" onclick={()=>toggle(id)}><span class="chat-name"><span class="chevron">{openRow?'⌄':'›'}</span><span>{text(row.title??row.name??row.session_title??row.thread_id??row.session_id)}{#if row.data_status==='partial'}<small>{tr('部分数据')}</small>{/if}</span></span><span>{cost(clientKind==='claude_code'?null:row.cost_usd)}</span><span>{compact(row.tokens)}</span></button>
+   {#if openRow}<div class="ranking-details">{#each [['model','模型'],['reasoning_effort','推理强度'],['speed','速度']] as [key,label]}<div class="breakdown"><span>{tr(label)}</span><div>{#each clientKind==='claude_code'&&key==='speed'?[]:breakdown(row,key) as group}<span>{groupLabel(key,group.label)} <small>{precise(group.percent)}</small></span>{:else}<span>—</span>{/each}</div></div>{/each}{#if clientKind!=='claude_code'}<button class="quiet open-chat" onclick={()=>open(id)}>{tr('打开聊天 ↗')}</button>{/if}</div>{/if}
   </article>{/each}
  </div><div class="ranking-footer">{#if visible<Math.min(25,candidates.length)}<button onclick={()=>visible=Math.min(25,visible+5)}>{tr('显示更多')}</button>{/if}<small>{tr('统计截至')+' '+utcReportStamp(ranking.data_as_of)}</small><div><button aria-label={tr('上一页')} disabled={!page} onclick={()=>changePage(-1)}>‹</button><span>{page+1} / {pages}</span><button aria-label={tr('下一页')} disabled={page+1>=pages} onclick={()=>changePage(1)}>›</button></div></div>{/if}
 </section>

@@ -114,7 +114,7 @@ func (r *ReportManager) Get(period string) (Row, error) {
 	slices := []Row{{"name": "凌晨", "requests": 0}, {"name": "上午", "requests": 0}, {"name": "午后", "requests": 0}, {"name": "晚间", "requests": 0}}
 	var first, last any
 	firstClock, lastClock := 86400, -1
-	rows, e := r.store.Database().Query(`SELECT timestamp,data FROM usage_request_groups WHERE timestamp>=? AND timestamp<? AND record_kind='user_request' AND is_subagent=0 ORDER BY timestamp`, reportIndexStamp(start), reportIndexStamp(end))
+	rows, e := r.store.Database().Query(`SELECT timestamp,data FROM usage_request_groups WHERE coalesce(json_extract(data,'$.client_kind'),'codex')='codex' AND timestamp>=? AND timestamp<? AND record_kind='user_request' AND is_subagent=0 ORDER BY timestamp`, reportIndexStamp(start), reportIndexStamp(end))
 	if e != nil {
 		return nil, e
 	}

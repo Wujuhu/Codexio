@@ -139,7 +139,7 @@ func (e *RollingEstimator) process(now time.Time) {
 }
 
 func (e *RollingEstimator) usage(start, end time.Time, sole bool) (int64, float64, bool, error) {
-	rows, err := e.store.db.Query(`SELECT data FROM usage_priced_calls c WHERE timestamp>? AND timestamp<=? AND EXISTS(SELECT 1 FROM usage_query_sources s WHERE s.record_id=c.id AND (s.source_id='local' OR s.source_id LIKE 'local:%')) ORDER BY timestamp,id`, ledgerStamp(start), ledgerStamp(end))
+	rows, err := e.store.db.Query(`SELECT data FROM usage_priced_calls c WHERE timestamp>? AND timestamp<=? AND coalesce(json_extract(c.data,'$.client_kind'),'codex')='codex' AND EXISTS(SELECT 1 FROM usage_query_sources s WHERE s.record_id=c.id AND (s.source_id='local' OR s.source_id LIKE 'local:%')) ORDER BY timestamp,id`, ledgerStamp(start), ledgerStamp(end))
 	if err != nil {
 		return 0, 0, true, err
 	}

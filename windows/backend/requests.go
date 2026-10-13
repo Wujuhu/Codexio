@@ -115,9 +115,10 @@ func (s *Store) project() error {
 	version := s.priceVersion
 	s.mu.RUnlock()
 	priceChanged := dataString(state, "prices") != version
+	claudeProjectionChanged := ValueInt(state["claude_projection_version"]) != 2
 	full := prior == "" || priceChanged
 	durationChanged := ValueInt(state["duration_projection_version"]) != requestDurationProjectionVersion
-	groupFull := full || ValueInt(state["request_projection_version"]) != requestMetadataVersion || durationChanged
+	groupFull := full || claudeProjectionChanged || ValueInt(state["request_projection_version"]) != requestMetadataVersion || durationChanged
 	// Source observations, future timestamps and clock rollback are time
 	// dependencies. A normal poll compares two cached boundaries, not history.
 	now := time.Now()
@@ -142,7 +143,11 @@ func (s *Store) project() error {
 	}
 	changedSQL := "SELECT r.data FROM usage_records r"
 	if !full {
-		changedSQL += ` WHERE (r.id IN (SELECT item_id FROM usage_query_changes WHERE kind='record') OR r.session_id IN (SELECT item_id FROM usage_query_changes WHERE kind='title'))`
+		changedSQL += ` WHERE ((r.id IN (SELECT item_id FROM usage_query_changes WHERE kind='record') OR r.session_id IN (SELECT item_id FROM usage_query_changes WHERE kind='title'))`
+		if claudeProjectionChanged {
+			changedSQL += ` OR json_extract(r.data,'$.client_kind')='claude_code'`
+		}
+		changedSQL += `)`
 	}
 	// Bounded input batches; SQL holds the complete history rather than a UI snapshot.
 	last := ""
@@ -211,11 +216,14 @@ func (s *Store) project() error {
 	if e = s.rebuildGroups(tx, now, groupFull, dirty); e != nil {
 		return e
 	}
+	if e = s.rebuildClaudeGroups(tx, dirty, groupFull); e != nil {
+		return e
+	}
 	var nextDurationRefresh, durationValidAfter sql.NullFloat64
 	if e = tx.QueryRow(`SELECT MIN(json_extract(data,'$.duration_refresh_at')),MAX(json_extract(data,'$.duration_valid_after')) FROM usage_request_groups`).Scan(&nextDurationRefresh, &durationValidAfter); e != nil {
 		return e
 	}
-	projection := Row{"revision": revision, "prices": version, "generation": s.Generation() + 1, "request_projection_version": requestMetadataVersion, "duration_projection_version": requestDurationProjectionVersion}
+	projection := Row{"revision": revision, "prices": version, "generation": s.Generation() + 1, "claude_projection_version": 2, "request_projection_version": requestMetadataVersion, "duration_projection_version": requestDurationProjectionVersion}
 	if nextDurationRefresh.Valid {
 		projection["duration_refresh_at"] = nextDurationRefresh.Float64
 	}
@@ -236,7 +244,7 @@ func (s *Store) project() error {
 	return e
 }
 func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[string]bool) error {
-	turns, e := queryJSON(tx, "SELECT data FROM usage_turns ORDER BY json_extract(data,'$.observed_at'),id")
+	turns, e := queryJSON(tx, "SELECT data FROM usage_turns WHERE coalesce(json_extract(data,'$.client_kind'),'codex')='codex' ORDER BY json_extract(data,'$.observed_at'),id")
 	if e != nil {
 		return e
 	}
@@ -295,7 +303,7 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 		}
 	}
 	// Index call ownership in SQLite; only per-turn IDs/metadata reside in the graph.
-	rows, e := tx.Query("SELECT DISTINCT session_id,turn_id FROM usage_priced_calls WHERE turn_id<>''")
+	rows, e := tx.Query("SELECT DISTINCT session_id,turn_id FROM usage_priced_calls WHERE turn_id<>'' AND coalesce(json_extract(data,'$.client_kind'),'codex')='codex'")
 	if e != nil {
 		return e
 	}
@@ -755,7 +763,7 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 	}
 	last := ""
 	for {
-		query := "SELECT data FROM usage_priced_calls WHERE turn_id='' AND id>?"
+		query := "SELECT data FROM usage_priced_calls WHERE turn_id='' AND coalesce(json_extract(data,'$.client_kind'),'codex')='codex' AND id>?"
 		if !full {
 			query += " AND id IN(SELECT item_id FROM usage_query_changes WHERE kind='record')"
 		}
@@ -811,6 +819,7 @@ type metricSum struct {
 	cost, compensation       float64
 	cacheInput, cacheRead    int64
 	cacheValid, cacheSkipped int
+	strict                   bool
 }
 
 func newMetricSum() *metricSum {
@@ -818,6 +827,9 @@ func newMetricSum() *metricSum {
 }
 func (m *metricSum) add(r Row) {
 	m.records++
+	if normalizedClient(dataString(r, "client_kind")) == "claude_code" {
+		m.strict = true
+	}
 	total, tok := knownCount(r["total_tokens"])
 	if _, exists := r["input_tokens"]; exists {
 		in, ok := knownCount(r["input_tokens"])
@@ -875,14 +887,18 @@ func (m *metricSum) row() Row {
 	r := Row{"records": m.records, "valid_counts": m.valid, "skipped": m.skipped, "unpriced_calls": m.unpriced, "unpriced_tokens": m.unpricedTokens, "cost_complete": m.unpriced == 0, "cache_input_tokens": m.cacheInput, "cache_read_tokens": m.cacheRead, "cache_valid_records": m.cacheValid, "cache_skipped_records": m.cacheSkipped, "cache_hit_rate": nil, "usd": nil}
 	for _, k := range append([]string{"tokens", "requests"}, tokenFields[:5]...) {
 		r[k] = nil
-		if m.valid[k] > 0 {
+		if m.valid[k] > 0 && (!m.strict || m.valid[k] == m.records) {
 			r[k] = m.totals[k]
 		}
+	}
+	if m.strict && m.cacheValid != m.records {
+		r["cache_input_tokens"] = nil
+		r["cache_read_tokens"] = nil
 	}
 	if m.valid["usd"] > 0 {
 		r["usd"] = m.cost
 	}
-	if m.cacheInput > 0 {
+	if m.cacheInput > 0 && (!m.strict || m.cacheValid == m.records) {
 		r["cache_hit_rate"] = float64(m.cacheRead) / float64(m.cacheInput)
 	}
 	return r

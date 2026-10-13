@@ -26,7 +26,10 @@ func (s *Service) GetChatRanking(metric string, page int) Row {
 }
 
 func (s *Service) GetChatRankingDetails(thread string) (Row, error) {
-	q := Query{Period: "all", Source: "local"}
+	return s.GetClientChatRankingDetails("codex", thread)
+}
+func (s *Service) GetClientChatRankingDetails(clientKind, thread string) (Row, error) {
+	q := Query{ClientKind: clientKind, Period: "all", Source: "local"}
 	key, cached, ok := s.store.cachedQuery("chat-ranking-details:"+thread, q)
 	if ok {
 		return cached, nil
@@ -34,7 +37,7 @@ func (s *Service) GetChatRankingDetails(thread string) (Row, error) {
 	where, args := queryFilter(q, false)
 	where = strings.ReplaceAll(where, "usage_priced_calls.id", "p.id")
 	args = append(args, thread)
-	query := `SELECT p.model,coalesce(json_extract(p.data,'$.reasoning_effort'),''),p.tier,sum(json_extract(p.metrics,'$.usd')),sum(json_extract(p.metrics,'$.tokens')) FROM usage_priced_calls p LEFT JOIN usage_query_session_roots roots ON roots.session_id=p.session_id WHERE ` + where + ` AND coalesce(roots.root_session_id,p.session_id)=? GROUP BY 1,2,3 ORDER BY 1,2,3`
+	query := `SELECT p.model,coalesce(json_extract(p.data,'$.reasoning_effort'),''),p.tier,sum(json_extract(p.metrics,'$.usd')),CASE WHEN coalesce(json_extract(p.data,'$.client_kind'),'codex')='claude_code' AND count(json_extract(p.metrics,'$.tokens'))<>count(*) THEN NULL ELSE sum(json_extract(p.metrics,'$.tokens')) END FROM usage_priced_calls p LEFT JOIN usage_query_session_roots roots ON roots.session_id=p.session_id WHERE ` + where + ` AND coalesce(roots.root_session_id,p.session_id)=? GROUP BY 1,2,3 ORDER BY 1,2,3`
 	records, err := s.store.db.Query(query, args...)
 	if err != nil {
 		return nil, err
@@ -48,7 +51,10 @@ func (s *Service) GetChatRankingDetails(thread string) (Row, error) {
 		if err = records.Scan(&model, &effort, &tier, &cost, &tokens); err != nil {
 			return nil, err
 		}
-		row := Row{"model": model, "reasoning_effort": effort, "speed": requestSpeed(tier), "cost_usd": nil, "tokens": nil}
+		row := Row{"client_kind": normalizedClient(clientKind), "model": model, "reasoning_effort": effort, "speed": requestSpeed(tier), "cost_usd": nil, "tokens": nil}
+		if normalizedClient(clientKind) == "claude_code" {
+			row["speed"] = nil
+		}
 		if cost.Valid {
 			row["cost_usd"] = cost.Float64
 		}

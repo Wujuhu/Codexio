@@ -34,22 +34,22 @@
 </div>
 {#if tab==='activity'}
  <div class="usage-section" role="tabpanel" id="usage-panel-activity" aria-labelledby="usage-tab-activity">
-  <Insights stats={data.insights?.stats??{}} section="metrics"/>
-  <ActivityCalendar data={data.heatmap??data.activity?.rows??[]} onselect={selectRange}/>
-  <Insights stats={data.insights?.stats??{}} section="insights"/>
+  <Insights stats={data.insights?.stats??{}} clientKind={query.client_kind??'codex'} section="metrics"/>
+  <ActivityCalendar data={data.heatmap??data.activity?.rows??[]} clientKind={query.client_kind??'codex'} onselect={selectRange}/>
+  <Insights stats={data.insights?.stats??{}} clientKind={query.client_kind??'codex'} section="insights"/>
   <button class="ranking-link" onclick={()=>changeTab('chats')}><span>{tr('聊天用量排行')}</span><svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 10h13m-5-5 5 5-5 5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-  <Journey revision={data.generation} {onerror}/>
+  {#if query.client_kind!=='claude_code'}<Journey revision={data.generation} {onerror}/>{/if}
  </div>
 {:else if tab==='trend'}
  <div class="usage-section trend-section" role="tabpanel" id="usage-panel-trend" aria-labelledby="usage-tab-trend">
   <div class="trend-filter-row"><Filters {query} models={data.models??[]} {onchange}/><select aria-label={tr('聚合')} value={query.granularity||((query.period==='today'||query.period==='yesterday')?'hour':'day')} onchange={event=>onchange({...query,granularity:event.currentTarget.value,page:1})}><option value="hour">{tr('每小时')}</option><option value="day">{tr('每天')}</option><option value="week">{tr('每周')}</option></select></div>
-  <Metrics summary={data.summary??{}}/>
-  <Chart data={data.chart??[]} title="" onselect={selectRange}/>
-  <ModelShare models={data.models??[]} summary={data.summary??{}}/>
+  <Metrics summary={data.summary??{}} clientKind={query.client_kind??'codex'}/>
+  <Chart data={data.chart??[]} clientKind={query.client_kind??'codex'} title="" onselect={selectRange}/>
+  <ModelShare models={data.models??[]} summary={data.summary??{}} clientKind={query.client_kind??'codex'}/>
  </div>
 {:else}
  <div class="usage-section" role="tabpanel" id="usage-panel-chats" aria-labelledby="usage-tab-chats">
-  <ChatRanking {data} {settings} {onsave} {onerror} onpage={pageChat}/>
+  <ChatRanking {data} clientKind={query.client_kind??'codex'} {settings} {onsave} {onerror} onpage={pageChat}/>
  </div>
 {/if}
 <style>

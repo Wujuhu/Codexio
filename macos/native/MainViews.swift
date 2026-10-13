@@ -25,7 +25,8 @@ struct MainView: View {
                 HStack(spacing:18) {
                     Button { state.toggleSidebar() } label: { Image(systemName:"sidebar.left") }.buttonStyle(.plain).accessibilityLabel(L("切换侧边栏", "Toggle sidebar"))
                     Spacer()
-                    FetchRefreshControls(activity:state.fetchActivity,clock:state.clock,openReport:{state.onOpenUsageReport?()}) {state.refresh()}
+                    if ["overview","logs","trends"].contains(state.selectedPage) { ClientSwitcher(state:state) }
+                    FetchRefreshControls(activity:state.fetchActivity,clock:state.pageClient == .claudeCode && ["overview","logs","trends"].contains(state.selectedPage) ? state.claudeClock : state.clock,openReport:{state.onOpenUsageReport?()}) {state.refresh()}
                 }.padding(.horizontal,PageLayout.inset).frame(height:48)
                 Divider()
                 HStack(alignment:.firstTextBaseline) {
@@ -44,13 +45,13 @@ struct MainView: View {
         }
         .background(Color(nsColor:.windowBackgroundColor))
         .preferredColorScheme(state.theme == "dark" ? .dark : state.theme == "light" ? .light : nil)
-        .onChange(of:state.selectedPage) { _,page in if page == "subscription" || (page == "trends" && state.usageSection == "threads") { state.refreshReports() } }
+        .onChange(of:state.selectedPage) { _,page in if page == "subscription" || (page == "trends" && state.pageClient == .codex && state.usageSection == "threads") { state.refreshReports() } }
     }
     @ViewBuilder private var page: some View {
         switch state.selectedPage {
-        case "overview": OverviewView(state:state)
-        case "logs": LogsView(state:state)
-        case "trends": UsageView(state:state)
+        case "overview": if state.pageClient == .claudeCode { ClaudeOverviewView(state:state) } else { OverviewView(state:state) }
+        case "logs": if state.pageClient == .claudeCode { ClaudeLogsView(state:state) } else { LogsView(state:state) }
+        case "trends": if state.pageClient == .claudeCode { ClaudeUsageView(state:state) } else { UsageView(state:state) }
         case "subscription": SubscriptionView(state:state)
         case "pricing": PricingView(state:state)
         default: SettingsView(state:state)

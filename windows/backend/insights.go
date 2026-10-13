@@ -87,10 +87,14 @@ func (s *Store) localChatRowsSorted(q Query, page, size int, metric string) ([]R
 	page = min(max(1, page), pages)
 	// The aggregate stays in SQLite; only the requested ranking page is decoded.
 	order := "tokens"
-	if metric == "cost_usd" {
+	if metric == "cost_usd" && normalizedClient(q.ClientKind) != "claude_code" {
 		order = "usd"
 	}
-	query := `SELECT coalesce(roots.root_session_id,p.session_id),coalesce(t.title,max(CASE WHEN roots.root_session_id=p.session_id OR roots.root_session_id IS NULL THEN json_extract(p.data,'$.session_title') END),''),sum(json_extract(p.metrics,'$.tokens')),sum(json_extract(p.metrics,'$.usd')),sum(coalesce(json_extract(p.metrics,'$.unpriced_calls'),0)) FROM usage_priced_calls p LEFT JOIN usage_query_session_roots roots ON roots.session_id=p.session_id LEFT JOIN usage_session_titles t ON t.session_id=coalesce(roots.root_session_id,p.session_id) WHERE ` + where + ` GROUP BY coalesce(roots.root_session_id,p.session_id) ORDER BY sum(json_extract(p.metrics,'$.` + order + `')) DESC,coalesce(roots.root_session_id,p.session_id) LIMIT ? OFFSET ?`
+	orderExpression := `sum(json_extract(p.metrics,'$.` + order + `'))`
+	if normalizedClient(q.ClientKind) == "claude_code" {
+		orderExpression = `CASE WHEN count(json_extract(p.metrics,'$.tokens'))=count(*) THEN sum(json_extract(p.metrics,'$.tokens')) END`
+	}
+	query := `SELECT coalesce(roots.root_session_id,p.session_id),coalesce(t.title,max(CASE WHEN roots.root_session_id=p.session_id OR roots.root_session_id IS NULL THEN json_extract(p.data,'$.session_title') END),''),CASE WHEN coalesce(json_extract(p.data,'$.client_kind'),'codex')='claude_code' AND count(json_extract(p.metrics,'$.tokens'))<>count(*) THEN NULL ELSE sum(json_extract(p.metrics,'$.tokens')) END,sum(json_extract(p.metrics,'$.usd')),sum(coalesce(json_extract(p.metrics,'$.unpriced_calls'),0)),sum(CASE WHEN json_extract(p.data,'$.client_kind')='claude_code' AND (coalesce(json_extract(p.data,'$.usage_complete'),0)=0 OR json_extract(p.data,'$.usage_conflict')=1) THEN 1 ELSE 0 END) FROM usage_priced_calls p LEFT JOIN usage_query_session_roots roots ON roots.session_id=p.session_id LEFT JOIN usage_session_titles t ON t.session_id=coalesce(roots.root_session_id,p.session_id) WHERE ` + where + ` GROUP BY coalesce(roots.root_session_id,p.session_id) ORDER BY ` + orderExpression + ` DESC,coalesce(roots.root_session_id,p.session_id) LIMIT ? OFFSET ?`
 	params := append(append([]any{}, args...), size, (page-1)*size)
 	rows, e := s.db.Query(query, params...)
 	if e != nil {
@@ -101,14 +105,22 @@ func (s *Store) localChatRowsSorted(q Query, page, size int, metric string) ([]R
 		var session, title string
 		var tokens sql.NullInt64
 		var usd sql.NullFloat64
-		var unpriced int
-		if e = rows.Scan(&session, &title, &tokens, &usd, &unpriced); e != nil {
+		var unpriced, incomplete int
+		if e = rows.Scan(&session, &title, &tokens, &usd, &unpriced, &incomplete); e != nil {
 			rows.Close()
 			return nil, 0, 0, e
 		}
-		r := Row{"session_id": session, "thread_id": session, "session_title": title, "name": title, "title": title, "tokens": nil, "local_tokens": nil, "usd": nil, "cost_usd": nil, "cost_partial": unpriced > 0, "cost_complete": unpriced == 0}
+		r := Row{"client_kind": normalizedClient(q.ClientKind), "session_id": session, "thread_id": session, "session_title": title, "name": title, "title": title, "tokens": nil, "local_tokens": nil, "usd": nil, "cost_usd": nil, "cost_partial": unpriced > 0, "cost_complete": unpriced == 0}
 		if unpriced > 0 {
 			r["data_status"] = "partial"
+		}
+		if normalizedClient(q.ClientKind) == "claude_code" {
+			r["cost_partial"] = false
+			r["cost_complete"] = false
+			delete(r, "data_status")
+			if incomplete > 0 {
+				r["data_status"] = "partial"
+			}
 		}
 		if tokens.Valid {
 			r["tokens"], r["local_tokens"] = tokens.Int64, tokens.Int64
@@ -154,6 +166,7 @@ func (s *Store) localInsights(q Query) (result Row, err error) {
 	requests := map[string]int{}
 	active := map[string]bool{}
 	knownDaily := map[string]int64{}
+	incompleteDaily := map[string]bool{}
 	total := newMetricSum()
 	speeds, efforts := map[string]int{}, map[string]int{}
 	err = s.stream(q, func(r Row) {
@@ -164,6 +177,11 @@ func (s *Store) localInsights(q Query) (result Row, err error) {
 			return
 		}
 		date := t.In(time.Local).Format("2006-01-02")
+		if normalizedClient(q.ClientKind) == "claude_code" {
+			if _, known := knownCount(r["total_tokens"]); !known {
+				incompleteDaily[date] = true
+			}
+		}
 		if total.valid["tokens"] > beforeValid {
 			knownDaily[date] += total.totals["tokens"] - beforeTokens
 		}
@@ -211,10 +229,16 @@ func (s *Store) localInsights(q Query) (result Row, err error) {
 	}
 	calendar := make([]Row, 0, 365)
 	var peak any
-	for _, tokens := range knownDaily {
+	for date, tokens := range knownDaily {
+		if incompleteDaily[date] {
+			continue
+		}
 		if prior, ok := knownCount(peak); !ok || tokens > prior {
 			peak = tokens
 		}
+	}
+	if normalizedClient(q.ClientKind) == "claude_code" && len(incompleteDaily) > 0 {
+		peak = nil
 	}
 	for offset := 0; offset < 365; offset++ {
 		date := floor.AddDate(0, 0, offset).Format("2006-01-02")
@@ -227,6 +251,10 @@ func (s *Store) localInsights(q Query) (result Row, err error) {
 		r["timestamp"] = date
 		r["label"] = date
 		r["user_requests"] = requests[date]
+		if normalizedClient(q.ClientKind) == "claude_code" {
+			r["usd"] = nil
+			r["client_kind"] = "claude_code"
+		}
 		calendar = append(calendar, r)
 	}
 	dates := []string{}
@@ -282,6 +310,9 @@ func (s *Store) localInsights(q Query) (result Row, err error) {
 			effortPercent = float64(mostCount) * 100 / float64(calls)
 		}
 	}
+	if normalizedClient(q.ClientKind) == "claude_code" {
+		fast = nil
+	}
 	seconds, partial, e := s.localChatDuration(q)
 	if e != nil {
 		return nil, e
@@ -291,6 +322,9 @@ func (s *Store) localInsights(q Query) (result Row, err error) {
 }
 
 func (s *Store) localChatDuration(q Query) (any, bool, error) {
+	if normalizedClient(q.ClientKind) == "claude_code" {
+		return s.claudeLongestDuration(q)
+	}
 	where, args := queryFilter(q, false)
 	rows, err := s.db.Query(`SELECT coalesce((SELECT json_extract(g.data,'$.session_id') FROM usage_request_groups g WHERE g.id=json_extract(t.data,'$.root_id')),json_extract(t.data,'$.session_id')),json_extract(t.data,'$.started_at'),json_extract(t.data,'$.ended_at'),json_extract(t.data,'$.duration_ms'),coalesce(json_extract(t.data,'$.started_inferred'),1),json_extract(t.data,'$.status') FROM usage_query_turns t WHERE EXISTS(SELECT 1 FROM usage_priced_calls WHERE session_id=json_extract(t.data,'$.session_id') AND turn_id=json_extract(t.data,'$.turn_id') AND `+where+`) ORDER BY 1,CASE WHEN (julianday(json_extract(t.data,'$.started_at')) IS NULL OR coalesce(json_extract(t.data,'$.started_inferred'),1)<>0) AND json_extract(t.data,'$.duration_ms')>=0 THEN julianday(json_extract(t.data,'$.ended_at'))-json_extract(t.data,'$.duration_ms')/86400000.0 ELSE julianday(json_extract(t.data,'$.started_at')) END`, args...)
 	if err != nil {

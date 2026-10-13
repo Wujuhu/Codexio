@@ -57,6 +57,11 @@ final class AsyncProjection<Value>: ObservableObject {
         requested = nil; generation += 1
         work?.cancel(); work = nil
     }
+    func discardVisible(_ replacement: Value) {
+        requested = nil; generation += 1; work?.cancel(); work = nil
+        cache.removeAll(keepingCapacity:true); order.removeAll(keepingCapacity:true)
+        value = replacement
+    }
     func load(key: String,revision: UUID,compute: @escaping () -> Value) {
         invalidate(for:revision)
         guard key != requested else { return }

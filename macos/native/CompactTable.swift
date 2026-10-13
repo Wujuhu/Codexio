@@ -11,9 +11,10 @@ struct GridColumn {
 struct GridText { var main: String; var secondary = ""; var upstream = ""; var upstreamMismatch = false }
 struct GridRow {
     let id: String
-    let text: (String) -> GridText
+    var text: (String) -> GridText
     var dynamic = false
     var detail: (() -> (UsageRow,[UsageRow]))? = nil
+    var customDetail: (() -> AnyView)? = nil
 }
 
 enum TableColumnWidths {
@@ -109,6 +110,15 @@ private final class GridDetailCell: NSView {
     func apply(_ row: GridRow) {
         coordinator?.close(); coordinator = nil
         link.target = nil; link.action = nil; link.entered = nil; link.exited = nil
+        if let custom = row.customDetail {
+            let coordinator = DetailsLink.Coordinator(row:UsageRow(raw:["id":row.id]),members:[])
+            coordinator.customContent = custom
+            self.coordinator = coordinator; coordinator.anchor = link
+            link.target = coordinator; link.action = #selector(DetailsLink.Coordinator.clicked)
+            link.entered = { [weak coordinator] in coordinator?.anchorInside = true; coordinator?.show() }
+            link.exited = { [weak coordinator] in coordinator?.anchorInside = false; coordinator?.scheduleClose() }
+            return
+        }
         guard let source = row.detail else { return }
         let payload = source()
         let coordinator = DetailsLink.Coordinator(row:payload.0,members:[])

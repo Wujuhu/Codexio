@@ -20,10 +20,13 @@ import (
 	"time"
 )
 
-const mobileLocalGroup = `(EXISTS(SELECT 1 FROM json_each(json_extract(g.data,'$.source_ids')) WHERE value='local' OR value LIKE 'local:%') OR json_extract(g.data,'$.source_id')='local' OR json_extract(g.data,'$.source_id') LIKE 'local:%')`
-const mobileLocalCall = `EXISTS(SELECT 1 FROM usage_query_sources s WHERE s.record_id=c.id AND (s.source_id='local' OR s.source_id LIKE 'local:%'))`
+const mobileLocalGroup = `coalesce(json_extract(g.data,'$.client_kind'),'codex')='codex' AND (EXISTS(SELECT 1 FROM json_each(json_extract(g.data,'$.source_ids')) WHERE value='local' OR value LIKE 'local:%') OR json_extract(g.data,'$.source_id')='local' OR json_extract(g.data,'$.source_id') LIKE 'local:%')`
+const mobileLocalCall = `coalesce(json_extract(c.data,'$.client_kind'),'codex')='codex' AND EXISTS(SELECT 1 FROM usage_query_sources s WHERE s.record_id=c.id AND (s.source_id='local' OR s.source_id LIKE 'local:%'))`
 
 func mobileIsLocal(r Row) bool {
+	if normalizedClient(dataString(r, "client_kind")) != "codex" {
+		return false
+	}
 	sources := ValueStrings(r["source_ids"])
 	if len(sources) == 0 {
 		sources = []string{ValueString(r["source_id"])}

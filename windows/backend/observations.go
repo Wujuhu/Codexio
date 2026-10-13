@@ -23,6 +23,9 @@ func (s *Store) enrichUpstream(rows []Row, grouped bool) {
 	defer db.Close()
 	db.SetMaxOpenConns(1)
 	for _, row := range rows {
+		if normalizedClient(dataString(row, "client_kind")) != "codex" {
+			continue
+		}
 		counts := map[string]int{}
 		detected, mismatches := 0, 0
 		consume := func(batch []Row) {

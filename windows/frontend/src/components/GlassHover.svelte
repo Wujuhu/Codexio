@@ -3,7 +3,7 @@
  import {numeric,compact,number,priced,type Row} from '../lib/api';
  import {tr} from '../lib/i18n';
  import {popover,viewportBounds} from '../lib/floating';
- export let row:Row;
+ export let row:Row;export let clientKind='codex';
  export let title:string;
  export let x:number;
  export let y:number;
@@ -16,7 +16,7 @@
 <div class="usage-glass-hover" popover="manual" use:popover role="tooltip" style:left={`${left}px`} style:top={`${top}px`} style:max-width={`${Math.max(0,viewport.width-16)}px`} style:max-height={`${Math.max(0,viewport.height-16)}px`} bind:offsetWidth={width} bind:offsetHeight={height}>
  <strong>{title}</strong>
  <div><span>Token</span><b>{compact(row.tokens)}</b></div>
- <div><span>{tr('费用')}</span><b>{priced(row,'usd')}</b></div>
+ <div><span>{tr('费用')}</span><b>{clientKind==='claude_code'?'—':priced(row,'usd')}</b></div>
  <div><span>{tr('用户请求')}</span><b>{numeric(row.user_requests)}</b></div>
  {#if row.tokens_complete===false || (number(row.skipped?.tokens)??0)>0}<small>{tr('数据不完整')}</small>{/if}
 </div>

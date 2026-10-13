@@ -361,6 +361,29 @@ func (s *Store) SetPrice(model string, rates Row) error {
 }
 func (s *Store) price(r Row) Row {
 	r = CloneRow(r)
+	if normalizedClient(dataString(r, "client_kind")) == "claude_code" {
+		r["cost_usd"] = nil
+		r["pricing_status"] = "not_applicable"
+		r["service_tier"] = nil
+		for _, field := range ValueStrings(r["final_missing_fields"]) {
+			r[field] = nil
+		}
+		r["context_input_tokens"] = r["input_tokens"]
+		if r["input_complete"] == false {
+			r["input_tokens"] = nil
+			r["context_input_tokens"] = nil
+		}
+		if !ValueBool(r["usage_complete"]) {
+			r["total_tokens"] = nil
+		}
+		if ValueBool(r["usage_conflict"]) {
+			for _, field := range tokenFields {
+				r[field] = nil
+			}
+			r["context_input_tokens"] = nil
+		}
+		return r
+	}
 	r["cost_usd"] = nil
 	r["pricing_status"] = "unpriced"
 	r["price_version"] = s.priceVersion

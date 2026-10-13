@@ -114,6 +114,7 @@ def build_native(bundle, version):
         shutil.copy2(ROOT / "src/codexio/icons" / name, resources / name)
     # Shared vector artwork: the same source is served directly by Windows.
     shutil.copytree(ROOT / "windows/frontend/public/journey-icons", resources / "journey-icons")
+    shutil.copytree(ROOT / "windows/frontend/public/client-icons", resources / "client-icons")
     icon_choices = resources / "app-icons"
     icon_choices.mkdir()
     for source in sorted((ROOT / "src/codexio/icons/app-icons").glob("*.png")):

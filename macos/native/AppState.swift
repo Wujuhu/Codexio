@@ -8,6 +8,15 @@ final class AppState: ObservableObject {
     let preferences: Preferences
     let database: Database
     let catalog: PricingCatalog
+    let claudeLedger: ClaudeLedger
+    let claudeClock = ScanClock()
+    @Published var pageClient: DesktopClient = .codex
+    @Published private(set) var claudeRevision = UUID()
+    @Published private(set) var claudeModels: [String] = []
+    @Published private(set) var claudeWarning: String?
+    private var claudePublishedKey = "" // dataQueue-owned dependency key.
+    private var claudeNextBoundary = Date.distantFuture
+    private var claudeLastScan = Date.distantPast
     let indexer: UsageIndexer
     let estimator: WeeklyEstimator
     let client = CodexClient()
@@ -99,6 +108,7 @@ final class AppState: ObservableObject {
 
     init(paths: AppPaths) throws {
         self.paths = paths; preferences = Preferences(paths)
+        claudeLedger = try ClaudeLedger(paths:paths)
         database = try Database(paths.database); catalog = PricingCatalog(paths.pricing); indexer = UsageIndexer(database); estimator = try WeeklyEstimator(database)
         theme = preferences.analytics.string("theme","system")
         appIconStyle = Branding.iconID(preferences.analytics.string("app_icon","main"))
@@ -144,7 +154,7 @@ final class AppState: ObservableObject {
     }
     func stop() {
         if !paths.mock { mobileSync.stop() }
-        stopped = true; scanTimer?.invalidate(); quotaTimer?.invalidate(); priceTimer?.invalidate(); indexer.cancel(); client.close()
+        stopped = true; scanTimer?.invalidate(); quotaTimer?.invalidate(); priceTimer?.invalidate(); indexer.cancel(); claudeLedger.cancel(); client.close()
         fetchActivity.clear()
         reportGeneration = UUID()
     }
@@ -175,6 +185,7 @@ final class AppState: ObservableObject {
         pending.notify(queue:.main) { [self] in
             guard stopped, quitGeneration == generation else { return }
             client.resumeAfterCancelledShutdown()
+            claudeLedger.resume()
             stopped = false; scanning = false; refreshing = false; reportInFlight = false
             loading = false; reportsLoading = false
             configureTimers()
@@ -194,7 +205,7 @@ final class AppState: ObservableObject {
         if paths.snapshot != canonical, ProcessInfo.processInfo.environment["CODEXIO_DATA_DIR"] == nil { try atomicJSON(snapshot,to:canonical) }
         WidgetCenter.shared.reloadAllTimelines()
     }
-    func refresh() { refreshUsage(); refreshQuota(); if selectedPage == "subscription" { refreshReports(force:true) } }
+    func refresh() { refreshUsage(); if pageClient == .codex || !["overview","logs","trends"].contains(selectedPage) { refreshQuota() }; if selectedPage == "subscription" { refreshReports(force:true) } }
     private var usageReportSourceKey: String { preferences.roots.map(\.path).sorted().joined(separator: "\n") + "\n" + accountRoot.path }
     func prepareUsageReports(completion: @escaping (Result<UsageReportCollection, Error>) -> Void) {
         let sourceKey = usageReportSourceKey
@@ -236,7 +247,29 @@ final class AppState: ObservableObject {
                 }
                 self.publishUsage()
             } catch { DispatchQueue.main.async { self.errorMessage = error.localizedDescription; self.loading = false } }
+            do {
+                try self.claudeLedger.scan()
+                self.publishClaude()
+            } catch { DispatchQueue.main.async { self.claudeWarning = error.localizedDescription } }
             DispatchQueue.main.async { self.scanning = false }
+        }
+    }
+    private func publishClaude() {
+        let now = Date(), calendar = Calendar.current
+        let key = "claude_code|"+claudeLedger.root.path+"|"+String(claudeLedger.revision)+"|"+String(calendar.startOfDay(for:now).timeIntervalSince1970)+"|"+TimeZone.current.identifier
+        let changed = key != claudePublishedKey || now >= claudeNextBoundary || now < claudeLastScan
+        claudeLastScan = now
+        if changed {
+            claudePublishedKey = key
+            let next = try? claudeLedger.database.query("SELECT min(timestamp) AS t FROM (SELECT timestamp FROM claude_calls UNION ALL SELECT timestamp FROM claude_requests) WHERE timestamp>?",[now.timeIntervalSince1970]).first?.number("t")
+            claudeNextBoundary = next.map {Date(timeIntervalSince1970:$0)} ?? .distantFuture
+        }
+        let models = changed ? (try? claudeLedger.models()) : nil, warning = claudeLedger.warning
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.stopped else { return }
+            if changed { self.claudeRevision = UUID(); if let models {self.claudeModels = models} }
+            if self.claudeWarning != warning {self.claudeWarning = warning}
+            self.claudeClock.updated = now
         }
     }
     private func publishUsage(finishLoading: Bool = true) {

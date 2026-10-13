@@ -36,3 +36,5 @@ body,button,input,select,textarea{font-family:"Codexio Inter","Microsoft YaHei U
 .report-card,.report-card *{font-family:"Codexio Inter","Microsoft YaHei UI",system-ui,sans-serif!important}
 .default-brand{display:block;color:#000}.default-brand svg{display:block;width:100%;height:100%}.theme-dark .default-brand{color:#FFF}
 .page-header.overview-header{padding-top:24px;padding-bottom:16px}
+
+.client-switch{display:flex;align-items:center;gap:4px;margin-right:9px}.client-button{display:flex;align-items:center;justify-content:center;width:30px;height:30px;padding:5px!important;border-radius:7px}.client-button.selected{background:var(--hover);box-shadow:inset 0 0 0 1px var(--control)}.client-logo{display:block;width:19px;height:19px;background:currentColor;mask-repeat:no-repeat;mask-position:center;mask-size:contain}

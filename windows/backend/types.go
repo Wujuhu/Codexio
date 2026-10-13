@@ -6,6 +6,7 @@ import "context"
 type Row map[string]any
 
 type Query struct {
+	ClientKind  string `json:"client_kind,omitempty"`
 	Mode        string `json:"mode"`
 	Period      string `json:"period"`
 	Start       string `json:"start"`
@@ -27,14 +28,16 @@ type PageResult struct {
 	Pages    int            `json:"pages"`
 	Counts   map[string]int `json:"counts"`
 	ShowYear bool           `json:"show_year"`
+	State    Row            `json:"state,omitempty"`
 }
 
 type DataOptions struct {
-	Directory   string
-	Roots       []string
-	Mock        bool
-	Config      Row
-	ScanUpdated func(string)
+	Directory         string
+	Roots             []string
+	Mock              bool
+	Config            Row
+	ScanUpdated       func(string)
+	ClientScanUpdated func(string, string)
 }
 
 type SystemOptions struct {

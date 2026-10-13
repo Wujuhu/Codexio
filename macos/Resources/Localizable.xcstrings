@@ -1153,6 +1153,22 @@
         }
       }
     },
+    "Claude 来源暂不可读，已保存的历史保留": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The Claude source is temporarily unreadable; saved history is retained"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude 来源暂不可读，已保存的历史保留"
+          }
+        }
+      }
+    },
     "Codex app-server 未启动": {
       "localizations": {
         "en": {
@@ -2205,6 +2221,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "上下文压缩"
+          }
+        }
+      }
+    },
+    "上下文容量": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Context window"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上下文容量"
           }
         }
       }
@@ -4653,6 +4685,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "历史片段关联不完整"
+          }
+        }
+      }
+    },
+    "原始正文": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Original content"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "原始正文"
           }
         }
       }
@@ -8785,6 +8833,22 @@
         }
       }
     },
+    "搜索正文或摘要": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search content or summaries"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "搜索正文或摘要"
+          }
+        }
+      }
+    },
     "搜索输入、会话或 ID": {
       "localizations": {
         "en": {
@@ -10065,6 +10129,54 @@
         }
       }
     },
+    "暂无 Claude 聊天记录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No Claude chats yet"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂无 Claude 聊天记录"
+          }
+        }
+      }
+    },
+    "暂无 Claude 记录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No Claude records yet"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂无 Claude 记录"
+          }
+        }
+      }
+    },
+    "暂无 Claude 请求": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No Claude requests yet"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂无 Claude 请求"
+          }
+        }
+      }
+    },
     "暂无单模型数据": {
       "localizations": {
         "en": {
@@ -11309,6 +11421,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "未找到内嵌字体，回退系统字体: %s"
+          }
+        }
+      }
+    },
+    "未找到本机 Claude Code 来源": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No local Claude Code source found"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未找到本机 Claude Code 来源"
           }
         }
       }
@@ -15729,6 +15857,22 @@
         }
       }
     },
+    "计量信息不完整": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Incomplete usage information"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "计量信息不完整"
+          }
+        }
+      }
+    },
     "计量分项异常": {
       "localizations": {
         "en": {
@@ -15757,6 +15901,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "计量时间 "
+          }
+        }
+      }
+    },
+    "计量片段存在冲突": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conflicting usage observations"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "计量片段存在冲突"
           }
         }
       }
@@ -16205,6 +16365,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "请求日志"
+          }
+        }
+      }
+    },
+    "请求组": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "request groups"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请求组"
           }
         }
       }
@@ -17629,6 +17805,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "速度未知 %d 次"
+          }
+        }
+      }
+    },
+    "部分 Claude 记录暂不可读，已保存的历史保留": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Some Claude records are temporarily unreadable; saved history is retained"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "部分 Claude 记录暂不可读，已保存的历史保留"
           }
         }
       }

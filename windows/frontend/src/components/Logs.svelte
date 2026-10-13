@@ -2,7 +2,7 @@
   import {onDestroy} from 'svelte';
   import {defaultQuery,rows,numeric,compact,priced,cost,text,type Row,type Query} from '../lib/api';
   import {tr} from '../lib/i18n';
-  import {preview,requestMetadata,hitRate,duration,effort,speed,logTime,fullTime,requestStatus} from './logFormat';
+  import {preview,requestMetadata,hitRate,duration,effort,speed,logTime,fullTime,requestStatus,contextTokens} from './logFormat';
   import Filters from './Filters.svelte';
   import DetailPopover from './DetailPopover.svelte';
   import Model from './Model.svelte';
@@ -35,7 +35,7 @@
   function persistWidths(){void onsave({log_column_widths:Object.fromEntries(Object.entries(widths).map(([key,width])=>[key,Math.round(width)]))}).catch(onerror)}
   function end(){if(drag){drag=null;persistWidths()}}
   function keyResize(event:KeyboardEvent,index:number){if(!['ArrowLeft','ArrowRight'].includes(event.key))return;event.preventDefault();widths={...widths,[columns[index].key]:Math.max(minimumWidth(columns[index].key),Math.min(1200,rendered[index]+(event.key==='ArrowLeft'?-10:10)))};persistWidths()}
-  function cell(record:Row,key:string):string{switch(key){case'time':return logTime(record.timestamp,query,data.show_year);case'input':return compact(record.input_tokens);case'output':return compact(record.output_tokens);case'total':return compact(record.total_tokens);case'cached':return compact(record.cached_input_tokens);case'cache_write':return compact(record.cache_write_input_tokens);case'cache_rate':return hitRate(record);case'cost':return cost(record.cost_usd??record.usd);case'duration':return duration(record.duration_ms);case'effort':return effort(record.reasoning_effort)||'—';case'speed':return speed(record.service_tier);case'context':return compact(record.model_context_window,0);case'status':return requestStatus(record);default:return text(record[key])}}
+  function cell(record:Row,key:string):string{switch(key){case'time':return logTime(record.timestamp,query,data.show_year);case'input':return compact(record.input_tokens);case'output':return compact(record.output_tokens);case'total':return compact(record.total_tokens);case'cached':return compact(record.cached_input_tokens);case'cache_write':return compact(record.cache_write_input_tokens);case'cache_rate':return hitRate(record);case'cost':return cost(query.client_kind==='claude_code'?null:record.cost_usd??record.usd);case'duration':return duration(record.duration_ms);case'effort':return effort(record.reasoning_effort)||'—';case'speed':return query.client_kind==='claude_code'?'—':speed(record.service_tier);case'context':return compact(contextTokens(record),0);case'status':return requestStatus(record);default:return text(record[key])}}
   function closeMenu(event:PointerEvent){if(menu?.open&&!menu.contains(event.target as Node))menu.open=false}
   onDestroy(()=>drag=null);
 </script>

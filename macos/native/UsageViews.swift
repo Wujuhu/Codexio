@@ -29,17 +29,18 @@ struct UsageView: View {
 }
 
 struct LocalActivityView: View {
+    var scopedActivity: ActivityStats? = nil
     @Environment(\.compactPage) private var isCompact
     @ObservedObject var state: AppState
     @State private var aggregation = "day"
     @State private var heatmapWidth: CGFloat = 430
-    private var stats: ActivityStats { state.usage.activity }
+    private var stats: ActivityStats { scopedActivity ?? state.usage.activity }
     private var buckets: [DayUsage] {
         let days = stats.days
         if aggregation == "cumulative" {
-            var total = 0, calls = 0, requests = 0, cost = 0.0
+            var total: Int? = 0, calls = 0, requests = 0, cost: Double? = scopedActivity == nil ? 0 : nil
             return days.map { day in
-                total += day.tokens ?? 0; calls += day.calls; requests += day.requests; cost += day.cost ?? 0
+                total = total.flatMap { prior in day.tokens.map {prior+$0} }; calls += day.calls; requests += day.requests; cost = cost.flatMap {prior in day.cost.map {prior+$0}}
                 return DayUsage(date:day.date,tokens:total,cost:cost,calls:calls,requests:requests)
             }
         }
@@ -48,8 +49,8 @@ struct LocalActivityView: View {
             var groups: [Date:DayUsage] = [:]
             for day in days {
                 let start = calendar.dateInterval(of:.weekOfYear,for:day.date)!.start
-                var bucket = groups[start] ?? DayUsage(date:start,tokens:0,cost:0,calls:0)
-                bucket.tokens = (bucket.tokens ?? 0)+(day.tokens ?? 0); bucket.cost = (bucket.cost ?? 0)+(day.cost ?? 0); bucket.calls += day.calls; bucket.requests += day.requests
+                var bucket = groups[start] ?? DayUsage(date:start,tokens:0,cost:scopedActivity == nil ? 0 : nil,calls:0)
+                bucket.tokens = bucket.tokens.flatMap {prior in day.tokens.map {prior+$0}}; bucket.cost = bucket.cost.flatMap {prior in day.cost.map {prior+$0}}; bucket.calls += day.calls; bucket.requests += day.requests
                 groups[start] = bucket
             }
             return groups.values.sorted {$0.date < $1.date}
@@ -78,7 +79,7 @@ struct LocalActivityView: View {
             }.font(.system(size:16))
             Divider()
             Button { state.usageSection = "threads" } label: { HStack { Text(L("聊天用量排行", "Chat usage ranking")); Spacer(); Image(systemName:"arrow.right") } }.buttonStyle(.plain)
-            JourneyView(state:state)
+            if scopedActivity == nil { JourneyView(state:state) }
         }
     }
     @ViewBuilder private func activityMetrics(separators: Bool) -> some View {

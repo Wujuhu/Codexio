@@ -47,6 +47,12 @@ type Store struct {
 	metadataRepairRemaining int
 	metadataRepairPriority  map[string]bool
 	media                   *requestMediaCache
+	claudeStatus            Row
+	claudeDiscovery         time.Time
+	claudeLastScan          string
+	claudeLastDisplay       string
+	claudeCountRevision     int64
+	claudeIncomplete        int
 }
 type directorySnapshot struct {
 	stamp   int64
@@ -95,11 +101,16 @@ func OpenStore(o DataOptions) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	s := &Store{db: db, options: o, config: CloneRow(o.Config), status: Row{"status": "starting"}, refresh: make(chan bool, 1), closed: make(chan struct{}), directories: map[string]directorySnapshot{}, titleSignatures: map[string]string{}, files: map[string][]string{}}
+	s.claudeCountRevision = -1
 	s.path = filepath.Join(o.Directory, name)
 	s.media = newRequestMediaCache(filepath.Dir(s.path), o.Mock)
 	s.queryCache = map[string]string{}
 	s.parentSignatureCache = map[string]map[string]bool{}
 	if e = s.schema(); e != nil {
+		db.Close()
+		return nil, e
+	}
+	if e = s.claudeSchema(); e != nil {
 		db.Close()
 		return nil, e
 	}
@@ -243,6 +254,7 @@ func (s *Store) Run(ctx context.Context, changed func()) {
 		var e error
 		if !s.options.Mock {
 			e = s.collect(ctx, force)
+			e = errors.Join(e, s.collectClaude(ctx, force))
 			if e == nil {
 				_ = s.syncPrices(ctx, false)
 			}

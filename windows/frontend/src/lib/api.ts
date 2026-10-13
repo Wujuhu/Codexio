@@ -1,15 +1,21 @@
 import { Call, Events } from '@wailsio/runtime';
 export type Row = Record<string, any>;
-export type Query = { mode: string; period: string; start: string; end: string; model: string; tier: string; status: string; search: string; page: number; page_size: number; granularity: string };
-export const defaultQuery = (): Query => ({mode:'user_request',period:'today',start:'',end:'',model:'',tier:'',status:'',search:'',page:1,page_size:50,granularity:''});
+export type ClientKind = 'codex' | 'claude_code';
+export type Query = { client_kind?: ClientKind; mode: string; period: string; start: string; end: string; model: string; tier: string; status: string; search: string; page: number; page_size: number; granularity: string };
+export const defaultQuery = (): Query => ({client_kind:'codex',mode:'user_request',period:'today',start:'',end:'',model:'',tier:'',status:'',search:'',page:1,page_size:50,granularity:''});
 const prefix = 'codexio/windows/backend.Service.';
 const reads = new Map<string, Promise<any>>();
 export function api<T = Row>(method: string, ...args: any[]): Promise<T> {
   const key = method + JSON.stringify(args);
   if (method.startsWith('Get') && reads.has(key)) return reads.get(key)!;
   const promise = Call.ByName(prefix + method, ...args) as Promise<T>;
-  if (method.startsWith('Get')) { reads.set(key, promise); void promise.finally(() => reads.delete(key)).catch(() => {}); }
+  if (method.startsWith('Get')) { reads.set(key, promise); void promise.finally(() => { if(reads.get(key)===promise)reads.delete(key); }).catch(() => {}); }
   return promise;
+}
+// Source changes abandon coalescing identities; in-flight callers still settle
+// under their existing sequence guards and cannot remove replacement reads.
+export function invalidateClientReads():void {
+  for(const key of reads.keys())if(/^(GetOverview|GetLogs|GetTrends|GetClientFilters|GetClientChatRanking|GetDetails)/.test(key))reads.delete(key);
 }
 export function listen(name: string, fn: (data: Row) => void): () => void {
   return Events.On(name, (event: any) => fn(event.data ?? {}));
@@ -27,7 +33,7 @@ export function compact(value: any, fractionDigits:0|1=1): string {
   return (n/unit).toLocaleString('en-US',{maximumFractionDigits:suffix?fractionDigits:0})+suffix;
 }
 export function cost(value: any): string { const n=number(value); return n === null ? '—' : '$' + n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
-export function priced(row: Row, key='cost_usd'): string { const en=document.documentElement.lang==='en';const value=row[key] ?? row.usd; return number(value)===null ? '—' : cost(value) + (row.cost_complete===false || Number(row.unpriced_calls)>0 || row.pricing_status==='partial' ? en?' · Partially priced':' · 部分定价' : ''); }
+export function priced(row: Row, key='cost_usd'): string { const en=document.documentElement.lang==='en';const value=row.client_kind==='claude_code'?null:row[key] ?? row.usd; return number(value)===null ? '—' : cost(value) + (row.cost_complete===false || Number(row.unpriced_calls)>0 || row.pricing_status==='partial' ? en?' · Partially priced':' · 部分定价' : ''); }
 export function updatedStamp(value:any):string{if(value==null||value==='')return'—';const n=number(value);const d=new Date(n===null?value:n<1e12?n*1000:n);if(!Number.isFinite(d.getTime()))return'—';return `${d.getMonth()+1}.${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;}
 export function percent(value: any): string { const n=number(value); return n === null ? '—' : n.toLocaleString(undefined,{maximumFractionDigits:1})+'%'; }
 export function stamp(value: any, utc=false): string { if (value===null || value===undefined || value==='') return '—'; const n=number(value); const d=new Date(n!==null ? n<1e12 ? n*1000 : n : value); if(!Number.isFinite(d.getTime())) return text(value); return d.toLocaleString(undefined,{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',...(utc?{timeZone:'UTC'}:{})})+(utc?' UTC':''); }

@@ -146,7 +146,7 @@ struct TrendChart: View {
         let lineWidth: CGFloat = compactStyle ? 1.8 : 2.2
         let plotInset = lineWidth/2+2
         VStack(spacing:10) {
-            HStack { Text(compact(maxToken)+" Token").foregroundStyle(.blue); Spacer(); Text(money(maxCost)).foregroundStyle(.green) }.font(.system(size:11))
+            HStack { Text(compact(maxToken)+" Token").foregroundStyle(.blue); Spacer(); Text(days.contains {$0.cost != nil} ? money(maxCost) : "—").foregroundStyle(.green) }.font(.system(size:11))
             Canvas { context,size in
                 let plot = CGRect(origin:.zero,size:size).insetBy(dx:plotInset,dy:plotInset)
                 for i in 0...3 {
@@ -219,6 +219,7 @@ struct DetailsLink: NSViewRepresentable {
         var row: UsageRow
         var members: [UsageRow]
         var loadMembers: (() -> [UsageRow])?
+        var customContent: (() -> AnyView)?
         weak var anchor: HoverLinkView?
         private var popover: NSPopover?
         var anchorInside = false
@@ -234,7 +235,7 @@ struct DetailsLink: NSViewRepresentable {
             let popover = NSPopover()
             popover.behavior = .transient; popover.animates = false; popover.delegate = self
             self.popover = popover
-            let content = LogDetail(row:row,members:loadMembers?() ?? members).onHover { [weak self,weak popover] inside in
+            let content = (customContent?() ?? AnyView(LogDetail(row:row,members:loadMembers?() ?? members))).onHover { [weak self,weak popover] inside in
                 guard let self, let popover, self.popover === popover else { return }
                 self.popupInside = inside
                 if inside { self.work?.cancel(); self.work = nil } else { self.scheduleClose() }

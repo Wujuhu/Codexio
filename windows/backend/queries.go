@@ -43,8 +43,8 @@ func queryBounds(q Query) (time.Time, time.Time) {
 }
 func queryFilter(q Query, groups bool) (string, []any) {
 	start, end := queryBounds(q)
-	where := "1=1"
-	args := []any{}
+	where := "coalesce(json_extract(data,'$.client_kind'),'codex')=?"
+	args := []any{normalizedClient(q.ClientKind)}
 	if !start.IsZero() {
 		where += " AND timestamp>=?"
 		args = append(args, ledgerStamp(start))
@@ -62,7 +62,12 @@ func queryFilter(q Query, groups bool) (string, []any) {
 		if groups {
 			where += ` AND EXISTS(SELECT 1 FROM json_each(json_extract(data,'$.models')) WHERE value=?)`
 		} else {
-			where += " AND model=?"
+			if normalizedClient(q.ClientKind) == "claude_code" {
+				where += " AND (model=? OR json_extract(data,'$.returned_model')=?)"
+				args = append(args, q.Model)
+			} else {
+				where += " AND model=?"
+			}
 		}
 		args = append(args, q.Model)
 	}
@@ -82,8 +87,19 @@ func queryFilter(q Query, groups bool) (string, []any) {
 		args = append(args, q.Status)
 	}
 	if search := strings.TrimSpace(q.Search); search != "" {
-		where += ` AND (instr(lower(coalesce(json_extract(data,'$.prompt_preview'),'')),lower(?))>0 OR instr(lower(coalesce(json_extract(data,'$.session_title'),'')),lower(?))>0 OR instr(lower(coalesce(json_extract(data,'$.model'),'')),lower(?))>0)`
+		where += ` AND (instr(lower(coalesce(json_extract(data,'$.prompt_preview'),'')),lower(?))>0 OR instr(lower(coalesce(json_extract(data,'$.session_title'),'')),lower(?))>0 OR instr(lower(coalesce(json_extract(data,'$.model'),'')),lower(?))>0`
 		args = append(args, search, search, search)
+		if normalizedClient(q.ClientKind) == "claude_code" {
+			matched := `SELECT l.item_id FROM claude_body_search JOIN claude_search b ON b.rowid=claude_body_search.rowid JOIN claude_locators l ON l.uuid=b.uuid AND l.path=b.path WHERE claude_body_search MATCH ? AND l.available=1 AND l.generation=b.generation`
+			if groups {
+				where += ` OR id IN (` + matched + `) OR id IN(SELECT request_id FROM usage_request_members WHERE record_id IN (` + matched + `))`
+			} else {
+				where += ` OR id IN (` + matched + `) OR json_extract(data,'$.claude_request_id') IN (` + matched + `)`
+			}
+			match := `"` + strings.ReplaceAll(search, `"`, `""`) + `"*`
+			args = append(args, match, match)
+		}
+		where += ")"
 	}
 	return where, args
 }
@@ -105,7 +121,7 @@ func (s *Store) Page(q Query) (PageResult, error) {
 	if page < 1 {
 		page = 1
 	}
-	result := PageResult{Rows: []Row{}, Page: page, Counts: map[string]int{}}
+	result := PageResult{Rows: []Row{}, Page: page, Counts: map[string]int{}, State: s.ClientStatus(q.ClientKind)}
 	var firstStamp sql.NullString
 	if e := s.db.QueryRow("SELECT count(*),min(timestamp) FROM "+table+" WHERE "+where, args...).Scan(&result.Total, &firstStamp); e != nil {
 		return result, e
@@ -166,7 +182,10 @@ func (s *Store) Page(q Query) (PageResult, error) {
 		}
 	}
 	rows.Close()
-	s.enrichUpstream(result.Rows, groups)
+	s.claudeSourceFields(result.Rows)
+	if normalizedClient(q.ClientKind) == "codex" {
+		s.enrichUpstream(result.Rows, groups)
+	}
 	return result, nil
 }
 func (s *Store) stream(q Query, fn func(Row)) error {
@@ -240,9 +259,10 @@ func (s *Store) Recent(q Query, n int) ([]Row, error) {
 	}
 	e = rows.Err()
 	rows.Close()
-	if e == nil {
+	if e == nil && normalizedClient(q.ClientKind) == "codex" {
 		s.enrichUpstream(result, true)
 	}
+	s.claudeSourceFields(result)
 	return result, e
 }
 func chartKey(t time.Time, granularity string) string {
@@ -393,6 +413,10 @@ func (s *Store) Chart(q Query) (resultRows []Row, err error) {
 		if buckets[key] != nil && buckets[key].records > 0 {
 			r = buckets[key].row()
 		}
+		if normalizedClient(q.ClientKind) == "claude_code" {
+			r["usd"] = nil
+			r["client_kind"] = "claude_code"
+		}
 		r["timestamp"] = key
 		r["date"] = key
 		r["label"] = key
@@ -462,16 +486,21 @@ func (s *Store) Insights(q Query) (result Row, err error) {
 		return nil, e
 	}
 	pages := max(1, (total+size-1)/size)
-	local, e := s.localInsights(Query{Period: "all", Source: "local"})
+	local, e := s.localInsights(Query{ClientKind: q.ClientKind, Period: "all", Source: "local"})
 	if e != nil {
 		return nil, e
 	}
 	return Row{"chats": chats, "chat_rankings": chats, "chat_page": page, "chat_pages": pages, "chat_total": total, "stats": local["stats"], "activity": local["activity"], "heatmap": local["activity"]}, nil
 }
-func (s *Store) Filters() (Row, error) {
+func (s *Store) Filters() (Row, error) { return s.ClientFilters("codex") }
+func (s *Store) ClientFilters(client string) (Row, error) {
 	result := Row{"models": []string{}, "tiers": []string{}, "statuses": []string{"running", "completed", "aborted", "unknown"}}
 	for _, field := range []string{"model", "tier"} {
-		rows, e := s.db.Query("SELECT DISTINCT " + field + " FROM usage_priced_calls ORDER BY " + field + " LIMIT 500")
+		statement := "SELECT DISTINCT " + field + " FROM usage_priced_calls WHERE coalesce(json_extract(data,'$.client_kind'),'codex')=? ORDER BY " + field + " LIMIT 500"
+		if normalizedClient(client) == "claude_code" && field == "model" {
+			statement = "SELECT DISTINCT model FROM (SELECT model FROM usage_priced_calls WHERE json_extract(data,'$.client_kind')=? UNION SELECT json_extract(data,'$.returned_model') AS model FROM usage_priced_calls WHERE json_extract(data,'$.client_kind')='claude_code') WHERE model IS NOT NULL AND model<>'' ORDER BY model LIMIT 500"
+		}
+		rows, e := s.db.Query(statement, normalizedClient(client))
 		if e != nil {
 			return nil, e
 		}
@@ -511,6 +540,9 @@ func (s *Store) Detail(id string, page int) (Row, error) {
 		return nil, e
 	}
 	request := dataRow(raw)
+	if normalizedClient(dataString(request, "client_kind")) == "claude_code" {
+		return s.claudeDetail(request, call, page)
+	}
 	result := Row{"request": request, "user": request["prompt_preview"], "final": request["output_preview"], "attachments": []Row{}, "members": []Row{}, "composition": request["composition"], "page": page, "pages": 1, "user_complete": false, "final_complete": false, "availability": "legacy_preview"}
 	var message Row
 	if call {

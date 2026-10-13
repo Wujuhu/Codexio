@@ -2,7 +2,7 @@
  import {compact,numeric,percent,number,text,type Row} from '../lib/api';
  import {tr} from '../lib/i18n';
  import {duration,effort} from './logFormat';
- export let stats:Row={};
+ export let stats:Row={};export let clientKind='codex';
  export let section:'metrics'|'insights'|'all'='all';
  const activityFields=[['total_tokens','累计 Token 数'],['peak_daily_tokens','单日峰值 Token'],['longest_chat_seconds','最长聊天时长'],['current_streak_days','当前连续天数'],['longest_streak_days','最长连续天数']];
  function activityValue(source:Row,key:string){
@@ -21,8 +21,8 @@
 {#if section!=='metrics'}
  <section class="local-insights">
   <h3>{tr('活动洞察')}</h3>
-  <div class="local-insight-values"><div><span>{tr('快速模式')}</span><strong>{percent(stats.fast_percent)}</strong></div><div><span>{tr('最常用的推理强度')}</span><strong>{stats.most_used_effort?effort(stats.most_used_effort)+' · '+percent(stats.effort_percent):'—'}</strong></div></div>
-  {#if Number(stats.unknown_speed)>0||Number(stats.unknown_effort)>0||stats.duration_partial}<p class="insight-quality muted">{#if Number(stats.unknown_speed)>0}{tr('速度未知')} {numeric(stats.unknown_speed)} {tr('次')}{/if}{#if Number(stats.unknown_effort)>0}<span>{tr('推理强度未知')} {numeric(stats.unknown_effort)} {tr('次')}</span>{/if}{#if stats.duration_partial}<span>{tr('时长仅含已记录区间')}</span>{/if}</p>{/if}
+  <div class="local-insight-values"><div><span>{tr('快速模式')}</span><strong>{percent(clientKind==='claude_code'?null:stats.fast_percent)}</strong></div><div><span>{tr('最常用的推理强度')}</span><strong>{stats.most_used_effort?effort(stats.most_used_effort)+' · '+percent(stats.effort_percent):'—'}</strong></div></div>
+  {#if (clientKind!=='claude_code'&&Number(stats.unknown_speed)>0)||Number(stats.unknown_effort)>0||stats.duration_partial}<p class="insight-quality muted">{#if (clientKind!=='claude_code'&&Number(stats.unknown_speed)>0)}{tr('速度未知')} {numeric(stats.unknown_speed)} {tr('次')}{/if}{#if Number(stats.unknown_effort)>0}<span>{tr('推理强度未知')} {numeric(stats.unknown_effort)} {tr('次')}</span>{/if}{#if stats.duration_partial}<span>{tr('时长仅含已记录区间')}</span>{/if}</p>{/if}
  </section>
 {/if}
 <style>

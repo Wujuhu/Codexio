@@ -1,6 +1,7 @@
 <script lang="ts">
   import {onDestroy} from 'svelte';
-  import {api,rows,text,kind,numeric,compact,priced,type Row} from '../lib/api';
+  import {Call} from '@wailsio/runtime';
+  import {rows,text,kind,numeric,compact,priced,type Row} from '../lib/api';
   import {tr} from '../lib/i18n';
   import {effort,speed,preview,fullTime,requestStatus,tpsLabel,ttftLabel} from './logFormat';
   import Markdown from './Markdown.svelte';
@@ -16,11 +17,11 @@
   onDestroy(()=>{sequence++;clearTimeout(copyTimer)});
   function reset(next:string,_revision:string){if(next){const changed=currentId!==next;if(changed){data={};callsOpen=false}currentId=next;void load(next,changed?1:page)}else{data={};sequence++;busy=false}}
   async function load(next:string,nextPage:number){
-    const ticket=++sequence;busy=true;
-    try{const value=await api('GetDetails',next,nextPage);if(ticket===sequence){data=value;currentId=next;page=Number(value.page??nextPage)}}
+    const ticket=++sequence;busy=true;data={};
+    try{const value=await Call.ByName('codexio/windows/backend.Service.GetDetails',next,nextPage) as Row;if(ticket===sequence){data=value;currentId=next;page=Number(value.page??nextPage)}}
     catch(error){if(ticket===sequence)onerror(error)}finally{if(ticket===sequence)busy=false}
   }
-  function body(value:any){return typeof value==='string'?value:text(value?.text??value?.content??value?.markdown,'')}
+  function body(value:any){if(data.availability==='unavailable')return '';return typeof value==='string'?value:text(value?.text??value?.content??value?.markdown,'')}
   async function copy(value:string,label:string){try{await navigator.clipboard.writeText(value);copied=label;clearTimeout(copyTimer);copyTimer=setTimeout(()=>copied='',1800)}catch(error){onerror(error)}}
 </script>
 <aside class="inspector surface" aria-busy={busy}>
@@ -34,7 +35,7 @@
       <section class="metric-fields">
         <div class="field-pair model-pair"><span class="muted">{tr('模型')}</span><Model record={request} align="right" showEffort={false}/></div>
         <div class="field-pair"><span class="muted">{tr('推理强度')}</span><span>{effort(request.reasoning_effort)||'—'}</span></div>
-        <div class="field-pair"><span class="muted">{tr('速度')}</span><span>{speed(request.service_tier)}</span></div>
+        <div class="field-pair"><span class="muted">{tr('速度')}</span><span>{request.client_kind==='claude_code'?'—':speed(request.service_tier)}</span></div>
         <div class="field-pair"><span class="muted">{tr('状态')}</span><span>{requestStatus(request)}</span></div>
         <div class="field-pair"><span class="muted">{tr('费用')}</span><span>{priced(request)}</span></div>
         {#each [['input_tokens','输入 Token'],['cached_input_tokens','缓存读取'],['cache_write_input_tokens','缓存写入'],['output_tokens','输出 Token'],['reasoning_output_tokens','推理输出'],['total_tokens','总 Token']] as [key,label]}<div class="field-pair"><span class="muted">{tr(label)}</span><span>{compact(request[key])}</span></div>{/each}
@@ -44,16 +45,16 @@
         <div class="field-pair"><span class="muted">{tr('时间')}</span><span>{fullTime(request.timestamp)}</span></div>
       </section>
       <section><div class="row between"><h3>{tr('原始请求')}</h3><button class="quiet" aria-label={tr('复制')} disabled={!body(data.user)} onclick={()=>copy(body(data.user),'user')}><Icon name={copied==='user'?'check':'copy'} size={15}/></button></div>
-        {#if body(data.user)}<Markdown content={body(data.user)} requestId={currentId} images={rows(data.images).filter(image=>image.placement!=='final')} {onerror}/>{:else}<p class="muted">—</p>{/if}
+        {#if body(data.user)}<Markdown content={body(data.user)} requestId={currentId} images={rows(data.availability==='unavailable'?[]:data.images).filter(image=>image.placement!=='final')} {onerror}/>{:else}<p class="muted">—</p>{/if}
         {#if data.user_complete===false}<small class="warning">{tr('正文未完整保留')}</small>{/if}
       </section>
       <section><div class="row between"><h3>{tr('最终回复')}</h3><button class="quiet" aria-label={tr('复制')} disabled={!body(data.final)} onclick={()=>copy(body(data.final),'final')}><Icon name={copied==='final'?'check':'copy'} size={15}/></button></div>
-        {#if body(data.final)}<Markdown content={body(data.final)} requestId={currentId} images={rows(data.images).filter(image=>image.placement==='final')} {onerror}/>{:else}<p class="muted">—</p>{/if}
+        {#if body(data.final)}<Markdown content={body(data.final)} requestId={currentId} images={rows(data.availability==='unavailable'?[]:data.images).filter(image=>image.placement==='final')} {onerror}/>{:else}<p class="muted">—</p>{/if}
         {#if data.final_complete===false}<small class="warning">{tr('正文未完整保留')}</small>{/if}
       </section>
-      {#if rows(data.attachments).length}<section><h3>{tr('附件')}</h3>{#each rows(data.attachments) as attachment}<div class="attachment"><Icon name="file" size={14}/><span>{text(attachment.name)}</span></div>{/each}</section>{/if}
+      {#if data.availability!=='unavailable'&&rows(data.attachments).length}<section><h3>{tr('附件')}</h3>{#each rows(data.attachments) as attachment}<div class="attachment"><Icon name="file" size={14}/><span>{text(attachment.name)}</span></div>{/each}</section>{/if}
       {#if members.length}<details class="calls" bind:open={callsOpen}><summary>{tr('模型调用')} ({numeric(data.total_members)})</summary>
-        {#each members as member}<div class="call"><div class="call-head"><Model record={member} align="left"/></div><small class="muted">{kind(member.record_kind)} · {speed(member.service_tier)}</small><p>{compact(member.total_tokens)} Token · {priced(member)}</p>{#if member.output_preview}<p class="muted call-preview">{text(member.output_preview)}</p>{/if}</div>{/each}
+        {#each members as member}<div class="call"><div class="call-head"><Model record={member} align="left"/></div><small class="muted">{kind(member.record_kind)} · {member.client_kind==='claude_code'?'—':speed(member.service_tier)}</small><p>{compact(member.total_tokens)} Token · {priced(member)}</p>{#if member.output_preview}<p class="muted call-preview">{text(member.output_preview)}</p>{/if}</div>{/each}
         {#if Number(data.pages)>1}<div class="row call-pages"><button disabled={page<=1||busy} onclick={()=>load(currentId,page-1)}>{tr('上一页')}</button><span>{page} / {data.pages}</span><button disabled={page>=data.pages||busy} onclick={()=>load(currentId,page+1)}>{tr('下一页')}</button></div>{/if}
       </details>{/if}
     {/if}

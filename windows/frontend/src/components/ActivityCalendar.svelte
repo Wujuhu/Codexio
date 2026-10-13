@@ -2,7 +2,7 @@
  import {number,compact,rows,type Row} from '../lib/api';
  import {tr} from '../lib/i18n';
  import GlassHover from './GlassHover.svelte';
- export let data:Row[]=[];
+ export let data:Row[]=[];export let clientKind='codex';
  export let onselect:(r:Row)=>void=()=>{};
  let aggregation='day',availableWidth=650;
  let monthWidths:Record<string,number>={};
@@ -65,7 +65,7 @@
   <div class="month-axis">{#each monthLabels as month}<span bind:clientWidth={monthWidths[month.title]} style:left={`${month.x}px`} style:visibility={month.visible&&monthWidths[month.title]!==undefined?'visible':'hidden'}>{month.title}</span>{/each}</div>
   {/if}
  </div>
- {#if hover}<GlassHover row={hover.row} title={label(hover.row)} x={hover.x} y={hover.y} onclose={()=>hover=null}/>{/if}
+ {#if hover}<GlassHover {clientKind} row={hover.row} title={label(hover.row)} x={hover.x} y={hover.y} onclose={()=>hover=null}/>{/if}
 </section>
 
 <style>
