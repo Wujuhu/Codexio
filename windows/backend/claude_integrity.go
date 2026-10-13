@@ -92,6 +92,9 @@ func mergeClaudeUsage(old, incoming Row) Row {
 		}
 	}
 	r["terminal_usage_values"] = facts
+	r["call_timing"] = mergeClaudeTiming(ValueRow(old["call_timing"]), ValueRow(incoming["call_timing"]))
+	r["call_timing_checked"] = ValueBool(old["call_timing_checked"]) && ValueBool(incoming["call_timing_checked"]) && !ValueBool(old["call_timing_incomplete"])
+	r["call_timing_incomplete"] = ValueBool(old["call_timing_incomplete"]) || ValueBool(incoming["call_timing_incomplete"])
 	r["usage_terminal"] = oldTerminal || newTerminal
 	r["usage_conflict"] = conflict
 	for _, field := range []string{"timestamp", "session_id", "claude_session_scope", "claude_agent_id"} {
@@ -197,6 +200,9 @@ func (s *Store) applyClaudeEvents(tx *sql.Tx, ns string) error {
 			if dataString(node, "subtype") == "turn_duration" {
 				if n, ok := ValueFloat(node["duration_ms"]); ok && n >= 0 && dataString(node, "timestamp") >= dataString(r, "duration_observed_at") {
 					r["duration_ms"] = n
+					r["explicit_duration_ms"] = n
+					r["explicit_ended_at"] = node["timestamp"]
+					r["duration_source"] = "turn_duration"
 					r["duration_observed_at"] = node["timestamp"]
 					if dataString(r, "request_status") != "failed" && dataString(r, "request_status") != "aborted" {
 						r["request_status"] = "completed"
@@ -262,6 +268,10 @@ func (s *Store) invalidateClaudePath(path string, deleted bool, prefix bool) err
 	return nil
 }
 func (s *Store) restoreClaudeLocators(ctx context.Context, path, identity, generation string, searchPending bool) (bool, error) {
+	if _, err := s.db.Exec(`UPDATE usage_records SET data=json_set(data,'$.call_timing_checked',json('false')) WHERE json_extract(data,'$.client_kind')='claude_code' AND json_extract(data,'$.call_timing_incomplete')=1 AND id IN(SELECT item_id FROM claude_locators WHERE path=? AND available<>1 AND identity=? AND generation=?)`, path, identity, generation); err != nil {
+		return false, err
+	}
+
 	result, e := s.db.Exec("UPDATE claude_locators SET available=1 WHERE path=? AND identity=? AND generation=? AND available<>1", path, identity, generation)
 	if e != nil {
 		return false, e

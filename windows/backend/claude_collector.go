@@ -40,6 +40,7 @@ func (s *Store) claudeSchema() error {
  CREATE TABLE IF NOT EXISTS claude_locators(item_id TEXT NOT NULL,uuid TEXT NOT NULL,path TEXT NOT NULL,offset INTEGER NOT NULL,identity TEXT NOT NULL,line_hash TEXT NOT NULL,available INTEGER NOT NULL,generation TEXT NOT NULL,PRIMARY KEY(item_id,uuid,path));
  CREATE INDEX IF NOT EXISTS claude_locators_path ON claude_locators(path);
  CREATE INDEX IF NOT EXISTS claude_locators_path_available ON claude_locators(path,available);
+ CREATE INDEX IF NOT EXISTS claude_timing_pending ON usage_records(id) WHERE coalesce(json_extract(data,'$.call_timing_checked'),0)=0 AND coalesce(json_extract(data,'$.is_subagent'),0)=0 AND json_extract(data,'$.client_kind')='claude_code';
  CREATE INDEX IF NOT EXISTS claude_response_scope ON usage_records(json_extract(data,'$.client_kind'),json_extract(data,'$.response_id'),json_extract(data,'$.claude_session_scope'));
  CREATE INDEX IF NOT EXISTS claude_records_request ON usage_records(json_extract(data,'$.client_kind'),json_extract(data,'$.claude_request_id'));
  CREATE TRIGGER IF NOT EXISTS claude_request_insert AFTER INSERT ON claude_requests BEGIN UPDATE usage_revisions SET revision=revision+1 WHERE kind='ledger'; INSERT INTO usage_query_changes(kind,item_id) VALUES('claude_request',NEW.id); END;
@@ -204,6 +205,9 @@ func (s *Store) collectClaude(ctx context.Context, force bool) error {
 		if err != nil {
 			return err
 		}
+	}
+	if e = s.recoverClaudeCallTiming(ctx, ns); e != nil {
+		return e
 	}
 	if failed > 0 || partial {
 		status["status"] = "error"
@@ -562,6 +566,8 @@ func (s *Store) claudeEntry(tx *sql.Tx, e, state Row, root, path, identity, gene
 	}
 	r["input_complete"] = ki && kr && kw
 	r["usage_complete"] = ki && kr && kw && ko
+	r["call_timing"] = claudeTimingObservation(e)
+	r["call_timing_checked"] = true
 	r["usage_terminal"] = dataString(message, "stop_reason") != ""
 	r["final_missing_fields"] = []string{}
 	if ValueBool(r["usage_terminal"]) {

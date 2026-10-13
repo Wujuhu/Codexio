@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -89,6 +90,8 @@ func (s *Store) rebuildClaudeGroups(tx *sql.Tx, dirty map[string]bool, full bool
 			subagents := map[string]bool{}
 			calls := 0
 			outputsComplete := true
+			mainTiming := []Row{}
+			timingPending := false
 			callRows, err := tx.Query("SELECT data FROM usage_priced_calls WHERE json_extract(data,'$.client_kind')='claude_code' AND json_extract(data,'$.claude_request_id')=? ORDER BY timestamp,id", id)
 			if err != nil {
 				return err
@@ -102,7 +105,13 @@ func (s *Store) rebuildClaudeGroups(tx *sql.Tx, dirty map[string]bool, full bool
 				}
 				r := dataRow(raw)
 				sum.add(r)
-				if !ValueBool(r["is_subagent"]) {
+				if !ValueBool(r["is_subagent"]) && dataString(r, "claude_agent_id") == "" {
+					timingPending = timingPending || !ValueBool(r["call_timing_checked"]) || ValueBool(r["call_timing_incomplete"])
+					mainTiming = append(mainTiming, r)
+					sort.SliceStable(mainTiming, func(i, j int) bool { return claudeCallStart(mainTiming[i]).After(claudeCallStart(mainTiming[j])) })
+					if len(mainTiming) > 2 {
+						mainTiming = mainTiming[:2]
+					}
 					if _, ok := knownCount(r["context_input_tokens"]); ok {
 						group["context_input_tokens"] = r["context_input_tokens"]
 					}
@@ -165,6 +174,12 @@ func (s *Store) rebuildClaudeGroups(tx *sql.Tx, dirty map[string]bool, full bool
 			}
 			if dataString(group, "reasoning_effort") != "" {
 				group["reasoning_effort"] = requestEffortName(group["reasoning_effort"])
+			}
+			if timingPending && len(mainTiming) > 0 {
+				mainTiming[0]["call_timing_incomplete"] = true
+			}
+			for key, value := range claudeRequestTiming(group, mainTiming) {
+				group[key] = value
 			}
 			if duration, ok := ValueFloat(group["duration_ms"]); ok && duration > 0 && outputsComplete && dataString(group, "request_status") == "completed" {
 				if output, ok := ValueFloat(group["output_tokens"]); ok {
