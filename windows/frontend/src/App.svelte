@@ -127,6 +127,12 @@
      dataFlight=request;
      const result=await request;
      if(!mounted||ticket!==sequence) return;
+      const returnedPage=Number(result.page);
+      if(active==='logs'&&Number.isSafeInteger(returnedPage)&&returnedPage>0&&returnedPage!==current.page){
+        // The ledger may clamp a page after the filtered result set shrinks.
+        query={...current,page:returnedPage};
+        pageQueries[pageKey(active,current.client_kind??'codex')]={...query};
+      }
      data=result;
      if(result.state)adoptState(result.state,clientPages.has(active)?current.client_kind??'codex':'codex');
      cache[pageKey(active,current.client_kind??'codex')]=result;
