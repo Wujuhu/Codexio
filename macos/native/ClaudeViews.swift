@@ -64,7 +64,7 @@ struct ClaudeOverviewView: View {
                 HStack {SectionHeading(title:L("最近请求", "Recent requests")); Button(L("查看全部", "View all")) {state.selectedPage = "logs"}.buttonStyle(.plain).foregroundStyle(.secondary)}
                 if projection.value.recent.isEmpty {EmptyState(title:L("暂无 Claude 请求", "No Claude requests yet"))}
                 else {
-                    CompactTable(columns:LogFields.columns(["content","model","total","cost","duration","details"]),rows:projection.value.recent.map {claudeGridRow($0,state:state,showYear:false,timeOnly:period == "today")},revision:key,preferences:state.preferences,storageKey:"claude-overview-recent",verticalScrolling:false)
+                    CompactTable(columns:LogFields.columns(["content","model","total","cost","duration","details"]),rows:projection.value.recent.map {claudeGridRow($0,state:state,showYear:false,timeOnly:period == "today")},revision:projection.value.revision.uuidString+period,preferences:state.preferences,storageKey:"claude-overview-recent",verticalScrolling:false)
                         .frame(height:CGFloat(projection.value.recent.count)*45+42).clipShape(RoundedRectangle(cornerRadius:14)).overlay(RoundedRectangle(cornerRadius:14).stroke(.secondary.opacity(0.16)))
                 }
             }.padding(.horizontal,PageLayout.inset).padding(.bottom,PageLayout.inset)
@@ -113,7 +113,8 @@ struct ClaudeLogsView: View {
                 }))}} label:{Image(systemName:"slider.horizontal.3")}.menuStyle(.borderlessButton).fixedSize().frame(width:30,height:30)
             }
             if let warning = state.claudeWarning {StatusNote(text:warning)}
-            CompactTable(columns:LogFields.columns(fields),rows:projection.value.rows.map {claudeGridRow($0,state:state,showYear:projection.value.showYear,timeOnly:period == "today")},revision:key,preferences:state.preferences,storageKey:"claude-logs",scrollResetKey:filterKey+String(page))
+            // Reload when the asynchronous result arrives, not only when its query changes.
+            CompactTable(columns:LogFields.columns(fields),rows:projection.value.rows.map {claudeGridRow($0,state:state,showYear:projection.value.showYear,timeOnly:period == "today")},revision:projection.value.revision.uuidString+period,preferences:state.preferences,storageKey:"claude-logs",scrollResetKey:filterKey+String(page))
                 .overlay {if projection.value.rows.isEmpty {EmptyState(title:L("暂无 Claude 记录", "No Claude records yet"))}}
             HStack {
                 Text("\(mode == "requests" ? projection.value.count-projection.value.unassigned : projection.value.count) "+(mode == "requests" ? L("请求组", "request groups") : L("模型调用", "model calls"))+" · \(projection.value.unassigned) "+L("未归属调用", "unassigned calls"))

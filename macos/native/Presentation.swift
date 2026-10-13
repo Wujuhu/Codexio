@@ -87,6 +87,7 @@ final class AsyncProjection<Value>: ObservableObject {
 }
 
 struct TrendProjection {
+    var revision = UUID()
     var summary = UsageSummary()
     var days: [DayUsage] = []
     var recent: [UsageRow] = []
