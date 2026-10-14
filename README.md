@@ -4,7 +4,7 @@
 
 <h1 align="center">Codexio</h1>
 
-<p align="center">看清 Codex 的额度、用量与每一次请求。</p>
+<p align="center">看清 Codex 的额度，以及 Codex 与 Claude Code 的用量和请求。</p>
 
 <p align="center">
   <a href="https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.app.zip"><strong>下载 macOS 版</strong></a> ·
@@ -14,7 +14,7 @@
   <a href="https://github.com/Wujuhu/Codexio/issues">反馈问题</a>
 </p>
 
-Codexio 是 Codex 的用量与任务看板。它读取本机日志，汇总 Token、费用估算、请求记录和使用趋势，结合账户额度帮助你了解日常使用情况。Mac 提供菜单栏与桌面小组件，Windows 提供托盘与悬浮窗；配对 iPhone 后，还可以在手机上查看状态、阅读请求与最终回复。
+Codexio 是 Codex 与 Claude Code 的用量和请求看板。它读取本机日志，汇总 Token、费用估算、请求记录和使用趋势，结合账户额度帮助你了解日常使用情况。Mac 提供菜单栏与桌面小组件，Windows 提供托盘与悬浮窗；配对 iPhone 后，还可以在手机上查看状态、阅读请求与最终回复。
 
 ![Codexio macOS 概览](docs/images/macos-overview.png)
 
@@ -22,7 +22,7 @@ Codexio 是 Codex 的用量与任务看板。它读取本机日志，汇总 Toke
 
 ## 下载与安装
 
-正式版本、各平台包版本与更新说明以 **[最新 Release](https://github.com/Wujuhu/Codexio/releases/latest)** 和其中的 `latest.json` 为准。当前桌面开发源码版本为 **0.3.9**；源码版本号不代表已经发布。
+正式版本、各平台包版本与更新说明以 **[最新 Release](https://github.com/Wujuhu/Codexio/releases/latest)** 和其中的 `latest.json` 为准。当前桌面源码版本为 **0.3.9**；安装包是否已发布，以 Release 页面为准。
 
 | 平台 | 系统要求 | 安装包 |
 | --- | --- | --- |
@@ -77,7 +77,7 @@ Mac 使用 `/Applications/Codexio.app` 作为稳定安装位置。从其他目�
 
 Claude Code 入口合并本机终端与 Desktop 的 Code 会话，默认读取 `~/.claude/projects`（Windows 为 `%USERPROFILE%\.claude\projects`），启动时也可读取 Codexio 自身环境中的 `CLAUDE_CONFIG_DIR`；本轮不处理目录迁移。第三方 API 返回的 GPT／Gemini 等模型仍归 Claude 客户端来源；Token 按真实回复去重，完整输入包括缓存读取和创建，推理 Token 不再次加进输出。Claude 页面不提供订阅额度或执行行程，费用、速度和快速模式占比显示 `—`；请求耗时优先采用明确轮次计时，缺少时使用最后一次主调用以 `end_turn`／`stop_sequence` 结束整轮的时间减请求开始时间，排除子代理结束时间；工具执行阶段显示 `—`。TPS 仅在请求完成且输出和正耗时有效时计算，TTFT 仍只采用原始首 Token 计时。普通 Chat、Cowork、未落盘的 side chat 和仅存在远端的会话不在本轮范围。
 
-小猫报告按钮始终保留，报告只统计 Codex。Mac 菜单栏、小组件和手机同步继续使用 Codex 数据。Claude 原始日志被清理或删除后，已经采集的统计和请求摘要保留，已删除正文／附件显示缺失。详细范围见 [Claude 适配规格](docs/superpowers/specs/2026-10-13-claude-code-desktop-design.md)。这些功能属于 0.3.9 开发源码，正式安装包以 Release 说明为准。
+小猫报告按钮始终保留，报告只统计 Codex。Mac 菜单栏、小组件和手机同步继续使用 Codex 数据。Claude 原始日志被清理或删除后，已经采集的统计和请求摘要保留，已删除正文／附件显示缺失。详细范围见 [Claude 适配规格](docs/superpowers/specs/2026-10-13-claude-code-desktop-design.md)。这些功能由 0.3.9 源码提供，正式安装包以 Release 说明为准。
 
 ## 数据与隐私
 
