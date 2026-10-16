@@ -4,7 +4,7 @@
  export let summary:Row={};export let clientKind='codex';
  const fields=[['usd','费用'],['tokens','总 Token'],['user_requests','用户请求'],['cache_hit_rate','命中率']];
  function value(source:Row,key:string,client:string){
-   if(key==='usd')return cost(client==='claude_code'?null:source.usd);
+   if(key==='usd')return cost(source.usd);
    if(key==='cache_hit_rate'){
      const rate=number(source[key]);
      return percent(rate===null?null:rate*(rate<=1?100:1));

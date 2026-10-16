@@ -37,7 +37,7 @@ func (s *Service) GetClientChatRankingDetails(clientKind, thread string) (Row, e
 	where, args := queryFilter(q, false)
 	where = strings.ReplaceAll(where, "usage_priced_calls.id", "p.id")
 	args = append(args, thread)
-	query := `SELECT p.model,coalesce(json_extract(p.data,'$.reasoning_effort'),''),p.tier,sum(json_extract(p.metrics,'$.usd')),CASE WHEN coalesce(json_extract(p.data,'$.client_kind'),'codex')='claude_code' AND count(json_extract(p.metrics,'$.tokens'))<>count(*) THEN NULL ELSE sum(json_extract(p.metrics,'$.tokens')) END FROM usage_priced_calls p LEFT JOIN usage_query_session_roots roots ON roots.session_id=p.session_id WHERE ` + where + ` AND coalesce(roots.root_session_id,p.session_id)=? GROUP BY 1,2,3 ORDER BY 1,2,3`
+	query := `SELECT p.model,coalesce(json_extract(p.data,'$.reasoning_effort'),''),coalesce(json_extract(p.data,'$.service_tier'),''),CASE WHEN coalesce(json_extract(p.data,'$.client_kind'),'codex')='claude_code' AND count(json_extract(p.metrics,'$.usd'))<>count(*) THEN NULL ELSE sum(json_extract(p.metrics,'$.usd')) END,CASE WHEN coalesce(json_extract(p.data,'$.client_kind'),'codex')='claude_code' AND count(json_extract(p.metrics,'$.tokens'))<>count(*) THEN NULL ELSE sum(json_extract(p.metrics,'$.tokens')) END FROM usage_priced_calls p LEFT JOIN usage_query_session_roots roots ON roots.session_id=p.session_id WHERE ` + where + ` AND coalesce(roots.root_session_id,p.session_id)=? GROUP BY 1,2,3 ORDER BY 1,2,3`
 	records, err := s.store.db.Query(query, args...)
 	if err != nil {
 		return nil, err
@@ -52,9 +52,6 @@ func (s *Service) GetClientChatRankingDetails(clientKind, thread string) (Row, e
 			return nil, err
 		}
 		row := Row{"client_kind": normalizedClient(clientKind), "model": model, "reasoning_effort": effort, "speed": requestSpeed(tier), "cost_usd": nil, "tokens": nil}
-		if normalizedClient(clientKind) == "claude_code" {
-			row["speed"] = nil
-		}
 		if cost.Valid {
 			row["cost_usd"] = cost.Float64
 		}

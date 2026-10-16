@@ -170,9 +170,9 @@ final class NativeUpdater {
             do {
                 let manifest = jsonObject(try HTTP.read(URL(string:"https://github.com/Wujuhu/Codexio/releases/latest/download/latest.json")!,maximum:1_048_576))
                 let mac = manifest.object("macos"), rawVersion = mac.string("version")
-                guard let target = Self.version(rawVersion), let current = Self.version(BuildInfo.version) else { throw AppFailure(L("更新清单无效", "Invalid update manifest")) }
+                guard let target = Self.version(rawVersion), target.prerelease.isEmpty, let current = Self.version(BuildInfo.version) else { throw AppFailure(L("更新清单无效", "Invalid update manifest")) }
                 let available: NativeUpdateRelease?
-                if current.lexicographicallyPrecedes(target) {
+                if current < target {
                     candidateVersion = rawVersion
                     _ = try NativeUpdateRelease(mac)
                     available = try NativeUpdateRelease(mac,notes:Self.releaseNotes(rawVersion))
@@ -581,11 +581,7 @@ final class NativeUpdater {
     }
     static func downloadURL(_ version: String) -> URL { URL(string:"https://github.com/Wujuhu/Codexio/releases/download/v\(version)/Codexio.app.zip")! }
     static func releaseURL(_ version: String) -> URL { URL(string:"https://github.com/Wujuhu/Codexio/releases/tag/v\(version)")! }
-    static func version(_ raw: String) -> [Int]? {
-        guard raw.range(of:#"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$"#,options:.regularExpression) != nil else { return nil }
-        let parts = raw.split(separator:".").compactMap {Int($0)}
-        return parts.count == 3 && parts.allSatisfy {$0 <= 65535} ? parts : nil
-    }
+    static func version(_ raw: String) -> AppVersion? { AppVersion(raw) }
     static func extract(_ archive: URL,to target: URL,version: String) throws {
         try ZipValidation.validate(archive)
         let folder = target.deletingLastPathComponent().appendingPathComponent("extract-"+UUID().uuidString)

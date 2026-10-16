@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$StagedExe,
     [Parameter(Mandatory = $true)]
-    [ValidatePattern('^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$')]
+    [ValidatePattern('^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$')]
     [string]$Version
 )
 $ErrorActionPreference = "Stop"

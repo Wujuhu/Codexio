@@ -55,10 +55,11 @@ def _validate_bundle(bundle: Path, version=None, *, stage="Mac 应用包校验")
             info = plistlib.load(source)
     except (OSError, ValueError, plistlib.InvalidFileException) as exc:
         raise UpdateError(stage + "失败：应用信息无法读取") from exc
-    actual_version = info.get("CFBundleShortVersionString")
-    version_tuple(actual_version)
+    from codexio.versions import AppVersion
+    actual_version = info.get("CodexioVersion", info.get("CFBundleShortVersionString"))
+    parsed = AppVersion.parse(actual_version)
     if (info.get("CFBundleIdentifier") != BUNDLE_ID or info.get("CFBundleExecutable") != "Codexio"
-            or info.get("CFBundleVersion") != actual_version
+            or info.get("CFBundleVersion") != parsed.numeric or info.get("CFBundleShortVersionString") != parsed.numeric
             or (version is not None and actual_version != version)
             or not executable.resolve().is_relative_to(bundle.resolve())):
         raise UpdateError("Mac 应用标识或版本与更新清单不一致")

@@ -343,7 +343,7 @@ enum LogFields {
             let raw = row.raw
             switch key {
             case "content":
-                let metadata = [logDateText(row.date,timeOnly:timeOnly,showYear:showYear),raw.string("reasoning_effort").isEmpty ? "" : logEffortName(raw.string("reasoning_effort")),logSpeedName(raw.string("service_tier")),raw.number("model_context_window").map {compact($0)} ?? "",raw.flag("is_subagent") ? L("子代理", "Subagent") : raw.string("record_kind") == "unassigned" ? L("未归属调用", "Unassigned call") : ""].filter {!$0.isEmpty}.joined(separator:" · ")
+                let metadata = [logDateText(row.date,timeOnly:timeOnly,showYear:showYear),raw.string("reasoning_effort").isEmpty ? "" : logEffortName(raw.string("reasoning_effort")),logSpeedName(raw.string("service_tier")),raw.number(raw.string("client_kind") == "claude_code" ? "context_input_tokens" : "model_context_window").map {compact($0)} ?? "",raw.flag("is_subagent") ? L("子代理", "Subagent") : raw.string("record_kind") == "unassigned" ? L("未归属调用", "Unassigned call") : ""].filter {!$0.isEmpty}.joined(separator:" · ")
                 return GridText(main:raw.string("prompt_preview").isEmpty ? row.title : raw.string("prompt_preview"),secondary:metadata)
             case "time": return GridText(main:logDateText(row.date,timeOnly:timeOnly,showYear:showYear))
             case "model":
@@ -357,7 +357,7 @@ enum LogFields {
             case "cache_rate":
                 let rate = raw.number("cache_hit_rate") ?? (raw.number("input_tokens").flatMap {$0 > 0 ? (raw.number("cached_input_tokens") ?? 0)/$0 : nil})
                 return GridText(main:percent(rate.map {$0*100},digits:1))
-            case "cost": return GridText(main:money(row.cost))
+            case "cost": return GridText(main:row.costText)
             case "duration":
                 guard let seconds = row.duration, seconds >= 0, seconds < Double(Int.max) else { return GridText(main:"—",secondary:"—") }
                 let value = Int(seconds)

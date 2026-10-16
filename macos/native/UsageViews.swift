@@ -38,7 +38,7 @@ struct LocalActivityView: View {
     private var buckets: [DayUsage] {
         let days = stats.days
         if aggregation == "cumulative" {
-            var total: Int? = 0, calls = 0, requests = 0, cost: Double? = scopedActivity == nil ? 0 : nil
+            var total: Int? = 0, calls = 0, requests = 0, cost: Double? = 0
             return days.map { day in
                 total = total.flatMap { prior in day.tokens.map {prior+$0} }; calls += day.calls; requests += day.requests; cost = cost.flatMap {prior in day.cost.map {prior+$0}}
                 return DayUsage(date:day.date,tokens:total,cost:cost,calls:calls,requests:requests)
@@ -49,7 +49,7 @@ struct LocalActivityView: View {
             var groups: [Date:DayUsage] = [:]
             for day in days {
                 let start = calendar.dateInterval(of:.weekOfYear,for:day.date)!.start
-                var bucket = groups[start] ?? DayUsage(date:start,tokens:0,cost:scopedActivity == nil ? 0 : nil,calls:0)
+                var bucket = groups[start] ?? DayUsage(date:start,tokens:0,cost:0,calls:0)
                 bucket.tokens = bucket.tokens.flatMap {prior in day.tokens.map {prior+$0}}; bucket.cost = bucket.cost.flatMap {prior in day.cost.map {prior+$0}}; bucket.calls += day.calls; bucket.requests += day.requests
                 groups[start] = bucket
             }

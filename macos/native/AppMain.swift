@@ -9,6 +9,7 @@ enum CodexioMain {
     static func main() {
         let arguments = CommandLine.arguments
         if arguments.contains("--version") { print(BuildInfo.version); return }
+        if let code = ClaudeAllowance.statusline(arguments) {exit(code)}
         do {
             if arguments.contains("--mock") && ["--native-update-job","--upstream-helper","--render-icon"].contains(where:arguments.contains) { throw AppFailure("Mock mode cannot run installation or background helpers") }
             if let index = arguments.firstIndex(of: "--render-report-preview") {

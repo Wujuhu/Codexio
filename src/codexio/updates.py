@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from codexio import __version__
+from codexio.versions import AppVersion
 
 REPOSITORY = "Wujuhu/Codexio"
 RELEASES_URL = "https://github.com/" + REPOSITORY + "/releases"
@@ -53,14 +54,17 @@ def version_tuple(value: str) -> tuple[int, int, int]:
     return numbers
 
 
-def release_from_json(data: dict, current_version: str = __version__, *, asset_name: str = EXE_NAME) -> Release | None:
+def release_from_json(data: dict, current_version: str = __version__, *, asset_name: str = EXE_NAME,
+                      allow_prerelease: bool = False) -> Release | None:
     if not isinstance(data, dict):
         raise UpdateError(tr("GitHub 返回了无效的版本信息"))
     if data.get("draft") or data.get("prerelease"):
         return None
     tag = data.get("tag_name", "")
-    parsed = version_tuple(tag)
-    if parsed <= version_tuple(current_version):
+    parsed = AppVersion.parse(tag)
+    if parsed.prerelease and not allow_prerelease:
+        return None
+    if parsed <= AppVersion.parse(current_version):
         return None
     assets = data.get("assets")
     matches = [item for item in assets if isinstance(item, dict) and item.get("name") == asset_name] if isinstance(assets, list) else []
@@ -76,7 +80,7 @@ def release_from_json(data: dict, current_version: str = __version__, *, asset_n
     size = asset.get("size")
     if isinstance(size, bool) or not isinstance(size, int) or not 2 <= size <= MAX_DOWNLOAD_BYTES:
         raise UpdateError(tr("更新文件大小无效"))
-    return Release(".".join(map(str, parsed)), expected_url, digest.group(1).lower(), size,
+    return Release(str(parsed), expected_url, digest.group(1).lower(), size,
                    str(data.get("body") or "")[:4000])
 
 
@@ -87,7 +91,7 @@ def _request(url: str) -> Request:
 
 def release_from_manifest(data: dict, current_version: str = __version__, *,
                           asset_name: str = EXE_NAME, architecture: str | None = None,
-                          manifest_key: str | None = None) -> Release | None:
+                           manifest_key: str | None = None, allow_prerelease: bool = False) -> Release | None:
     if not isinstance(data, dict):
         raise UpdateError(tr("更新清单格式无效"))
     if manifest_key:
@@ -96,18 +100,20 @@ def release_from_manifest(data: dict, current_version: str = __version__, *,
         data = data[manifest_key]
         if not isinstance(data, dict):
             raise UpdateError(tr("平台更新清单格式无效"))
-    parsed = version_tuple(data.get("version", ""))
-    if parsed <= version_tuple(current_version):
+    parsed = AppVersion.parse(data.get("version", ""))
+    if parsed.prerelease and not allow_prerelease:
+        return None
+    if parsed <= AppVersion.parse(current_version):
         return None
     if architecture and data.get("architecture") != architecture:
         raise UpdateError(tr("新版尚未提供适合此 Mac 芯片的安装包"))
-    tag = "v" + ".".join(map(str, parsed))
+    tag = "v" + str(parsed)
     return release_from_json({
         "tag_name": tag, "body": data.get("notes", ""), "assets": [{
             "name": asset_name, "state": "uploaded", "browser_download_url": data.get("url"),
             "digest": "sha256:" + str(data.get("sha256", "")), "size": data.get("size"),
         }],
-    }, current_version, asset_name=asset_name)
+    }, current_version, asset_name=asset_name, allow_prerelease=allow_prerelease)
 
 
 def fetch_release(current_version: str = __version__, *, manifest_url: str = LATEST_MANIFEST,

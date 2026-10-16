@@ -7,7 +7,7 @@ import plistlib
 import shutil
 import subprocess
 import zipfile
-from ios_release import desktop_version, source_digest, validate_ipa
+from ios_release import AppVersion, desktop_version, source_digest, validate_ipa
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
@@ -20,6 +20,7 @@ def run(*args):
 
 def main():
     version = desktop_version(ROOT)
+    numeric_version = AppVersion.parse(version).numeric
     version_file = ROOT / "ios/VERSION"
     if version_file.read_text(encoding="utf-8").strip() != version:
         version_file.write_text(version+"\n", encoding="utf-8")
@@ -45,7 +46,7 @@ def main():
     run("xcrun", "actool", assets.parent, "--compile", APP, "--platform", "iphoneos", "--minimum-deployment-target", "26.0", "--app-icon", "AppIcon", "--target-device", "iphone", "--output-partial-info-plist", STAGE / "asset-info.plist")
     info = plistlib.loads((STAGE / "asset-info.plist").read_bytes())
     info.update({"CFBundleIdentifier":"com.wujuhu.codexio.ios", "CFBundleExecutable":"Codexio", "CFBundleName":"Codexio", "CFBundleDisplayName":"Codexio",
-        "CFBundlePackageType":"APPL", "CFBundleShortVersionString":version, "CFBundleVersion":version, "CFBundleInfoDictionaryVersion":"6.0",
+        "CFBundlePackageType":"APPL", "CFBundleShortVersionString":numeric_version, "CFBundleVersion":numeric_version, "CodexioVersion":version, "CFBundleInfoDictionaryVersion":"6.0",
         "CFBundleSupportedPlatforms":["iPhoneOS"], "MinimumOSVersion":"26.0", "UIDeviceFamily":[1], "LSRequiresIPhoneOS":True,
         "UILaunchScreen":{}, "UIApplicationSceneManifest":{"UIApplicationSupportsMultipleScenes":False},
         "NSCameraUsageDescription":"扫描电脑上的 Codexio 二维码以配对设备。",
@@ -60,7 +61,7 @@ def main():
             if path.is_file(): archive.write(path,path.relative_to(STAGE))
     with zipfile.ZipFile(ipa) as archive:
         assert archive.testzip() is None
-        assert plistlib.loads(archive.read("Payload/Codexio.app/Info.plist"))["CFBundleShortVersionString"] == version
+        assert plistlib.loads(archive.read("Payload/Codexio.app/Info.plist"))["CodexioVersion"] == version
     run("lipo", "-verify_arch", "arm64", APP / "Codexio")
     validate_ipa(ipa, version)
     output = BUILD / "dev/ios"

@@ -53,6 +53,9 @@ func desktopParse(args []string) (desktopArguments, error) {
 	return r, nil
 }
 func main() {
+	if handled, code := backend.RunClaudeStatusline(os.Args[1:]); handled {
+		os.Exit(code)
+	}
 	if handled, e := backend.RunUpdateHelper(os.Args[1:]); handled {
 		if e != nil {
 			fmt.Fprintln(os.Stderr, e)

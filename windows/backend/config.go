@@ -29,7 +29,7 @@ func systemDefaultConfig() Row {
 		"usage_refresh_interval_seconds": 10, "usage_refresh_interval_user_set": false, "week_estimate_interval_minutes": 30, "week_estimate_interval_version": 2,
 		"codex_roots": []string{systemCodexRoot()}, "account_since": UTCStamp(time.Now()), "main_geometry": nil,
 		"navigation_order": []string{"overview", "logs", "trends", "subscription", "pricing", "settings"}, "navigation_order_version": 1,
-		"sidebar_collapsed": false, "sidebar_width": 238, "log_preview_width": 240, "native_log_columns": []string{"content", "model", "input", "output", "cache_rate", "cost", "duration", "details"}, "subscription_profile": Row{"plan": "", "price_usd": nil, "renewal_date": ""}, "language": systemLanguage()}) {
+		"sidebar_collapsed": false, "sidebar_width": 238, "log_preview_width": 240, "native_log_columns": []string{"content", "model", "input", "output", "cache_rate", "cost", "duration", "details"}, "claude_log_columns": []string{"content", "model", "input", "output", "cache_rate", "cost", "duration", "details"}, "claude_log_column_widths": Row{}, "subscription_profile": Row{"plan": "", "price_usd": nil, "renewal_date": ""}, "language": systemLanguage()}) {
 		r[k] = v
 	}
 	return r
@@ -239,14 +239,16 @@ func systemNormalizeConfig(r Row) Row {
 		}
 	}
 	r["navigation_order"] = nav
-	columns := []string{"content"}
-	selected := ValueStrings(r["native_log_columns"])
-	for _, field := range []string{"time", "model", "input", "output", "total", "cached", "cache_write", "cache_rate", "cost", "duration", "effort", "speed", "context", "status"} {
-		if systemContains(selected, field) {
-			columns = append(columns, field)
+	for _, columnKey := range []string{"native_log_columns", "claude_log_columns"} {
+		columns := []string{"content"}
+		selected := ValueStrings(r[columnKey])
+		for _, field := range []string{"time", "model", "input", "output", "total", "cached", "cache_write", "cache_rate", "cost", "duration", "effort", "speed", "context", "status"} {
+			if systemContains(selected, field) {
+				columns = append(columns, field)
+			}
 		}
+		r[columnKey] = append(columns, "details")
 	}
-	r["native_log_columns"] = append(columns, "details")
 	roots := []string{}
 	for _, s := range ValueStrings(r["codex_roots"]) {
 		s = strings.TrimSpace(s)

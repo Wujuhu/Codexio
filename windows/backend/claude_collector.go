@@ -84,6 +84,9 @@ func (s *Store) collectClaude(ctx context.Context, force bool) error {
 			s.generation.Add(1)
 		}
 	}()
+	if err := s.observeClaudePriceLabels(root); err != nil {
+		return err
+	}
 	info, e := os.Stat(projects)
 	if e != nil || !info.IsDir() {
 		status["source_status"] = "unavailable"
@@ -548,11 +551,37 @@ func (s *Store) claudeEntry(tx *sql.Tx, e, state Row, root, path, identity, gene
 	if _, err := tx.Exec("UPDATE claude_nodes SET data=? WHERE id=?", dataJSON(node), nodeID); err != nil {
 		return err
 	}
-	r := Row{"id": id, "response_id": response, "client_kind": "claude_code", "client_origin": state["client_origin"], "session_id": firstString(oldNode["session_id"], session), "claude_request_id": request, "claude_session_scope": sessionScope, "claude_agent_id": agent, "turn_id": "", "timestamp": timestamp, "requested_model": requestedModel, "returned_model": message["model"], "upstream_model": message["model"], "upstream_mismatched": false, "model": requestedModel, "reasoning_effort": requestEffortName(e["effort"]), "service_tier": nil, "cost_usd": nil, "pricing_status": "not_applicable", "quality": "response", "source_id": "local:claude:" + HashString(root)[:16], "source_path": path, "is_subagent": agent != "" || ValueBool(e["isSidechain"]), "parent_uuid": parent, "node_id": nodeID, "stop_reason": message["stop_reason"], "duration_ms": nil, "tps": nil, "ttft": nil, "model_context_window": nil}
+	r := Row{"id": id, "response_id": response, "client_kind": "claude_code", "client_origin": state["client_origin"], "session_id": firstString(oldNode["session_id"], session), "claude_request_id": request, "claude_session_scope": sessionScope, "claude_agent_id": agent, "turn_id": "", "timestamp": timestamp, "requested_model": requestedModel, "returned_model": message["model"], "upstream_model": message["model"], "upstream_mismatched": false, "model": requestedModel, "reasoning_effort": requestEffortName(e["effort"]), "service_tier": nil, "cost_usd": nil, "pricing_status": "unpriced", "quality": "response", "source_id": "local:claude:" + HashString(root)[:16], "source_path": path, "is_subagent": agent != "" || ValueBool(e["isSidechain"]), "parent_uuid": parent, "node_id": nodeID, "stop_reason": message["stop_reason"], "duration_ms": nil, "tps": nil, "ttft": nil, "model_context_window": nil}
 	in, ki := knownCount(usage["input_tokens"])
 	read, kr := knownCount(usage["cache_read_input_tokens"])
 	write, kw := knownCount(usage["cache_creation_input_tokens"])
 	out, ko := knownCount(usage["output_tokens"])
+	creation := ValueRow(usage["cache_creation"])
+	r["cache_write_5m_tokens"] = creation["ephemeral_5m_input_tokens"]
+	r["cache_write_1h_tokens"] = creation["ephemeral_1h_input_tokens"]
+	speed := strings.ToLower(firstString(usage["speed"], e["speed"]))
+	if speed == "fast" {
+		r["service_tier"] = "priority"
+	} else if speed == "standard" {
+		r["service_tier"] = "default"
+	} else if fast, ok := e["fastMode"].(bool); ok {
+		if fast {
+			r["service_tier"] = "priority"
+		} else {
+			r["service_tier"] = "default"
+		}
+	} else if fast, ok := e["fast_mode"].(bool); ok {
+		if fast {
+			r["service_tier"] = "priority"
+		} else {
+			r["service_tier"] = "default"
+		}
+	}
+	for _, key := range []string{"auth_mode", "billing_source"} {
+		if e[key] != nil {
+			r[key] = e[key]
+		}
+	}
 	r["raw_input_tokens"] = usage["input_tokens"]
 	r["cached_input_tokens"] = usage["cache_read_input_tokens"]
 	r["cache_write_input_tokens"] = usage["cache_creation_input_tokens"]

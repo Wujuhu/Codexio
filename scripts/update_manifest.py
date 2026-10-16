@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from codexio.app_archive import APP_ARCHIVE_NAME
 from codexio.updates import REPOSITORY, UpdateError, file_sha256, release_from_manifest, version_tuple
+from codexio.versions import AppVersion
 
 
 def read_manifest(path):
@@ -56,7 +57,7 @@ def load_base(system, explicit=None, *, version=None):
 
 
 def write_manifest(system, asset, version, output, *, base=None, architecture=None):
-    version = ".".join(map(str, version_tuple(version)))
+    version = str(AppVersion.parse(version))
     name = APP_ARCHIVE_NAME if system == "macos" else "Codexio.exe"
     if asset.name != name:
         raise UpdateError("更新文件名必须为 " + name)
@@ -64,13 +65,13 @@ def write_manifest(system, asset, version, output, *, base=None, architecture=No
     if system == "macos":
         # Keep every existing Windows field intact, including its own version.
         if "version" in data:
-            release_from_manifest(data, "0.0.0")
+            release_from_manifest(data, "0.0.0", allow_prerelease=True)
     elif "macos" in data:
         # An old release can serve as a base while Mac migrates from DMG to APP ZIP.
         if not isinstance(data["macos"], dict):
             raise UpdateError("平台更新清单格式无效")
         name_in_base = "Codexio.dmg" if str(data["macos"].get("url", "")).endswith("/Codexio.dmg") else APP_ARCHIVE_NAME
-        release_from_manifest(data, "0.0.0", asset_name=name_in_base, manifest_key="macos")
+        release_from_manifest(data, "0.0.0", asset_name=name_in_base, manifest_key="macos", allow_prerelease=True)
     entry = dict(version=version, url=f"https://github.com/{REPOSITORY}/releases/download/v{version}/{name}",
                  sha256=file_sha256(asset), size=asset.stat().st_size)
     if system == "macos":

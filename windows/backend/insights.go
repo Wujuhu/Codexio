@@ -87,14 +87,14 @@ func (s *Store) localChatRowsSorted(q Query, page, size int, metric string) ([]R
 	page = min(max(1, page), pages)
 	// The aggregate stays in SQLite; only the requested ranking page is decoded.
 	order := "tokens"
-	if metric == "cost_usd" && normalizedClient(q.ClientKind) != "claude_code" {
+	if metric == "cost_usd" {
 		order = "usd"
 	}
 	orderExpression := `sum(json_extract(p.metrics,'$.` + order + `'))`
 	if normalizedClient(q.ClientKind) == "claude_code" {
-		orderExpression = `CASE WHEN count(json_extract(p.metrics,'$.tokens'))=count(*) THEN sum(json_extract(p.metrics,'$.tokens')) END`
+		orderExpression = `CASE WHEN count(json_extract(p.metrics,'$.` + order + `'))=count(*) THEN sum(json_extract(p.metrics,'$.` + order + `')) END`
 	}
-	query := `SELECT coalesce(roots.root_session_id,p.session_id),coalesce(t.title,max(CASE WHEN roots.root_session_id=p.session_id OR roots.root_session_id IS NULL THEN json_extract(p.data,'$.session_title') END),''),CASE WHEN coalesce(json_extract(p.data,'$.client_kind'),'codex')='claude_code' AND count(json_extract(p.metrics,'$.tokens'))<>count(*) THEN NULL ELSE sum(json_extract(p.metrics,'$.tokens')) END,sum(json_extract(p.metrics,'$.usd')),sum(coalesce(json_extract(p.metrics,'$.unpriced_calls'),0)),sum(CASE WHEN json_extract(p.data,'$.client_kind')='claude_code' AND (coalesce(json_extract(p.data,'$.usage_complete'),0)=0 OR json_extract(p.data,'$.usage_conflict')=1) THEN 1 ELSE 0 END) FROM usage_priced_calls p LEFT JOIN usage_query_session_roots roots ON roots.session_id=p.session_id LEFT JOIN usage_session_titles t ON t.session_id=coalesce(roots.root_session_id,p.session_id) WHERE ` + where + ` GROUP BY coalesce(roots.root_session_id,p.session_id) ORDER BY ` + orderExpression + ` DESC,coalesce(roots.root_session_id,p.session_id) LIMIT ? OFFSET ?`
+	query := `SELECT coalesce(roots.root_session_id,p.session_id),coalesce(t.title,max(CASE WHEN roots.root_session_id=p.session_id OR roots.root_session_id IS NULL THEN json_extract(p.data,'$.session_title') END),''),CASE WHEN coalesce(json_extract(p.data,'$.client_kind'),'codex')='claude_code' AND count(json_extract(p.metrics,'$.tokens'))<>count(*) THEN NULL ELSE sum(json_extract(p.metrics,'$.tokens')) END,CASE WHEN coalesce(json_extract(p.data,'$.client_kind'),'codex')='claude_code' AND count(json_extract(p.metrics,'$.usd'))<>count(*) THEN NULL ELSE sum(json_extract(p.metrics,'$.usd')) END,sum(coalesce(json_extract(p.metrics,'$.unpriced_calls'),0)),sum(CASE WHEN json_extract(p.data,'$.client_kind')='claude_code' AND (coalesce(json_extract(p.data,'$.usage_complete'),0)=0 OR json_extract(p.data,'$.usage_conflict')=1) THEN 1 ELSE 0 END) FROM usage_priced_calls p LEFT JOIN usage_query_session_roots roots ON roots.session_id=p.session_id LEFT JOIN usage_session_titles t ON t.session_id=coalesce(roots.root_session_id,p.session_id) WHERE ` + where + ` GROUP BY coalesce(roots.root_session_id,p.session_id) ORDER BY ` + orderExpression + ` DESC,coalesce(roots.root_session_id,p.session_id) LIMIT ? OFFSET ?`
 	params := append(append([]any{}, args...), size, (page-1)*size)
 	rows, e := s.db.Query(query, params...)
 	if e != nil {
@@ -115,9 +115,6 @@ func (s *Store) localChatRowsSorted(q Query, page, size int, metric string) ([]R
 			r["data_status"] = "partial"
 		}
 		if normalizedClient(q.ClientKind) == "claude_code" {
-			r["cost_partial"] = false
-			r["cost_complete"] = false
-			delete(r, "data_status")
 			if incomplete > 0 {
 				r["data_status"] = "partial"
 			}
@@ -252,7 +249,6 @@ func (s *Store) localInsights(q Query) (result Row, err error) {
 		r["label"] = date
 		r["user_requests"] = requests[date]
 		if normalizedClient(q.ClientKind) == "claude_code" {
-			r["usd"] = nil
 			r["client_kind"] = "claude_code"
 		}
 		calendar = append(calendar, r)
@@ -310,7 +306,7 @@ func (s *Store) localInsights(q Query) (result Row, err error) {
 			effortPercent = float64(mostCount) * 100 / float64(calls)
 		}
 	}
-	if normalizedClient(q.ClientKind) == "claude_code" {
+	if normalizedClient(q.ClientKind) == "claude_code" && speeds["default"]+speeds["priority"] != int(calls) {
 		fast = nil
 	}
 	seconds, partial, e := s.localChatDuration(q)

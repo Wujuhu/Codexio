@@ -196,6 +196,9 @@ func validBase(r Row) bool {
 	return true
 }
 func (s *Store) loadPrices() error {
+	if e := s.loadClaudePrices(); e != nil {
+		return e
+	}
 	seed, _ := DecodeRow(priceSeed)
 	cached, _ := ReadJSON(filepath.Join(s.priceDirectory(), "pricing_cache.json"))
 	overrides, _ := ReadJSON(filepath.Join(s.priceDirectory(), "pricing_overrides.json"))
@@ -309,7 +312,8 @@ func (s *Store) loadPrices() error {
 	version := HashString(priceRule + dataJSON([]any{content, solPolicyContent()}))[:16]
 	s.mu.Lock()
 	s.prices = result
-	s.priceVersion = version
+	s.codexPriceVersion = version
+	s.priceVersion = HashString(version + "|" + s.claudePriceVersion)[:16]
 	s.priceStatus = Row{"status": firstString(cached["status"], "bundled"), "updated_at": cached["updated_at"], "error": cached["error"]}
 	s.mu.Unlock()
 	archive := filepath.Join(s.priceDirectory(), "versions", version+".json")
@@ -364,7 +368,6 @@ func (s *Store) price(r Row) Row {
 	if normalizedClient(dataString(r, "client_kind")) == "claude_code" {
 		r["cost_usd"] = nil
 		r["pricing_status"] = "not_applicable"
-		r["service_tier"] = nil
 		for _, field := range ValueStrings(r["final_missing_fields"]) {
 			r[field] = nil
 		}
@@ -382,7 +385,7 @@ func (s *Store) price(r Row) Row {
 			}
 			r["context_input_tokens"] = nil
 		}
-		return r
+		return s.priceClaude(r)
 	}
 	r["cost_usd"] = nil
 	r["pricing_status"] = "unpriced"

@@ -17,9 +17,11 @@
   let drag:{key:string,start:number,width:number}|null=null;
   let loadedWidths:any;
   let savedWidths=new Set<string>();
-  $: columns=definitions.filter(c=>c.key==='content'||c.key==='details'||(Array.isArray(settings.native_log_columns)?settings.native_log_columns:defaults).includes(c.key));
-  $: if(!drag&&settings.log_column_widths!==loadedWidths){
-    loadedWidths=settings.log_column_widths;
+  $: columnsKey=query.client_kind==='claude_code'?'claude_log_columns':'native_log_columns';
+  $: widthsKey=query.client_kind==='claude_code'?'claude_log_column_widths':'log_column_widths';
+  $: columns=definitions.filter(c=>c.key==='content'||c.key==='details'||(Array.isArray(settings[columnsKey])?settings[columnsKey]:defaults).includes(c.key));
+  $: if(!drag&&settings[widthsKey]!==loadedWidths){
+    loadedWidths=settings[widthsKey];
     const legacy=Array.isArray(loadedWidths)&&loadedWidths.length===5?{content:loadedWidths[0],model:loadedWidths[1],total:loadedWidths[2],cost:loadedWidths[3]}:loadedWidths;
     savedWidths=new Set(definitions.filter((c,i)=>Number.isFinite(Number(Array.isArray(legacy)?legacy[i]:legacy?.[c.key]))).map(c=>c.key));
     widths=Object.fromEntries(definitions.map((c,i)=>{const n=Number(Array.isArray(legacy)?legacy[i]:legacy?.[c.key]);return[c.key,Number.isFinite(n)?Math.max(minimumWidth(c.key),Math.min(1200,n)):c.width]}));
@@ -29,18 +31,18 @@
   $: flexible=columns.filter(c=>!savedWidths.has(c.key));
   $: rendered=columns.map(c=>(widths[c.key]??c.width)+(!drag&&flexible.length&&!savedWidths.has(c.key)?Math.max(0,available-total)/flexible.length:0));
   $: tableWidth=rendered.reduce((a,b)=>a+b,0);
-  function toggle(key:string,enabled:boolean){const selected=new Set(columns.map(c=>c.key));enabled?selected.add(key):selected.delete(key);void onsave({native_log_columns:definitions.filter(c=>selected.has(c.key)).map(c=>c.key)}).catch(onerror)}
+  function toggle(key:string,enabled:boolean){const selected=new Set(columns.map(c=>c.key));enabled?selected.add(key):selected.delete(key);void onsave({[columnsKey]:definitions.filter(c=>selected.has(c.key)).map(c=>c.key)}).catch(onerror)}
   function begin(event:PointerEvent,index:number){if(event.button!==0)return;event.preventDefault();widths={...widths,...Object.fromEntries(columns.map((c,i)=>[c.key,rendered[i]]))};drag={key:columns[index].key,start:event.clientX,width:rendered[index]}}
   function move(event:PointerEvent){if(drag)widths={...widths,[drag.key]:Math.max(minimumWidth(drag.key),Math.min(1200,drag.width+event.clientX-drag.start))}}
-  function persistWidths(){void onsave({log_column_widths:Object.fromEntries(Object.entries(widths).map(([key,width])=>[key,Math.round(width)]))}).catch(onerror)}
+  function persistWidths(){void onsave({[widthsKey]:Object.fromEntries(Object.entries(widths).map(([key,width])=>[key,Math.round(width)]))}).catch(onerror)}
   function end(){if(drag){drag=null;persistWidths()}}
   function keyResize(event:KeyboardEvent,index:number){if(!['ArrowLeft','ArrowRight'].includes(event.key))return;event.preventDefault();widths={...widths,[columns[index].key]:Math.max(minimumWidth(columns[index].key),Math.min(1200,rendered[index]+(event.key==='ArrowLeft'?-10:10)))};persistWidths()}
-  function cell(record:Row,key:string):string{switch(key){case'time':return logTime(record.timestamp,query,data.show_year);case'input':return compact(record.input_tokens);case'output':return compact(record.output_tokens);case'total':return compact(record.total_tokens);case'cached':return compact(record.cached_input_tokens);case'cache_write':return compact(record.cache_write_input_tokens);case'cache_rate':return hitRate(record);case'cost':return cost(query.client_kind==='claude_code'?null:record.cost_usd??record.usd);case'duration':return duration(record.duration_ms);case'effort':return effort(record.reasoning_effort)||'—';case'speed':return query.client_kind==='claude_code'?'—':speed(record.service_tier);case'context':return compact(contextTokens(record),0);case'status':return requestStatus(record);default:return text(record[key])}}
+  function cell(record:Row,key:string):string{switch(key){case'time':return logTime(record.timestamp,query,data.show_year);case'input':return compact(record.input_tokens);case'output':return compact(record.output_tokens);case'total':return compact(record.total_tokens);case'cached':return compact(record.cached_input_tokens);case'cache_write':return compact(record.cache_write_input_tokens);case'cache_rate':return hitRate(record);case'cost':return cost(record.cost_usd??record.usd);case'duration':return duration(record.duration_ms);case'effort':return effort(record.reasoning_effort)||'—';case'speed':return speed(record.service_tier);case'context':return compact(contextTokens(record),0);case'status':return requestStatus(record);default:return text(record[key])}}
   function closeMenu(event:PointerEvent){if(menu?.open&&!menu.contains(event.target as Node))menu.open=false}
   onDestroy(()=>drag=null);
 </script>
 <svelte:window onpointermove={move} onpointerup={end} onpointercancel={end} onblur={end} onpointerdown={closeMenu}/>
-<Filters {query} {models} logs {onchange}><details class="column-picker" bind:this={menu}><summary>{tr('显示字段')}</summary><div class="column-menu">{#each definitions.filter(c=>!['content','details'].includes(c.key)) as column}<label><input type="checkbox" checked={columns.some(c=>c.key===column.key)} onchange={event=>toggle(column.key,event.currentTarget.checked)}/>{tr(column.title)}</label>{/each}<button class="quiet" onclick={()=>onsave({native_log_columns:defaults}).catch(onerror)}>{tr('恢复默认字段')}</button></div></details></Filters>
+<Filters {query} {models} logs {onchange}><details class="column-picker" bind:this={menu}><summary>{tr('显示字段')}</summary><div class="column-menu">{#each definitions.filter(c=>!['content','details'].includes(c.key)) as column}<label><input type="checkbox" checked={columns.some(c=>c.key===column.key)} onchange={event=>toggle(column.key,event.currentTarget.checked)}/>{tr(column.title)}</label>{/each}<button class="quiet" onclick={()=>onsave({[columnsKey]:defaults}).catch(onerror)}>{tr('恢复默认字段')}</button></div></details></Filters>
 <div class="logs-layout"><section class="ledger surface" class:resizing={!!drag}>
   <div class="table-scroll" bind:clientWidth={available}>
     <table style:width={`${tableWidth}px`} style:min-width={`${tableWidth}px`}>

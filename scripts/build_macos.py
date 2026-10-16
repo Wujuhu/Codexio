@@ -15,10 +15,12 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+from codexio.versions import AppVersion
 BUILD = ROOT / "build"
 STAGING = BUILD / "staging/macos"
 DESTINATION = BUILD / "dev/macos"
-WIDGET_VERSION = 25  # Allow normal quit while the usage report sheet is open.
+WIDGET_VERSION = 26  # Keep stable-host takeover ordering correct for beta app versions.
 
 
 def run(*args, **kwargs):
@@ -97,7 +99,8 @@ def build_native(bundle, version):
     info = {
         "CFBundleIdentifier": "com.wujuhu.codexio", "CFBundleExecutable": "Codexio",
         "CFBundleName": "Codexio", "CFBundleDisplayName": "Codexio", "CFBundlePackageType": "APPL",
-        "CFBundleShortVersionString": version, "CFBundleVersion": version,
+        "CFBundleShortVersionString": AppVersion.parse(version).numeric, "CFBundleVersion": AppVersion.parse(version).numeric,
+        "CodexioVersion": version,
         "CodexioWidgetBuild": str(WIDGET_VERSION),
         "CFBundleInfoDictionaryVersion": "6.0", "CFBundleDevelopmentRegion": "en",
         "CFBundleLocalizations": ["en", "zh-Hans"], "CFBundleIconFile": "Codexio.icns",
@@ -125,6 +128,8 @@ def build_native(bundle, version):
     run(executable, "--render-icon", iconset)
     run("iconutil", "-c", "icns", iconset, "-o", resources / "Codexio.icns")
     shutil.copy2(ROOT / "src/codexio/pricing_seed.json", resources / "pricing_seed.json")
+    shutil.copy2(ROOT / "src/codexio/claude_pricing_seed.json", resources / "claude_pricing_seed.json")
+    shutil.copy2(ROOT / "src/codexio/claude_bridge.json", resources / "claude_bridge.json")
     shutil.copytree(ROOT / "macos/Resources/ReportCards", resources / "ReportCards")
     shutil.copytree(ROOT / "macos/Resources/ReportCat", resources / "ReportCat")
     localization_resources(resources)
@@ -194,14 +199,14 @@ def main():
     target = DESTINATION / "Codexio.app"
     refuse_running(bundle)
     version = (ROOT / "macos/VERSION").read_text(encoding="utf-8").strip()
-    if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version):
-        raise RuntimeError("macos/VERSION 不是有效的正式版本号")
+    parsed_version = AppVersion.parse(version)
     build_native(bundle, version)
     embed_widget(bundle)
     with (bundle / "Contents/Info.plist").open("rb") as stream:
         info = plistlib.load(stream)
     version = (ROOT / "macos/VERSION").read_text(encoding="utf-8").strip()
-    assert info["CFBundleShortVersionString"] == info["CFBundleVersion"] == version
+    assert info["CFBundleShortVersionString"] == info["CFBundleVersion"] == parsed_version.numeric
+    assert info["CodexioVersion"] == version
     widget_info = plistlib.loads((bundle / "Contents/PlugIns/CodexioWidget.appex/Contents/Info.plist").read_bytes())
     assert widget_info["CFBundleVersion"] == str(WIDGET_VERSION)
     assert widget_info["CFBundleShortVersionString"] == "1.%d" % (WIDGET_VERSION - 1)

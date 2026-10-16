@@ -7,7 +7,8 @@ $EnvironmentBefore = Get-CodexioBuildEnvironment
 try {
     Initialize-CodexioWindowsTools -ProjectRoot $ProjectRoot
     $ActualVersion = (Get-Content -LiteralPath (Join-Path $ProjectRoot 'windows\VERSION') -Encoding UTF8 -Raw).Trim()
-    if ($ActualVersion -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') { throw 'Invalid windows/VERSION.' }
+    if ($ActualVersion -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$') { throw 'Invalid windows/VERSION.' }
+    $NumericVersion = ($ActualVersion -split '-',2)[0]
     if ($Version -and $Version -ne $ActualVersion) { throw 'This command never changes versions. Confirm and update windows/VERSION separately.' }
     $Version = $ActualVersion
     Build-CodexioFrontend -ProjectRoot $ProjectRoot
@@ -17,7 +18,11 @@ try {
     foreach ($Directory in @($Staging, $Checks)) { New-Item -ItemType Directory -Path $Directory -Force | Out-Null }
     $CLI = Join-Path $ProjectRoot 'build\cache\tools\wails3.exe'
     $Resource = Join-Path $Staging 'rsrc_windows_amd64.syso'
-    & $CLI generate syso -arch amd64 -manifest (Join-Path $ProjectRoot 'windows\build\windows\Codexio.exe.manifest') -icon (Join-Path $ProjectRoot 'src\codexio\icons\app.ico') -info (Join-Path $ProjectRoot 'windows\build\windows\info.json') -out $Resource
+    $VersionInfo = Get-Content -LiteralPath (Join-Path $ProjectRoot 'windows\build\windows\info.json') -Encoding UTF8 -Raw | ConvertFrom-Json
+    $VersionInfo.fixed.file_version = $NumericVersion + '.0'; $VersionInfo.fixed.product_version = $NumericVersion + '.0'
+    $VersionInfo.info.'0000'.ProductVersion = $Version; $VersionInfo.info.'0000'.FileVersion = $NumericVersion
+    $InfoPath = Join-Path $Staging 'info.json'; Write-CodexioJSON -Path $InfoPath -Value $VersionInfo
+    & $CLI generate syso -arch amd64 -manifest (Join-Path $ProjectRoot 'windows\build\windows\Codexio.exe.manifest') -icon (Join-Path $ProjectRoot 'src\codexio\icons\app.ico') -info $InfoPath -out $Resource
     if ($LASTEXITCODE -ne 0) { throw 'Wails resource generation failed.' }
     # Go's Windows linker reads .syso paths directly, so a source snapshot keeps
     # the resource and every generated intermediate under build/staging.
@@ -30,7 +35,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Go Windows compilation failed.' }
     } finally { Pop-Location }
     $Metadata = (Get-Item -LiteralPath $StagedExe).VersionInfo
-    if ($Metadata.ProductVersion -ne $Version -or $Metadata.FileVersion -ne $Version -or $Metadata.ProductName -ne 'Codexio') { throw 'EXE product/file version metadata failed verification.' }
+    if ($Metadata.ProductVersion -ne $Version -or $Metadata.FileVersion -ne $NumericVersion -or $Metadata.ProductName -ne 'Codexio') { throw 'EXE product/file version metadata failed verification.' }
     $Header = [IO.File]::OpenRead($StagedExe)
     try { if ($Header.ReadByte() -ne 77 -or $Header.ReadByte() -ne 90) { throw 'EXE MZ header verification failed.' } } finally { $Header.Dispose() }
     $SmokeOutput = Join-Path $Checks ('smoke-' + [Guid]::NewGuid().ToString('N'))

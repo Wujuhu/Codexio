@@ -3441,6 +3441,22 @@
         }
       }
     },
+    "价格目录缺少已有型号，保留已有价格": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The price catalog is missing a model; saved prices were retained"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "价格目录缺少已有型号，保留已有价格"
+          }
+        }
+      }
+    },
     "价格目录超过大小限制": {
       "localizations": {
         "en": {
@@ -3853,22 +3869,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "全部状态"
-          }
-        }
-      }
-    },
-    "全部速度": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "All speeds"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "全部速度"
           }
         }
       }
@@ -6550,7 +6550,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Interrupted"
+            "value": "Aborted"
           }
         },
         "zh-Hans": {
@@ -7245,6 +7245,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "应用版本不匹配"
+          }
+        }
+      }
+    },
+    "应用版本无效": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Invalid app version"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "应用版本无效"
           }
         }
       }
@@ -8838,7 +8854,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Search content or summaries"
+            "value": "Search prompt or summary"
           }
         },
         "zh-Hans": {
@@ -15133,6 +15149,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "缓存写入"
+          }
+        }
+      }
+    },
+    "缓存写入 1 小时": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cache write 1 hour"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "缓存写入 1 小时"
+          }
+        }
+      }
+    },
+    "缓存写入 5 分钟": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cache write 5 minutes"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "缓存写入 5 分钟"
           }
         }
       }

@@ -8,9 +8,25 @@ final class AppState: ObservableObject {
     let preferences: Preferences
     let database: Database
     let catalog: PricingCatalog
+    let claudeCatalog: ClaudePricingCatalog
+    @Published private(set) var claudePrices: [PriceRow] = []
+    @Published private(set) var claudePricesRevision = ""
+    @Published private(set) var claudePriceUpdated: Date?
+    @Published private(set) var claudePriceWarning: String?
+    let claudeAllowance: ClaudeAllowance
+    let claudeEstimator: WeeklyEstimator
+    @Published private(set) var claudeQuota = QuotaState()
+    @Published private(set) var claudeWeeklyEstimates: [Object] = []
+    let claudeQuotaClock = ScanClock()
+    private var claudeQuotaKey = ""
+    private var claudeLastSample: String?
+    private var claudeEstimateRevision = -1
+    private var claudeObserved: Date?
+    var claudeQuotaFresh: Bool {claudeObserved.map {Date().timeIntervalSince($0) >= 0 && Date().timeIntervalSince($0) < 900} == true}
     let claudeLedger: ClaudeLedger
     let claudeClock = ScanClock()
     @Published var pageClient: DesktopClient = .codex
+    var logFilters: [DesktopClient:LogFilterMemory] = [:]
     @Published private(set) var claudeRevision = UUID()
     @Published private(set) var claudeModels: [String] = []
     @Published private(set) var claudeWarning: String?
@@ -108,7 +124,12 @@ final class AppState: ObservableObject {
 
     init(paths: AppPaths) throws {
         self.paths = paths; preferences = Preferences(paths)
-        claudeLedger = try ClaudeLedger(paths:paths)
+        claudeCatalog = ClaudePricingCatalog(paths.pricing)
+        claudeLedger = try ClaudeLedger(paths:paths,pricing:claudeCatalog)
+        claudePrices = claudeCatalog.rows; claudePricesRevision = claudeCatalog.version
+        claudeAllowance = ClaudeAllowance(paths:paths,root:claudeLedger.root)
+        let ledger = claudeLedger
+        claudeEstimator = try WeeklyEstimator(ledger.database,limitID:"claude",usage:{ledger.subscriptionConsumption(start:$0,end:$1)})
         database = try Database(paths.database); catalog = PricingCatalog(paths.pricing); indexer = UsageIndexer(database); estimator = try WeeklyEstimator(database)
         theme = preferences.analytics.string("theme","system")
         appIconStyle = Branding.iconID(preferences.analytics.string("app_icon","main"))
@@ -127,6 +148,8 @@ final class AppState: ObservableObject {
     func start() {
         if paths.mock { seedMock(); return }
         if UserDefaults.standard.bool(forKey:"codexio.mobile.enabled") { mobileSync.start() }
+        claudeAllowance.onSample = { [weak self] sample in self?.dataQueue.async { [weak self] in self?.receiveClaudeQuota(sample)} }
+        claudeAllowance.start()
         refreshUsage(); refreshQuota()
         configureTimers()
         let priceFetch = fetchActivity.begin()
@@ -135,6 +158,8 @@ final class AppState: ObservableObject {
             defer { DispatchQueue.main.async {self.fetchActivity.end(priceFetch)} }
             guard self.preferences.analytics.flag("auto_sync_prices",true) else { return }
             do { try self.catalog.sync(); self.publishUsage() }
+            catch { DispatchQueue.main.async { self.errorMessage = L("价格同步失败，保留已有价格", "Price sync failed; saved prices are retained") } }
+            do {try self.claudeCatalog.sync(); try self.claudeLedger.refreshPricing(); self.publishClaude()}
             catch { DispatchQueue.main.async { self.errorMessage = L("价格同步失败，保留已有价格", "Price sync failed; saved prices are retained") } }
         }
     }
@@ -148,13 +173,13 @@ final class AppState: ObservableObject {
         priceTimer = Timer.scheduledTimer(withTimeInterval:3600,repeats:true) { [weak self] _ in
             guard let self, self.preferences.analytics.flag("auto_sync_prices",true) else { return }
             let operation = self.fetchActivity.begin()
-            self.dataQueue.async { defer {DispatchQueue.main.async {self.fetchActivity.end(operation)}}; try? self.catalog.sync(); self.publishUsage() }
+            self.dataQueue.async { defer {DispatchQueue.main.async {self.fetchActivity.end(operation)}}; try? self.catalog.sync(); self.publishUsage(); try? self.claudeCatalog.sync(); try? self.claudeLedger.refreshPricing(); self.publishClaude() }
         }
         priceTimer?.tolerance = 180
     }
     func stop() {
         if !paths.mock { mobileSync.stop() }
-        stopped = true; scanTimer?.invalidate(); quotaTimer?.invalidate(); priceTimer?.invalidate(); indexer.cancel(); claudeLedger.cancel(); client.close()
+        stopped = true; claudeAllowance.stop(); scanTimer?.invalidate(); quotaTimer?.invalidate(); priceTimer?.invalidate(); indexer.cancel(); claudeLedger.cancel(); client.close()
         fetchActivity.clear()
         reportGeneration = UUID()
     }
@@ -205,7 +230,7 @@ final class AppState: ObservableObject {
         if paths.snapshot != canonical, ProcessInfo.processInfo.environment["CODEXIO_DATA_DIR"] == nil { try atomicJSON(snapshot,to:canonical) }
         WidgetCenter.shared.reloadAllTimelines()
     }
-    func refresh() { refreshUsage(); if pageClient == .codex || !["overview","logs","trends"].contains(selectedPage) { refreshQuota() }; if selectedPage == "subscription" { refreshReports(force:true) } }
+    func refresh() { if selectedPage == "pricing" {syncPrices();return}; refreshUsage(); if pageClient == .codex || !["overview","logs","trends","subscription"].contains(selectedPage) { refreshQuota() }; if selectedPage == "subscription" && pageClient == .codex { refreshReports(force:true) } }
     private var usageReportSourceKey: String { preferences.roots.map(\.path).sorted().joined(separator: "\n") + "\n" + accountRoot.path }
     func prepareUsageReports(completion: @escaping (Result<UsageReportCollection, Error>) -> Void) {
         let sourceKey = usageReportSourceKey
@@ -249,9 +274,37 @@ final class AppState: ObservableObject {
             } catch { DispatchQueue.main.async { self.errorMessage = error.localizedDescription; self.loading = false } }
             do {
                 try self.claudeLedger.scan()
-                self.publishClaude()
+                self.publishClaude(); self.receiveClaudeQuota(self.claudeAllowance.snapshot())
             } catch { DispatchQueue.main.async { self.claudeWarning = error.localizedDescription } }
             DispatchQueue.main.async { self.scanning = false }
+        }
+    }
+    private func receiveClaudeQuota(_ sample: Object) {
+        guard !stopped, !paths.mock else {return}
+        let now = Date(), observed = sample.number("captured_at").map {Date(timeIntervalSince1970:$0)}
+        let fresh = observed.map {now.timeIntervalSince($0) >= 0 && now.timeIntervalSince($0) < 900} == true
+        var quota = QuotaState(); quota.account = sample.object("account"); quota.updated = observed
+        quota.windows = sample.objects("windows").compactMap {window in
+            let reset = parsedDate(window["reset"])
+            guard reset == nil || reset! > now else {return nil}
+            return QuotaWindow(id:window.string("kind"),minutes:window.string("kind") == "five_hour" ? 300 : 10080,used:window.number("used"),reset:reset)
+        }
+        quota.applicable = !quota.windows.isEmpty
+        if let stamp = sample.number("captured_at"), String(stamp)+quota.account.string("identityKey") != claudeLastSample {
+            claudeLastSample = String(stamp)+quota.account.string("identityKey")
+            if fresh, quota.account.flag("verified"), let week = quota.week, let used = week.used, let reset = week.reset {
+                claudeEstimator.add(["timestamp":stamp,"used_percent":used,"reset_at":reset.timeIntervalSince1970,"account_key":quota.account.string("identityKey"),"plan_type":quota.account.string("planType").isEmpty ? "claude" : quota.account.string("planType"),"limit_id":"claude"],intervalMinutes:max(1,preferences.analytics.integer("week_estimate_interval_minutes") ?? 30))
+            } else {claudeEstimator.invalidate()}
+        }
+        let estimates = (try? claudeEstimator.process(calls:[],priceVersion:claudeCatalog.version,accountKey:quota.account.flag("verified") ? quota.account.string("identityKey") : "")) ?? []
+        let estimateRevision = claudeEstimator.revision
+        let key = quota.contentKey+String(fresh)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.stopped else {return}
+            self.claudeObserved = observed
+            if self.claudeQuotaKey != key {self.claudeQuotaKey = key; self.claudeQuota = quota}
+            if self.claudeEstimateRevision != estimateRevision {self.claudeEstimateRevision = estimateRevision; self.claudeWeeklyEstimates = estimates}
+            if let observed {self.claudeQuotaClock.updated = observed}
         }
     }
     private func publishClaude() {
@@ -265,10 +318,14 @@ final class AppState: ObservableObject {
             claudeNextBoundary = next.map {Date(timeIntervalSince1970:$0)} ?? .distantFuture
         }
         let models = changed ? (try? claudeLedger.models()) : nil, warning = claudeLedger.warning
+        let prices = claudeCatalog.rows, priceVersion = claudeCatalog.version, updated = claudeCatalog.updated, priceWarning = claudeCatalog.warning
         DispatchQueue.main.async { [weak self] in
             guard let self, !self.stopped else { return }
             if changed { self.claudeRevision = UUID(); if let models {self.claudeModels = models} }
             if self.claudeWarning != warning {self.claudeWarning = warning}
+            if self.claudePricesRevision != priceVersion {self.claudePrices = prices; self.claudePricesRevision = priceVersion}
+            if self.claudePriceUpdated != updated {self.claudePriceUpdated = updated}
+            if self.claudePriceWarning != priceWarning {self.claudePriceWarning = priceWarning}
             self.claudeClock.updated = now
         }
     }
@@ -439,7 +496,7 @@ final class AppState: ObservableObject {
         if !planHistory.isEmpty { planHistory = [:] }; if !chatUsage.isEmpty { chatUsage = [:] }
         if reportError != nil { reportError = nil }; if reportsLoading { reportsLoading = false }
     }
-    private var reportsVisible: Bool { mainWindowVisible && selectedPage == "subscription" }
+    private var reportsVisible: Bool { mainWindowVisible && selectedPage == "subscription" && pageClient == .codex }
     func refreshVisibleReports() { if reportsVisible { refreshReports() } }
     private func pendingResetOperations(account: String) -> [Object] {
         guard !account.isEmpty else { return [] }
@@ -535,18 +592,26 @@ final class AppState: ObservableObject {
     }
     func syncPrices() {
         guard !paths.mock, !stopped else { return }
-        let operation = fetchActivity.begin()
+        let operation = fetchActivity.begin(), selectedClient = pageClient
         dataQueue.async { [weak self] in
             guard let self else { return }
             defer {DispatchQueue.main.async {self.fetchActivity.end(operation)}}
-            do { try self.catalog.sync(force:true); self.publishUsage() }
+            do {
+                if selectedClient == .claudeCode {try self.claudeCatalog.sync(force:true); try self.claudeLedger.refreshPricing(); self.publishClaude()}
+                else {try self.catalog.sync(force:true); self.publishUsage()}
+            }
             catch { DispatchQueue.main.async { self.errorMessage = error.localizedDescription } }
         }
     }
     func overridePrice(model: String, rates: Object?) {
+        let selectedClient = pageClient
         dataQueue.async { [weak self] in
-            do { try self?.catalog.setOverride(model:model,rates:rates); self?.publishUsage() }
-            catch { DispatchQueue.main.async { self?.errorMessage = error.localizedDescription } }
+            guard let self else {return}
+            do {
+                if selectedClient == .claudeCode {try self.claudeCatalog.setOverride(model:model,rates:rates); try self.claudeLedger.refreshPricing(); self.publishClaude()}
+                else {try self.catalog.setOverride(model:model,rates:rates); self.publishUsage()}
+            }
+            catch { DispatchQueue.main.async { self.errorMessage = error.localizedDescription } }
         }
     }
     func publishWidget() {

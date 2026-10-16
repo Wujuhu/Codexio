@@ -25,7 +25,7 @@ enum Installation {
         guard try bundle.resourceValues(forKeys:[.isSymbolicLinkKey]).isSymbolicLink != true else { throw AppFailure(L("应用路径不能是符号链接", "The app path cannot be a symbolic link")) }
         let info = try plist(bundle.appendingPathComponent("Contents/Info.plist")), widget = try plist(bundle.appendingPathComponent(widgetRelative+"/Contents/Info.plist"))
         guard info.string("CFBundleIdentifier") == BuildInfo.bundleID, info.string("CFBundleExecutable") == "Codexio", widget.string("CFBundleIdentifier") == BuildInfo.widgetID, let build = Int(widget.string("CFBundleVersion")), build > 0, info.string("CFBundleShortVersionString").split(separator:".").count == 3 else { throw AppFailure(L("应用或小组件标识无效", "Invalid app or widget identity")) }
-        if let version, info.string("CFBundleShortVersionString") != version { throw AppFailure(L("应用版本不匹配", "The app version does not match")) }
+        if let version, info.string("CodexioVersion",info.string("CFBundleShortVersionString")) != version { throw AppFailure(L("应用版本不匹配", "The app version does not match")) }
         guard try execute("/usr/bin/codesign",["--verify","--deep","--strict",bundle.path]).code == 0 else { throw AppFailure(L("应用签名校验失败", "App signature verification failed")) }
         var result = info; result["CodexioWidgetBuild"] = build; return result
     }
@@ -130,9 +130,8 @@ enum Installation {
         let incomingInfo = try verify(source)
         if source == canonical { return false }
         if let installed = try? verify(canonical) {
-            let current = installed.string("CFBundleShortVersionString").split(separator:".").compactMap {Int($0)}
-            let incoming = BuildInfo.version.split(separator:".").compactMap {Int($0)}
-            if incoming.lexicographicallyPrecedes(current) || (incoming == current && (incomingInfo.integer("CodexioWidgetBuild") ?? 0) < (installed.integer("CodexioWidgetBuild") ?? 0)) || binariesMatch(source,canonical) {
+            guard let current = AppVersion(installed.string("CodexioVersion",installed.string("CFBundleShortVersionString"))), let incoming = AppVersion(BuildInfo.version) else { throw AppFailure(L("应用版本无效", "Invalid app version")) }
+            if incoming < current || (incoming == current && (incomingInfo.integer("CodexioWidgetBuild") ?? 0) < (installed.integer("CodexioWidgetBuild") ?? 0)) || binariesMatch(source,canonical) {
                 _ = try execute("/usr/bin/open",["-a",canonical.path]); return true
             }
         } else if FileManager.default.fileExists(atPath:canonical.path) {
@@ -214,7 +213,8 @@ enum Installation {
         let active = processPaths()
         for file in files where file.lastPathComponent.range(of:#"^\.Codexio-(?:takeover-[a-f0-9]{16}|[a-f0-9]{32})\.previous$"#,options:.regularExpression) != nil {
             guard !active.contains(where:{$0.1.hasPrefix(file.path+"/")}), let old = try? verify(file),
-                  !(current.string("CFBundleShortVersionString").split(separator:".").compactMap {Int($0)}).lexicographicallyPrecedes(old.string("CFBundleShortVersionString").split(separator:".").compactMap {Int($0)}) else { continue }
+                  let currentVersion = AppVersion(current.string("CodexioVersion",current.string("CFBundleShortVersionString"))),
+                  let oldVersion = AppVersion(old.string("CodexioVersion",old.string("CFBundleShortVersionString"))), currentVersion >= oldVersion else { continue }
             _ = try? execute("/usr/bin/pluginkit",["-r",file.appendingPathComponent(widgetRelative).path])
             try? FileManager.default.removeItem(at:file)
         }

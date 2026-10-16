@@ -30,11 +30,11 @@ func (s *Service) GetClientChatRanking(clientKind, metric string, page int) (Row
 		return s.GetChatRanking(metric, page), nil
 	}
 	q := Query{ClientKind: client, Period: "all", Source: "local", Page: max(1, page), PageSize: 25}
-	key, cached, ok := s.store.cachedQuery("client-chat-ranking:"+dataJSON(q.Page), q)
+	key, cached, ok := s.store.cachedQuery("client-chat-ranking:"+metric+":"+dataJSON(q.Page), q)
 	if ok {
 		return cached, nil
 	}
-	rows, total, index, e := s.store.localChatRowsSorted(q, q.Page, 25, "tokens")
+	rows, total, index, e := s.store.localChatRowsSorted(q, q.Page, 25, metric)
 	if e != nil {
 		return nil, e
 	}
@@ -86,6 +86,8 @@ func (s *Store) rebuildClaudeGroups(tx *sql.Tx, dirty map[string]bool, full bool
 			sum := newMetricSum()
 			models := map[string]bool{}
 			returnedModels := map[string]bool{}
+			tiers := map[string]bool{}
+			estimated := false
 			sources := map[string]bool{}
 			subagents := map[string]bool{}
 			calls := 0
@@ -105,6 +107,8 @@ func (s *Store) rebuildClaudeGroups(tx *sql.Tx, dirty map[string]bool, full bool
 				}
 				r := dataRow(raw)
 				sum.add(r)
+				tiers[dataString(r, "service_tier")] = true
+				estimated = estimated || dataString(r, "pricing_status") == "estimated"
 				if !ValueBool(r["is_subagent"]) && dataString(r, "claude_agent_id") == "" {
 					timingPending = timingPending || !ValueBool(r["call_timing_checked"]) || ValueBool(r["call_timing_incomplete"])
 					mainTiming = append(mainTiming, r)
@@ -154,10 +158,26 @@ func (s *Store) rebuildClaudeGroups(tx *sql.Tx, dirty map[string]bool, full bool
 				group[k] = metrics[k]
 			}
 			group["total_tokens"] = metrics["tokens"]
-			group["cost_usd"] = nil
-			group["pricing_status"] = "not_applicable"
+			group["cost_usd"] = metrics["usd"]
+			if !ValueBool(metrics["cost_complete"]) {
+				group["cost_usd"] = nil
+			}
+			group["pricing_status"] = "priced"
+			if estimated {
+				group["pricing_status"] = "estimated"
+			}
+			if group["cost_usd"] == nil {
+				group["pricing_status"] = "unpriced"
+			}
 			group["service_tier"] = nil
-			group["service_tiers"] = []string{}
+			group["service_tiers"] = sortedKeys(tiers)
+			if !tiers[""] && len(tiers) > 0 {
+				if len(tiers) == 1 {
+					group["service_tier"] = sortedKeys(tiers)[0]
+				} else {
+					group["service_tier"] = "mixed"
+				}
+			}
 			group["call_count"] = calls
 			group["models"] = sortedKeys(models)
 			group["upstream_models"] = sortedKeys(returnedModels)

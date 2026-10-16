@@ -13,6 +13,7 @@ enum DesktopClient: String, CaseIterable {
 /// Full transcript bodies never enter the durable normalized ledger.
 final class ClaudeLedger {
     let database: Database
+    let pricing: ClaudePricingCatalog
     let root: URL
     private let cancellationLock = NSLock()
     private var cancelled = false
@@ -29,7 +30,8 @@ final class ClaudeLedger {
     private var sourceGeneration = 0
     private var sourceStamp: FileStamp?
     private var sourceLineHash = ""
-    init(paths: AppPaths) throws {
+    init(paths: AppPaths, pricing: ClaudePricingCatalog) throws {
+        self.pricing = pricing
         // Mock paths never consult CLAUDE_CONFIG_DIR or the real home directory.
         root = paths.mock ? paths.data.appendingPathComponent("claude-mock") : URL(fileURLWithPath:NSString(string:ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"] ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude").path).expandingTildeInPath).standardizedFileURL
         scope = "claude_code:"+String(identity(root.path).prefix(16))+":"
@@ -100,6 +102,7 @@ final class ClaudeLedger {
     func scan() throws {
         guard !isCancelled else {return}
         changedFiles = false
+        try pricing.observeLabels(root:root)
         do {
             _ = try FileManager.default.attributesOfItem(atPath:root.appendingPathComponent("projects").path); warning = nil
         } catch let error as NSError {
@@ -127,6 +130,11 @@ final class ClaudeLedger {
         }
         if changedFiles || ownershipNeedsRepair {ownershipNeedsRepair = try repairOwnership()}
         try recoverCallTiming()
+        try reprice()
+        try materializeAffected()
+    }
+    func refreshPricing() throws {try reprice(); try materializeAffected()}
+    private func materializeAffected() throws {
         if !affected.isEmpty || !affectedSessions.isEmpty {
             try database.transaction {
                 for id in affected { try materializeRequest(id) }
@@ -273,7 +281,7 @@ final class ClaudeLedger {
                 request = id
                 var raw = (try database.query("SELECT data FROM claude_requests WHERE id=?",[id]).first).map {jsonObject(Data($0.string("data").utf8))} ?? [:]
                 if raw.isEmpty {
-                    raw = ["id":id,"client_kind":"claude_code","session_id":session,"timestamp":row["timestamp"] ?? NSNull(),"source_id":"local","local_origin":true,"record_kind":"user_request","prompt_preview":String(requestPreview(text(contents)).prefix(400)),"main_uuid":uuid,"model":row.string("requestedModel"),"reasoning_effort":row.string("effort"),"service_tier":"","status":"","pricing_status":"not_applicable"]
+                    raw = ["id":id,"client_kind":"claude_code","session_id":session,"timestamp":row["timestamp"] ?? NSNull(),"source_id":"local","local_origin":true,"record_kind":"user_request","prompt_preview":String(requestPreview(text(contents)).prefix(400)),"main_uuid":uuid,"model":row.string("requestedModel"),"reasoning_effort":row.string("effort"),"service_tier":"","status":"","pricing_status":"unpriced"]
                 }
                 if raw.string("model").isEmpty {raw["model"] = row.string("requestedModel")}
                 if raw.string("reasoning_effort").isEmpty {raw["reasoning_effort"] = row.string("effort")}
@@ -298,8 +306,16 @@ final class ClaudeLedger {
                 }
             } else if !message.object("usage").isEmpty, !message.string("id").isEmpty {
                 let usage = message.object("usage")
-                var raw: Object = ["client_kind":"claude_code","client_origin":sessionInfo["client_origin"] ?? NSNull(),"session_id":session,"source_id":"local","local_origin":true,"response_id":message.string("id"),"uuid":uuid,"parent_uuid":row.string("parentUuid"),"agent_id":row.string("agentId"),"request_id":request,"record_kind":request.isEmpty ? "unassigned" : "model_call","timestamp":row["timestamp"] ?? NSNull(),"model":row.string("requestedModel"),"upstream_model":message.string("model"),"upstream_mismatched":false,"reasoning_effort":row.string("effort"),"service_tier":"","is_subagent":child,"quality":"response","pricing_status":"not_applicable","status":"","prompt_preview":""]
+                var raw: Object = ["client_kind":"claude_code","client_origin":sessionInfo["client_origin"] ?? NSNull(),"session_id":session,"source_id":"local","local_origin":true,"response_id":message.string("id"),"uuid":uuid,"parent_uuid":row.string("parentUuid"),"agent_id":row.string("agentId"),"request_id":request,"record_kind":request.isEmpty ? "unassigned" : "model_call","timestamp":row["timestamp"] ?? NSNull(),"model":row.string("requestedModel"),"upstream_model":message.string("model"),"upstream_mismatched":false,"reasoning_effort":row.string("effort"),"service_tier":"","is_subagent":child,"quality":"response","pricing_status":"unpriced","status":"","prompt_preview":""]
                 let input = usage.integer("input_tokens"), read = usage.integer("cache_read_input_tokens"), write = usage.integer("cache_creation_input_tokens"), output = usage.integer("output_tokens")
+                let creation = usage.object("cache_creation")
+                raw["cache_write_5m_tokens"] = creation.integer("ephemeral_5m_input_tokens") as Any? ?? NSNull()
+                raw["cache_write_1h_tokens"] = creation.integer("ephemeral_1h_input_tokens") as Any? ?? NSNull()
+                let speed = usage.string("speed",row.string("speed")).lowercased()
+                if speed == "fast" {raw["service_tier"] = "priority"}
+                else if speed == "standard" {raw["service_tier"] = "default"}
+                else if let fast = row["fastMode"] as? Bool ?? row["fast_mode"] as? Bool {raw["service_tier"] = fast ? "priority" : "default"}
+                for key in ["auth_mode","billing_source"] where row[key] != nil {raw[key] = row[key]}
                 raw["raw_input_tokens"] = input as Any? ?? NSNull(); raw["cached_input_tokens"] = read as Any? ?? NSNull(); raw["cache_write_input_tokens"] = write as Any? ?? NSNull(); raw["output_tokens"] = output as Any? ?? NSNull()
                 if let input, let read, let write, input <= Int.max-read, input+read <= Int.max-write {
                     let completeInput = input+read+write; raw["input_tokens"] = completeInput
@@ -365,7 +381,7 @@ final class ClaudeLedger {
         }
         if !request.isEmpty {affectedSessions.insert(session)}
     }
-    private let usageKeys = ["raw_input_tokens","cached_input_tokens","cache_write_input_tokens","input_tokens","output_tokens","total_tokens","reasoning_output_tokens"]
+    private let usageKeys = ["cache_write_5m_tokens","cache_write_1h_tokens","raw_input_tokens","cached_input_tokens","cache_write_input_tokens","input_tokens","output_tokens","total_tokens","reasoning_output_tokens"]
     private func mergeUsage(_ old: Object,_ incoming: Object) -> Object {
         let retained = old.object("usage_evidence").isEmpty ? old : old.object("usage_evidence")
         let newFacts = incoming.object("usage_evidence").isEmpty ? incoming : incoming.object("usage_evidence")
@@ -401,7 +417,7 @@ final class ClaudeLedger {
         result["call_timing"] = ClaudeTiming.merge(old.object("call_timing"),incoming.object("call_timing"))
         result["call_timing_checked"] = old.flag("call_timing_checked") && incoming.flag("call_timing_checked") && !old.flag("call_timing_incomplete")
         result["call_timing_incomplete"] = old.flag("call_timing_incomplete") || incoming.flag("call_timing_incomplete")
-        for key in ["model","reasoning_effort","upstream_model"] where result.string(key).isEmpty {result[key] = old[key] ?? incoming[key]}
+        for key in ["model","reasoning_effort","upstream_model","service_tier","auth_mode","billing_source"] where result.string(key).isEmpty {result[key] = old[key] ?? incoming[key]}
         let conflict = old.flag("usage_conflict") || incoming.flag("usage_conflict") || terminalConflict
         result["usage_conflict"] = conflict
         if conflict {
@@ -487,7 +503,30 @@ final class ClaudeLedger {
             return pending
         }
     }
-    private func saveCall(_ raw: Object) throws {
+    func subscriptionConsumption(start: Double,end: Double) -> (Int,Double,Bool) {
+        let rows = try? database.query("SELECT count(*) AS n,count(json_extract(data,'$.cost_usd')) AS priced,sum(total) AS tokens,sum(json_extract(data,'$.cost_usd')) AS cost FROM claude_calls WHERE timestamp>? AND timestamp<=? AND COALESCE(json_extract(data,'$.service_tier'),'') NOT IN ('priority','fast') AND COALESCE(json_extract(data,'$.auth_mode'),'') NOT IN ('api','api_key','apikey') AND COALESCE(json_extract(data,'$.billing_source'),'') NOT IN ('credits','api','api_key','usage_credits')",[start,end])
+        guard let row = rows?.first else {return (0,0,true)}
+        return (row.integer("tokens") ?? 0,row.number("cost") ?? 0,row.integer("n") != row.integer("priced"))
+    }
+    func reprice() throws {
+        let key = "claude-prices:"+scope
+        guard database.object("usage_meta",key:key).string("version") != pricing.version else {return}
+        var last = ""
+        while !isCancelled {
+            let page = try database.query("SELECT id,data FROM claude_calls WHERE id LIKE ? AND id>? ORDER BY id LIMIT 256",[scope+"%",last])
+            if page.isEmpty {break}
+            try database.transaction {
+                for row in page {
+                    let raw = jsonObject(Data(row.string("data").utf8)); try saveCall(raw)
+                    if !raw.string("request_id").isEmpty {affected.insert(raw.string("request_id"))}
+                    affectedSessions.insert(raw.string("session_id")); last = row.string("id")
+                }
+            }
+        }
+        if !isCancelled {try database.put("usage_meta",key:key,value:["version":pricing.version])}
+    }
+    private func saveCall(_ input: Object) throws {
+        let raw = pricing.price(input,root:root)
         try database.run("INSERT INTO claude_calls VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET request_id=excluded.request_id,session_id=excluded.session_id,input=excluded.input,cache_read=excluded.cache_read,cache_write=excluded.cache_write,output=excluded.output,total=excluded.total,model=excluded.model,data=excluded.data WHERE data<>excluded.data",[raw.string("id"),raw.string("request_id"),raw.string("session_id"),parsedDate(raw["timestamp"])?.timeIntervalSince1970 as Any? ?? NSNull(),raw.string("model"),raw["input_tokens"] ?? NSNull(),raw["cached_input_tokens"] ?? NSNull(),raw["cache_write_input_tokens"] ?? NSNull(),raw["output_tokens"] ?? NSNull(),raw["total_tokens"] ?? NSNull(),jsonString(raw)])
     }
     private func saveRequest(_ raw: Object) throws {
@@ -499,7 +538,7 @@ final class ClaudeLedger {
     }
     private func sumColumns(_ table: String,where predicate: String,args: [Any]) throws -> Object {
         let sums = ["input","cache_read","cache_write","output","total"].map {"CASE WHEN count(*)>0 AND count(\($0))=count(*) THEN sum(\($0)) END AS \($0)"}.joined(separator:",")
-        return try database.query("SELECT count(*) AS calls,\(sums) FROM \(table) WHERE \(predicate)",args).first ?? [:]
+        return try database.query("SELECT count(*) AS calls,\(sums),CASE WHEN count(*)>0 AND count(json_extract(data,'$.cost_usd'))=count(*) THEN sum(json_extract(data,'$.cost_usd')) END AS cost FROM \(table) WHERE \(predicate)",args).first ?? [:]
     }
     private func materializeRequest(_ id: String) throws {
         let sums = try sumColumns("claude_calls",where:"request_id=?",args:[id])
@@ -511,6 +550,11 @@ final class ClaudeLedger {
         let context = try database.query("SELECT input FROM claude_calls WHERE request_id=? AND COALESCE(json_extract(data,'$.is_subagent'),0)=0 ORDER BY timestamp DESC,id DESC LIMIT 1",[id]).first
         fields["context_input_tokens"] = context?["input"] ?? NSNull()
         fields["call_count"] = sums["calls"] ?? 0
+        fields["cost_usd"] = sums["cost"] ?? NSNull()
+        let priced = try database.query("SELECT max(json_extract(data,'$.pricing_status')='estimated') AS estimated FROM claude_calls WHERE request_id=?",[id]).first
+        fields["pricing_status"] = sums.number("cost") == nil ? "unpriced" : priced?.integer("estimated") == 1 ? "estimated" : "priced"
+        let speeds = try database.query("SELECT DISTINCT json_extract(data,'$.service_tier') AS tier FROM claude_calls WHERE request_id=?",[id]).map {$0.string("tier")}
+        if !speeds.isEmpty {fields["service_tier"] = speeds.contains("") ? "" : speeds.count == 1 ? speeds[0] : "mixed"}
         fields["upstream_models"] = try database.query("SELECT DISTINCT json_extract(data,'$.upstream_model') AS model FROM claude_calls WHERE request_id=? AND COALESCE(json_extract(data,'$.upstream_model'),'')<>'' ORDER BY model",[id]).map {$0.string("model")}
         if let stored = try database.query("SELECT data FROM claude_requests WHERE id=?",[id]).first {
             let request = jsonObject(Data(stored.string("data").utf8))
@@ -526,7 +570,7 @@ final class ClaudeLedger {
         if sums.integer("calls") == 0, (try database.query("SELECT count(*) AS n FROM claude_requests WHERE session_id=?",[session]).first?.integer("n") ?? 0) == 0 {try database.run("DELETE FROM claude_ranking WHERE id=?",[session]); return}
         let title = try database.query("SELECT title FROM claude_sessions WHERE id=?",[session]).first?.string("title") ?? ""
         let count = try database.query("SELECT count(*) AS n FROM claude_requests WHERE session_id=?",[session]).first?.integer("n") ?? 0
-        let raw: Object = ["thread_id":session,"title":title,"tokens":sums["total"] ?? NSNull(),"calls":sums["calls"] ?? 0,"requests":count,"cost_usd":NSNull()]
+        let raw: Object = ["thread_id":session,"title":title,"tokens":sums["total"] ?? NSNull(),"calls":sums["calls"] ?? 0,"requests":count,"cost_usd":sums["cost"] ?? NSNull()]
         try database.run("INSERT INTO claude_ranking VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET tokens=excluded.tokens,data=excluded.data WHERE data<>excluded.data",[session,sums["total"] ?? NSNull(),jsonString(raw)])
     }
     private func filtered(_ table: String,range: UsageRange,model: String = "all",status: String = "all",query: String = "") -> (String,[Any]) {
@@ -564,15 +608,16 @@ final class ClaudeLedger {
         let sum = try sumColumns("claude_calls",where:sql,args:args)
         let (requestSQL,requestArgs) = filtered("claude_requests",range:range,model:model)
         let requests = try database.query("SELECT count(*) AS n FROM claude_requests WHERE \(requestSQL)",requestArgs).first?.integer("n") ?? 0
-        var summary = UsageSummary(); summary.tokens = sum.integer("total"); summary.cost = nil; summary.calls = sum.integer("calls") ?? 0; summary.requests = requests
+        var summary = UsageSummary(); summary.tokens = sum.integer("total"); summary.cost = sum.number("cost"); summary.calls = sum.integer("calls") ?? 0; summary.requests = requests
         if let input = sum.integer("input"), let read = sum.integer("cache_read") {summary.input = input; summary.cached = read}
         summary.output = sum.integer("output") ?? 0
-        let rows = try database.query("SELECT model,count(*) AS calls,CASE WHEN count(total)=count(*) THEN sum(total) END AS tokens FROM claude_calls WHERE \(sql) GROUP BY model ORDER BY tokens DESC",args)
+        let rows = try database.query("SELECT model,count(*) AS calls,CASE WHEN count(total)=count(*) THEN sum(total) END AS tokens,CASE WHEN count(json_extract(data,'$.cost_usd'))=count(*) THEN sum(json_extract(data,'$.cost_usd')) END AS cost FROM claude_calls WHERE \(sql) GROUP BY model ORDER BY tokens DESC",args)
         let requestRows = try database.query("SELECT model,count(*) AS n FROM claude_requests WHERE \(requestSQL) GROUP BY model ORDER BY n DESC",requestArgs)
         let requestCounts = Dictionary(uniqueKeysWithValues:requestRows.map {($0.string("model"),$0.integer("n") ?? 0)})
+        let costs = Dictionary(uniqueKeysWithValues:rows.map {($0.string("model"),$0.number("cost"))})
         let tokenCounts = Dictionary(uniqueKeysWithValues:rows.map {($0.string("model"),$0.integer("tokens"))})
-        let groups = rows.map {row -> MobileModel in MobileModel(id:row.string("model"),name:requestValueText(modelName(row.string("model"))),metric:MobileMetric(tokens:row.integer("tokens"),cost:nil,requests:requestCounts[row.string("model")] ?? 0,costComplete:false,hitRate:nil))}
-        let requestGroups = requestRows.map {row in MobileModel(id:row.string("model"),name:requestValueText(modelName(row.string("model"))),metric:MobileMetric(tokens:tokenCounts[row.string("model")] ?? nil,cost:nil,requests:row.integer("n") ?? 0,costComplete:false,hitRate:nil))}
+        let groups = rows.map {row -> MobileModel in MobileModel(id:row.string("model"),name:requestValueText(modelName(row.string("model"))),metric:MobileMetric(tokens:row.integer("tokens"),cost:row.number("cost"),requests:requestCounts[row.string("model")] ?? 0,costComplete:row.number("cost") != nil,hitRate:nil))}
+        let requestGroups = requestRows.map {row in MobileModel(id:row.string("model"),name:requestValueText(modelName(row.string("model"))),metric:MobileMetric(tokens:tokenCounts[row.string("model")] ?? nil,cost:costs[row.string("model")] ?? nil,requests:row.integer("n") ?? 0,costComplete:(costs[row.string("model")] ?? nil) != nil,hitRate:nil))}
         let recent = try database.query("SELECT data FROM claude_requests WHERE \(requestSQL) ORDER BY timestamp DESC LIMIT 3",requestArgs).map {UsageRow(raw:jsonObject(Data($0.string("data").utf8)))}
         return TrendProjection(summary:summary,days:try days(range:range,model:model,granularity:granularity),recent:recent,modelRows:[groups,groups,requestGroups])
     }
@@ -581,36 +626,41 @@ final class ClaudeLedger {
         // timezone/calendar bucket mapping on these small values, never bodies.
         let (sql,args) = filtered("claude_calls",range:range,model:model)
         let grouping = granularity == "hour" ? "strftime('%Y-%m-%d %H',timestamp,'unixepoch','localtime')" : granularity == "week" ? "strftime('%Y-%W',timestamp,'unixepoch','localtime')" : "strftime('%Y-%m-%d',timestamp,'unixepoch','localtime')"
-        let calls = try database.query("SELECT min(timestamp) AS t,count(*) AS n,CASE WHEN count(total)=count(*) THEN sum(total) END AS tokens FROM claude_calls WHERE \(sql) GROUP BY \(grouping)",args)
+        let calls = try database.query("SELECT min(timestamp) AS t,count(*) AS n,CASE WHEN count(total)=count(*) THEN sum(total) END AS tokens,CASE WHEN count(json_extract(data,'$.cost_usd'))=count(*) THEN sum(json_extract(data,'$.cost_usd')) END AS cost FROM claude_calls WHERE \(sql) GROUP BY \(grouping)",args)
         let (requestSQL,requestArgs) = filtered("claude_requests",range:range,model:model)
         let requests = try database.query("SELECT min(timestamp) AS t,count(*) AS n FROM claude_requests WHERE \(requestSQL) GROUP BY \(grouping)",requestArgs)
         var calendar = Calendar.current; calendar.firstWeekday = 2
         let component: Calendar.Component = granularity == "hour" ? .hour : granularity == "week" ? .weekOfYear : .day
-        var groups: [Date:DayUsage] = [:], missing = Set<Date>()
+        var groups: [Date:DayUsage] = [:], missing = Set<Date>(), missingCosts = Set<Date>()
         for row in calls {
             guard let t = row.number("t"), let start = calendar.dateInterval(of:component,for:Date(timeIntervalSince1970:t))?.start else {continue}
-            var value = groups[start] ?? DayUsage(date:start,tokens:0,cost:nil,calls:0)
+            var value = groups[start] ?? DayUsage(date:start,tokens:0,cost:0,calls:0)
             if let tokens = row.integer("tokens") {value.tokens = (value.tokens ?? 0)+tokens} else {missing.insert(start)}
+            if let cost = row.number("cost") {value.cost = (value.cost ?? 0)+cost} else {missingCosts.insert(start)}
             value.calls += row.integer("n") ?? 0; groups[start] = value
         }
         for row in requests {
             guard let t = row.number("t"), let start = calendar.dateInterval(of:component,for:Date(timeIntervalSince1970:t))?.start else {continue}
-            var value = groups[start] ?? DayUsage(date:start,tokens:0,cost:nil,calls:0); value.requests += row.integer("n") ?? 0; groups[start] = value
+            var value = groups[start] ?? DayUsage(date:start,tokens:0,cost:0,calls:0); value.requests += row.integer("n") ?? 0; groups[start] = value
         }
         var cursor = calendar.dateInterval(of:component,for:range.start == .distantPast ? groups.keys.min() ?? range.end : range.start)!.start
         var result: [DayUsage] = []
         while cursor <= range.end && result.count < 20_000 {
-            var value = groups[cursor] ?? DayUsage(date:cursor,tokens:0,cost:nil,calls:0)
-            if missing.contains(cursor) {value.tokens = nil}; result.append(value)
+            var value = groups[cursor] ?? DayUsage(date:cursor,tokens:0,cost:0,calls:0)
+            if missing.contains(cursor) {value.tokens = nil}; if missingCosts.contains(cursor) {value.cost = nil}; result.append(value)
             guard let next = calendar.date(byAdding:component,value:1,to:cursor), next > cursor else {break}; cursor = next
         }
         return result
     }
     func activity() throws -> ActivityStats {
         let projection = try trend(range:UsageRange(period:"all"),granularity:"day")
-        var value = ActivityStats(); value.days = projection.days; value.total = projection.summary.tokens; value.peak = value.days.contains {$0.calls > 0 && $0.tokens == nil} ? nil : value.days.compactMap(\.tokens).max(); value.calls = projection.summary.calls
+        let calendar = Calendar.current, today = calendar.startOfDay(for:Date())
+        let byDay = Dictionary(projection.days.map {($0.date,$0)},uniquingKeysWith:{$1})
+        var value = ActivityStats(); value.days = (-364...0).compactMap { offset in
+            calendar.date(byAdding:.day,value:offset,to:today).map {byDay[$0] ?? DayUsage(date:$0,tokens:0,cost:0,calls:0)}
+        }; value.total = projection.summary.tokens; value.peak = projection.days.contains {$0.calls > 0 && $0.tokens == nil} ? nil : projection.days.compactMap(\.tokens).max(); value.calls = projection.summary.calls
         var longest = 0, current = 0, previous: Date?
-        for day in value.days where day.calls > 0 || day.requests > 0 {
+        for day in projection.days where day.calls > 0 || day.requests > 0 {
             current = previous.flatMap {Calendar.current.date(byAdding:.day,value:1,to:$0)} == day.date ? current+1 : 1
             longest = max(longest,current); previous = day.date
         }
@@ -621,18 +671,20 @@ final class ClaudeLedger {
         if value.calls > 0, let n = efforts?.integer("n") {value.effortPercent = Double(n)/Double(value.calls)*100}
         // Chat duration requires complete explicit timing for the whole chat.
         let duration = try database.query("SELECT CASE WHEN sum(missing)=0 THEN max(ms) END AS ms FROM (SELECT session_id,sum(json_extract(data,'$.duration_ms')) AS ms,sum(CASE WHEN status='completed' AND json_extract(data,'$.duration_ms')>=0 THEN 0 ELSE 1 END) AS missing FROM claude_requests WHERE id LIKE ? GROUP BY session_id)",[scope+"%"]).first?.number("ms")
-        value.longestChat = duration.map {$0/1000}; value.fastPercent = nil
+        value.longestChat = duration.map {$0/1000}
+        let speeds = try database.query("SELECT count(*) AS total,sum(json_extract(data,'$.service_tier') IN ('default','priority')) AS known,sum(json_extract(data,'$.service_tier')='priority') AS fast FROM claude_calls WHERE id LIKE ?",[scope+"%"]).first ?? [:]
+        if let total = speeds.integer("total"), total>0, speeds.integer("known") == total {value.fastPercent = Double(speeds.integer("fast") ?? 0)/Double(total)*100}
         return value
     }
-    func ranking(page: Int) throws -> Object {
+    func ranking(page: Int,metric: String = "cost") throws -> Object {
         let count = try database.query("SELECT count(*) AS n FROM claude_ranking WHERE id LIKE ?",[scope+"%"]).first?.integer("n") ?? 0
         let pages = max(1,(count+24)/25), selected = min(max(0,page),pages-1)
-        let rows = try database.query("SELECT data FROM claude_ranking WHERE id LIKE ? ORDER BY tokens IS NULL,tokens DESC,id LIMIT 25 OFFSET ?",[scope+"%",selected*25]).map {jsonObject(Data($0.string("data").utf8))}
+        let rows = try database.query("SELECT data FROM claude_ranking WHERE id LIKE ? ORDER BY \(metric == "tokens" ? "tokens IS NULL,tokens DESC" : "json_extract(data,'$.cost_usd') IS NULL,json_extract(data,'$.cost_usd') DESC"),id LIMIT 25 OFFSET ?",[scope+"%",selected*25]).map {jsonObject(Data($0.string("data").utf8))}
         return ["threads":rows,"page":selected,"pages":pages,"total":count]
     }
     func rankingDetails(_ id: String,page: Int) throws -> [Object] {
         guard id.hasPrefix(scope) else {return []}
-        return try database.query("SELECT model,json_extract(data,'$.reasoning_effort') AS effort,count(*) AS calls,CASE WHEN count(total)=count(*) THEN sum(total) END AS tokens FROM claude_calls WHERE session_id=? GROUP BY model,effort ORDER BY tokens DESC LIMIT 25 OFFSET ?",[id,max(0,page)*25])
+        return try database.query("SELECT model,json_extract(data,'$.reasoning_effort') AS effort,json_extract(data,'$.service_tier') AS service_tier,count(*) AS calls,CASE WHEN count(total)=count(*) THEN sum(total) END AS tokens,CASE WHEN count(json_extract(data,'$.cost_usd'))=count(*) THEN sum(json_extract(data,'$.cost_usd')) END AS cost_usd FROM claude_calls WHERE session_id=? GROUP BY model,effort,service_tier ORDER BY tokens DESC LIMIT 25 OFFSET ?",[id,max(0,page)*25])
     }
     func members(_ id: String,page: Int) throws -> [UsageRow] {
         guard id.hasPrefix(scope) else {return []}

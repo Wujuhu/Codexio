@@ -414,7 +414,6 @@ func (s *Store) Chart(q Query) (resultRows []Row, err error) {
 			r = buckets[key].row()
 		}
 		if normalizedClient(q.ClientKind) == "claude_code" {
-			r["usd"] = nil
 			r["client_kind"] = "claude_code"
 		}
 		r["timestamp"] = key

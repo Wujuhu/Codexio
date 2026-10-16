@@ -21,7 +21,7 @@
 {#if section!=='metrics'}
  <section class="local-insights">
   <h3>{tr('活动洞察')}</h3>
-  <div class="local-insight-values"><div><span>{tr('快速模式')}</span><strong>{percent(clientKind==='claude_code'?null:stats.fast_percent)}</strong></div><div><span>{tr('最常用的推理强度')}</span><strong>{stats.most_used_effort?effort(stats.most_used_effort)+' · '+percent(stats.effort_percent):'—'}</strong></div></div>
+  <div class="local-insight-values"><div><span>{tr('快速模式')}</span><strong>{percent(stats.fast_percent)}</strong></div><div><span>{tr('最常用的推理强度')}</span><strong>{stats.most_used_effort?effort(stats.most_used_effort)+' · '+percent(stats.effort_percent):'—'}</strong></div></div>
   {#if (clientKind!=='claude_code'&&Number(stats.unknown_speed)>0)||Number(stats.unknown_effort)>0||stats.duration_partial}<p class="insight-quality muted">{#if (clientKind!=='claude_code'&&Number(stats.unknown_speed)>0)}{tr('速度未知')} {numeric(stats.unknown_speed)} {tr('次')}{/if}{#if Number(stats.unknown_effort)>0}<span>{tr('推理强度未知')} {numeric(stats.unknown_effort)} {tr('次')}</span>{/if}{#if stats.duration_partial}<span>{tr('时长仅含已记录区间')}</span>{/if}</p>{/if}
  </section>
 {/if}

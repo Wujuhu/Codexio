@@ -4,18 +4,10 @@ import SwiftUI
 // Reuse NativeUpdater's stable version comparison and manifest-first lookup.
 // Release tags identify a publication; ios.version identifies the installed app.
 private enum IOSUpdateVersion {
-    static func parts(_ value: String) -> [Int]? {
-        let pieces = value.split(separator:".",omittingEmptySubsequences:false)
-        guard pieces.count == 3, pieces.allSatisfy({ part in
-            !part.isEmpty && part.utf8.allSatisfy { $0 >= 48 && $0 <= 57 }
-                && (part.count == 1 || part.first != "0")
-        }) else { return nil }
-        let numbers = pieces.compactMap {Int($0)}
-        return numbers.count == 3 && numbers.allSatisfy {$0 <= 65535} ? numbers : nil
-    }
+    static func parts(_ value: String) -> AppVersion? { AppVersion(value) }
     static func newer(_ target: String, than current: String) -> Bool {
         guard let target = parts(target), let current = parts(current) else { return false }
-        return current.lexicographicallyPrecedes(target)
+        return current < target
     }
 }
 
@@ -125,7 +117,7 @@ private final class IOSUpdateClient: @unchecked Sendable {
         guard IOSUpdateVersion.parts(current) != nil else { throw IOSUpdateError.invalidManifest }
         let url = URL(string:"https://github.com/Wujuhu/Codexio/releases/latest/download/latest.json")!
         let manifest = try JSONDecoder().decode(Manifest.self,from:await read(url))
-        guard let package = manifest.ios, IOSUpdateVersion.parts(package.version) != nil else { throw IOSUpdateError.invalidManifest }
+        guard let package = manifest.ios, let target = IOSUpdateVersion.parts(package.version), target.prerelease.isEmpty else { throw IOSUpdateError.invalidManifest }
         guard IOSUpdateVersion.newer(package.version,than:current) else { return nil }
         let components = package.url.path.split(separator:"/").map(String.init)
         guard components.count == 6, Array(components.prefix(4)) == ["Wujuhu","Codexio","releases","download"], components.last == "Codexio.ipa" else { throw IOSUpdateError.invalidManifest }
@@ -173,7 +165,7 @@ private final class IOSUpdateClient: @unchecked Sendable {
     private var task: Task<Void,Never>?
     private var requestID = UUID()
     init() {
-        currentVersion = Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String ?? "—"
+        currentVersion = Bundle.main.object(forInfoDictionaryKey:"CodexioVersion") as? String ?? Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String ?? "—"
         client = IOSUpdateClient(current:currentVersion)
         cacheURL = FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask)[0].appendingPathComponent("Codexio/updates/ios-release.json")
         let url = cacheURL

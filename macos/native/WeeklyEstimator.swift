@@ -3,6 +3,8 @@ import SwiftUI
 
 final class WeeklyEstimator {
     let database: Database
+    private let limitID: String
+    private let intervalUsage: ((Double,Double)->(Int,Double,Bool))?
     private var anchor: Object?
     private var checkpoint: Object?
     private var latest: Object?
@@ -10,16 +12,17 @@ final class WeeklyEstimator {
     private var interval = 30
     private var cachedRows: [Object]?
     private var cachedPrices = ""
+    private var cachedAccount: String?
     private var databaseVersion: Int?
     private(set) var revision = 0
-    init(_ database: Database) throws {
-        self.database = database
+    init(_ database: Database, limitID: String = "codex", usage: ((Double,Double)->(Int,Double,Bool))? = nil) throws {
+        self.database = database; self.limitID = limitID; intervalUsage = usage
         try database.script("CREATE TABLE IF NOT EXISTS usage_week_intervals(id INTEGER PRIMARY KEY AUTOINCREMENT,end_at TEXT NOT NULL,data TEXT NOT NULL); CREATE INDEX IF NOT EXISTS week_intervals_end ON usage_week_intervals(end_at DESC,id DESC);")
     }
     func invalidate() { anchor = nil; checkpoint = nil; latest = nil; pending.removeAll() }
     func add(_ sample: Object, intervalMinutes: Int) {
         if interval != intervalMinutes { interval = intervalMinutes; invalidate() }
-        guard let stamp = sample.number("timestamp"), let used = sample.number("used_percent"), used >= 0, used <= 100, let reset = sample.number("reset_at"), reset > stamp, !sample.string("account_key").isEmpty, !sample.string("plan_type").isEmpty, sample.string("limit_id") == "codex" else { invalidate(); return }
+        guard let stamp = sample.number("timestamp"), let used = sample.number("used_percent"), used >= 0, used <= 100, let reset = sample.number("reset_at"), reset > stamp, !sample.string("account_key").isEmpty, !sample.string("plan_type").isEmpty, sample.string("limit_id") == limitID else { invalidate(); return }
         if let old = latest {
             let changed = ["account_key","plan_type","limit_id"].contains { old.string($0) != sample.string($0) } || old.flag("sole_codex_pool") != sample.flag("sole_codex_pool")
             if changed || abs(reset-(old.number("reset_at") ?? 0)) > 60 || stamp <= (old.number("timestamp") ?? 0) || stamp-(old.number("timestamp") ?? 0) > 600 { invalidate() }
@@ -28,6 +31,7 @@ final class WeeklyEstimator {
         if anchor == nil { anchor = sample; checkpoint = sample } else { pending.append(sample); if pending.count > 180 { pending.removeFirst(pending.count-180) } }
     }
     private func usage(_ calls: [UsageRow], start: Double,end: Double,sole: Bool) -> (Int,Double,Bool) {
+        if let intervalUsage {return intervalUsage(start,end)}
         var tokens = 0, dollars = 0.0, invalid = false
         for row in calls where row.local && ["openai","codexio-upstream"].contains(row.raw.string("provider")) {
             guard let stamp = row.date?.timeIntervalSince1970, stamp > start, stamp <= end else { continue }
@@ -37,7 +41,7 @@ final class WeeklyEstimator {
         }
         return (tokens,dollars,invalid)
     }
-    func process(calls: [UsageRow],priceVersion: String,now: Date = Date()) throws -> [Object] {
+    func process(calls: [UsageRow],priceVersion: String,now: Date = Date(),accountKey: String? = nil) throws -> [Object] {
         if let checkpoint, let start = anchor, let sample = pending.last(where:{ ($0.number("timestamp") ?? .infinity) <= now.timeIntervalSince1970-120 && ($0.number("timestamp") ?? 0)-(checkpoint.number("timestamp") ?? 0) >= Double(interval)*60 }) {
             self.checkpoint = sample
             let end = sample.number("timestamp") ?? 0, beginning = start.number("timestamp") ?? 0
@@ -47,15 +51,15 @@ final class WeeklyEstimator {
             if delta > 0 {
                 let (tokens,dollars,invalid) = usage(calls,start:beginning,end:end,sole:start.flag("sole_codex_pool"))
                 if !invalid && dollars > 0 {
-                    let row: Object = ["start":iso(Date(timeIntervalSince1970:beginning)),"end":iso(Date(timeIntervalSince1970:end)),"account_key":sample.string("account_key"),"plan_type":sample.string("plan_type"),"limit_id":"codex","reset_at":sample["reset_at"]!,"sole_codex_pool":start.flag("sole_codex_pool"),"start_percent":start["used_percent"]!,"end_percent":sample["used_percent"]!,"delta_percent":delta,"consumed_tokens":tokens,"consumed_usd":dollars,"estimated_total_usd":100*dollars/delta,"price_version":priceVersion]
+                    let row: Object = ["start":iso(Date(timeIntervalSince1970:beginning)),"end":iso(Date(timeIntervalSince1970:end)),"account_key":sample.string("account_key"),"plan_type":sample.string("plan_type"),"limit_id":limitID,"reset_at":sample["reset_at"]!,"sole_codex_pool":start.flag("sole_codex_pool"),"start_percent":start["used_percent"]!,"end_percent":sample["used_percent"]!,"delta_percent":delta,"consumed_tokens":tokens,"consumed_usd":dollars,"estimated_total_usd":100*dollars/delta,"price_version":priceVersion]
                     try database.run("INSERT INTO usage_week_intervals(end_at,data) VALUES(?,?)",[row.string("end"),jsonString(row)])
                     cachedRows = nil
                 }
             }
         }
         let version = try database.query("PRAGMA data_version").first?.integer("data_version")
-        if let cachedRows, cachedPrices == priceVersion, databaseVersion == version { return cachedRows }
-        let rows = try database.query("SELECT id,data FROM usage_week_intervals ORDER BY end_at DESC,id DESC LIMIT 10")
+        if let cachedRows, cachedPrices == priceVersion, databaseVersion == version, cachedAccount == accountKey { return cachedRows }
+        let rows = try database.query("SELECT id,data FROM usage_week_intervals"+(accountKey == nil ? "" : " WHERE json_extract(data,'$.account_key')=?")+" ORDER BY end_at DESC,id DESC LIMIT 10",accountKey.map {[$0]} ?? [])
         var result: [Object] = []
         for stored in rows {
             var row = jsonObject(Data(stored.string("data").utf8))
@@ -67,17 +71,19 @@ final class WeeklyEstimator {
             }
             row["id"] = stored["id"]; result.append(row)
         }
-        cachedRows = result; cachedPrices = priceVersion; databaseVersion = version; revision += 1
+        cachedRows = result; cachedPrices = priceVersion; cachedAccount = accountKey; databaseVersion = version; revision += 1
         return result
     }
 }
 
 struct EstimateHistoryView: View {
     @ObservedObject var state: AppState
+    var rows: [Object]? = nil
+    private var values: [Object] {rows ?? state.weeklyEstimates}
     var body: some View {
         LazyVStack(alignment:.leading,spacing:10) {
-            if state.weeklyEstimates.isEmpty { StatusNote(text:L("等待同一周期内足够的额度与本机消费记录", "Waiting for enough allowance and local usage records within one period")) }
-            ForEach(Array(state.weeklyEstimates.prefix(10)),id:\.estimateIdentity) { row in
+            if values.isEmpty { StatusNote(text:L("等待同一周期内足够的额度与本机消费记录", "Waiting for enough allowance and local usage records within one period")) }
+            ForEach(Array(values.prefix(10)),id:\.estimateIdentity) { row in
                 HStack {
                     Text(dateText(parsedDate(row["start"]))+" – "+dateText(parsedDate(row["end"]))).foregroundStyle(.secondary)
                     Spacer()

@@ -61,6 +61,10 @@ struct ClaudeOverviewView: View {
     var body: some View {
         ScrollView {
             VStack(alignment:.leading,spacing:22) {
+                AdaptiveRow(spacing:12) {
+                    QuotaCard(window:state.claudeQuota.five,title:L("5 小时额度", "5-hour limit"),fresh:state.claudeQuotaFresh,compactLayout:true)
+                    QuotaCard(window:state.claudeQuota.week,title:L("周额度", "Weekly limit"),fresh:state.claudeQuotaFresh,compactLayout:true)
+                }
                 if let warning = state.claudeWarning {StatusNote(text:warning)}
                 HStack {SectionHeading(title:L("用量", "Usage")); Spacer(); PeriodPicker(selection:$period).fixedSize()}
                 SummaryMetrics(summary:projection.value.summary)
@@ -90,33 +94,26 @@ struct ClaudeLogsView: View {
     @State private var through = Date()
     @State private var datesOpen = false
     @FocusState private var searchFocused: Bool
+    init(state: AppState) {
+        self.state = state
+        let saved = state.logFilters[.claudeCode] ?? LogFilterMemory()
+        _mode = State(initialValue:saved.mode); _period = State(initialValue:saved.period); _model = State(initialValue:saved.model)
+        _status = State(initialValue:saved.status); _query = State(initialValue:saved.query); _page = State(initialValue:saved.page)
+        _from = State(initialValue:saved.from); _through = State(initialValue:saved.through)
+    }
     private var fields: [String] {
-        let saved = state.preferences.analytics["native_log_columns"] as? [String] ?? LogFields.defaults
+        let saved = state.preferences.analytics["claude_log_columns"] as? [String] ?? LogFields.defaults
         return ["content"]+LogFields.all.filter {$0 != "content" && $0 != "details" && saved.contains($0)}+["details"]
     }
     private var filterKey: String {[mode,period,model,status,query,period == "custom" ? String(from.timeIntervalSince1970) : "",period == "custom" ? String(through.timeIntervalSince1970) : ""].joined(separator:"|")}
     private var key: String {"claude_code|logs|\(state.claudeRevision)|\(filterKey)|\(page)|\(TimeZone.current.identifier)"}
     private func load() {
         let queue = state.dataQueue, ledger = state.claudeLedger, range = UsageRange(period:period,from:from,through:through), mode = mode, model = model, status = status, query = query, page = page
-        projection.load(key:key,revision:state.claudeRevision) {queue.sync {(try? ledger.logPage(range:range,mode:mode,model:model,status:status,query:query,page:page)) ?? LogProjection()}}
+        projection.load(key:key,revision:state.claudeRevision) {queue.sync {(try? ledger.logPage(range:range,mode:mode,model:model,status:status == "unknown" ? "" : status,query:query,page:page)) ?? LogProjection()}}
     }
     var body: some View {
         VStack(alignment:.leading,spacing:14) {
-            HStack(spacing:10) {
-                PeriodPicker(selection:$period,custom:true,condensed:true)
-                if period == "custom" {Button {datesOpen = true} label:{Image(systemName:"calendar")}.popover(isPresented:$datesOpen) {DateRangeControls(from:$from,through:$through).padding(18).frame(width:360)}}
-                Spacer()
-                CompactFilterPicker(title:mode == "requests" ? L("用户请求", "User requests") : L("模型调用", "Model calls"),label:L("日志类型", "Log type"),selection:mode,items:[.init(id:"requests",title:L("用户请求", "User requests")),.init(id:"calls",title:L("模型调用", "Model calls"))],choose:{mode = $0}).frame(width:140)
-            }
-            HStack(spacing:10) {
-                CompactFilterPicker(title:model == "all" ? L("全部模型", "All models") : model,label:L("模型", "Model"),selection:model,items:[.init(id:"all",title:L("全部模型", "All models"))]+state.claudeModels.map {.init(id:$0,title:$0)},choose:{model = $0}).frame(width:170)
-                CompactFilterPicker(title:status == "all" ? L("全部状态", "All statuses") : status == "completed" ? L("已完成", "Completed") : status == "failed" ? L("失败", "Failed") : "—",label:L("状态", "Status"),selection:status,items:[.init(id:"all",title:L("全部状态", "All statuses")),.init(id:"completed",title:L("已完成", "Completed")),.init(id:"failed",title:L("失败", "Failed")),.init(id:"",title:"—")],choose:{status = $0}).frame(width:140)
-                TextField(L("搜索正文或摘要", "Search content or summaries"),text:$query).textFieldStyle(.roundedBorder).focused($searchFocused).frame(maxWidth:.infinity).frame(height:30)
-                Menu {ForEach(LogFields.all.filter {$0 != "content" && $0 != "details"},id:\.self) {field in Toggle(LogFields.title(field),isOn:Binding(get:{fields.contains(field)},set:{enabled in
-                    var values = Set(fields); if enabled {values.insert(field)} else {values.remove(field)}
-                    state.setPreference("native_log_columns",LogFields.all.filter {values.contains($0)})
-                }))}} label:{Image(systemName:"slider.horizontal.3")}.menuStyle(.borderlessButton).fixedSize().frame(width:30,height:30)
-            }
+            LogFilterBar(period:$period,mode:$mode,model:$model,status:$status,query:$query,from:$from,through:$through,models:state.claudeModels,fields:fields) {state.setPreference("claude_log_columns",$0)}
             if let warning = state.claudeWarning {StatusNote(text:warning)}
             // Reload when the asynchronous result arrives, not only when its query changes.
             CompactTable(columns:LogFields.columns(fields),rows:projection.value.rows.map {claudeGridRow($0,state:state,showYear:projection.value.showYear,timeOnly:period == "today")},revision:projection.value.revision.uuidString+period,preferences:state.preferences,storageKey:"claude-logs",scrollResetKey:filterKey+String(page))
@@ -128,6 +125,7 @@ struct ClaudeLogsView: View {
                 Button {page += 1} label:{Image(systemName:"chevron.right")}.disabled(page+1 >= projection.value.pages)
             }.font(.caption).foregroundStyle(.secondary)
         }.padding(.horizontal,PageLayout.inset).padding(.bottom,PageLayout.inset)
+            .onDisappear {state.logFilters[.claudeCode] = LogFilterMemory(mode:mode,period:period,model:model,status:status,query:query,page:page,from:from,through:through)}
             .onAppear(perform:load).onChange(of:key) {_,_ in load()}.onChange(of:filterKey) {_,_ in page = 0; load()}
             .onChange(of:projection.value.pages) {_,count in if page >= count {page = max(0,count-1)}}
             .onReceive(NotificationCenter.default.publisher(for:.init("CodexioSearch"))) {_ in searchFocused = true}
@@ -198,17 +196,18 @@ struct ClaudeRankingView: View {
     @State private var page = 0
     @State private var visible = 5
     @State private var expanded = Set<String>()
-    private var key: String {"claude_code|ranking|\(state.claudeRevision)|\(page)"}
+    @State private var sortMetric = "cost"
+    private var key: String {"claude_code|ranking|\(state.claudeRevision)|\(page)|\(sortMetric)"}
     private func load() {
-        let queue = state.dataQueue, ledger = state.claudeLedger, page = page
+        let queue = state.dataQueue, ledger = state.claudeLedger, page = page, sortMetric = sortMetric
         projection.load(key:key,revision:state.claudeRevision) {
-            let data = queue.sync {(try? ledger.ranking(page:page)) ?? [:]}
+            let data = queue.sync {(try? ledger.ranking(page:page,metric:sortMetric)) ?? [:]}
             return ClaudeRankingPage(rows:data.objects("threads"),pages:data.integer("pages") ?? 1,total:data.integer("total") ?? 0)
         }
     }
     var body: some View {
         VStack(alignment:.leading,spacing:20) {
-            HStack {SectionHeading(title:L("聊天用量排行", "Chat usage ranking")); Spacer(); Text(L("按 Token 排序", "Sort by tokens")).font(.system(size:12)).foregroundStyle(.secondary)}
+            HStack {SectionHeading(title:L("聊天用量排行", "Chat usage ranking")); Spacer(); Picker("",selection:$sortMetric) {Text(L("按费用排序", "Sort by cost")).tag("cost"); Text(L("按 Token 排序", "Sort by tokens")).tag("tokens")}.labelsHidden().frame(width:140)}
             if projection.value.rows.isEmpty {EmptyState(title:L("暂无 Claude 聊天记录", "No Claude chats yet"))}
             VStack(spacing:0) {
                 HStack {Text(L("聊天", "Chat")).frame(maxWidth:.infinity,alignment:.leading); Text(L("费用", "Cost")).frame(width:110); Text("Token").frame(width:120)}.font(.system(size:12)).foregroundStyle(.secondary).padding(18)
@@ -219,7 +218,7 @@ struct ClaudeRankingView: View {
                         HStack {
                             Image(systemName:expanded.contains(id) ? "chevron.down" : "chevron.right").font(.system(size:12)).foregroundStyle(.secondary)
                             Text(requestValueText(row.string("title"))).lineLimit(1).frame(maxWidth:.infinity,alignment:.leading)
-                            Text("—").frame(width:110); Text(compact(row.number("tokens"))).monospacedDigit().frame(width:120)
+                            Text(money(row.number("cost_usd"))).frame(width:110); Text(compact(row.number("tokens"))).monospacedDigit().frame(width:120)
                         }.font(.system(size:14)).padding(18).contentShape(Rectangle())
                     }.buttonStyle(.plain)
                     if expanded.contains(id) {ClaudeRankingDetails(state:state,id:id).padding(18)}
@@ -241,7 +240,7 @@ private struct ClaudeRankingDetails: View {
     var body: some View {
         VStack(alignment:.leading,spacing:12) {
             ForEach(Array(projection.value.enumerated()),id:\.offset) {_,row in
-                HStack {VStack(alignment:.leading,spacing:4) {Text(requestValueText(modelName(row.string("model")))); Text(logEffortName(row.string("effort"))+" · —").font(.caption).foregroundStyle(.secondary)}; Spacer(); Text("—").frame(width:110); Text(compact(row.number("tokens"))).frame(width:120)}
+                HStack {VStack(alignment:.leading,spacing:4) {Text(requestValueText(modelName(row.string("model")))); Text(logEffortName(row.string("effort"))+" · "+detailSpeedName(row.string("service_tier"))).font(.caption).foregroundStyle(.secondary)}; Spacer(); Text(money(row.number("cost_usd"))).frame(width:110); Text(compact(row.number("tokens"))).frame(width:120)}
             }
             HStack {Button {page = max(0,page-1)} label:{Image(systemName:"chevron.left")}.disabled(page == 0); Text("\(page+1)"); Button {page += 1} label:{Image(systemName:"chevron.right")}.disabled(projection.value.count < 25)}.font(.caption)
         }.onAppear(perform:load).onChange(of:key) {_,_ in load()}
@@ -287,9 +286,9 @@ struct ClaudeDetailView: View {
                 Text(dateText(row.date)).font(.caption).foregroundStyle(.secondary)
                 Divider()
                 field(L("模型", "Model"),requestValueText(modelName(row.raw.string("model"))))
-                field(L("响应返回模型", "Response model"),requestValueText(row.raw.string("upstream_model")))
+                field(L("响应返回模型", "Response model"),requestValueText(((row.raw["upstream_models"] as? [String] ?? [])+[row.raw.string("upstream_model")]).filter {!$0.isEmpty}.joined(separator:" · ")))
                 field(L("推理强度", "Reasoning"),logEffortName(row.raw.string("reasoning_effort")))
-                field(L("速度", "Speed"),"—"); field(L("费用", "Cost"),"—")
+                field(L("速度", "Speed"),detailSpeedName(row.raw.string("service_tier"))); field(L("费用", "Cost"),row.costText)
                 field(L("状态", "Status"),row.raw.string("status") == "failed" ? L("失败", "Failed") : row.raw.string("status") == "completed" ? L("已完成", "Completed") : "—")
                 field(L("耗时", "Duration"),durationText(row.duration))
                 field("TPS",outputRateText(row.outputTokensPerSecond,unit:"tokens/s")); field("TTFT",row.firstTokenSeconds.map {String(format:"%.2f",$0)+L(" 秒", " s")} ?? "—")

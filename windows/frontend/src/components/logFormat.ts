@@ -52,7 +52,7 @@ export function contextTokens(record:Row):number|null {
 
 export function requestMetadata(record: Row, query: Query, showYear?: boolean): string {
   const context = contextTokens(record);
-  const tier = record.client_kind==='claude_code'?'—':speed(record.service_tier);
+  const tier = speed(record.service_tier);
   return [logTime(record.timestamp,query,showYear), effort(record.reasoning_effort), ['Fast','Ultra Fast'].includes(tier) ? tier : '', context !== null ? compact(context,0) : ''].filter(Boolean).join(' · ');
 }
 

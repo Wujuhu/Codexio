@@ -6,12 +6,14 @@ struct PricingView: View {
     @State private var search = ""
     @State private var selected: String?
     @State private var editing = false
-    private var selectedModel: String? { state.prices.first {$0.id == selected}?.model }
-    private var filtered: [PriceRow] { PricingDisplayOrder.sorted(state.prices.filter {(state.modelIDs.isEmpty || state.modelIDs.contains($0.model)) && (search.isEmpty || $0.model.localizedCaseInsensitiveContains(search))}) }
+    private var isClaude: Bool {state.pageClient == .claudeCode}
+    private var prices: [PriceRow] {isClaude ? state.claudePrices : state.prices}
+    private var selectedModel: String? { prices.first {$0.id == selected}?.model }
+    private var filtered: [PriceRow] { PricingDisplayOrder.sorted(prices.filter {(isClaude || state.modelIDs.isEmpty || state.modelIDs.contains($0.model)) && (search.isEmpty || $0.model.localizedCaseInsensitiveContains(search))}) }
     var body: some View {
         VStack(alignment:.leading,spacing:20) {
-            HStack { StatusNote(text:L("美元 / 1M Token", "USD / 1M tokens")); Spacer(); Text(lastUpdateText(state.priceUpdated)).font(.caption).foregroundStyle(.secondary) }
-            if let warning = state.priceWarning { StatusNote(text:warning) }
+            HStack { StatusNote(text:L("美元 / 1M Token", "USD / 1M tokens")); Spacer(); Text(lastUpdateText(isClaude ? state.claudePriceUpdated : state.priceUpdated)).font(.caption).foregroundStyle(.secondary) }
+            if let warning = isClaude ? state.claudePriceWarning : state.priceWarning { StatusNote(text:warning) }
             AdaptiveRow(spacing:8) {
                 TextField(L("搜索模型", "Search models"),text:$search).textFieldStyle(.roundedBorder)
                 Button(L("编辑基础价", "Edit base price")) { editing = true }.disabled(selectedModel == nil)
@@ -22,15 +24,15 @@ struct PricingView: View {
                 GridColumn(id:"condition",title:L("条件", "Condition"),width:138,maximum:166,alignment:.center),
                 GridColumn(id:"input",title:L("输入", "Input"),width:104,maximum:122,alignment:.center),
                 GridColumn(id:"cache_read",title:L("缓存读取", "Cached input"),width:104,maximum:122,alignment:.center),
-                GridColumn(id:"cache_write",title:L("缓存写入", "Cache write"),width:104,maximum:122,alignment:.center),
-                GridColumn(id:"output",title:L("输出", "Output"),width:104,maximum:122,alignment:.center)
-            ],rows:filtered.map { row in GridRow(id:row.id,text: { column in
+                GridColumn(id:"cache_write",title:isClaude ? L("缓存写入 5 分钟", "Cache write 5 minutes") : L("缓存写入", "Cache write"),width:104,maximum:122,alignment:.center)
+            ] + (isClaude ? [GridColumn(id:"cache_write_1h",title:L("缓存写入 1 小时", "Cache write 1 hour"),width:112,alignment:.center)] : []) + [GridColumn(id:"output",title:L("输出", "Output"),width:104,maximum:122,alignment:.center)],rows:filtered.map { row in GridRow(id:row.id,text: { column in
                 if column == "model" { return GridText(main:row.model) }
+                if column == "condition" && isClaude {return GridText(main:"Standard"+(row.model == "claude-haiku-5-5" ? ((row.raw.integer("threshold") ?? 0)>0 ? " · >100K" : " · ≤100K") : ""))}
                 if column == "condition" { return GridText(main:(["default":"Standard","priority":"Fast","ultrafast":"Ultra Fast"][row.raw.string("service_tier")] ?? "—")+((row.raw.integer("threshold") ?? 0) > 0 ? " >272K" : "")) }
-                return GridText(main:money(row.raw.number(column)))
-            }) },revision:state.pricesRevision+search+state.modelIDs.sorted().joined(separator:","),rowHeight:30,selection:$selected,preferences:state.preferences,storageKey:"pricing")
+                return GridText(main:isClaude ? row.raw.number(column).map {"$"+$0.formatted(.number.locale(Locale(identifier:"en_US")).precision(.fractionLength(2...4)))} ?? "—" : money(row.raw.number(column)))
+            }) },revision:(isClaude ? state.claudePricesRevision : state.pricesRevision)+search+state.modelIDs.sorted().joined(separator:","),rowHeight:30,selection:$selected,preferences:state.preferences,storageKey:isClaude ? "claude-pricing" : "pricing")
                 .overlay(RoundedRectangle(cornerRadius:10).stroke(.secondary.opacity(0.16)))
-        }.padding(.horizontal,PageLayout.inset).padding(.bottom,PageLayout.inset).sheet(isPresented:$editing) { if let model = selectedModel { PriceEditor(state:state,model:model) } }
+        }.padding(.horizontal,PageLayout.inset).padding(.bottom,PageLayout.inset).onChange(of:state.pageClient) {_,_ in selected = nil; search = ""}.sheet(isPresented:$editing) { if let model = selectedModel { PriceEditor(state:state,model:model) } }
     }
 }
 
@@ -45,18 +47,19 @@ struct PriceEditor: View {
             Text(model).font(.title2)
             StatusNote(text:L("编辑 Standard 基础价 · 美元 / 1M Token", "Edit Standard base prices · USD / 1M tokens"))
             Form {
-                field("input",L("输入", "Input")); field("cache_read",L("缓存读取", "Cached input")); field("cache_write",L("缓存写入", "Cache write")); field("output",L("输出", "Output"))
+                field("input",L("输入", "Input")); field("cache_read",L("缓存读取", "Cached input")); field("cache_write",state.pageClient == .claudeCode ? L("缓存写入 5 分钟", "Cache write 5 minutes") : L("缓存写入", "Cache write")); if state.pageClient == .claudeCode {field("cache_write_1h",L("缓存写入 1 小时", "Cache write 1 hour"))}; field("output",L("输出", "Output"))
             }
             if !error.isEmpty { Text(error).font(.caption).foregroundStyle(.red) }
             HStack { Spacer(); Button(L("取消", "Cancel")) { dismiss() }; Button(L("保存", "Save")) { save() }.keyboardShortcut(.defaultAction) }
         }.padding(26).frame(width:460).onAppear {
-            if let row = state.prices.first(where:{$0.model == model && $0.raw.string("service_tier") == "default" && $0.raw.integer("threshold") == 0}) { let base = row.raw.object("base_rates").isEmpty ? row.raw : row.raw.object("base_rates"); for key in Array(values.keys) { values[key] = base.number(key).map {String($0)} ?? "" } }
+            if let row = (state.pageClient == .claudeCode ? state.claudePrices : state.prices).first(where:{$0.model == model && $0.raw.string("service_tier") == "default" && $0.raw.integer("threshold") == 0}) { let base = row.raw.object("base_rates").isEmpty ? row.raw : row.raw.object("base_rates"); for key in priceKeys { values[key] = base.number(key).map {String($0)} ?? "" } }
         }
     }
+    private var priceKeys: [String] {["input","cache_read","cache_write"]+(state.pageClient == .claudeCode ? ["cache_write_1h"] : [])+["output"]}
     private func field(_ key: String,_ title: String) -> some View { TextField(title,text:Binding(get:{values[key] ?? ""},set:{values[key] = $0})) }
     private func save() {
         var result: Object = [:]
-        for key in ["input","cache_read","cache_write","output"] {
+        for key in priceKeys {
             let text = values[key] ?? ""
             if text.isEmpty && key.hasPrefix("cache_") { result[key] = NSNull(); continue }
             guard let amount = Double(text), amount.isFinite, amount >= 0 else { error = L("请输入有限的非负单价", "Enter finite, nonnegative prices"); return }

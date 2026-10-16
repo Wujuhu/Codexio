@@ -28,6 +28,10 @@ struct UsageRow: Identifiable {
         confirmedCall = ["","response","legacy_last"].contains(quality) || (quality == "cumulative_delta" && id.hasPrefix("response:"))
         inputTokens = raw.integer("input_tokens"); cachedTokens = raw.integer("cached_input_tokens"); outputTokens = raw.integer("output_tokens")
     }
+    var costText: String {
+        let text = money(cost)
+        return cost != nil && raw.string("client_kind") == "claude_code" && raw.string("pricing_status") == "estimated" ? "≈"+text : text
+    }
     var title: String {
         if RequestClassification.isApproval(raw) { return L("自动审批审查", "Automatic approval review") }
         if raw.string("record_kind") == "context_compaction" { return L("上下文压缩", "Context compaction") }

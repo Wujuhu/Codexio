@@ -10,6 +10,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 from codexio.updates import UpdateError, version_tuple
+from codexio.versions import AppVersion
 
 APP_ARCHIVE_NAME = "Codexio.app.zip"
 BUNDLE_NAME = "Codexio.app"
@@ -58,8 +59,11 @@ def _members(archive, version):
         raise UpdateError("APP 应用信息无效")
     actual = info.get("CFBundleShortVersionString")
     version_tuple(actual)
+    full = info.get("CodexioVersion", actual)
+    parsed = AppVersion.parse(full)
     if (info.get("CFBundleIdentifier") != BUNDLE_ID or info.get("CFBundleExecutable") != "Codexio"
-            or info.get("CFBundleVersion") != actual or (version is not None and actual != version)):
+            or info.get("CFBundleVersion") != actual or parsed.numeric != actual
+            or (version is not None and full != version)):
         raise UpdateError("APP 版本或标识与更新清单不一致")
     return entries
 

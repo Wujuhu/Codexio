@@ -7,7 +7,7 @@
  export let onselect:(r:Row)=>void=()=>{};
 
  let hover:{row:Row,index:number,x:number,y:number}|null=null;
- $: series=clientKind==='claude_code'?[['tokens','总 Token']]:[['tokens','总 Token'],['usd','费用']];
+ $: series=[['tokens','总 Token'],['usd','费用']];
  const colors:Record<string,string>={tokens:'var(--plot-token)',usd:'var(--plot-cost)',user_requests:'var(--output)'};
  function dateOf(r:Row):Date|null {
    const raw=String(r.timestamp??r.date??'');
@@ -19,7 +19,7 @@
  // Go owns empty-bucket versus unknown-value meaning; rendering never infers it.
  $: items=rows(data).slice(-800);
  $: {data;clientKind;hover=null;}
- function value(r:Row,k:string){return number(k==='usd'?(clientKind==='claude_code'?null:r.usd??r.cost_usd):r[k]);}
+ function value(r:Row,k:string){return number(k==='usd'?(r.usd??r.cost_usd):r[k]);}
  $: maxima=Object.fromEntries(series.map(([k])=>[k,Math.max(k==='usd'?.01:1,...items.map(r=>Math.max(0,value(r,k)??0)))]));
  $: firstTime=items.length?dateOf(items[0])?.getTime():undefined;
  $: lastTime=items.length?dateOf(items[items.length-1])?.getTime():undefined;
@@ -37,8 +37,8 @@
 
 <section class="surface chart-panel">
  {#if title}<div class="row chart-heading"><h3>{tr(title)}</h3></div>{/if}
- <div class="plot-scale"><span>{compact(maxima.tokens)} Token</span>{#if clientKind!=='claude_code'&&items.some(row=>value(row,'usd')!==null)}<span>{axisCost(maxima.usd)}</span>{/if}</div>
- <svg class="usage-plot" viewBox="0 0 770 170" preserveAspectRatio="none" role="img" aria-label={tr(title||(clientKind==='claude_code'?'Token 趋势':'Token 和费用趋势'))}>
+ <div class="plot-scale"><span>{compact(maxima.tokens)} Token</span>{#if items.some(row=>value(row,'usd')!==null)}<span>{axisCost(maxima.usd)}</span>{/if}</div>
+ <svg class="usage-plot" viewBox="0 0 770 170" preserveAspectRatio="none" role="img" aria-label={tr(title||'Token 和费用趋势')}>
   <path d="M3.1 3.1H766.9 M3.1 57.7H766.9 M3.1 112.3H766.9 M3.1 166.9H766.9" stroke="var(--grid)" fill="none" stroke-width="0.5" vector-effect="non-scaling-stroke"/>
   {#each plots as plot}<path d={plot.d} fill="none" stroke={colors[plot.key]} stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>{#each plot.points as point}<circle cx={point.x} cy={point.y} r={plot.key==='tokens'?3.5:2.5} fill={colors[plot.key]}/>{/each}{/each}
   {#if hover}<line x1={positions[hover.index]} x2={positions[hover.index]} y1="3.1" y2="166.9" stroke="var(--muted)" stroke-opacity=".4" pointer-events="none"/>{/if}

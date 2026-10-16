@@ -895,7 +895,7 @@ func (m *metricSum) row() Row {
 		r["cache_input_tokens"] = nil
 		r["cache_read_tokens"] = nil
 	}
-	if m.valid["usd"] > 0 {
+	if m.valid["usd"] > 0 && (!m.strict || m.unpriced == 0) {
 		r["usd"] = m.cost
 	}
 	if m.cacheInput > 0 && (!m.strict || m.cacheValid == m.records) {

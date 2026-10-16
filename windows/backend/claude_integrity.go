@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+var claudeUsageFields = append(append([]string{}, tokenFields...), "raw_input_tokens", "cache_write_5m_tokens", "cache_write_1h_tokens")
+
 func mergeClaudeUsage(old, incoming Row) Row {
 	r := CloneRow(incoming)
 	oldFinalFacts, newFinalFacts := claudeTerminalFacts(old), claudeTerminalFacts(incoming)
@@ -18,7 +20,7 @@ func mergeClaudeUsage(old, incoming Row) Row {
 	oldZero, newZero := ValueBool(old["usage_zero"]), ValueBool(incoming["usage_zero"])
 	same := true
 	oldPositive := false
-	for _, field := range tokenFields {
+	for _, field := range claudeUsageFields {
 		prior, priorKnown := knownCount(oldFinalFacts[field])
 		next, nextKnown := knownCount(newFinalFacts[field])
 		if priorKnown && nextKnown && prior != next {
@@ -45,7 +47,7 @@ func mergeClaudeUsage(old, incoming Row) Row {
 		replace = false
 	}
 	if !replace {
-		for _, field := range append(append([]string{}, tokenFields...), "raw_input_tokens") {
+		for _, field := range claudeUsageFields {
 			if _, ok := knownCount(old[field]); ok {
 				if _, incomingKnown := knownCount(incoming[field]); !incomingKnown || !newTerminal || oldTerminal {
 					r[field] = old[field]
@@ -67,7 +69,7 @@ func mergeClaudeUsage(old, incoming Row) Row {
 			}
 		}
 	}
-	for _, field := range append(append([]string{}, tokenFields...), "raw_input_tokens") {
+	for _, field := range claudeUsageFields {
 		if _, known := knownCount(r[field]); !known {
 			if _, oldKnown := knownCount(old[field]); oldKnown {
 				r[field] = old[field]
@@ -105,7 +107,7 @@ func mergeClaudeUsage(old, incoming Row) Row {
 	if dataString(r, "claude_request_id") == "" {
 		r["claude_request_id"] = old["claude_request_id"]
 	}
-	for _, field := range []string{"prompt_preview", "output_preview", "model", "returned_model", "upstream_model", "requested_model", "reasoning_effort"} {
+	for _, field := range []string{"prompt_preview", "output_preview", "model", "returned_model", "upstream_model", "requested_model", "reasoning_effort", "service_tier", "auth_mode", "billing_source"} {
 		if r[field] == nil || r[field] == "" {
 			r[field] = old[field]
 		}
@@ -406,7 +408,7 @@ func claudeTerminalFacts(r Row) Row {
 	for _, field := range ValueStrings(r["final_missing_fields"]) {
 		missing[field] = true
 	}
-	for _, field := range append(append([]string{}, tokenFields...), "raw_input_tokens") {
+	for _, field := range claudeUsageFields {
 		if missing[field] || field == "reasoning_output_tokens" {
 			continue
 		}

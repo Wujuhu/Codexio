@@ -4,7 +4,7 @@ struct ModelShareCard: View {
     let projection: TrendProjection
     let client: DesktopClient
     @State private var metric: Int
-    init(projection: TrendProjection,client: DesktopClient = .codex) {self.projection = projection; self.client = client; _metric = State(initialValue:client == .claudeCode ? 1 : 0)}
+    init(projection: TrendProjection,client: DesktopClient = .codex) {self.projection = projection; self.client = client; _metric = State(initialValue:0)}
     @State private var visible = 5
     nonisolated static func amount(_ value: MobileMetric,_ index: Int) -> Double { index == 0 ? value.cost ?? 0 : index == 1 ? Double(value.tokens ?? 0) : Double(value.requests) }
     private func share(_ value: MobileMetric,_ index: Int) -> Double {
@@ -14,7 +14,7 @@ struct ModelShareCard: View {
     private var names: [String] {[L("费用", "Cost"),"Token",L("请求", "Requests")]}
     var body: some View {
         VStack(alignment:.leading,spacing:16) {
-            HStack { SectionHeading(title:L("模型占比", "Model share")); Spacer(); Picker("",selection:$metric) {ForEach(client == .claudeCode ? [1,2] : [0,1,2],id:\.self) {Text(names[$0]).tag($0)}}.labelsHidden().pickerStyle(.segmented).frame(width:210) }
+            HStack { SectionHeading(title:L("模型占比", "Model share")); Spacer(); Picker("",selection:$metric) {ForEach([0,1,2],id:\.self) {Text(names[$0]).tag($0)}}.labelsHidden().pickerStyle(.segmented).frame(width:210) }
             if projection.modelRows[metric].isEmpty {Text(L("暂无单模型数据", "No single-model data")).foregroundStyle(.secondary).font(.caption)}
             ForEach(Array(projection.modelRows[metric].prefix(visible))) { model in
                 VStack(alignment:.leading,spacing:8) {

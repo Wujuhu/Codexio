@@ -18,15 +18,20 @@ type RollingEstimator struct {
 	interval                   int64
 	priceVersion               string
 	changed                    func()
+	limitID                    string
 }
 
-func NewRollingEstimator(store *Store, config func() Row, changed func()) (*RollingEstimator, error) {
+func NewRollingEstimator(store *Store, config func() Row, changed func(), limits ...string) (*RollingEstimator, error) {
 	_, err := store.db.Exec(`CREATE TABLE IF NOT EXISTS usage_week_intervals(id INTEGER PRIMARY KEY AUTOINCREMENT,end_at TEXT NOT NULL,data TEXT NOT NULL);
 	CREATE INDEX IF NOT EXISTS week_intervals_end ON usage_week_intervals(end_at DESC,id DESC)`)
 	if err != nil {
 		return nil, err
 	}
-	return &RollingEstimator{store: store, config: config, changed: changed}, nil
+	limit := "codex"
+	if len(limits) > 0 {
+		limit = limits[0]
+	}
+	return &RollingEstimator{store: store, config: config, changed: changed, limitID: limit}, nil
 }
 
 func (e *RollingEstimator) invalidate() {
@@ -51,7 +56,7 @@ func (e *RollingEstimator) Sample(quota Row) {
 	used, uok := ValueFloat(w["used_percent"])
 	reset, rok := ParseStamp(w["resets_at"])
 	account, plan, limit := ValueString(quota["account_key"]), ValueString(quota["plan_type"]), ValueString(quota["limit_id"])
-	if ValueString(quota["status"]) != "ok" || !ok || !uok || used < 0 || used > 100 || !rok || !reset.After(stamp) || account == "" || plan == "" || plan == "unknown" || plan == "legacy" || limit != "codex" {
+	if ValueString(quota["status"]) != "ok" || !ok || !uok || used < 0 || used > 100 || !rok || !reset.After(stamp) || account == "" || plan == "" || plan == "unknown" || plan == "legacy" || limit != e.limitID {
 		e.invalidate()
 		return
 	}
@@ -123,7 +128,7 @@ func (e *RollingEstimator) process(now time.Time) {
 	if err != nil || invalid || dollars <= 0 {
 		return
 	}
-	r := Row{"start": UTCStamp(startAt), "end": UTCStamp(endAt), "account_key": sample["account_key"], "plan_type": sample["plan_type"], "limit_id": "codex", "reset_at": sample["reset_at"], "sole_codex_pool": start["sole_codex_pool"], "start_percent": startPercent, "end_percent": endPercent, "delta_percent": delta, "consumed_tokens": tokens, "consumed_usd": dollars, "estimated_total_usd": 100 * dollars / delta, "price_version": version}
+	r := Row{"start": UTCStamp(startAt), "end": UTCStamp(endAt), "account_key": sample["account_key"], "plan_type": sample["plan_type"], "limit_id": e.limitID, "reset_at": sample["reset_at"], "sole_codex_pool": start["sole_codex_pool"], "start_percent": startPercent, "end_percent": endPercent, "delta_percent": delta, "consumed_tokens": tokens, "consumed_usd": dollars, "estimated_total_usd": 100 * dollars / delta, "price_version": version}
 	b, _ := json.Marshal(r)
 	tx, err := e.store.db.Begin()
 	if err != nil {
@@ -139,6 +144,33 @@ func (e *RollingEstimator) process(now time.Time) {
 }
 
 func (e *RollingEstimator) usage(start, end time.Time, sole bool) (int64, float64, bool, error) {
+	if e.limitID == "claude" {
+		rows, err := e.store.db.Query(`SELECT data FROM usage_priced_calls WHERE timestamp>? AND timestamp<=? AND json_extract(data,'$.client_kind')='claude_code' AND coalesce(json_extract(data,'$.service_tier'),'') NOT IN ('priority','fast') AND coalesce(json_extract(data,'$.auth_mode'),'') NOT IN ('api','api_key','apikey') AND coalesce(json_extract(data,'$.billing_source'),'') NOT IN ('credits','api','api_key','usage_credits')`, ledgerStamp(start), ledgerStamp(end))
+		if err != nil {
+			return 0, 0, true, err
+		}
+		defer rows.Close()
+		var tokens int64
+		var cost float64
+		invalid := false
+		for rows.Next() {
+			var raw string
+			if err = rows.Scan(&raw); err != nil {
+				return 0, 0, true, err
+			}
+			r := dataRow(raw)
+			n, known := knownCount(r["total_tokens"])
+			amount, priced := ValueFloat(r["cost_usd"])
+			if !known || !priced {
+				invalid = true
+				continue
+			}
+			tokens += n
+			cost += amount
+		}
+		return tokens, cost, invalid, rows.Err()
+	}
+
 	rows, err := e.store.db.Query(`SELECT data FROM usage_priced_calls c WHERE timestamp>? AND timestamp<=? AND coalesce(json_extract(c.data,'$.client_kind'),'codex')='codex' AND EXISTS(SELECT 1 FROM usage_query_sources s WHERE s.record_id=c.id AND (s.source_id='local' OR s.source_id LIKE 'local:%')) ORDER BY timestamp,id`, ledgerStamp(start), ledgerStamp(end))
 	if err != nil {
 		return 0, 0, true, err
@@ -183,7 +215,7 @@ func (e *RollingEstimator) usage(start, end time.Time, sole bool) (int64, float6
 }
 
 func (e *RollingEstimator) reprice(version string) error {
-	rows, err := e.store.db.Query("SELECT id,data FROM usage_week_intervals ORDER BY end_at DESC,id DESC")
+	rows, err := e.store.db.Query("SELECT id,data FROM usage_week_intervals WHERE coalesce(json_extract(data,'$.limit_id'),'codex')=? ORDER BY end_at DESC,id DESC", e.limitID)
 	if err != nil {
 		return err
 	}
@@ -242,7 +274,7 @@ func (e *RollingEstimator) Rows(account string) []Row {
 	if account == "" {
 		return []Row{}
 	}
-	rows, err := e.store.db.Query("SELECT data FROM usage_week_intervals WHERE json_extract(data,'$.account_key')=? ORDER BY end_at DESC,id DESC LIMIT 20", account)
+	rows, err := e.store.db.Query("SELECT data FROM usage_week_intervals WHERE json_extract(data,'$.account_key')=? AND coalesce(json_extract(data,'$.limit_id'),'codex')=? ORDER BY end_at DESC,id DESC LIMIT 20", account, e.limitID)
 	if err != nil {
 		return []Row{}
 	}

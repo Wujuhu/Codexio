@@ -28,6 +28,12 @@ type Store struct {
 	lastScanDisplay         string
 	prices                  []Row
 	priceVersion            string
+	codexPriceVersion       string
+	claudePrices            []Row
+	claudePriceVersion      string
+	claudePriceStatus       Row
+	claudeAliases           Row
+	claudePricingStamp      string
 	priceStatus             Row
 	generation              atomic.Int64
 	refresh                 chan bool
@@ -279,6 +285,7 @@ func (s *Store) Run(ctx context.Context, changed func()) {
 			e = errors.Join(e, s.collectClaude(ctx, force))
 			if e == nil {
 				_ = s.syncPrices(ctx, false)
+				_ = s.syncClaudePrices(ctx, false)
 			}
 		}
 		// Successful file transactions must be visible even when another file

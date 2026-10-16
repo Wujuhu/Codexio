@@ -24,7 +24,7 @@ import (
 const systemLatestManifest = "https://github.com/Wujuhu/Codexio/releases/latest/download/latest.json"
 const systemMaxUpdateBytes int64 = 512 << 20
 
-var systemVersionPattern = regexp.MustCompile(`^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$`)
+var systemVersionPattern = regexp.MustCompile(`^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$`)
 var systemDigestPattern = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
 var systemJobPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
@@ -230,32 +230,91 @@ func (u *Updater) Check(ctx context.Context) (Row, error) {
 	u.publish("error", 0, "GitHub 返回了无效的版本信息")
 	return u.Snapshot(), errors.New("GitHub 返回了无效的版本信息")
 }
-func systemVersion(v string) ([3]int, error) {
-	var numbers [3]int
-	if len(v) > 18 {
-		return numbers, errors.New("版本号无效")
+
+type systemAppVersion struct {
+	numbers [3]int
+	pre     []string
+	text    string
+}
+
+func systemVersion(v string) (systemAppVersion, error) {
+	var parsed systemAppVersion
+	if len(v) > 128 {
+		return parsed, errors.New("版本号无效")
 	}
 	matches := systemVersionPattern.FindStringSubmatch(v)
-	if len(matches) != 4 {
-		return numbers, errors.New("版本号必须为三段数字")
+	if len(matches) != 6 {
+		return parsed, errors.New("版本号无效")
 	}
-	for i := range numbers {
+	for i := range parsed.numbers {
 		n, e := strconv.Atoi(matches[i+1])
 		if e != nil || n > 65535 {
-			return numbers, errors.New("版本号超出 Windows 支持范围")
+			return parsed, errors.New("版本号超出 Windows 支持范围")
 		}
-		numbers[i] = n
+		parsed.numbers[i] = n
 	}
-	return numbers, nil
+	if matches[4] != "" {
+		parsed.pre = strings.Split(matches[4], ".")
+		for _, part := range parsed.pre {
+			if systemVersionDigits(part) && len(part) > 1 && part[0] == '0' {
+				return parsed, errors.New("预发布序号不能含前导零")
+			}
+		}
+	}
+	parsed.text = strings.TrimPrefix(v, "v")
+	return parsed, nil
 }
-func systemCompareVersion(a, b [3]int) int {
-	for i := range a {
-		if a[i] < b[i] {
+func systemVersionDigits(v string) bool {
+	for _, c := range v {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return v != ""
+}
+func systemCompareVersion(a, b systemAppVersion) int {
+	for i := range a.numbers {
+		if a.numbers[i] < b.numbers[i] {
 			return -1
 		}
-		if a[i] > b[i] {
+		if a.numbers[i] > b.numbers[i] {
 			return 1
 		}
+	}
+	if len(a.pre) == 0 && len(b.pre) > 0 {
+		return 1
+	}
+	if len(a.pre) > 0 && len(b.pre) == 0 {
+		return -1
+	}
+	for i := 0; i < len(a.pre) && i < len(b.pre); i++ {
+		left, right := a.pre[i], b.pre[i]
+		if left == right {
+			continue
+		}
+		ld, rd := systemVersionDigits(left), systemVersionDigits(right)
+		if ld != rd {
+			if ld {
+				return -1
+			}
+			return 1
+		}
+		if ld && len(left) != len(right) {
+			if len(left) < len(right) {
+				return -1
+			}
+			return 1
+		}
+		if left < right {
+			return -1
+		}
+		return 1
+	}
+	if len(a.pre) < len(b.pre) {
+		return -1
+	}
+	if len(a.pre) > len(b.pre) {
+		return 1
 	}
 	return 0
 }
@@ -264,6 +323,9 @@ func systemManifestRelease(m Row, current string) (*systemRelease, error) {
 	if e != nil {
 		return nil, e
 	}
+	if len(n.pre) > 0 {
+		return nil, nil
+	}
 	old, e := systemVersion(current)
 	if e != nil {
 		return nil, e
@@ -271,7 +333,7 @@ func systemManifestRelease(m Row, current string) (*systemRelease, error) {
 	if systemCompareVersion(n, old) <= 0 {
 		return nil, nil
 	}
-	version := fmt.Sprintf("%d.%d.%d", n[0], n[1], n[2])
+	version := n.text
 	expected := "https://github.com/Wujuhu/Codexio/releases/download/v" + version + "/Codexio.exe"
 	if ValueString(m["url"]) != expected {
 		return nil, errors.New("更新文件不属于指定的 GitHub 发布版本")

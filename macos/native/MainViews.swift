@@ -25,8 +25,8 @@ struct MainView: View {
                 HStack(spacing:18) {
                     Button { state.toggleSidebar() } label: { Image(systemName:"sidebar.left") }.buttonStyle(.plain).accessibilityLabel(L("切换侧边栏", "Toggle sidebar"))
                     Spacer()
-                    if ["overview","logs","trends"].contains(state.selectedPage) { ClientSwitcher(state:state) }
-                    FetchRefreshControls(activity:state.fetchActivity,clock:state.pageClient == .claudeCode && ["overview","logs","trends"].contains(state.selectedPage) ? state.claudeClock : state.clock,openReport:{state.onOpenUsageReport?()}) {state.refresh()}
+                    if ["overview","logs","trends","subscription","pricing"].contains(state.selectedPage) { ClientSwitcher(state:state) }
+                    FetchRefreshControls(activity:state.fetchActivity,clock:state.pageClient == .claudeCode && ["overview","logs","trends","subscription","pricing"].contains(state.selectedPage) ? (state.selectedPage == "subscription" ? state.claudeQuotaClock : state.claudeClock) : state.clock,openReport:{state.onOpenUsageReport?()}) {state.refresh()}
                 }.padding(.horizontal,PageLayout.inset).frame(height:48)
                 Divider()
                 HStack(alignment:.firstTextBaseline) {
@@ -45,14 +45,14 @@ struct MainView: View {
         }
         .background(Color(nsColor:.windowBackgroundColor))
         .preferredColorScheme(state.theme == "dark" ? .dark : state.theme == "light" ? .light : nil)
-        .onChange(of:state.selectedPage) { _,page in if page == "subscription" || (page == "trends" && state.pageClient == .codex && state.usageSection == "threads") { state.refreshReports() } }
+        .onChange(of:state.selectedPage) { _,page in if state.pageClient == .codex && (page == "subscription" || (page == "trends" && state.usageSection == "threads")) { state.refreshReports() } }
     }
     @ViewBuilder private var page: some View {
         switch state.selectedPage {
         case "overview": if state.pageClient == .claudeCode { ClaudeOverviewView(state:state) } else { OverviewView(state:state) }
         case "logs": if state.pageClient == .claudeCode { ClaudeLogsView(state:state) } else { LogsView(state:state) }
         case "trends": if state.pageClient == .claudeCode { ClaudeUsageView(state:state) } else { UsageView(state:state) }
-        case "subscription": SubscriptionView(state:state)
+        case "subscription": if state.pageClient == .claudeCode {ClaudeSubscriptionView(state:state)} else {SubscriptionView(state:state)}
         case "pricing": PricingView(state:state)
         default: SettingsView(state:state)
         }
@@ -218,46 +218,35 @@ struct LogsView: View {
     @State private var query = ""
     @State private var page = 0
     @State private var status = "all"
-    @State private var tier = "all"
     @State private var from = Calendar.current.date(byAdding:.day,value:-6,to:Date())!
     @State private var through = Date()
     @FocusState private var searchFocused: Bool
     @State private var datesOpen = false
-    init(state: AppState) { self.state = state; projection = state.logProjection }
+    init(state: AppState) {
+        self.state = state; projection = state.logProjection
+        let saved = state.logFilters[.codex] ?? LogFilterMemory()
+        _mode = State(initialValue:saved.mode); _period = State(initialValue:saved.period); _model = State(initialValue:saved.model)
+        _status = State(initialValue:saved.status); _query = State(initialValue:saved.query); _page = State(initialValue:saved.page)
+        _from = State(initialValue:saved.from); _through = State(initialValue:saved.through)
+    }
     private var fields: [String] {
         let saved = state.preferences.analytics["native_log_columns"] as? [String] ?? LogFields.defaults
         return ["content"]+LogFields.all.filter {$0 != "content" && $0 != "details" && saved.contains($0)}+["details"]
     }
-    private var filterKey: String { [mode,period,model,tier,status,query,period == "custom" ? String(Calendar.current.startOfDay(for:from).timeIntervalSince1970) : "",period == "custom" ? String(Calendar.current.startOfDay(for:through).timeIntervalSince1970) : ""].joined(separator:"|") }
+    private var filterKey: String { [mode,period,model,status,query,period == "custom" ? String(Calendar.current.startOfDay(for:from).timeIntervalSince1970) : "",period == "custom" ? String(Calendar.current.startOfDay(for:through).timeIntervalSince1970) : ""].joined(separator:"|") }
     private var key: String { state.usage.revision.uuidString+filterKey+String(page) }
     private func load() {
         let snapshot = state.usage, range = UsageRange(period:period,from:from,through:through)
-        let mode = mode, model = model, tier = tier, status = status, query = query, page = page, filterKey = filterKey
-        projection.load(key:key,revision:snapshot.revision) { LogProjection.build(snapshot,range:range,mode:mode,model:model,tier:tier,status:status,query:query,page:page,filterKey:filterKey) }
+        let mode = mode, model = model, status = status, query = query, page = page, filterKey = filterKey
+        projection.load(key:key,revision:snapshot.revision) { LogProjection.build(snapshot,range:range,mode:mode,model:model,tier:"all",status:status,query:query,page:page,filterKey:filterKey) }
     }
     private func toggle(_ key: String,_ enabled: Bool) {
         var values = Set(fields); if enabled { values.insert(key) } else { values.remove(key) }
         state.setPreference("native_log_columns",LogFields.all.filter {values.contains($0)})
     }
-    private var modePicker: some View {
-        Picker("",selection:$mode) { Text(L("用户请求", "User requests")).tag("requests"); Text(L("模型调用", "Model calls")).tag("calls") }.labelsHidden()
-    }
     var body: some View {
         VStack(alignment:.leading,spacing:14) {
-            HStack(spacing:10) {
-                PeriodPicker(selection:$period,custom:true,condensed:true)
-                if period == "custom" { Button {datesOpen=true} label:{Image(systemName:"calendar")}.popover(isPresented:$datesOpen) {DateRangeControls(from:$from,through:$through).padding(18).frame(width:360)} }
-                Spacer(minLength:4)
-                if compact { modePicker.pickerStyle(.menu).fixedSize() }
-                else { modePicker.pickerStyle(.segmented).fixedSize() }
-                Menu(L("显示字段", "Columns")) {
-                    ForEach(LogFields.all.filter {$0 != "content" && $0 != "details"},id:\.self) { field in
-                        Toggle(LogFields.title(field),isOn:Binding(get:{fields.contains(field)},set:{toggle(field,$0)}))
-                    }
-                    Divider(); Button(L("恢复默认字段", "Reset columns")) { state.setPreference("native_log_columns",LogFields.defaults) }
-                }.fixedSize()
-            }
-            if compact { ScrollView(.horizontal) {filters}.frame(height:30) } else { filters }
+            LogFilterBar(period:$period,mode:$mode,model:$model,status:$status,query:$query,from:$from,through:$through,models:state.usage.models.filter(MobileTrends.isSingleModel),fields:fields) {state.setPreference("native_log_columns",$0)}
             CompactTable(columns:LogFields.columns(fields),rows:projection.value.rows.map { row in LogFields.row(row,timeOnly:period == "today",showYear:projection.value.showYear) {state.usage.members(of:row)} },revision:projection.value.revision.uuidString+period,preferences:state.preferences,storageKey:"logs",scrollResetKey:projection.value.scrollResetKey)
                 .overlay(RoundedRectangle(cornerRadius:10).stroke(.secondary.opacity(0.16)))
             HStack {
@@ -268,18 +257,10 @@ struct LogsView: View {
                 Button { page = projection.value.page+1 } label: { Image(systemName:"chevron.right") }.disabled(projection.value.page+1 >= projection.value.pages)
             }.font(.system(size:12))
         }.padding(.horizontal,PageLayout.inset).padding(.bottom,PageLayout.inset)
+        .onDisappear {state.logFilters[.codex] = LogFilterMemory(mode:mode,period:period,model:model,status:status,query:query,page:page,from:from,through:through)}
         .onAppear(perform:load).onChange(of:key) { _,_ in load() }
         .onChange(of:filterKey) { _,_ in page = 0 }
         .onChange(of:period) { _,value in if value == "custom" { datesOpen = true } }
         .onReceive(NotificationCenter.default.publisher(for:.init("CodexioSearch"))) { _ in searchFocused = true }
-    }
-    private var filters: some View {
-        HStack(spacing:10) {
-            Picker("",selection:$model) {Text(L("全部模型", "All models")).tag("all"); ForEach(state.usage.models.filter(MobileTrends.isSingleModel),id:\.self) {Text($0).tag($0)}}.labelsHidden().frame(width:112)
-            Picker("",selection:$tier) {Text(L("全部速度", "All speeds")).tag("all"); Text("Fast").tag("priority"); Text(L("标准", "Standard")).tag("default"); Text(L("未知", "Unknown")).tag("unknown")}.labelsHidden().frame(width:112)
-            if mode == "requests" {Picker("",selection:$status) {Text(L("全部状态", "All statuses")).tag("all"); Text(L("已完成", "Completed")).tag("completed"); Text(L("进行中", "In progress")).tag("running"); Text(L("未知", "Unknown")).tag("unknown")}.labelsHidden().frame(width:112)}
-            if !compact {Spacer(minLength:0)}
-            TextField(L("搜索输入、聊天或 ID", "Search prompt, chat or ID"),text:$query).textFieldStyle(.roundedBorder).focused($searchFocused).frame(minWidth:100,idealWidth:200,maxWidth:220)
-        }
     }
 }

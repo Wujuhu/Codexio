@@ -23,6 +23,8 @@ type Service struct {
 	mock             bool
 	store            *Store
 	quota            *QuotaService
+	claudeQuota      *ClaudeAllowance
+	claudeEstimate   *RollingEstimator
 	updater          *Updater
 	reports          *ReportManager
 	estimate         *RollingEstimator
@@ -78,6 +80,26 @@ func NewService(directory, executable, version string, mock bool, callbacks Desk
 		cancel()
 		return nil, err
 	}
+	s.claudeEstimate, err = NewRollingEstimator(s.store, s.Config, func() { s.notify("claude_quota") }, "claude")
+	if err != nil {
+		s.store.Close()
+		cancel()
+		return nil, err
+	}
+	s.claudeQuota = NewClaudeAllowance(directory, executable, func() { s.notify("claude_quota") }, func(r Row) {
+		if !ValueBool(r["account_verified"]) {
+			s.claudeEstimate.Sample(Row{})
+		} else {
+			sample := CloneRow(r)
+			if dataString(sample, "plan_type") == "" {
+				sample["plan_type"] = "claude"
+			}
+			s.claudeEstimate.Sample(sample)
+		}
+		if callbacks.Changed != nil {
+			callbacks.Changed("codexio:clock", Row{"client_kind": "claude_code", "updated_at": r["updated_at"]})
+		}
+	})
 	opts := SystemOptions{Directory: directory, Executable: executable, Version: version, Mock: mock, Config: s.Config, Changed: func() { s.notify("quota") }, Exit: func() {
 		if callbacks.Action != nil {
 			_ = callbacks.Action("quit-for-update")
@@ -132,10 +154,14 @@ func (s *Service) Start() {
 		go s.store.Run(s.ctx, func() {
 			if !s.mock {
 				s.estimate.Process()
+				s.claudeEstimate.Process()
 			}
 			s.notify("usage")
 			s.mobile.RequestProjection()
 		})
+		if !s.mock {
+			s.claudeQuota.Start()
+		}
 		s.quota.Start(s.ctx)
 		s.updater.Start(s.ctx)
 		s.mobile.Start(s.ctx)
@@ -174,6 +200,8 @@ func (s *Service) GetOverview(q Query) (Row, error) {
 	var quota any
 	if normalizedClient(q.ClientKind) == "codex" {
 		quota = s.subscription(false)
+	} else {
+		quota = s.claudeQuota.Snapshot()
 	}
 	return Row{"summary": summary, "chart": chart, "recent": recent, "models": models, "quota": quota, "state": s.store.ClientStatus(q.ClientKind), "generation": s.store.Generation()}, nil
 }
@@ -227,6 +255,14 @@ func (s *Service) GetTrends(q Query) (Row, error) {
 	return Row{"state": s.store.ClientStatus(q.ClientKind), "summary": summary, "chart": chart, "models": models, "insights": insights, "heatmap": insights["heatmap"], "activity": Row{"rows": insights["activity"]}, "chats": insights["chats"], "chat_page": insights["chat_page"], "chat_pages": insights["chat_pages"], "chat_total": insights["chat_total"], "generation": s.store.Generation()}, nil
 }
 func (s *Service) GetSubscription() Row { return s.subscription(true) }
+func (s *Service) GetClientSubscription(client string) Row {
+	if normalizedClient(client) != "claude_code" {
+		return s.GetSubscription()
+	}
+	r := s.claudeQuota.Snapshot()
+	r["rolling_estimates"] = s.claudeEstimate.Rows(dataString(r, "account_key"))
+	return r
+}
 func (s *Service) GetTrayState() Row {
 	r := s.quota.Snapshot()
 	delete(r, "reports")
@@ -258,6 +294,33 @@ func (s *Service) subscription(reports bool) Row {
 func (s *Service) GetPrices() Row {
 	st := s.store.Status()
 	return Row{"rows": codexDisplayPrices(s.store.Prices()), "basis": "标准 API 单价 × Codex 倍率", "version": st["price_version"], "status": st["pricing"]}
+}
+func (s *Service) GetClientPrices(client string) Row {
+	if normalizedClient(client) == "claude_code" {
+		return s.store.ClaudePrices()
+	}
+	return s.GetPrices()
+}
+func (s *Service) SaveClientPrice(client, model string, rates Row) (Row, error) {
+	if normalizedClient(client) != "claude_code" {
+		return s.SavePrice(model, rates)
+	}
+	if e := s.store.SetClaudePrice(model, rates); e != nil {
+		return nil, e
+	}
+	s.notify("pricing")
+	return s.store.ClaudePrices(), nil
+}
+func (s *Service) SyncClientPrices(client string) (Row, error) {
+	if normalizedClient(client) != "claude_code" {
+		return s.SyncPrices()
+	}
+	s.store.work.Lock()
+	e := s.store.syncClaudePrices(s.ctx, true)
+	s.store.work.Unlock()
+	s.store.Refresh()
+	s.notify("pricing")
+	return s.store.ClaudePrices(), e
 }
 func (s *Service) SavePrice(model string, rates Row) (Row, error) {
 	if e := s.store.SetPrice(model, rates); e != nil {
@@ -369,6 +432,14 @@ func (s *Service) SaveSettings(changes Row) (Row, error) {
 	}
 	s.notify("settings")
 	return s.GetSettings(), nil
+}
+func (s *Service) RefreshClient(client string) {
+	if normalizedClient(client) == "claude_code" {
+		s.store.Refresh()
+		s.notify("claude_quota")
+		return
+	}
+	s.Refresh()
 }
 func (s *Service) Refresh() {
 	s.store.Refresh()
@@ -504,6 +575,9 @@ func (s *Service) Close() error {
 	var result error
 	s.closeOnce.Do(func() {
 		s.cancel()
+		if !s.mock {
+			s.claudeQuota.Close()
+		}
 		_ = s.mobile.Close()
 		if e := s.upstream.Stop(); e != nil {
 			result = e
