@@ -45,3 +45,14 @@
 - 两种来源的日志首次默认及恢复默认字段均隐藏命中率，仍允许手动选择，来源间的字段和列宽继续独立。旧默认字段集合迁移，其他自定义集合保留。
 - 请求副行及上下文列统一显示 model_context_window 容量。Mods 的 context.window 和 statusLine 的 context_window.context_window_size 通过明确的 transcript UUID／prompt ID 关联，最多保留 256 条待关联提示，新增的上下文索引在后台采集队列按需构建，不按时间相邻猜测，不把当前会话容量回填到历史记录，不新增模型标识字段。历史缺少容量显示 —。
 - 参考：既有 WeeklyEstimator.swift／rolling.go 的账号及周期校验、120 秒成熟等待和本地消费查询；Claude Code 2.1.301 Mods 类型定义的 session.append UUID、clock.after 和 session.usage；[Windows 非休眠计时 API](https://learn.microsoft.com/en-us/windows/win32/api/realtimeapiset/nf-realtimeapiset-queryunbiasedinterrupttime)。验证范围仍为原有三项隔离冒烟、插件静态校验及交付校验，不新增测试套件。
+
+## 2026-10-16 Mac 小组件与菜单栏双来源
+
+- 用户确认修正后的本地原型 `build/prototypes/agent-widgets-menu-20261016/index.html`，授权本轮实现 Mac 小组件及菜单栏。桌面版本保持 0.3.10-beta；Widget 构建号由 26 增至 27。本轮不修改 Windows／iOS，不推送、不发布。
+- 原有 ChatGPT 请求 kind 保留小／中／大尺寸，另保留三种额度 kind；Claude 增加对应四个独立 kind，合计十二种尺寸／样式展示。请求名称带 ChatGPT／Claude 后缀；额度名称为 Codex／Claude 单额度、双额度、刻度额度，无重复后缀。旧组件身份和旧版根快照保持兼容。
+- 请求组件保留原布局，模型行右侧的 Agent 名称与模型信息共用字号和半粗字重，小尺寸使用仓库既有 Logo。Claude 显示返回模型的目录名称并去掉 Claude 前缀，未知型号保留原始标识；仅转换展示副本，不新增或改写账本模型字段。
+- 复用当前 `ClaudeLedger.swift` 的明确请求归属、调用聚合和七日 SQL 桶；主 App 在已有后台队列准备一个请求、今天汇总及七日数据，不把整份 Claude 历史搬入 UI 快照。最近开始的有效运行主请求优先，结束后选择其他运行主请求，没有运行任务时选择最近完成者。
+- Claude 的本地用户／助手／工具进度及明确完成、失败事件仅更新有界运行观测表（最多 256 项）；不建立独立采集服务、不请求账号接口。索引及最多 64 个新鲜未结束请求的升级恢复在后台按需准备，不重读历史日志、不重采 Token。运行状态沿用 15 分钟新鲜度；子代理不单独占一张请求卡片。
+- Claude 统计依赖账本 revision、来源目录、价格实际物化结果、本机日期／时区和未来记录边界；纯运行观测依赖独立 revision 与到期边界，不使账本、用量页或价格缓存失效。无展示内容变化不发布 surface 状态；Widget 快照复用内容签名和五分钟保活，两个来源只由同一主 App 写入，退出统一离线。
+- 菜单栏沿用当前 `MenuBar.swift` 的 420 点面板及两张用量卡片，上方左右显示 ChatGPT、Claude 的额度。选择保存在 `menu_bar_agent`，独立于主窗口来源切换；下方汇总、趋势与已有菜单栏字段使用所选来源，点击不访问数据库、不发起采集。复用 `MenuBarReadout` 供实际状态项与设置预览。
+- 最小三项隔离冒烟保持不变。沿用已有 MockGallery 的单张按需原生排版预览，模拟窗口屏外运行且无 Dock／菜单栏条目；不增加测试文件、测试项或界面遍历。交付继续核验版本、Widget 构建、签名和 ZIP。

@@ -14,21 +14,42 @@ struct GlassBackground: View {
 struct MenuBarView: View {
     @ObservedObject var state: AppState
     var dismiss: () -> Void
-    private var summary: UsageSummary { state.usage.summaries["today"] ?? UsageSummary() }
+    private var summary: UsageSummary {state.menuSummary}
     var body: some View {
         ScrollView {
             VStack(spacing:12) {
                 HStack {
                     Button("Codexio ↗") { dismiss(); state.onOpenWindow?() }.buttonStyle(.plain).font(.system(size:13,weight:.medium)).foregroundStyle(.secondary)
                     Spacer()
+                    ScanStamp(clock:state.menuClient == .codex ? state.menuQuotaClock : state.claudeQuotaClock).font(.system(size:9)).foregroundStyle(.secondary)
                 }.padding(.horizontal,6).padding(.bottom,3)
-                card {
-                    HStack { Text("Codex").font(.system(size:18,weight:.semibold)); Spacer(); ScanStamp(clock:state.menuQuotaClock).font(.system(size:10)).foregroundStyle(.secondary) }
-                    meter(state.menuQuota.five,title:L("5 小时额度", "5-hour limit"))
-                    meter(state.menuQuota.week,title:L("周额度", "Weekly limit"))
-                    if state.menuQuota.retained { StatusNote(text:L("显示上次成功获取的额度", "Showing the last successfully retrieved limits")) }
-                    if let error = state.quota.error { StatusNote(text:error) }
+                card(padding:5) {
+                    HStack(alignment:.top,spacing:5) {
+                        ForEach(DesktopClient.allCases,id:\.self) {client in
+                            Button {state.selectMenuClient(client)} label: {
+                                VStack(alignment:.leading,spacing:16) {
+                                    HStack(spacing:6) {
+                                        WidgetAgentLogo(agent:client.widgetAgent).frame(width:18,height:18)
+                                        Text(client.surfaceTitle).font(.system(size:14,weight:.semibold))
+                                        Spacer(minLength:2)
+                                        Image(systemName:state.menuClient == client ? "checkmark.circle.fill" : "circle")
+                                            .font(.system(size:12)).foregroundStyle(state.menuClient == client ? Color.blue : Color.secondary.opacity(0.3))
+                                    }
+                                    meter(state.menuWindow(client,week:false),title:L("5 小时额度", "5-hour limit"),week:false)
+                                    meter(state.menuWindow(client,week:true),title:L("周额度", "Weekly limit"),week:true)
+                                }.padding(.horizontal,10).padding(.vertical,12).frame(maxWidth:.infinity,alignment:.leading)
+                                    .background(state.menuClient == client ? Color.blue.opacity(0.055) : Color.clear,in:RoundedRectangle(cornerRadius:12))
+                                    .overlay(RoundedRectangle(cornerRadius:12).stroke(state.menuClient == client ? Color.blue.opacity(0.22) : .clear,lineWidth:0.7))
+                                    .contentShape(RoundedRectangle(cornerRadius:12))
+                            }.buttonStyle(.plain).accessibilityLabel(client.surfaceTitle)
+                                .accessibilityAddTraits(state.menuClient == client ? .isSelected : [])
+                        }
+                    }
                 }
+                if state.menuClient == .codex {
+                    if state.menuQuota.retained {StatusNote(text:L("显示上次成功获取的额度", "Showing the last successfully retrieved limits"))}
+                    if let error = state.quota.error {StatusNote(text:error)}
+                } else if let warning = state.claudeWarning {StatusNote(text:warning)}
                 card {
                     HStack { Text(L("今天", "Today")).fontWeight(.medium); Spacer(); Text(Date().formatted(.dateTime.month().day())).foregroundStyle(.secondary) }.font(.system(size:12))
                     HStack(alignment:.firstTextBaseline) {
@@ -41,35 +62,46 @@ struct MenuBarView: View {
                         HStack(spacing:1) {
                             Color.blue.opacity(0.45).frame(width:max(0,geometry.size.width*Double(summary.input-summary.cached)/Double(total)))
                             Color.blue.opacity(0.8).frame(width:max(0,geometry.size.width*Double(summary.cached)/Double(total)))
-                            Color.blue
-                        }.clipShape(Capsule())
+                            Color.blue.frame(width:summary.tokens == nil ? 0 : geometry.size.width*Double(summary.output)/Double(total))
+                            Spacer(minLength:0)
+                        }.background(Color.secondary.opacity(0.12)).clipShape(Capsule())
                     }.frame(height:5)
                     VStack(spacing:9) {
-                        tokenRow(L("未缓存输入", "Uncached input"),summary.input-summary.cached)
-                        tokenRow(L("缓存输入", "Cached input"),summary.cached)
-                        tokenRow(L("输出", "Output"),summary.output)
+                        tokenRow(L("未缓存输入", "Uncached input"),summary.tokens == nil ? nil : max(0,summary.input-summary.cached))
+                        tokenRow(L("缓存输入", "Cached input"),summary.tokens == nil ? nil : summary.cached)
+                        tokenRow(L("输出", "Output"),summary.tokens == nil ? nil : summary.output)
                     }
                 }
                 card {
                     HStack { Text(L("最近 7 天", "Last 7 days")).fontWeight(.medium); Spacer(); Text(L("费用", "Cost")).foregroundStyle(.secondary) }.font(.system(size:12))
-                    TrendChart(days:Array(state.usage.activity.days.suffix(7)),compactStyle:true)
+                    TrendChart(days:state.menuDays,compactStyle:true)
                 }
             }.padding(14)
         }.scrollContentBackground(.hidden).frame(width:420).background { GlassBackground() }
             .clipShape(RoundedRectangle(cornerRadius:23,style:.continuous))
             .preferredColorScheme(state.theme == "dark" ? .dark : state.theme == "light" ? .light : nil)
     }
-    private func card<Content:View>(@ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment:.leading,spacing:17,content:content).padding(18).frame(maxWidth:.infinity,alignment:.leading).background(Color.primary.opacity(0.025),in:RoundedRectangle(cornerRadius:16)).overlay(RoundedRectangle(cornerRadius:16).stroke(.primary.opacity(0.12),lineWidth:0.5))
+    private func card<Content:View>(padding: CGFloat = 18,@ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment:.leading,spacing:17,content:content).padding(padding).frame(maxWidth:.infinity,alignment:.leading).background(Color.primary.opacity(0.025),in:RoundedRectangle(cornerRadius:16)).overlay(RoundedRectangle(cornerRadius:16).stroke(.primary.opacity(0.12),lineWidth:0.5))
     }
-    private func meter(_ window: QuotaWindow?,title: String) -> some View {
-        VStack(spacing:9) {
-            HStack { Text(title).font(.system(size:13)); Spacer(); Text(percent(window?.remaining)).font(.system(size:17,weight:.medium)).monospacedDigit(); Text(L("剩余", "remaining")).font(.system(size:11)).foregroundStyle(.secondary) }
-            SegmentedMeter(value:window?.remaining)
-            HStack { Text(L("重置时间", "Resets at")); Spacer(); Text(dateText(window?.reset,timeOnly:window?.minutes == 300)) }.font(.system(size:11)).foregroundStyle(.secondary)
+    private func meter(_ window: QuotaWindow?,title: String,week: Bool) -> some View {
+        VStack(alignment:.leading,spacing:5) {
+            HStack(alignment:.firstTextBaseline,spacing:2) {
+                Text(title).font(.system(size:11)).lineLimit(1)
+                Spacer(minLength:2)
+                Text(percent(window?.remaining)).font(.system(size:19,weight:.semibold)).monospacedDigit().fixedSize()
+                if window?.remaining != nil {Text(L("剩余", "remaining")).font(.system(size:9)).foregroundStyle(.secondary)}
+            }
+            GeometryReader {geometry in
+                Capsule().fill(Color.secondary.opacity(0.16)).overlay(alignment:.leading) {
+                    Capsule().fill(Color.blue).frame(width:geometry.size.width*max(0,min(100,window?.remaining ?? 0))/100)
+                }
+            }.frame(height:6)
+            HStack(spacing:3) {Text(L("重置", "Resets")); Text(logDateText(window?.reset,timeOnly:!week,showYear:window?.reset.map {Calendar.current.component(.year,from:$0) != Calendar.current.component(.year,from:Date())} ?? false)).monospacedDigit()}
+                .font(.system(size:9)).foregroundStyle(.secondary).lineLimit(1).help(dateText(window?.reset))
         }
     }
-    private func tokenRow(_ name: String,_ value: Int) -> some View { HStack { Circle().fill(.blue.opacity(0.7)).frame(width:4,height:4); Text(name).foregroundStyle(.secondary); Spacer(); Text(compact(Double(value))).monospacedDigit() }.font(.system(size:11)) }
+    private func tokenRow(_ name: String,_ value: Int?) -> some View { HStack { Circle().fill(.blue.opacity(0.7)).frame(width:4,height:4); Text(name).foregroundStyle(.secondary); Spacer(); Text(compact(value.map(Double.init))).monospacedDigit() }.font(.system(size:11)) }
 }
 
 private final class StatusPanel: NSPanel {
@@ -103,8 +135,8 @@ final class MenuBarController {
                 frameObserver = NotificationCenter.default.addObserver(forName:NSView.frameDidChangeNotification,object:button,queue:.main) { [weak self] _ in self?.layoutReadout() }
             }
         }
-        let text = MenuBarField.text(state), running = state.menuFields.contains("task") && state.taskRunning == true
-        let key = state.menuFields.joined(separator:",")+"|"+text+"|"+String(running)
+        let text = MenuBarField.text(state), running = state.menuFields.contains("task") && state.menuTaskRunning == true
+        let key = state.menuClient.rawValue+"|"+state.menuFields.joined(separator:",")+"|"+text+"|"+String(running)
         guard key != displayed else { return }; displayed = key
         readout?.rootView = MenuBarReadout(state:state)
         readout?.layoutSubtreeIfNeeded()

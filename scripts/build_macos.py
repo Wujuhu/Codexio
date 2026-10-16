@@ -20,7 +20,7 @@ from codexio.versions import AppVersion
 BUILD = ROOT / "build"
 STAGING = BUILD / "staging/macos"
 DESTINATION = BUILD / "dev/macos"
-WIDGET_VERSION = 26  # Keep stable-host takeover ordering correct for beta app versions.
+WIDGET_VERSION = 27  # Separate ChatGPT and Claude widget data and configurations.
 
 
 def run(*args, **kwargs):
@@ -153,6 +153,7 @@ def embed_widget(bundle):
     resources = extension / "Contents/Resources"
     resources.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "src/codexio/icons/brand-mark.png", resources / "brand-mark.png")
+    shutil.copytree(ROOT / "windows/frontend/public/client-icons", resources / "client-icons")
     localization_resources(resources)
     (extension / "Contents/Info.plist").write_bytes(plistlib.dumps({
         "CFBundleIdentifier": "com.wujuhu.codexio.widget", "CFBundleExecutable": "CodexioWidget",

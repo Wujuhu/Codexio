@@ -35,7 +35,7 @@ enum CodexioMain {
                 DistributedNotificationCenter.default().postNotificationName(.init("com.wujuhu.codexio.show"),object:nil,userInfo:nil,deliverImmediately:true); return
             }
             let application = NSApplication.shared
-            application.setActivationPolicy(smoke == nil ? .regular : .accessory)
+            application.setActivationPolicy(smoke != nil || mock && arguments.contains("--mock-gallery") ? .accessory : .regular)
             let delegate = try ApplicationDelegate(paths:paths,lease:lease,smoke:smoke)
             self.delegate = delegate; application.delegate = delegate; application.run()
         } catch {
@@ -135,7 +135,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             }
             self.window = window
         }
-        if smoke != nil, let window {
+        if smoke != nil || state.paths.mock && CommandLine.arguments.contains("--mock-gallery"), let window {
             // Keep the original visible-window checks while leaving the desktop
             // and foreground app alone during isolated build verification.
             let left = NSScreen.screens.map { $0.frame.minX }.min() ?? 0
@@ -169,6 +169,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     }
     func applicationShouldHandleReopen(_ sender: NSApplication,hasVisibleWindows flag: Bool) -> Bool { showWindow(); return true }
     func application(_ application: NSApplication,open urls: [URL]) {
+        if let url = urls.last(where:{$0.scheme == "codexio"}), let agent = URLComponents(url:url,resolvingAgainstBaseURL:false)?.queryItems?.first(where:{$0.name == "agent"})?.value {
+            if agent == "claude" {state.pageClient = .claudeCode}
+            else if agent == "chatgpt" {state.pageClient = .codex}
+        }
         if urls.contains(where:{$0.scheme == "codexio" && $0.host == "subscription"}) { state.selectedPage = "subscription" }
         showWindow()
     }

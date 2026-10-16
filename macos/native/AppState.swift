@@ -35,6 +35,11 @@ final class AppState: ObservableObject {
     private var claudePublishedKey = "" // dataQueue-owned dependency key.
     private var claudeNextBoundary = Date.distantFuture
     private var claudeLastScan = Date.distantPast
+    @Published private(set) var claudeSurface = AgentSurfaceData()
+    private var claudeSurfaceCache = AgentSurfaceData() // dataQueue-owned.
+    private var claudeSurfaceKey = ""
+    private var claudeSurfaceRevision = -1
+    private var claudeTaskBoundary = Date.distantFuture
     let indexer: UsageIndexer
     let estimator: WeeklyEstimator
     let client = CodexClient()
@@ -82,6 +87,16 @@ final class AppState: ObservableObject {
     @Published var sidebarWidth: Double = 238
     @Published var menuVisible = true
     @Published private(set) var menuFields = MenuBarField.defaults
+    @Published private(set) var menuClient: DesktopClient = .codex
+    var menuSummary: UsageSummary {menuClient == .codex ? usage.summaries["today"] ?? UsageSummary() : claudeSurface.today}
+    var menuDays: [DayUsage] {menuClient == .codex ? Array(usage.activity.days.suffix(7)) : claudeSurface.days}
+    var menuRequest: UsageRow? {menuClient == .codex ? usage.widgetRequest : claudeSurface.request}
+    var menuTaskRunning: Bool? {menuClient == .codex ? taskRunning : claudeSurface.ready ? claudeSurface.hasRunningTask : nil}
+    func menuWindow(_ client: DesktopClient,week: Bool) -> QuotaWindow? {
+        let window = client == .codex ? (week ? menuQuota.week : menuQuota.five) : (claudeQuotaFresh ? (week ? claudeQuota.week : claudeQuota.five) : nil)
+        return window.flatMap {window in window.reset.map {$0 <= Date()} == true ? nil : window}
+    }
+    func selectMenuClient(_ client: DesktopClient) {setPreference("menu_bar_agent",client.rawValue)}
     @Published var loading = true
     @Published var scanProgress = ""
     @Published var errorMessage: String?
@@ -139,6 +154,7 @@ final class AppState: ObservableObject {
         sidebarWidth = min(320,max(140,preferences.analytics.number("native_sidebar_width") ?? preferences.analytics.number("sidebar_width") ?? 238))
         menuVisible = preferences.analytics.flag("menu_bar_visible",true)
         menuFields = MenuBarField.normalize(preferences.analytics["menu_bar_fields"] as? [String] ?? MenuBarField.defaults)
+        menuClient = DesktopClient(rawValue:preferences.analytics.string("menu_bar_agent")) ?? .codex
         if !paths.mock {
             sleepObserver = NSWorkspace.shared.notificationCenter.addObserver(forName:NSWorkspace.willSleepNotification,object:nil,queue:.main) { [weak self] _ in
                 self?.dataQueue.async { [weak self] in self?.estimator.invalidate(); self?.claudeEstimator.invalidate() }
@@ -318,12 +334,15 @@ final class AppState: ObservableObject {
             if self.claudeQuotaKey != key {self.claudeQuotaKey = key; self.claudeQuota = quota}
             if self.claudeEstimateRevision != estimateRevision {self.claudeEstimateRevision = estimateRevision; self.claudeWeeklyEstimates = estimates}
             if let observed {self.claudeQuotaClock.updated = observed}
+            self.onMenuDataChange?()
+            self.publishWidget()
         }
     }
     private func publishClaude() {
         let now = Date(), calendar = Calendar.current
-        let key = "claude_code|"+claudeLedger.root.path+"|"+String(claudeLedger.revision)+"|"+String(calendar.startOfDay(for:now).timeIntervalSince1970)+"|"+TimeZone.current.identifier
+        let key = "claude_code|"+claudeLedger.root.path+"|"+String(claudeLedger.revision)+"|"+String(calendar.startOfDay(for:now).timeIntervalSince1970)+"|"+TimeZone.current.identifier+"|"+String(TimeZone.current.secondsFromGMT(for:now))
         let changed = key != claudePublishedKey || now >= claudeNextBoundary || now < claudeLastScan
+        let surfaceChanged = changed || claudeSurfaceRevision != claudeLedger.surfaceRevision || now >= claudeTaskBoundary || now < claudeLastScan
         claudeLastScan = now
         if changed {
             claudePublishedKey = key
@@ -331,6 +350,15 @@ final class AppState: ObservableObject {
             claudeNextBoundary = next.map {Date(timeIntervalSince1970:$0)} ?? .distantFuture
         }
         let models = changed ? (try? claudeLedger.models()) : nil, warning = claudeLedger.warning
+        var surfaceUpdate: AgentSurfaceData?
+        if surfaceChanged, var next = try? claudeLedger.surface(now:now,includeUsage:changed) {
+            if !changed {next.today = claudeSurfaceCache.today; next.days = claudeSurfaceCache.days}
+            claudeTaskBoundary = next.nextBoundary; claudeSurfaceRevision = claudeLedger.surfaceRevision
+            let signature = next.contentKey
+            if signature != claudeSurfaceKey {claudeSurfaceKey = signature; surfaceUpdate = next}
+            claudeSurfaceCache = next
+        }
+        let preparedSurface = surfaceUpdate
         let prices = claudeCatalog.rows, priceVersion = claudeCatalog.version, updated = claudeCatalog.updated, priceWarning = claudeCatalog.warning
         DispatchQueue.main.async { [weak self] in
             guard let self, !self.stopped else { return }
@@ -339,7 +367,9 @@ final class AppState: ObservableObject {
             if self.claudePricesRevision != priceVersion {self.claudePrices = prices; self.claudePricesRevision = priceVersion}
             if self.claudePriceUpdated != updated {self.claudePriceUpdated = updated}
             if self.claudePriceWarning != priceWarning {self.claudePriceWarning = priceWarning}
+            if let preparedSurface {self.claudeSurface = preparedSurface; self.onMenuDataChange?()}
             self.claudeClock.updated = now
+            self.publishWidget()
         }
     }
     private func publishUsage(finishLoading: Bool = true) {
@@ -562,6 +592,7 @@ final class AppState: ObservableObject {
         if key == "theme" { theme = preferences.analytics.string("theme","system") }
         if key == "menu_bar_visible" { menuVisible = preferences.analytics.flag("menu_bar_visible",true) }
         if key == "menu_bar_fields" { menuFields = MenuBarField.normalize(preferences.analytics["menu_bar_fields"] as? [String] ?? MenuBarField.defaults) }
+        if key == "menu_bar_agent" {menuClient = DesktopClient(rawValue:preferences.analytics.string("menu_bar_agent")) ?? .codex; onMenuDataChange?()}
         if ["usage_refresh_interval_seconds","refresh_interval_seconds"].contains(key) { configureTimers() }
         if key == "week_estimate_interval_minutes" {dataQueue.async {self.estimator.invalidate();self.claudeEstimator.invalidate()}}
         if ["theme","menu_bar_visible","menu_bar_fields"].contains(key) { onSettingsChange?() }
@@ -633,18 +664,22 @@ final class AppState: ObservableObject {
     func publishWidget() {
         guard !paths.mock, !stopped else { return }
         mobileSync.update(usage,quota:menuQuota,observed:clock.updated)
-        var request: Any = NSNull()
-        if let selected = usage.widgetRequest {
-            var value: Object = ["id":selected.id,"prompt":String(selected.raw.string("prompt_preview").prefix(240)),"model":modelName(selected.raw.string("model")),"reasoning_effort":logEffortName(selected.raw.string("reasoning_effort")),"duration_running":selected.raw.flag("duration_running")]
-            for key in ["cost_usd","duration_ms","input_tokens","output_tokens","cached_input_tokens","cache_hit_rate","service_tier","model_context_window"] { value[key] = selected.raw[key] ?? NSNull() }
-            if let start = parsedDate(selected.raw["duration_started_at"]) { value["duration_started_at"] = start.timeIntervalSince1970-(selected.raw.number("duration_base_ms") ?? 0)/1000 }
-            for key in ["input_tokens","output_tokens","cached_input_tokens"] where value[key] is NSNull { value[key] = 0 }
-            request = value
-        }
-        let today = usage.summaries["today"] ?? UsageSummary()
-        let snapshot: Object = ["schema":1,"updated_at":Date().timeIntervalSince1970,"host_running":true,"host_pid":Int(getpid()),"request":request,"today":["cost_usd":today.cost as Any? ?? NSNull(),"tokens":today.tokens as Any? ?? NSNull(),"requests":today.requests,"cache_hit_rate":today.cacheRate as Any? ?? NSNull()],"quota":["applicable":quota.applicable,"updated_at":quota.updated?.timeIntervalSince1970 as Any? ?? NSNull(),"five_hour":(quota.fresh ? quota.five?.remaining : nil) as Any? ?? NSNull(),"week":(quota.fresh ? quota.week?.remaining : nil) as Any? ?? NSNull(),"has_five_hour":quota.five != nil,"has_week":quota.week != nil,"five_hour_reset_at":(quota.fresh ? quota.five?.reset?.timeIntervalSince1970 : nil) as Any? ?? NSNull(),"week_reset_at":(quota.fresh ? quota.week?.reset?.timeIntervalSince1970 : nil) as Any? ?? NSNull(),"reset_count":(quota.fresh ? quota.availableCount : nil) as Any? ?? NSNull()]]
+        let codex = AgentWidgetPayload.make(request:usage.widgetRequest,today:usage.summaries["today"],quota:quota,fresh:quota.fresh,observed:clock.updated)
+        let claude = AgentWidgetPayload.make(request:claudeSurface.request,today:claudeSurface.ready ? claudeSurface.today : nil,quota:claudeQuota,fresh:claudeQuotaFresh,observed:claudeClock.updated)
+        // Retain the Codex root fields for older extensions during atomic host
+        // replacement. Both new source variants come from this one host snapshot.
+        var snapshot = codex
+        snapshot["schema"] = 1; snapshot["updated_at"] = Date().timeIntervalSince1970
+        snapshot["host_running"] = true; snapshot["host_pid"] = Int(getpid())
+        snapshot["agents"] = ["chatgpt":codex,"claude":claude]
         var content = snapshot; content.removeValue(forKey:"updated_at")
         var quotaContent = content.object("quota"); quotaContent.removeValue(forKey:"updated_at"); content["quota"] = quotaContent
+        var agents = content.object("agents")
+        for key in ["chatgpt","claude"] {
+            var agent = agents.object(key); agent.removeValue(forKey:"updated_at")
+            var allowance = agent.object("quota"); allowance.removeValue(forKey:"updated_at"); agent["quota"] = allowance; agents[key] = agent
+        }
+        content["agents"] = agents
         let signature = identity(content)
         guard signature != snapshotSignature || Date().timeIntervalSince(snapshotWritten) >= 300 else { return }
         snapshotSignature = signature; snapshotWritten = Date()
@@ -674,6 +709,16 @@ final class AppState: ObservableObject {
                     var quota = QuotaState(); quota.account = ["type":"chatgpt","email":"demo@example.invalid","planType":"pro","identityKey":"mock-account"]
                     quota.update(["rateLimits":["primary":["usedPercent":26,"windowDurationMins":300,"resetsAt":now.addingTimeInterval(7200).timeIntervalSince1970],"secondary":["usedPercent":77,"windowDurationMins":10080,"resetsAt":now.addingTimeInterval(432000).timeIntervalSince1970]],"rateLimitResetCredits":["availableCount":2,"credits":[["id":"mock-reset-1","title":L("重置 1", "Reset 1"),"status":"available","resetType":"codexRateLimits","expiresAt":now.addingTimeInterval(864000).timeIntervalSince1970],["id":"mock-reset-2","title":L("重置 2", "Reset 2"),"status":"available","resetType":"codexRateLimits","expiresAt":now.addingTimeInterval(1728000).timeIntervalSince1970]]]])
                     self.applyQuota(quota); self.priceUpdated = now
+                    var claudeQuota = QuotaState()
+                    claudeQuota.account = ["identityKey":"mock-claude-account","planType":"max"]
+                    claudeQuota.updated = now; claudeQuota.applicable = true
+                    claudeQuota.windows = [QuotaWindow(id:"five_hour",minutes:300,used:18,reset:now.addingTimeInterval(4200)),QuotaWindow(id:"seven_day",minutes:10080,used:37,reset:now.addingTimeInterval(556800))]
+                    self.claudeQuota = claudeQuota; self.claudeObserved = now; self.claudeQuotaClock.updated = now; self.claudeClock.updated = now
+                    var summary = UsageSummary(); summary.tokens = 36_180_000; summary.cost = 42.86; summary.requests = 9; summary.calls = 12; summary.input = 35_360_000; summary.cached = 33_170_000; summary.output = 824_000
+                    var days = Array(self.usage.activity.days.suffix(7)).map {day in DayUsage(date:day.date,tokens:day.tokens.map {$0/2},cost:day.cost.map {$0*0.4},calls:day.calls,requests:day.requests)}
+                    if let last = days.last {days[days.count-1] = DayUsage(date:last.date,tokens:summary.tokens,cost:summary.cost,calls:summary.calls,requests:summary.requests)}
+                    let request = UsageRow(raw:["id":"mock-claude-request","timestamp":iso(now.addingTimeInterval(-128)),"prompt_preview":L("完善 Claude 任务、小组件与菜单栏数据", "Connect Claude tasks, widgets and menu usage"),"model":"Opus 5.5","reasoning_effort":"high","model_context_window":1_000_000,"input_tokens":814000,"output_tokens":28600,"total_tokens":842600,"cached_input_tokens":763500,"cost_usd":0.28,"duration_ms":128000,"status":"completed","local_origin":true])
+                    self.claudeSurface = AgentSurfaceData(ready:true,request:request,today:summary,days:days)
                     self.preferences.analytics["subscription_profile"] = ["plan":"ChatGPT Pro","price_usd":200.0,"renewal_date":"2026-10-27"]
                     self.planHistory = ["data_as_of":iso(now),"coverage_complete":true,"approximate":false,"periods":[["id":"mock-period","window_minutes":10080,"starts_at":iso(now.addingTimeInterval(-172800)),"ends_at":iso(now.addingTimeInterval(432000)),"accounting_complete":true,"used_basis_points":7700,"breakdowns":[["dimension":"model","rows":[["key":"gpt-6-astra","basis_points":4160],["key":"gpt-5.6-sol","basis_points":2580],["key":"gpt-6-luna","basis_points":960]]]]]]]
                     self.chatUsage = ["data_as_of":iso(now),"threads":(0..<4).map { index -> Object in

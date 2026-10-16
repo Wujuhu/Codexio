@@ -31,6 +31,8 @@ final class ClaudeLedger {
     private var sourceStamp: FileStamp?
     private var sourceLineHash = ""
     private var contextIndexReady = false
+    private(set) var surfaceRevision = 0
+    private var surfacePrepared = false
     init(paths: AppPaths, pricing: ClaudePricingCatalog) throws {
         self.pricing = pricing
         // Mock paths never consult CLAUDE_CONFIG_DIR or the real home directory.
@@ -381,7 +383,86 @@ final class ClaudeLedger {
             }
             try database.run("INSERT INTO claude_nodes VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET request_id=excluded.request_id WHERE request_id='' AND excluded.request_id<>''",[nodeID,request,session,namespaced(row.string("parentUuid"))])
         }
-        if !request.isEmpty {affectedSessions.insert(session)}
+        if !request.isEmpty {
+            affectedSessions.insert(session)
+            if !child, let date = parsedDate(row["timestamp"]), Date().timeIntervalSince(date) < 900, date <= Date() {
+                var status = ""
+                if type == "assistant", row.flag("isApiErrorMessage") || message.string("model") == "<synthetic>" {status = "failed"}
+                else if type == "assistant", ["end_turn","stop_sequence"].contains(message.string("stop_reason")) {status = "completed"}
+                else if type == "system", row.string("subtype") == "turn_duration" {status = "completed"}
+                else if ["assistant","progress"].contains(type) || type == "user" {status = "running"}
+                if !status.isEmpty {try observeSurfaceRequest(request,at:date.timeIntervalSince1970,status:status)}
+            }
+        }
+    }
+    private func prepareSurface() throws {
+        guard !surfacePrepared else {return}
+        try database.script("""
+        CREATE TABLE IF NOT EXISTS claude_live_requests(id TEXT PRIMARY KEY,observed_at REAL NOT NULL,status TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS claude_live_time ON claude_live_requests(status,observed_at DESC);
+        CREATE INDEX IF NOT EXISTS claude_completed_time ON claude_requests(COALESCE((julianday(json_extract(data,'$.ended_at'))-2440587.5)*86400,timestamp) DESC,id) WHERE status='completed';
+        """)
+        surfacePrepared = true
+        // Recover only fresh, unfinished indexed requests on first upgrade. No
+        // transcript replay or historical usage/pricing rebuild is needed.
+        let now = Date().timeIntervalSince1970
+        for row in try database.query("SELECT id,timestamp FROM claude_requests r WHERE id LIKE ? AND status='' AND timestamp>? AND timestamp<=? AND NOT EXISTS(SELECT 1 FROM claude_live_requests l WHERE l.id=r.id) ORDER BY timestamp DESC LIMIT 64",[scope+"%",now-900,now]) {
+            let call = try database.query("SELECT json_extract(data,'$.call_timing.last') AS observed,json_extract(data,'$.call_timing.stop') AS stop FROM claude_calls WHERE request_id=? AND COALESCE(json_extract(data,'$.is_subagent'),0)=0 ORDER BY timestamp DESC LIMIT 1",[row.string("id")]).first ?? [:]
+            if !call.isEmpty && call.string("stop") != "tool_use" {continue}
+            let observed = parsedDate(call["observed"])?.timeIntervalSince1970 ?? row.number("timestamp") ?? now-900
+            if observed <= now {try observeSurfaceRequest(row.string("id"),at:observed,status:"running")}
+        }
+    }
+    private func observeSurfaceRequest(_ id: String,at: Double,status: String) throws {
+        try prepareSurface()
+        let prior = try database.query("SELECT observed_at,status FROM claude_live_requests WHERE id=?",[id]).first
+        if let prior, let previous = prior.number("observed_at"), previous > at || previous == at && (prior.string("status") == status || prior.string("status") != "running") {return}
+        try database.run("INSERT INTO claude_live_requests VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET observed_at=excluded.observed_at,status=excluded.status",[id,at,status])
+        try database.run("DELETE FROM claude_live_requests WHERE rowid NOT IN(SELECT rowid FROM claude_live_requests ORDER BY observed_at DESC LIMIT 256)")
+        surfaceRevision += 1
+    }
+
+    // Reuse the existing SQL aggregation and day buckets, retaining only one
+    // request plus seven days. Live observations have no ledger-revision trigger.
+    func surface(now: Date = Date(),includeUsage: Bool = true) throws -> AgentSurfaceData {
+        try prepareSurface()
+        var result = AgentSurfaceData(); result.ready = true
+        let stamp = now.timeIntervalSince1970
+        let running = try database.query("SELECT r.data,l.observed_at FROM claude_live_requests l JOIN claude_requests r ON r.id=l.id WHERE r.id LIKE ? AND l.status='running' AND l.observed_at>? AND l.observed_at<=? AND r.timestamp<=? AND r.status NOT IN('failed','aborted') AND NOT(r.status='completed' AND (julianday(json_extract(r.data,'$.ended_at'))-2440587.5)*86400>=l.observed_at) ORDER BY r.timestamp DESC,r.id LIMIT 1",[scope+"%",stamp-900,stamp,stamp]).first
+        var completed = running == nil ? try database.query("SELECT data FROM claude_requests WHERE id LIKE ? AND status='completed' AND timestamp<=? ORDER BY COALESCE((julianday(json_extract(data,'$.ended_at'))-2440587.5)*86400,timestamp) DESC,id LIMIT 1",[scope+"%",stamp]).first : nil
+        if running == nil, let observed = try database.query("SELECT r.data,l.observed_at,1 AS observed_completion FROM claude_live_requests l JOIN claude_requests r ON r.id=l.id WHERE r.id LIKE ? AND l.status='completed' AND l.observed_at<=? AND r.timestamp<=? AND r.status NOT IN('failed','aborted') ORDER BY l.observed_at DESC,r.id LIMIT 1",[scope+"%",stamp,stamp]).first {
+            let prior = completed.map {jsonObject(Data($0.string("data").utf8))} ?? [:]
+            let end = parsedDate(prior["ended_at"]) ?? parsedDate(prior["timestamp"]) ?? .distantPast
+            if (observed.number("observed_at") ?? 0) > end.timeIntervalSince1970 {completed = observed}
+        }
+        if let row = running ?? completed {
+            var raw = jsonObject(Data(row.string("data").utf8))
+            let models = Array(Set((raw["upstream_models"] as? [String] ?? [])+[raw.string("upstream_model")])).filter {!$0.isEmpty}.sorted()
+            raw["model"] = (models.isEmpty ? [raw.string("model")] : models).filter {!$0.isEmpty}.map {pricing.compactModelName($0)}.joined(separator:" + ")
+            raw["cache_hit_rate"] = raw.number("input_tokens").flatMap {input in input > 0 ? raw.number("cached_input_tokens").map {$0/input} : nil} as Any? ?? NSNull()
+            raw["duration_running"] = running != nil
+            if running != nil {raw["status"] = "running"; raw["duration_started_at"] = raw["timestamp"]; raw["duration_ms"] = NSNull()}
+            else if row.integer("observed_completion") == 1 {
+                raw["status"] = "completed"
+                // A stop event confirms completion, but never invents missing
+                // duration or reuses timing from an earlier continuation.
+                if (parsedDate(raw["ended_at"])?.timeIntervalSince1970 ?? 0)+0.01 < (row.number("observed_at") ?? 0) {raw["duration_ms"] = NSNull()}
+            }
+            result.request = UsageRow(raw:raw); result.hasRunningTask = running != nil
+        }
+        if let expiry = try database.query("SELECT min(observed_at+900) AS expiry FROM claude_live_requests WHERE id LIKE ? AND status='running' AND observed_at>? AND observed_at<=?",[scope+"%",stamp-900,stamp]).first?.number("expiry") {result.nextBoundary = Date(timeIntervalSince1970:expiry)}
+        if includeUsage {
+            let range = UsageRange(period:"today"), (sql,args) = filtered("claude_calls",range:range)
+            let sums = try sumColumns("claude_calls",where:sql,args:args)
+            let (requestSQL,requestArgs) = filtered("claude_requests",range:range)
+            var summary = UsageSummary(); summary.calls = sums.integer("calls") ?? 0
+            summary.requests = try database.query("SELECT count(*) AS n FROM claude_requests WHERE \(requestSQL)",requestArgs).first?.integer("n") ?? 0
+            summary.tokens = summary.calls == 0 ? 0 : sums.integer("total"); summary.cost = summary.calls == 0 ? 0 : sums.number("cost")
+            summary.input = sums.integer("input") ?? 0; summary.cached = sums.integer("cache_read") ?? 0; summary.output = sums.integer("output") ?? 0
+            summary.unknownCosts = summary.calls > 0 && summary.cost == nil ? 1 : 0
+            result.today = summary; result.days = try days(range:UsageRange(period:"week"),model:"all",granularity:"day")
+        }
+        return result
     }
     private let usageKeys = ["cache_write_5m_tokens","cache_write_1h_tokens","raw_input_tokens","cached_input_tokens","cache_write_input_tokens","input_tokens","output_tokens","total_tokens","reasoning_output_tokens"]
     private func mergeUsage(_ old: Object,_ incoming: Object) -> Object {

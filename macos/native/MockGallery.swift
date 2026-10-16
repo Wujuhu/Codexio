@@ -50,7 +50,7 @@ final class MockGallery {
                 view = AnyView(UsageReportReader(model: model)); size = NSSize(width:540,height:690)
             case "menu": view = AnyView(menuPreview); size = NSSize(width:620,height:940)
             case "widgets-quota": view = AnyView(quotaWidgets); size = NSSize(width:740,height:350)
-            case "widgets-request": view = AnyView(requestWidgets); size = NSSize(width:1060,height:530)
+            case "widgets-request": state.selectMenuClient(.claudeCode); view = AnyView(requestWidgets); size = NSSize(width:1500,height:1390)
             default:
                 state.selectedPage = name.hasPrefix("usage") ? "trends" : name.hasPrefix("settings") ? "settings" : name.hasPrefix("logs") ? "logs" : name
                 if name.hasPrefix("usage-") { state.usageSection = String(name.dropFirst(6)) == "trends" ? "trend" : String(name.dropFirst(6)) }
@@ -70,7 +70,8 @@ final class MockGallery {
             }
             window.contentView = NSHostingView(rootView:view)
             window.setContentSize(size)
-            window.center(); window.makeKeyAndOrderFront(nil)
+            let left = NSScreen.screens.map {$0.frame.minX}.min() ?? 0
+            window.setFrameOrigin(NSPoint(x:left-window.frame.width-128,y:0)); window.orderBack(nil)
             prepared = true; return
         }
         if let view = window.contentView {
@@ -97,8 +98,13 @@ final class MockGallery {
         let now = Date().timeIntervalSince1970
         return Snapshot(schema:1,updated_at:now,request:RequestSnapshot(prompt:L("优化 Codexio 的日志详情与额度显示", "Refine Codexio log details and allowance display"),model:"GPT-6 Astra",reasoning_effort:"Max",service_tier:"priority",model_context_window:828000,cost_usd:0.52,duration_ms:138000,duration_started_at:nil,duration_running:false,input_tokens:32000,output_tokens:6800,cached_input_tokens:18000,cache_hit_rate:0.5625),quota:QuotaSnapshot(applicable:true,five_hour:74,week:23,has_five_hour:true,has_week:true,five_hour_reset_at:now+7200,week_reset_at:now+432000,reset_count:2,updated_at:now),today:TodaySnapshot(cost_usd:23.54,tokens:14179000,requests:18,cache_hit_rate:0.73))
     }
-    private func quota(_ style: QuotaStyle) -> some View {
-        return QuotaWidgetView(entry:QuotaEntry(date:Date(),snapshot:snapshot,style:style)).preview.frame(width:170,height:170).clipShape(RoundedRectangle(cornerRadius:24))
+    private func quota(_ style: QuotaStyle,agent: WidgetAgent = .chatgpt) -> some View {
+        return QuotaWidgetView(entry:QuotaEntry(date:Date(),snapshot:agentSnapshot(agent),style:style,agent:agent)).preview.frame(width:170,height:170).clipShape(RoundedRectangle(cornerRadius:24))
+    }
+    private func agentSnapshot(_ agent: WidgetAgent) -> Snapshot {
+        guard agent == .claude else {return snapshot}
+        let now = Date().timeIntervalSince1970
+        return Snapshot(schema:1,updated_at:now,request:RequestSnapshot(prompt:L("完善 Claude 任务、小组件与菜单栏数据", "Connect Claude tasks, widgets and menu usage"),model:"Opus 5.5",reasoning_effort:"High",service_tier:"default",model_context_window:1_000_000,cost_usd:0.28,duration_ms:128000,duration_started_at:nil,duration_running:false,input_tokens:814000,output_tokens:28600,cached_input_tokens:763500,cache_hit_rate:0.938),quota:QuotaSnapshot(applicable:true,five_hour:82,week:63,has_five_hour:true,has_week:true,five_hour_reset_at:now+4200,week_reset_at:now+556800,updated_at:now),today:TodaySnapshot(cost_usd:42.86,tokens:36180000,requests:9,cache_hit_rate:0.938))
     }
     private func caption<V:View>(_ title: String,@ViewBuilder content: ()->V) -> some View {
         VStack(alignment:.leading,spacing:14) { content(); Text(title).font(.system(size:13)).foregroundStyle(.secondary) }
@@ -114,13 +120,25 @@ final class MockGallery {
         }.padding(42).frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).background(Color(red:0.91,green:0.925,blue:0.94)).environment(\.colorScheme,.light)
     }
     private var requestWidgets: some View {
-        VStack(alignment:.leading,spacing:24) {
-            Text(L("原请求小组件 · 小 / 中 / 大", "Existing request widgets · small / medium / large")).font(.system(size:23,weight:.medium))
-            HStack(alignment:.top,spacing:22) {
-                requestWidgetPreview(snapshot,family:.systemSmall).frame(width:170,height:170).clipShape(RoundedRectangle(cornerRadius:24))
-                requestWidgetPreview(snapshot,family:.systemMedium).frame(width:364,height:170).clipShape(RoundedRectangle(cornerRadius:24))
-                requestWidgetPreview(snapshot,family:.systemLarge).frame(width:364,height:382).clipShape(RoundedRectangle(cornerRadius:24))
+        HStack(alignment:.top,spacing:28) {
+            VStack(alignment:.leading,spacing:16) {
+                ForEach(WidgetAgent.allCases,id:\.self) { [self] agent in
+                    VStack(alignment:.leading,spacing:12) {
+                        Text(agent.title).font(.system(size:20,weight:.semibold))
+                        HStack(alignment:.center,spacing:22) {
+                            requestWidgetPreview(agentSnapshot(agent),family:.systemSmall,agent:agent).frame(width:170,height:170).clipShape(RoundedRectangle(cornerRadius:24))
+                            requestWidgetPreview(agentSnapshot(agent),family:.systemMedium,agent:agent).frame(width:364,height:170).clipShape(RoundedRectangle(cornerRadius:24))
+                            requestWidgetPreview(agentSnapshot(agent),family:.systemLarge,agent:agent).frame(width:364,height:382).clipShape(RoundedRectangle(cornerRadius:24))
+                        }.frame(height:382)
+                        HStack(spacing:80) {
+                            caption(agent.quotaTitle+" "+L("单额度", "Single limit")) {quota(.single,agent:agent)}
+                            caption(agent.quotaTitle+" "+L("双额度", "Dual limits")) {quota(.dual,agent:agent)}
+                            caption(agent.quotaTitle+" "+L("刻度额度", "Segmented allowance")) {quota(.segmented,agent:agent)}
+                        }
+                    }
+                }
             }
-        }.padding(32).frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).background(Color(red:0.91,green:0.925,blue:0.94)).environment(\.colorScheme,.light)
+            MenuBarView(state:state,dismiss:{}).frame(width:420,height:770).clipShape(RoundedRectangle(cornerRadius:23))
+        }.padding(20).frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).background(Color(red:0.91,green:0.925,blue:0.94)).environment(\.colorScheme,.light)
     }
 }

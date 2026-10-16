@@ -367,7 +367,7 @@ final class Preferences {
             for key in ["native_log_columns","claude_log_columns"] where (analytics[key] as? [String]) == old {analytics[key] = old.filter {$0 != "cache_rate"}}
             analytics["log_column_defaults_version"] = 1
         }
-        let defaults: Object = ["theme":"system", "menu_bar_visible":true, "menu_bar_content":"week", "macos_auto_update":true, "usage_refresh_interval_seconds":10, "week_estimate_interval_minutes":10, "sidebar_collapsed":false, "native_sidebar_width":258]
+        let defaults: Object = ["theme":"system", "menu_bar_visible":true, "menu_bar_content":"week", "menu_bar_agent":"codex", "macos_auto_update":true, "usage_refresh_interval_seconds":10, "week_estimate_interval_minutes":10, "sidebar_collapsed":false, "native_sidebar_width":258]
         for (key,value) in defaults where analytics[key] == nil { analytics[key] = value }
         if analytics["menu_bar_fields"] == nil { analytics["menu_bar_fields"] = ["week","task"] }
         if analytics.integer("menu_bar_logo_field_version") != 1 {

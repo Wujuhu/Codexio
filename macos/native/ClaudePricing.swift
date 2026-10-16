@@ -26,6 +26,11 @@ final class ClaudePricingCatalog {
     }
     private static func id(_ value: String) -> String { value.trimmingCharacters(in:.whitespacesAndNewlines).lowercased().replacingOccurrences(of:"[1m]",with:"") }
     private static func label(_ value: String) -> String { value.lowercased().filter {$0.isASCII && ($0.isLetter || $0.isNumber)} }
+    func compactModelName(_ model: String) -> String {
+        let canonical = ids[Self.id(model)]
+        let name = canonical.flatMap {id in rows.first(where:{$0.model == id})?.raw.string("display_name")} ?? model
+        return name.replacingOccurrences(of:"^claude[-\\s]+",with:"",options:[.regularExpression,.caseInsensitive])
+    }
     private func rebuild() {
         let cached = cache.objects("rows")
         rows = seed.objects("rows").map { original in

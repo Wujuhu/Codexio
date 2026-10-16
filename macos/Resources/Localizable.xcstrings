@@ -1153,6 +1153,54 @@
         }
       }
     },
+    "Claude 刻度额度": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude Segmented Allowance"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude 刻度额度"
+          }
+        }
+      }
+    },
+    "Claude 单额度": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude Weekly Allowance"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude 单额度"
+          }
+        }
+      }
+    },
+    "Claude 双额度": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude Dual Allowance"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude 双额度"
+          }
+        }
+      }
+    },
     "Claude 来源暂不可读，已保存的历史保留": {
       "localizations": {
         "en": {
@@ -1661,6 +1709,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "Codexio 请求"
+          }
+        }
+      }
+    },
+    "Codexio 请求 · ChatGPT": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codexio Request · ChatGPT"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codexio 请求 · ChatGPT"
+          }
+        }
+      }
+    },
+    "Codexio 请求 · Claude": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codexio Request · Claude"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codexio 请求 · Claude"
           }
         }
       }
@@ -4369,6 +4449,22 @@
         }
       }
     },
+    "刻度额度": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Segmented allowance"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "刻度额度"
+          }
+        }
+      }
+    },
     "前天": {
       "localizations": {
         "en": {
@@ -4717,22 +4813,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "原始记录未提供明确服务档位，按默认 Standard 标准价估计"
-          }
-        }
-      }
-    },
-    "原请求小组件 · 小 / 中 / 大": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Existing request widgets · small / medium / large"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "原请求小组件 · 小 / 中 / 大"
           }
         }
       }
@@ -6157,6 +6237,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "子代理完成"
+          }
+        }
+      }
+    },
+    "完善 Claude 任务、小组件与菜单栏数据": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connect Claude tasks, widgets and menu usage"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "完善 Claude 任务、小组件与菜单栏数据"
           }
         }
       }
@@ -12253,6 +12349,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "查看"
+          }
+        }
+      }
+    },
+    "查看 ChatGPT 剩余额度与重置时间": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "View ChatGPT remaining allowance and reset times"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查看 ChatGPT 剩余额度与重置时间"
+          }
+        }
+      }
+    },
+    "查看 Claude 剩余额度与重置时间": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "View Claude remaining allowance and reset times"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查看 Claude 剩余额度与重置时间"
           }
         }
       }

@@ -6,14 +6,16 @@ struct QuotaEntry: TimelineEntry {
     var date: Date
     var snapshot: Snapshot?
     var style: QuotaStyle
+    var agent: WidgetAgent = .chatgpt
 }
 struct QuotaProvider: TimelineProvider {
     let style: QuotaStyle
-    func placeholder(in context: Context) -> QuotaEntry { QuotaEntry(date:Date(),snapshot:nil,style:style) }
-    func getSnapshot(in context: Context,completion: @escaping (QuotaEntry) -> Void) { completion(QuotaEntry(date:Date(),snapshot:Snapshot.read(),style:style)) }
+    var agent: WidgetAgent = .chatgpt
+    func placeholder(in context: Context) -> QuotaEntry { QuotaEntry(date:Date(),snapshot:nil,style:style,agent:agent) }
+    func getSnapshot(in context: Context,completion: @escaping (QuotaEntry) -> Void) { completion(QuotaEntry(date:Date(),snapshot:Snapshot.read(agent:agent),style:style,agent:agent)) }
     func getTimeline(in context: Context,completion: @escaping (Timeline<QuotaEntry>) -> Void) {
-        let date = Date(), snapshot = Snapshot.read()
-        completion(Timeline(entries:[QuotaEntry(date:date,snapshot:snapshot,style:style)],policy:snapshot?.host_running == true ? .after(date.addingTimeInterval(900)) : .never))
+        let date = Date(), snapshot = Snapshot.read(agent:agent)
+        completion(Timeline(entries:[QuotaEntry(date:date,snapshot:snapshot,style:style,agent:agent)],policy:snapshot?.host_running == true ? .after(date.addingTimeInterval(900)) : .never))
     }
 }
 
@@ -35,7 +37,7 @@ struct QuotaWidgetView: View {
     var body: some View {
         card
             .containerBackground(for:.widget) { background }
-            .widgetURL(URL(string:"codexio://subscription"))
+            .widgetURL(entry.agent.url("subscription"))
     }
     private var background: Color { dark ? Color(red:0.055,green:0.058,blue:0.065) : Color.white }
     private var card: some View {
@@ -57,7 +59,7 @@ struct QuotaWidgetView: View {
         else if entry.style == .single { single }
         else {
             VStack(alignment:.leading,spacing:8) {
-                HStack { Text("Codex").font(.system(size:13,weight:.semibold)); Spacer(minLength:4); freshness }
+                HStack { Text(entry.agent.quotaTitle).font(.system(size:13,weight:.semibold)); Spacer(minLength:4); freshness }
                 dualRow(week:true)
                 dualRow(week:false)
             }
@@ -121,21 +123,24 @@ struct QuotaWidgetView: View {
     }
 }
 
-private func quotaConfiguration(kind: String,title: LocalizedStringKey,style: QuotaStyle) -> some WidgetConfiguration {
-    StaticConfiguration(kind:kind,provider:QuotaProvider(style:style)) { entry in QuotaWidgetView(entry:entry) }
-        .configurationDisplayName(title)
-        .description("查看 Codex 剩余额度与重置时间")
+private func quotaConfiguration(agent: WidgetAgent,suffix: String,title: String,style: QuotaStyle) -> some WidgetConfiguration {
+    StaticConfiguration(kind:agent.kindPrefix+suffix,provider:QuotaProvider(style:style,agent:agent)) { entry in QuotaWidgetView(entry:entry) }
+        .configurationDisplayName(LocalizedStringKey(title))
+        .description(LocalizedStringKey(agent.quotaDescription))
         .supportedFamilies([.systemSmall])
         .contentMarginsDisabled()
 }
 struct CodexioQuotaWidget: Widget {
-    var body: some WidgetConfiguration { quotaConfiguration(kind:"com.wujuhu.codexio.quota",title:"Codex 单额度",style:.single) }
+    var agent: WidgetAgent = .chatgpt
+    var body: some WidgetConfiguration { quotaConfiguration(agent:agent,suffix:".quota",title:agent == .chatgpt ? WL("Codex 单额度", "Codex Weekly Allowance") : WL("Claude 单额度", "Claude Weekly Allowance"),style:.single) }
 }
 struct CodexioDualQuotaWidget: Widget {
-    var body: some WidgetConfiguration { quotaConfiguration(kind:"com.wujuhu.codexio.quota.dual",title:"Codex 双额度",style:.dual) }
+    var agent: WidgetAgent = .chatgpt
+    var body: some WidgetConfiguration { quotaConfiguration(agent:agent,suffix:".quota.dual",title:agent == .chatgpt ? WL("Codex 双额度", "Codex Dual Allowance") : WL("Claude 双额度", "Claude Dual Allowance"),style:.dual) }
 }
 struct CodexioSegmentedQuotaWidget: Widget {
-    var body: some WidgetConfiguration { quotaConfiguration(kind:"com.wujuhu.codexio.quota.segmented",title:"Codex 刻度额度",style:.segmented) }
+    var agent: WidgetAgent = .chatgpt
+    var body: some WidgetConfiguration { quotaConfiguration(agent:agent,suffix:".quota.segmented",title:agent == .chatgpt ? WL("Codex 刻度额度", "Codex Segmented Allowance") : WL("Claude 刻度额度", "Claude Segmented Allowance"),style:.segmented) }
 }
 
 func WL(_ chinese: String,_ english: String) -> String { NSLocalizedString(chinese,tableName:"Localizable",bundle:.main,value:english,comment:"") }

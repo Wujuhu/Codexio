@@ -4,7 +4,31 @@ import Foundation
 import SwiftUI
 import WidgetKit
 
-private let widgetKind = "com.wujuhu.codexio.request"
+enum WidgetAgent: String, CaseIterable {
+    case chatgpt, claude
+    var title: String {self == .chatgpt ? "ChatGPT" : "Claude"}
+    var quotaTitle: String {self == .chatgpt ? "Codex" : "Claude"}
+    var requestTitle: String {self == .chatgpt ? WL("Codexio 请求 · ChatGPT", "Codexio Request · ChatGPT") : WL("Codexio 请求 · Claude", "Codexio Request · Claude")}
+    var quotaDescription: String {self == .chatgpt ? WL("查看 ChatGPT 剩余额度与重置时间", "View ChatGPT remaining allowance and reset times") : WL("查看 Claude 剩余额度与重置时间", "View Claude remaining allowance and reset times")}
+    var kindPrefix: String {"com.wujuhu.codexio"+(self == .chatgpt ? "" : ".claude")}
+    var logo: String {self == .chatgpt ? "chatgpt" : "claude-code"}
+    func url(_ page: String) -> URL? {URL(string:"codexio://"+page+"?agent="+rawValue)}
+    private static let images: [WidgetAgent:NSImage] = Dictionary(uniqueKeysWithValues:allCases.compactMap {agent in
+        guard let file = Bundle.main.resourceURL?.appendingPathComponent("client-icons/"+agent.logo+".svg"), let image = NSImage(contentsOf:file) else {return nil}
+        image.isTemplate = true; return (agent,image)
+    })
+    var image: NSImage? {Self.images[self]}
+}
+
+struct WidgetAgentLogo: View {
+    let agent: WidgetAgent
+    var body: some View {
+        Group {
+            if let image = agent.image {Image(nsImage:image).resizable().scaledToFit()}
+            else {Text(agent == .chatgpt ? "G" : "C")}
+        }.accessibilityLabel(agent.title)
+    }
+}
 
 struct RequestSnapshot: Decodable {
     let prompt: String
@@ -16,10 +40,17 @@ struct RequestSnapshot: Decodable {
     let duration_ms: Double?
     let duration_started_at: Double?
     let duration_running: Bool
-    let input_tokens: Int
-    let output_tokens: Int
-    let cached_input_tokens: Int
+    let input_tokens: Int?
+    let output_tokens: Int?
+    let cached_input_tokens: Int?
     let cache_hit_rate: Double?
+    var total_tokens: Int? = nil
+    var totalTokens: Int? {
+        if let total_tokens {return total_tokens}
+        guard let input_tokens, let output_tokens else {return nil}
+        let sum = input_tokens.addingReportingOverflow(output_tokens)
+        return sum.overflow ? nil : sum.partialValue
+    }
 }
 
 struct QuotaSnapshot: Decodable {
@@ -41,6 +72,13 @@ struct TodaySnapshot: Decodable {
     let cache_hit_rate: Double?
 }
 
+struct AgentSnapshot: Decodable {
+    let updated_at: Double?
+    let request: RequestSnapshot?
+    let quota: QuotaSnapshot
+    let today: TodaySnapshot?
+}
+
 struct Snapshot: Decodable {
     let schema: Int
     let updated_at: Double
@@ -49,8 +87,9 @@ struct Snapshot: Decodable {
     let today: TodaySnapshot?
     var host_running: Bool? = nil
     var host_pid: Int? = nil
+    var agents: [String:AgentSnapshot]? = nil
 
-    static func read() -> Snapshot? {
+    static func read(agent: WidgetAgent = .chatgpt) -> Snapshot? {
         guard let account = getpwuid(getuid()) else { return nil }
         let home = String(cString: account.pointee.pw_dir)
         let path = home + "/Library/Application Support/Codexio/widget_snapshot.json"
@@ -60,6 +99,12 @@ struct Snapshot: Decodable {
         }
         let host = snapshot.host_pid.flatMap { $0 > 0 && $0 <= Int(Int32.max) ? NSRunningApplication(processIdentifier:Int32($0)) : nil }
         snapshot.host_running = snapshot.host_running == true && host?.bundleIdentifier == "com.wujuhu.codexio" && host?.isTerminated == false
+        if let source = snapshot.agents?[agent.rawValue] {
+            return Snapshot(schema:snapshot.schema,updated_at:source.updated_at ?? snapshot.updated_at,request:source.request,quota:source.quota,today:source.today,host_running:snapshot.host_running,host_pid:snapshot.host_pid)
+        }
+        if agent == .claude {
+            return Snapshot(schema:snapshot.schema,updated_at:snapshot.updated_at,request:nil,quota:QuotaSnapshot(applicable:true,five_hour:nil,week:nil,has_five_hour:nil,has_week:nil,five_hour_reset_at:nil,week_reset_at:nil),today:nil,host_running:snapshot.host_running,host_pid:snapshot.host_pid)
+        }
         return snapshot
     }
 }
@@ -67,27 +112,30 @@ struct Snapshot: Decodable {
 private struct CodexioEntry: TimelineEntry {
     let date: Date
     let snapshot: Snapshot?
+    var agent: WidgetAgent = .chatgpt
 }
 
 private struct CodexioProvider: TimelineProvider {
+    var agent: WidgetAgent = .chatgpt
     func placeholder(in context: Context) -> CodexioEntry {
-        CodexioEntry(date: Date(), snapshot: nil)
+        CodexioEntry(date: Date(), snapshot: nil,agent:agent)
     }
 
     func getSnapshot(in context: Context, completion: @escaping (CodexioEntry) -> Void) {
-        completion(CodexioEntry(date: Date(), snapshot: Snapshot.read()))
+        completion(CodexioEntry(date: Date(), snapshot: Snapshot.read(agent:agent),agent:agent))
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<CodexioEntry>) -> Void) {
         let now = Date()
-        let snapshot = Snapshot.read()
+        let snapshot = Snapshot.read(agent:agent)
         let interval: TimeInterval = snapshot?.request?.duration_running == true ? 300 : 1800
-        completion(Timeline(entries: [CodexioEntry(date: now, snapshot: snapshot)],
+        completion(Timeline(entries: [CodexioEntry(date: now, snapshot: snapshot,agent:agent)],
                             policy: snapshot?.host_running == true ? .after(now.addingTimeInterval(interval)) : .never))
     }
 }
 
-private func compactNumber(_ count: Int) -> String {
+private func compactNumber(_ value: Int?) -> String {
+    guard let count = value else {return "—"}
     if count >= 1_000_000 { return String(format: "%.2fM", Double(count) / 1_000_000) }
     if count >= 10_000 { return String(format: "%.1fK", Double(count) / 1_000) }
     return count.formatted()
@@ -106,7 +154,7 @@ private func compactContext(_ count: Int?) -> String? {
 }
 
 private func modelDetail(_ request: RequestSnapshot, family: WidgetFamily) -> String {
-    var parts = [request.model.isEmpty ? WL("等待模型调用", "Waiting for a model call") : request.model]
+    var parts = [request.model.isEmpty ? "—" : request.model]
     if let effort = request.reasoning_effort, !effort.isEmpty {
         let labels = ["无":"None","最轻":"Minimal","轻度":"Low","中等":"Medium","高度":"High","极高":"Extra high","最高":"Max","超高":"Ultra","未知":"Unknown","none":"None","minimal":"Minimal","low":"Low","medium":"Medium","high":"High","xhigh":"Extra high","max":"Max","ultra":"Ultra"]
         parts.append(labels[effort.lowercased()] ?? effort)
@@ -225,11 +273,16 @@ private struct CodexioWidgetView: View {
     @ViewBuilder
     private func requestBody(_ request: RequestSnapshot, quota: QuotaSnapshot, today: TodaySnapshot?) -> some View {
         Spacer(minLength: 0)
-        Text(request.prompt.isEmpty ? WL("等待请求内容", "Waiting for a request") : request.prompt)
+        Text(request.prompt.isEmpty ? "—" : request.prompt)
             .font(.system(size: family == .systemSmall ? 13 : 15, weight: .semibold))
             .lineLimit(family == .systemLarge ? 3 : 2)
             .frame(maxWidth: .infinity, alignment: .leading)
-        Text(modelDetail(request, family: family))
+        HStack(spacing:8) {
+            Text(modelDetail(request, family: family)).lineLimit(1).truncationMode(.tail)
+            Spacer(minLength:0)
+            if family == .systemSmall {WidgetAgentLogo(agent:entry.agent).frame(width:14,height:14)}
+            else {Text(entry.agent.title).fixedSize()}
+        }
             .font(.system(size: family == .systemSmall ? 11 : 12, weight: .semibold))
             .foregroundStyle(.primary)
             .lineLimit(1)
@@ -240,7 +293,7 @@ private struct CodexioWidgetView: View {
                 Metric(title: WL("费用", "Cost"), value: request.cost_usd.map { String(format: "$%.2f", $0) } ?? "—")
                     .frame(maxWidth: .infinity, alignment: .leading)
                 durationMetric(request)
-                Metric(title: WL("总 Token", "Total tokens"), value: compactNumber(request.input_tokens + request.output_tokens))
+                Metric(title: WL("总 Token", "Total tokens"), value: compactNumber(request.totalTokens))
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Metric(title: WL("命中率", "Cache hit"), value: request.cache_hit_rate.map { String(format: "%.1f%%", $0 * 100) } ?? "—")
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -270,9 +323,9 @@ private struct CodexioWidgetView: View {
             HStack(alignment: .top, spacing: 8) {
                 Metric(title: WL("今日费用", "Today’s cost"), value: today?.cost_usd.map { String(format: "$%.2f", $0) } ?? "—")
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Metric(title: WL("今日 Token", "Today’s tokens"), value: today?.tokens.map(compactNumber) ?? "—")
+                Metric(title: WL("今日 Token", "Today’s tokens"), value: today?.tokens.map {compactNumber($0)} ?? "—")
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Metric(title: WL("今日请求数", "Today’s requests"), value: today?.requests.map(compactNumber) ?? "—")
+                Metric(title: WL("今日请求数", "Today’s requests"), value: today?.requests.map {compactNumber($0)} ?? "—")
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Metric(title: WL("今日命中率", "Today’s cache hit"), value: today?.cache_hit_rate.map { String(format: "%.1f%%", $0 * 100) } ?? "—")
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -335,7 +388,7 @@ private struct CodexioWidgetView: View {
         #if CODEXIO_APP_WIDGET_PREVIEW
         content.background(Color(nsColor:.controlBackgroundColor))
         #else
-        content.containerBackground(for:.widget) { Color(nsColor:.controlBackgroundColor) }.widgetURL(URL(string:"codexio://open"))
+        content.containerBackground(for:.widget) { Color(nsColor:.controlBackgroundColor) }.widgetURL(entry.agent.url("open"))
         #endif
     }
 }
@@ -357,18 +410,19 @@ private extension EnvironmentValues {
         set { self[PreviewFamilyKey.self] = newValue }
     }
 }
-func requestWidgetPreview(_ snapshot: Snapshot,family: WidgetFamily) -> some View {
-    CodexioWidgetView(entry:CodexioEntry(date:Date(),snapshot:snapshot))
+func requestWidgetPreview(_ snapshot: Snapshot,family: WidgetFamily,agent: WidgetAgent = .chatgpt) -> some View {
+    CodexioWidgetView(entry:CodexioEntry(date:Date(),snapshot:snapshot,agent:agent))
         .environment(\.codexioPreviewFamily,family).background(Color(nsColor:.controlBackgroundColor))
 }
 #endif
 
 private struct CodexioRequestWidget: Widget {
+    var agent: WidgetAgent = .chatgpt
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: widgetKind, provider: CodexioProvider()) { entry in
+        StaticConfiguration(kind: agent.kindPrefix+".request", provider: CodexioProvider(agent:agent)) { entry in
             CodexioWidgetView(entry: entry)
         }
-        .configurationDisplayName("Codexio 请求")
+        .configurationDisplayName(LocalizedStringKey(agent.requestTitle))
         .description("查看最近请求、费用与剩余额度")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
         .contentMarginsDisabled()
@@ -383,6 +437,10 @@ struct CodexioWidgetBundle: WidgetBundle {
         CodexioQuotaWidget()
         CodexioDualQuotaWidget()
         CodexioSegmentedQuotaWidget()
+        CodexioRequestWidget(agent:.claude)
+        CodexioQuotaWidget(agent:.claude)
+        CodexioDualQuotaWidget(agent:.claude)
+        CodexioSegmentedQuotaWidget(agent:.claude)
     }
 }
 

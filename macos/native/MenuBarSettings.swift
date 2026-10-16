@@ -24,15 +24,15 @@ enum MenuBarField {
     }
     static func value(_ field: String,state: AppState) -> String {
         if field == "logo" { return "" }
-        let today = state.usage.summaries["today"]
-        let recent = state.usage.widgetRequest
-        let ready = state.taskRunning != nil
-        let current = !ready || (state.taskRunning == true && recent?.raw.string("status") != "running") ? nil : recent
-        let todayCost = ready ? today.flatMap {$0.cost ?? ($0.unknownCosts == 0 ? 0 : nil)} : nil
-        let todayTokens = ready ? today.flatMap {$0.tokens ?? ($0.unknownCosts == 0 ? 0 : nil)} : nil
+        let today = state.menuSummary
+        let recent = state.menuRequest
+        let ready = state.menuTaskRunning != nil
+        let current = !ready || (state.menuTaskRunning == true && recent?.raw.string("status") != "running") ? nil : recent
+        let todayCost = ready ? today.cost ?? (today.unknownCosts == 0 ? 0 : nil) : nil
+        let todayTokens = ready ? today.tokens ?? (today.unknownCosts == 0 ? 0 : nil) : nil
         switch field {
-        case "week": return percent(state.menuQuota.week?.remaining)
-        case "task": return state.taskRunning.map {$0 ? L("运行中", "Running") : L("已完成", "Completed")} ?? "—"
+        case "week": return percent(state.menuWindow(state.menuClient,week:true)?.remaining)
+        case "task": return state.menuTaskRunning.map {$0 ? L("运行中", "Running") : L("已完成", "Completed")} ?? "—"
         case "today_cost": return money(todayCost)
         case "today_tokens": return compact(todayTokens.map(Double.init))
         case "task_cost": return money(current?.cost)
@@ -126,7 +126,7 @@ struct MenuBarReadout: View {
     let values: [String:String]
     let running: Bool?
     init(state: AppState) {
-        fields = state.menuFields; running = state.taskRunning
+        fields = state.menuFields; running = state.menuTaskRunning
         values = Dictionary(uniqueKeysWithValues:fields.map {($0,MenuBarField.value($0,state:state))})
     }
     var body: some View {
