@@ -32,6 +32,7 @@ type PageResult struct {
 }
 
 type DataOptions struct {
+	Maintenance       func(healthy bool)
 	Directory         string
 	Roots             []string
 	Mock              bool

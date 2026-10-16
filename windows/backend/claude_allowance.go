@@ -26,6 +26,7 @@ import (
 var claudeBridgeAssets []byte
 
 type ClaudeAllowance struct {
+	startedAt                          float64
 	mu                                 sync.Mutex
 	directory, root, executable, nonce string
 	cached                             Row
@@ -37,7 +38,7 @@ type ClaudeAllowance struct {
 }
 
 func NewClaudeAllowance(directory, executable string, changed func(), sample func(Row)) *ClaudeAllowance {
-	return &ClaudeAllowance{directory: filepath.Join(directory, "claude-bridge"), root: claudeRoot(), executable: executable, cached: Row{}, changed: changed, sample: sample}
+	return &ClaudeAllowance{directory: filepath.Join(directory, "claude-bridge"), root: claudeRoot(), executable: executable, cached: Row{}, changed: changed, sample: sample, startedAt: float64(time.Now().UnixNano()) / 1e9}
 }
 func (q *ClaudeAllowance) Start() {
 	q.mu.Lock()
@@ -91,7 +92,7 @@ func (q *ClaudeAllowance) Close() {
 }
 func (q *ClaudeAllowance) identity(surface, session string) Row {
 	if surface != "cli" {
-		return Row{"identityKey": HashString(q.root + "|desktop|" + session), "verified": false}
+		return Row{"identityKey": HashString(q.root + "|desktop"), "verified": false}
 	}
 	file := filepath.Join(q.root, ".claude.json")
 	if filepath.Base(q.root) == ".claude" {
@@ -100,7 +101,7 @@ func (q *ClaudeAllowance) identity(surface, session string) Row {
 	data, _ := systemReadJSON(file, 1<<20)
 	account := ValueRow(data["oauthAccount"])
 	id := dataString(account, "accountUuid")
-	key := session
+	key := "local"
 	if id != "" {
 		key = id + "|" + dataString(account, "organizationUuid")
 	}
@@ -148,7 +149,24 @@ func (q *ClaudeAllowance) serve(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	value := Row{"source": source, "surface": surface, "captured_at": at, "session_id": session, "windows": windows, "account": q.identity(surface, session)}
+	contexts := []Row{}
+	for _, point := range ValueRows(payload["contexts"]) {
+		window, known := knownCount(point["window"])
+		stamp, valid := ValueFloat(point["observed_at"])
+		session := dataString(point, "session_id")
+		uuid, prompt := dataString(point, "message_uuid"), dataString(point, "prompt_id")
+		if known && window > 0 && window <= 2147483647 && valid && stamp >= q.startedAt && stamp <= at+5 && session != "" && len(session) <= 256 && ((uuid != "" && len(uuid) <= 256) || (prompt != "" && len(prompt) <= 256)) {
+			contexts = append(contexts, point)
+		}
+		if len(contexts) >= 32 {
+			break
+		}
+	}
+	boundary := true
+	if value, exists := payload["scheduled"]; exists {
+		boundary = ValueBool(value)
+	}
+	value := Row{"boundary_sample": boundary, "contexts": contexts, "source": source, "surface": surface, "captured_at": at, "session_id": session, "windows": windows, "account": q.identity(surface, session)}
 	q.mu.Lock()
 	if q.closed {
 		q.mu.Unlock()
@@ -170,8 +188,12 @@ func (q *ClaudeAllowance) serve(w http.ResponseWriter, r *http.Request) {
 	if q.sample != nil {
 		q.sample(next)
 	}
+	delete(old, "boundary_sample")
+	delete(old, "contexts")
 	delete(old, "updated_at")
 	comparison := CloneRow(next)
+	delete(comparison, "boundary_sample")
+	delete(comparison, "contexts")
 	delete(comparison, "updated_at")
 	if dataJSON(old) != dataJSON(comparison) && q.changed != nil {
 		q.changed()
@@ -212,7 +234,7 @@ func (q *ClaudeAllowance) snapshotLocked() Row {
 	age := time.Since(when)
 	fresh := at > 0 && age >= 0 && age < 15*time.Minute
 	account := ValueRow(q.cached["account"])
-	result := Row{"client_kind": "claude_code", "status": "unavailable", "applicable": true, "primary": nil, "secondary": nil, "account": Row{"email": account["email"]}, "account_key": account["identityKey"], "account_verified": account["verified"], "plan_type": account["planType"], "limit_id": "claude", "updated_at": nil, "error": ""}
+	result := Row{"boundary_sample": q.cached["boundary_sample"], "contexts": q.cached["contexts"], "client_kind": "claude_code", "status": "unavailable", "applicable": true, "primary": nil, "secondary": nil, "account": Row{"email": account["email"]}, "account_key": account["identityKey"], "account_verified": account["verified"], "plan_type": account["planType"], "limit_id": "claude", "updated_at": nil, "error": ""}
 	if at > 0 {
 		result["updated_at"] = UTCStamp(when)
 	}
@@ -377,7 +399,11 @@ func RunClaudeStatusline(args []string) (bool, int) {
 				windows = append(windows, row)
 			}
 		}
-		body := Row{"schema": 1, "source": "statusline", "surface": "cli", "session_id": raw["session_id"], "config_root": prior["root"], "captured_at": float64(time.Now().UnixMilli()) / 1000, "windows": windows}
+		contexts := []Row{}
+		if window, ok := knownCount(ValueRow(raw["context_window"])["context_window_size"]); ok && window > 0 && dataString(raw, "prompt_id") != "" {
+			contexts = append(contexts, Row{"session_id": raw["session_id"], "prompt_id": raw["prompt_id"], "window": window, "observed_at": float64(time.Now().UnixNano()) / 1e9})
+		}
+		body := Row{"contexts": contexts, "schema": 1, "source": "statusline", "surface": "cli", "session_id": raw["session_id"], "config_root": prior["root"], "captured_at": float64(time.Now().UnixMilli()) / 1000, "windows": windows}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		request, _ := http.NewRequestWithContext(ctx, "POST", u.String(), strings.NewReader(dataJSON(body)))

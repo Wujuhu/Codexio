@@ -17,6 +17,9 @@ import (
 )
 
 type Store struct {
+	claudeContextIndexReady bool
+	claudeContexts          map[string]Row
+	claudeContextDirty      map[string]bool
 	db                      *sql.DB
 	path                    string
 	options                 DataOptions
@@ -290,6 +293,7 @@ func (s *Store) Run(ctx context.Context, changed func()) {
 		}
 		// Successful file transactions must be visible even when another file
 		// failed; its retained cursor will be retried on the next collection.
+		e = errors.Join(e, s.applyClaudeContexts())
 		e = errors.Join(e, s.project())
 		upstreamPath := filepath.Join(s.options.Directory, "upstream.sqlite")
 		upstreamSignature := fileStamp(upstreamPath) + fileStamp(upstreamPath+"-wal")
@@ -332,6 +336,9 @@ func (s *Store) Run(ctx context.Context, changed func()) {
 		}
 		s.mu.Unlock()
 		s.work.Unlock()
+		if s.options.Maintenance != nil {
+			s.options.Maintenance(e == nil)
+		}
 		if scanUpdated != "" && s.options.ScanUpdated != nil {
 			s.options.ScanUpdated(scanUpdated)
 		}

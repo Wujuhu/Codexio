@@ -37,3 +37,5 @@ func systemLanguage() string {
 	}
 	return "en"
 }
+
+func systemAwakeSeconds() float64 { return 0 }

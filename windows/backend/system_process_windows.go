@@ -288,3 +288,15 @@ func systemInstallRoots(ctx context.Context) ([]string, []string) {
 	}
 	return roots, nil
 }
+
+// This clock excludes suspend/hibernate time; quota windows cannot span sleep.
+var systemUnbiasedClock = windows.NewLazySystemDLL("kernel32.dll").NewProc("QueryUnbiasedInterruptTime")
+
+func systemAwakeSeconds() float64 {
+	var ticks uint64
+	ok, _, _ := systemUnbiasedClock.Call(uintptr(unsafe.Pointer(&ticks)))
+	if ok == 0 {
+		return 0
+	}
+	return float64(ticks) / 1e7
+}

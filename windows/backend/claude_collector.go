@@ -23,7 +23,8 @@ func normalizedClient(v string) string {
 	return "codex"
 }
 func (s *Store) claudeSchema() error {
-	_, e := s.db.Exec(`CREATE TABLE IF NOT EXISTS claude_revisions(kind TEXT PRIMARY KEY,revision INTEGER NOT NULL);
+	_, e := s.db.Exec(`CREATE TABLE IF NOT EXISTS claude_context_windows(session_id TEXT NOT NULL,message_uuid TEXT NOT NULL,prompt_id TEXT NOT NULL,observed_at REAL NOT NULL,window INTEGER NOT NULL,PRIMARY KEY(session_id,message_uuid,prompt_id));
+ CREATE TABLE IF NOT EXISTS claude_revisions(kind TEXT PRIMARY KEY,revision INTEGER NOT NULL);
  INSERT OR IGNORE INTO claude_revisions VALUES('calls',0);
  CREATE TRIGGER IF NOT EXISTS claude_call_insert AFTER INSERT ON usage_records WHEN json_extract(NEW.data,'$.client_kind')='claude_code' BEGIN UPDATE claude_revisions SET revision=revision+1 WHERE kind='calls'; END;
  CREATE TRIGGER IF NOT EXISTS claude_call_update AFTER UPDATE ON usage_records WHEN json_extract(NEW.data,'$.client_kind')='claude_code' OR json_extract(OLD.data,'$.client_kind')='claude_code' BEGIN UPDATE claude_revisions SET revision=revision+1 WHERE kind='calls'; END;
@@ -468,6 +469,9 @@ func (s *Store) claudeEntry(tx *sql.Tx, e, state Row, root, path, identity, gene
 			text, _ := claudeText(message["content"])
 			r = Row{"id": request, "client_kind": "claude_code", "session_id": session, "turn_id": prompt, "timestamp": timestamp, "started_at": timestamp, "prompt_preview": clip(text, 320), "request_status": "unknown", "status": "unknown", "record_kind": "user_request", "has_user_message": true, "source_id": "local:claude:" + HashString(root)[:16], "client_origin": state["client_origin"], "user_uuid": uuid, "model": e["requestedModel"], "reasoning_effort": e["effort"]}
 		}
+		if r["model_context_window"] == nil {
+			r["model_context_window"] = claudeContextWindow(tx, session, uuid, prompt)
+		}
 		if err := claudeSaveRequest(tx, r); err != nil {
 			return err
 		}
@@ -551,7 +555,7 @@ func (s *Store) claudeEntry(tx *sql.Tx, e, state Row, root, path, identity, gene
 	if _, err := tx.Exec("UPDATE claude_nodes SET data=? WHERE id=?", dataJSON(node), nodeID); err != nil {
 		return err
 	}
-	r := Row{"id": id, "response_id": response, "client_kind": "claude_code", "client_origin": state["client_origin"], "session_id": firstString(oldNode["session_id"], session), "claude_request_id": request, "claude_session_scope": sessionScope, "claude_agent_id": agent, "turn_id": "", "timestamp": timestamp, "requested_model": requestedModel, "returned_model": message["model"], "upstream_model": message["model"], "upstream_mismatched": false, "model": requestedModel, "reasoning_effort": requestEffortName(e["effort"]), "service_tier": nil, "cost_usd": nil, "pricing_status": "unpriced", "quality": "response", "source_id": "local:claude:" + HashString(root)[:16], "source_path": path, "is_subagent": agent != "" || ValueBool(e["isSidechain"]), "parent_uuid": parent, "node_id": nodeID, "stop_reason": message["stop_reason"], "duration_ms": nil, "tps": nil, "ttft": nil, "model_context_window": nil}
+	r := Row{"id": id, "response_id": response, "client_kind": "claude_code", "client_origin": state["client_origin"], "session_id": firstString(oldNode["session_id"], session), "claude_request_id": request, "claude_session_scope": sessionScope, "claude_agent_id": agent, "turn_id": "", "timestamp": timestamp, "requested_model": requestedModel, "returned_model": message["model"], "upstream_model": message["model"], "upstream_mismatched": false, "model": requestedModel, "reasoning_effort": requestEffortName(e["effort"]), "service_tier": nil, "cost_usd": nil, "pricing_status": "unpriced", "quality": "response", "source_id": "local:claude:" + HashString(root)[:16], "source_path": path, "is_subagent": agent != "" || ValueBool(e["isSidechain"]), "parent_uuid": parent, "node_id": nodeID, "stop_reason": message["stop_reason"], "duration_ms": nil, "tps": nil, "ttft": nil, "model_context_window": claudeContextWindow(tx, session, uuid, dataString(e, "promptId"))}
 	in, ki := knownCount(usage["input_tokens"])
 	read, kr := knownCount(usage["cache_read_input_tokens"])
 	write, kw := knownCount(usage["cache_creation_input_tokens"])

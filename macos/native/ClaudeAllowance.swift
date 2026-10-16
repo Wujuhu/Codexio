@@ -12,6 +12,7 @@ final class ClaudeAllowance {
     private var clients: [UUID:AllowanceConnection] = [:]
     private let nonce = UUID().uuidString+UUID().uuidString
     private var cached: Object = [:]
+    private let startedAt = Date().timeIntervalSince1970
     private var metadataStamp: FileStamp?
     private var metadata: Object = [:]
     var onSample: ((Object)->Void)?
@@ -60,12 +61,12 @@ final class ClaudeAllowance {
     private func account(surface: String,session: String) -> Object {
         // Desktop may be signed into a different account from the CLI. Without
         // a matching identity from that host, retain a session-scoped identity.
-        guard surface == "cli" else {return ["identityKey":identity(root.path+"|desktop|"+session),"verified":false]}
+        guard surface == "cli" else {return ["identityKey":identity(root.path+"|desktop"),"verified":false]}
         let file = root.lastPathComponent == ".claude" ? root.deletingLastPathComponent().appendingPathComponent(".claude.json") : root.appendingPathComponent(".claude.json")
         let stamp = FileStamp(file)
         if stamp != metadataStamp {metadataStamp = stamp; metadata = readObject(file).object("oauthAccount")}
         let id = metadata.string("accountUuid"), org = metadata.string("organizationUuid")
-        return ["identityKey":identity(root.path+"|cli|"+(id.isEmpty ? session : id+"|"+org)),"verified":!id.isEmpty,
+        return ["identityKey":identity(root.path+"|cli|"+(id.isEmpty ? "local" : id+"|"+org)),"verified":!id.isEmpty,
                 "email":metadata.string("emailAddress"),"planType":metadata.string("planDisplayName",metadata.string("subscriptionType"))]
     }
     private func accept(_ payload: Object) -> Bool {
@@ -83,7 +84,13 @@ final class ClaudeAllowance {
             guard reset == nil || reset!.timeIntervalSince1970 > captured else {continue}
             windows.append(["kind":window.string("kind"),"used":used,"reset":reset?.timeIntervalSince1970 as Any? ?? NSNull()])
         }
-        let value: Object = ["source":source,"surface":surface,"captured_at":captured,"windows":windows,
+        let contexts = payload.objects("contexts").prefix(32).filter {point in
+            guard let window = point.integer("window"), window > 0, window <= 2_147_483_647,
+                  let at = point.number("observed_at"), at >= startedAt, at <= captured+5 else {return false}
+            return point.string("session_id").count <= 256 && !point.string("session_id").isEmpty &&
+                ((!point.string("message_uuid").isEmpty && point.string("message_uuid").count <= 256) || (!point.string("prompt_id").isEmpty && point.string("prompt_id").count <= 256))
+        }
+        let value: Object = ["boundary_sample":payload["scheduled"] as? Bool ?? true,"contexts":Array(contexts),"source":source,"surface":surface,"captured_at":captured,"windows":windows,
                              "account":currentAccount,"session_id":payload.string("session_id")]
         cached = value; try? atomicJSON(value,to:directory.appendingPathComponent("snapshot.json")); onSample?(value)
         return true
@@ -143,7 +150,11 @@ final class ClaudeAllowance {
                 let window = limits.object(key); guard let used = window.number("used_percentage") else {return nil}
                 return ["kind":key,"percentUsed":used,"resetsAt":window.number("resets_at").map {iso(Date(timeIntervalSince1970:$0))} as Any? ?? NSNull()]
             }
-            let body: Object = ["schema":1,"source":"statusline","surface":"cli","session_id":raw.string("session_id"),"config_root":prior.string("root"),"captured_at":Date().timeIntervalSince1970,"windows":windows]
+            var contexts: [Object] = []
+            if let window = raw.object("context_window").integer("context_window_size"), window > 0, !raw.string("prompt_id").isEmpty {
+                contexts = [["session_id":raw.string("session_id"),"prompt_id":raw.string("prompt_id"),"window":window,"observed_at":Date().timeIntervalSince1970]]
+            }
+            let body: Object = ["contexts":contexts,"schema":1,"source":"statusline","surface":"cli","session_id":raw.string("session_id"),"config_root":prior.string("root"),"captured_at":Date().timeIntervalSince1970,"windows":windows]
             var request = URLRequest(url:url,timeoutInterval:1); request.httpMethod = "POST"; request.httpBody = try? jsonData(body)
             request.setValue("application/json",forHTTPHeaderField:"Content-Type"); request.setValue("Bearer "+runtime.string("nonce"),forHTTPHeaderField:"Authorization")
             let session = URLSession(configuration:.ephemeral), done = DispatchSemaphore(value:0)

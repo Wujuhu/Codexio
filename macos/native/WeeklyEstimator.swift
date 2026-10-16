@@ -6,29 +6,57 @@ final class WeeklyEstimator {
     private let limitID: String
     private let intervalUsage: ((Double,Double)->(Int,Double,Bool))?
     private var anchor: Object?
-    private var checkpoint: Object?
     private var latest: Object?
-    private var pending: [Object] = []
-    private var interval = 30
+    private var completed: [(Object,Object,Int)] = []
+    private var interval = 10
+    private var acceptAfter = Date().timeIntervalSince1970
+    private var lastCheck: Date?
+    private var lastUptime: TimeInterval?
     private var cachedRows: [Object]?
     private var cachedPrices = ""
     private var cachedAccount: String?
     private var databaseVersion: Int?
     private(set) var revision = 0
+    private static let boundaryTolerance = 5.0
     init(_ database: Database, limitID: String = "codex", usage: ((Double,Double)->(Int,Double,Bool))? = nil) throws {
         self.database = database; self.limitID = limitID; intervalUsage = usage
         try database.script("CREATE TABLE IF NOT EXISTS usage_week_intervals(id INTEGER PRIMARY KEY AUTOINCREMENT,end_at TEXT NOT NULL,data TEXT NOT NULL); CREATE INDEX IF NOT EXISTS week_intervals_end ON usage_week_intervals(end_at DESC,id DESC);")
     }
-    func invalidate() { anchor = nil; checkpoint = nil; latest = nil; pending.removeAll() }
-    func add(_ sample: Object, intervalMinutes: Int) {
-        if interval != intervalMinutes { interval = intervalMinutes; invalidate() }
-        guard let stamp = sample.number("timestamp"), let used = sample.number("used_percent"), used >= 0, used <= 100, let reset = sample.number("reset_at"), reset > stamp, !sample.string("account_key").isEmpty, !sample.string("plan_type").isEmpty, sample.string("limit_id") == limitID else { invalidate(); return }
+    // Only unfinished observation windows are discarded. Completed windows may
+    // still wait for their local usage records to mature.
+    func invalidate() {anchor = nil; latest = nil; acceptAfter = Date().timeIntervalSince1970}
+    func interrupt() {invalidate(); completed.removeAll()}
+    func add(_ input: Object, intervalMinutes: Int) {
+        let minutes = [10,30,60].contains(intervalMinutes) ? intervalMinutes : 10
+        if interval != minutes {interval = minutes; anchor = nil; latest = nil}
+        var sample = input
+        if limitID == "claude", sample.string("plan_type").isEmpty {sample["plan_type"] = "claude"}
+        guard let stamp = sample.number("timestamp"), stamp >= acceptAfter,
+              stamp <= Date().timeIntervalSince1970+Self.boundaryTolerance,
+              let used = sample.number("used_percent"), used.isFinite, (0...100).contains(used),
+              let reset = sample.number("reset_at"), reset > stamp,
+              !sample.string("account_key").isEmpty, !sample.string("plan_type").isEmpty,
+              sample.string("limit_id") == limitID else {invalidate(); return}
         if let old = latest {
-            let changed = ["account_key","plan_type","limit_id"].contains { old.string($0) != sample.string($0) } || old.flag("sole_codex_pool") != sample.flag("sole_codex_pool")
-            if changed || abs(reset-(old.number("reset_at") ?? 0)) > 60 || stamp <= (old.number("timestamp") ?? 0) || stamp-(old.number("timestamp") ?? 0) > 600 { invalidate() }
+            let previous = old.number("timestamp") ?? 0
+            if stamp <= previous {return}
+            let changed = ["account_key","plan_type","limit_id"].contains {old.string($0) != sample.string($0)} || old.flag("sole_codex_pool") != sample.flag("sole_codex_pool")
+            let gap = max(45,min(330,sample.number("max_gap_seconds") ?? 90))
+            if changed || abs(reset-(old.number("reset_at") ?? 0)) > 1 || used < (old.number("used_percent") ?? used) || stamp-previous > gap {
+                anchor = nil
+            }
         }
         latest = sample
-        if anchor == nil { anchor = sample; checkpoint = sample } else { pending.append(sample); if pending.count > 180 { pending.removeFirst(pending.count-180) } }
+        let eligible = sample.flag("boundary_sample",true)
+        guard let start = anchor, let beginning = start.number("timestamp") else {if eligible {anchor = sample}; return}
+        let due = beginning+Double(interval)*60
+        if stamp > due+Self.boundaryTolerance {anchor = eligible ? sample : nil; return}
+        if eligible && abs(stamp-due) <= Self.boundaryTolerance {
+            completed.append((start,sample,interval)); if completed.count > 12 {completed.removeFirst(completed.count-12)}
+            // Every window advances, including zero-consumption / unchanged-quota
+            // windows. They must never be folded into a longer observation.
+            anchor = sample
+        }
     }
     private func usage(_ calls: [UsageRow], start: Double,end: Double,sole: Bool) -> (Int,Double,Bool) {
         if let intervalUsage {return intervalUsage(start,end)}
@@ -42,19 +70,23 @@ final class WeeklyEstimator {
         return (tokens,dollars,invalid)
     }
     func process(calls: [UsageRow],priceVersion: String,now: Date = Date(),accountKey: String? = nil) throws -> [Object] {
-        if let checkpoint, let start = anchor, let sample = pending.last(where:{ ($0.number("timestamp") ?? .infinity) <= now.timeIntervalSince1970-120 && ($0.number("timestamp") ?? 0)-(checkpoint.number("timestamp") ?? 0) >= Double(interval)*60 }) {
-            self.checkpoint = sample
-            let end = sample.number("timestamp") ?? 0, beginning = start.number("timestamp") ?? 0
-            pending.removeAll { ($0.number("timestamp") ?? 0) <= end }
+        let uptime = ProcessInfo.processInfo.systemUptime
+        if let previous = lastCheck, let previousUptime = lastUptime {
+            let wall = now.timeIntervalSince(previous), elapsed = uptime-previousUptime
+            if wall < 0 || wall > 90 || abs(wall-elapsed) > 5 {interrupt()}
+        }
+        lastCheck = now; lastUptime = uptime
+        if let last = latest?.number("timestamp"), now.timeIntervalSince1970-last > max(45,min(330,latest?.number("max_gap_seconds") ?? 90)) {invalidate()}
+        while let window = completed.first, let end = window.1.number("timestamp"), end <= now.timeIntervalSince1970-120 {
+            completed.removeFirst()
+            let start = window.0, sample = window.1, beginning = start.number("timestamp") ?? end
             let delta = (sample.number("used_percent") ?? 0)-(start.number("used_percent") ?? 0)
-            if delta != 0 { anchor = sample }
-            if delta > 0 {
-                let (tokens,dollars,invalid) = usage(calls,start:beginning,end:end,sole:start.flag("sole_codex_pool"))
-                if !invalid && dollars > 0 {
-                    let row: Object = ["start":iso(Date(timeIntervalSince1970:beginning)),"end":iso(Date(timeIntervalSince1970:end)),"account_key":sample.string("account_key"),"plan_type":sample.string("plan_type"),"limit_id":limitID,"reset_at":sample["reset_at"]!,"sole_codex_pool":start.flag("sole_codex_pool"),"start_percent":start["used_percent"]!,"end_percent":sample["used_percent"]!,"delta_percent":delta,"consumed_tokens":tokens,"consumed_usd":dollars,"estimated_total_usd":100*dollars/delta,"price_version":priceVersion]
-                    try database.run("INSERT INTO usage_week_intervals(end_at,data) VALUES(?,?)",[row.string("end"),jsonString(row)])
-                    cachedRows = nil
-                }
+            guard delta > 0, abs(end-beginning-Double(window.2)*60) <= Self.boundaryTolerance else {continue}
+            let (tokens,dollars,invalid) = usage(calls,start:beginning,end:end,sole:start.flag("sole_codex_pool"))
+            if !invalid && dollars > 0 {
+                let row: Object = ["start":iso(Date(timeIntervalSince1970:beginning)),"end":iso(Date(timeIntervalSince1970:end)),"account_key":sample.string("account_key"),"plan_type":sample.string("plan_type"),"limit_id":limitID,"reset_at":sample["reset_at"]!,"sole_codex_pool":start.flag("sole_codex_pool"),"start_percent":start["used_percent"]!,"end_percent":sample["used_percent"]!,"delta_percent":delta,"consumed_tokens":tokens,"consumed_usd":dollars,"estimated_total_usd":100*dollars/delta,"price_version":priceVersion,"interval_minutes":window.2,"duration_seconds":end-beginning,"fixed_window_version":1]
+                try database.run("INSERT INTO usage_week_intervals(end_at,data) VALUES(?,?)",[row.string("end"),jsonString(row)])
+                cachedRows = nil
             }
         }
         let version = try database.query("PRAGMA data_version").first?.integer("data_version")

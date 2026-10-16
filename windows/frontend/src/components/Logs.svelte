@@ -12,7 +12,7 @@
   export let onchange:(q:Query)=>void; export let onsave:(r:Row)=>Promise<void>; export let onerror:(e:any)=>void;
   const definitions=[['content','请求 / 时间',168],['time','时间',108],['model','模型',132],['input','输入',78],['output','输出',78],['total','总 Token',78],['cached','缓存读取',78],['cache_write','缓存写入',78],['cache_rate','命中率',78],['cost','费用',80],['duration','耗时',88],['effort','推理强度',70],['speed','速度',70],['context','上下文',78],['status','状态',70],['details','详情',60]].map(([key,title,width])=>({key:String(key),title:String(title),width:Number(width)}));
   function minimumWidth(key:string){return key==='content'?144:key==='model'?120:key==='duration'?78:key==='details'?54:64}
-  const defaults=['content','model','input','output','cache_rate','cost','duration','details'];
+  const defaults=['content','model','input','output','cost','duration','details'];
   let widths:Record<string,number>={},available=0,menu:HTMLDetailsElement;
   let drag:{key:string,start:number,width:number}|null=null;
   let loadedWidths:any;

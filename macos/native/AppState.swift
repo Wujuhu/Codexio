@@ -20,6 +20,8 @@ final class AppState: ObservableObject {
     let claudeQuotaClock = ScanClock()
     private var claudeQuotaKey = ""
     private var claudeLastSample: String?
+    private var claudeContextKey = ""
+    private var sleepObserver: NSObjectProtocol?
     private var claudeEstimateRevision = -1
     private var claudeObserved: Date?
     var claudeQuotaFresh: Bool {claudeObserved.map {Date().timeIntervalSince($0) >= 0 && Date().timeIntervalSince($0) < 900} == true}
@@ -137,6 +139,11 @@ final class AppState: ObservableObject {
         sidebarWidth = min(320,max(140,preferences.analytics.number("native_sidebar_width") ?? preferences.analytics.number("sidebar_width") ?? 238))
         menuVisible = preferences.analytics.flag("menu_bar_visible",true)
         menuFields = MenuBarField.normalize(preferences.analytics["menu_bar_fields"] as? [String] ?? MenuBarField.defaults)
+        if !paths.mock {
+            sleepObserver = NSWorkspace.shared.notificationCenter.addObserver(forName:NSWorkspace.willSleepNotification,object:nil,queue:.main) { [weak self] _ in
+                self?.dataQueue.async { [weak self] in self?.estimator.invalidate(); self?.claudeEstimator.invalidate() }
+            }
+        }
         client.onNotification = { [weak self] method, _ in
             guard ["account/rateLimits/updated","account/updated"].contains(method) else { return }
             DispatchQueue.main.async {
@@ -145,6 +152,7 @@ final class AppState: ObservableObject {
             }
         }
     }
+    deinit {if let sleepObserver {NSWorkspace.shared.notificationCenter.removeObserver(sleepObserver)}}
     func start() {
         if paths.mock { seedMock(); return }
         if UserDefaults.standard.bool(forKey:"codexio.mobile.enabled") { mobileSync.start() }
@@ -271,11 +279,11 @@ final class AppState: ObservableObject {
                     if initial && (current == total || current % 50 == 0) { DispatchQueue.main.async { let text = "\(current) / \(total)"; if self.scanProgress != text { self.scanProgress = text } } }
                 }
                 self.publishUsage()
-            } catch { DispatchQueue.main.async { self.errorMessage = error.localizedDescription; self.loading = false } }
+            } catch {self.estimator.interrupt(); DispatchQueue.main.async { self.errorMessage = error.localizedDescription; self.loading = false } }
             do {
                 try self.claudeLedger.scan()
                 self.publishClaude(); self.receiveClaudeQuota(self.claudeAllowance.snapshot())
-            } catch { DispatchQueue.main.async { self.claudeWarning = error.localizedDescription } }
+            } catch {self.claudeEstimator.interrupt(); DispatchQueue.main.async { self.claudeWarning = error.localizedDescription } }
             DispatchQueue.main.async { self.scanning = false }
         }
     }
@@ -292,11 +300,16 @@ final class AppState: ObservableObject {
         quota.applicable = !quota.windows.isEmpty
         if let stamp = sample.number("captured_at"), String(stamp)+quota.account.string("identityKey") != claudeLastSample {
             claudeLastSample = String(stamp)+quota.account.string("identityKey")
-            if fresh, quota.account.flag("verified"), let week = quota.week, let used = week.used, let reset = week.reset {
-                claudeEstimator.add(["timestamp":stamp,"used_percent":used,"reset_at":reset.timeIntervalSince1970,"account_key":quota.account.string("identityKey"),"plan_type":quota.account.string("planType").isEmpty ? "claude" : quota.account.string("planType"),"limit_id":"claude"],intervalMinutes:max(1,preferences.analytics.integer("week_estimate_interval_minutes") ?? 30))
+            if fresh, let week = quota.week, let used = week.used, let reset = week.reset {
+                claudeEstimator.add(["timestamp":stamp,"used_percent":used,"reset_at":reset.timeIntervalSince1970,"account_key":quota.account.string("identityKey"),"plan_type":quota.account.string("planType").isEmpty ? "claude" : quota.account.string("planType"),"limit_id":"claude","boundary_sample":sample["boundary_sample"] ?? true,"max_gap_seconds":90],intervalMinutes:max(1,preferences.analytics.integer("week_estimate_interval_minutes") ?? 10))
             } else {claudeEstimator.invalidate()}
         }
-        let estimates = (try? claudeEstimator.process(calls:[],priceVersion:claudeCatalog.version,accountKey:quota.account.flag("verified") ? quota.account.string("identityKey") : "")) ?? []
+        let contexts = sample.objects("contexts"), contextKey = identity(contexts)
+        if contextKey != claudeContextKey {
+            do {try claudeLedger.observeContexts(contexts); claudeContextKey = contextKey; publishClaude()}
+            catch {DispatchQueue.main.async {self.claudeWarning = error.localizedDescription}}
+        }
+        let estimates = (try? claudeEstimator.process(calls:[],priceVersion:claudeCatalog.version,accountKey:quota.account.string("identityKey"))) ?? []
         let estimateRevision = claudeEstimator.revision
         let key = quota.contentKey+String(fresh)
         DispatchQueue.main.async { [weak self] in
@@ -391,8 +404,8 @@ final class AppState: ObservableObject {
                     if let identityAfter { next.account["identityKey"] = identityAfter.key }
                     if let week = next.week, let used = week.used, let reset = week.reset, let identity = identityAfter {
                         let buckets = limits.object("rateLimitsByLimitId")
-                        let sample: Object = ["timestamp":Date().timeIntervalSince1970,"used_percent":used,"reset_at":reset.timeIntervalSince1970,"account_key":identity.key,"plan_type":account.string("planType"),"limit_id":"codex","sole_codex_pool":Set(buckets.keys) == Set(["codex"])]
-                        let interval = self.preferences.analytics.integer("week_estimate_interval_minutes") ?? 30
+                        let sample: Object = ["timestamp":Date().timeIntervalSince1970,"used_percent":used,"reset_at":reset.timeIntervalSince1970,"account_key":identity.key,"plan_type":account.string("planType"),"limit_id":"codex","sole_codex_pool":Set(buckets.keys) == Set(["codex"]),"max_gap_seconds":max(45,min(330,(self.preferences.general.number("refresh_interval_seconds") ?? 60)+30))]
+                        let interval = self.preferences.analytics.integer("week_estimate_interval_minutes") ?? 10
                         self.dataQueue.async { self.estimator.add(sample,intervalMinutes:interval) }
                     }
                 }
@@ -412,6 +425,7 @@ final class AppState: ObservableObject {
                     if self.reportsVisible { self.refreshReports() }
                 }
             } catch {
+                self.dataQueue.async {self.estimator.invalidate()}
                 if !self.client.running { self.client.close() }
                 let currentIdentity = try? BackendCredentials.load(root:accountRoot).account
                 let owner = currentIdentity?.key ?? ""
@@ -548,6 +562,7 @@ final class AppState: ObservableObject {
         if key == "menu_bar_visible" { menuVisible = preferences.analytics.flag("menu_bar_visible",true) }
         if key == "menu_bar_fields" { menuFields = MenuBarField.normalize(preferences.analytics["menu_bar_fields"] as? [String] ?? MenuBarField.defaults) }
         if ["usage_refresh_interval_seconds","refresh_interval_seconds"].contains(key) { configureTimers() }
+        if key == "week_estimate_interval_minutes" {dataQueue.async {self.estimator.invalidate();self.claudeEstimator.invalidate()}}
         if ["theme","menu_bar_visible","menu_bar_fields"].contains(key) { onSettingsChange?() }
         objectWillChange.send()
     }
@@ -666,7 +681,7 @@ final class AppState: ObservableObject {
                     }]
                     self.onQuotaChange?()
                 }
-            } catch { DispatchQueue.main.async { self.errorMessage = error.localizedDescription; self.loading = false } }
+            } catch {self.estimator.interrupt(); DispatchQueue.main.async { self.errorMessage = error.localizedDescription; self.loading = false } }
         }
     }
 }

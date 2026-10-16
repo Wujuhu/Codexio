@@ -61,7 +61,17 @@ func NewService(directory, executable, version string, mock bool, callbacks Desk
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Service{config: c, directory: directory, version: version, mock: mock, callbacks: callbacks, ctx: ctx, cancel: cancel}
-	s.store, err = OpenStore(DataOptions{Directory: directory, Roots: ValueStrings(c["codex_roots"]), Mock: mock, Config: CloneRow(c), ClientScanUpdated: func(client, stamp string) {
+	s.store, err = OpenStore(DataOptions{Directory: directory, Roots: ValueStrings(c["codex_roots"]), Mock: mock, Config: CloneRow(c), Maintenance: func(healthy bool) {
+		if !s.mock {
+			if healthy {
+				s.estimate.Process()
+				s.claudeEstimate.Process()
+			} else {
+				s.estimate.Interrupt()
+				s.claudeEstimate.Interrupt()
+			}
+		}
+	}, ClientScanUpdated: func(client, stamp string) {
 		if callbacks.Changed != nil {
 			callbacks.Changed("codexio:clock", Row{"client_kind": client, "updated_at": stamp})
 		}
@@ -87,15 +97,8 @@ func NewService(directory, executable, version string, mock bool, callbacks Desk
 		return nil, err
 	}
 	s.claudeQuota = NewClaudeAllowance(directory, executable, func() { s.notify("claude_quota") }, func(r Row) {
-		if !ValueBool(r["account_verified"]) {
-			s.claudeEstimate.Sample(Row{})
-		} else {
-			sample := CloneRow(r)
-			if dataString(sample, "plan_type") == "" {
-				sample["plan_type"] = "claude"
-			}
-			s.claudeEstimate.Sample(sample)
-		}
+		s.claudeEstimate.Sample(r)
+		s.store.ObserveClaudeContexts(r)
 		if callbacks.Changed != nil {
 			callbacks.Changed("codexio:clock", Row{"client_kind": "claude_code", "updated_at": r["updated_at"]})
 		}
@@ -152,10 +155,6 @@ func (s *Service) notify(scope string) {
 func (s *Service) Start() {
 	s.startOnce.Do(func() {
 		go s.store.Run(s.ctx, func() {
-			if !s.mock {
-				s.estimate.Process()
-				s.claudeEstimate.Process()
-			}
 			s.notify("usage")
 			s.mobile.RequestProjection()
 		})
@@ -422,6 +421,10 @@ func (s *Service) SaveSettings(changes Row) (Row, error) {
 	s.config = c
 	s.mu.Unlock()
 	s.store.Configure(c)
+	if ValueInt(old["week_estimate_interval_minutes"]) != ValueInt(c["week_estimate_interval_minutes"]) {
+		s.estimate.Interrupt()
+		s.claudeEstimate.Interrupt()
+	}
 	if ValueBool(old["mobile_sync_enabled"]) != ValueBool(c["mobile_sync_enabled"]) {
 		if _, e = s.mobile.Action("enable", Row{"enabled": ValueBool(c["mobile_sync_enabled"])}); e != nil {
 			s.notice(e.Error())

@@ -118,6 +118,9 @@ func (s *Store) rebuildClaudeGroups(tx *sql.Tx, dirty map[string]bool, full bool
 					}
 					if _, ok := knownCount(r["context_input_tokens"]); ok {
 						group["context_input_tokens"] = r["context_input_tokens"]
+						if capacity, known := knownCount(r["model_context_window"]); known && capacity > 0 {
+							group["model_context_window"] = capacity
+						}
 					}
 					if dataString(group, "model") == "" {
 						group["model"] = r["requested_model"]

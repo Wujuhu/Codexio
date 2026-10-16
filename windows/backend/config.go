@@ -26,10 +26,10 @@ func systemDefaultConfig() Row {
 	r := CloneRow(systemSettingDefaults)
 	for k, v := range (Row{"version": 1, "theme": "system", "widget_visible": true, "auto_sync_prices": true, "auto_update": true, "macos_auto_update": true,
 		"usage_report_auto": true, "usage_report_style": "garden", "app_icon": "main", "mobile_sync_enabled": false, "upstream_detection_enabled": false,
-		"usage_refresh_interval_seconds": 10, "usage_refresh_interval_user_set": false, "week_estimate_interval_minutes": 30, "week_estimate_interval_version": 2,
+		"usage_refresh_interval_seconds": 10, "usage_refresh_interval_user_set": false, "week_estimate_interval_minutes": 10, "week_estimate_interval_version": 3, "log_column_defaults_version": 1,
 		"codex_roots": []string{systemCodexRoot()}, "account_since": UTCStamp(time.Now()), "main_geometry": nil,
 		"navigation_order": []string{"overview", "logs", "trends", "subscription", "pricing", "settings"}, "navigation_order_version": 1,
-		"sidebar_collapsed": false, "sidebar_width": 238, "log_preview_width": 240, "native_log_columns": []string{"content", "model", "input", "output", "cache_rate", "cost", "duration", "details"}, "claude_log_columns": []string{"content", "model", "input", "output", "cache_rate", "cost", "duration", "details"}, "claude_log_column_widths": Row{}, "subscription_profile": Row{"plan": "", "price_usd": nil, "renewal_date": ""}, "language": systemLanguage()}) {
+		"sidebar_collapsed": false, "sidebar_width": 238, "log_preview_width": 240, "native_log_columns": []string{"content", "model", "input", "output", "cost", "duration", "details"}, "claude_log_columns": []string{"content", "model", "input", "output", "cost", "duration", "details"}, "claude_log_column_widths": Row{}, "subscription_profile": Row{"plan": "", "price_usd": nil, "renewal_date": ""}, "language": systemLanguage()}) {
 		r[k] = v
 	}
 	return r
@@ -113,8 +113,16 @@ func LoadConfig(directory string) (Row, error) {
 			if ValueInt(raw["navigation_order_version"]) != 1 {
 				r["navigation_order"] = systemDefaultConfig()["navigation_order"]
 			}
-			if ValueInt(raw["week_estimate_interval_version"]) != 2 && ValueInt(raw["week_estimate_interval_minutes"]) == 10 {
-				r["week_estimate_interval_minutes"] = 30
+			if ValueInt(raw["week_estimate_interval_version"]) != 3 && ValueInt(raw["week_estimate_interval_minutes"]) == 30 {
+				r["week_estimate_interval_minutes"] = 10
+			}
+			if ValueInt(raw["log_column_defaults_version"]) != 1 {
+				old := "content,model,input,output,cache_rate,cost,duration,details"
+				for _, key := range []string{"native_log_columns", "claude_log_columns"} {
+					if strings.Join(ValueStrings(raw[key]), ",") == old {
+						r[key] = systemDefaultConfig()[key]
+					}
+				}
 			}
 		}
 	}
@@ -279,7 +287,8 @@ func systemNormalizeConfig(r Row) Row {
 	if ValueString(r["app_icon"]) == "" {
 		r["app_icon"] = "main"
 	}
-	r["week_estimate_interval_version"] = 2
+	r["week_estimate_interval_version"] = 3
+	r["log_column_defaults_version"] = 1
 	r["navigation_order_version"] = 1
 	return r
 }

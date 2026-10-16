@@ -40,7 +40,7 @@ private func claudeGridRow(_ row: UsageRow,state: AppState,showYear: Bool,timeOn
             let rate = row.raw.number("input_tokens").flatMap {input in input > 0 ? row.raw.number("cached_input_tokens").map {$0/input*100} : nil}
             return GridText(main:percent(rate,digits:1))
         }
-        if key == "context" {return GridText(main:compact(row.raw.string("record_kind") == "user_request" ? row.raw.number("context_input_tokens") : row.inputTokens.map(Double.init)))}
+        if key == "context" {return GridText(main:compact(row.raw.number("model_context_window")))}
         if key == "status" && row.raw.string("status") == "failed" {return GridText(main:L("失败", "Failed"))}
         return original(key)
     }
@@ -299,7 +299,7 @@ struct ClaudeDetailView: View {
                 field(L("输出 Token", "Output tokens"),compact(row.raw.number("output_tokens")))
                 field(L("推理输出", "Reasoning output"),compact(row.raw.number("reasoning_output_tokens")))
                 field(L("上下文", "Context"),compact(row.raw.string("record_kind") == "user_request" ? row.raw.number("context_input_tokens") : row.inputTokens.map(Double.init)))
-                field(L("上下文容量", "Context window"),"—")
+                field(L("上下文容量", "Context window"),compact(row.raw.number("model_context_window")))
                 if row.raw.flag("usage_conflict") {StatusNote(text:L("计量片段存在冲突", "Conflicting usage observations"))}
                 else if row.raw.integer("total_tokens") == nil && row.raw.integer("call_count") != 0 {StatusNote(text:L("计量信息不完整", "Incomplete usage information"))}
                 Divider(); Text(L("原始正文", "Original content")).foregroundStyle(.secondary)
