@@ -9585,6 +9585,22 @@
         }
       }
     },
+    "无法读取更新包芯片架构": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not read the update architecture"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法读取更新包芯片架构"
+          }
+        }
+      }
+    },
     "无法连接 ChatGPT（网络或代理异常）": {
       "localizations": {
         "en": {

@@ -594,7 +594,12 @@ final class NativeUpdater {
         guard try execute("/usr/bin/ditto",["-x","-k",archive.path,folder.path],timeout:120).code == 0 else { throw AppFailure(L("更新包解压失败", "Could not extract the update")) }
         let app = folder.appendingPathComponent("Codexio.app")
         _ = try Installation.verify(app,version:version)
-        guard try execute("/usr/bin/lipo",["-verify_arch",NativeUpdateRelease.architecture,app.appendingPathComponent("Contents/MacOS/Codexio").path]).code == 0 else { throw AppFailure(L("更新包芯片架构不匹配", "Update architecture does not match")) }
+        // Foundation reads the Mach-O architectures without requiring Xcode command-line tools.
+        guard let architectures = Bundle(url:app)?.executableArchitectures, !architectures.isEmpty else {
+            throw AppFailure(L("无法读取更新包芯片架构", "Could not read the update architecture"))
+        }
+        let expected = NativeUpdateRelease.architecture == "arm64" ? NSBundleExecutableArchitectureARM64 : NSBundleExecutableArchitectureX86_64
+        guard architectures.contains(NSNumber(value:expected)) else { throw AppFailure(L("更新包芯片架构不匹配", "Update architecture does not match")) }
         guard !FileManager.default.fileExists(atPath:target.path) else { throw AppFailure(L("更新暂存已存在", "An update staging bundle already exists")) }
         try FileManager.default.moveItem(at:app,to:target)
     }
