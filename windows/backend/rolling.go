@@ -12,6 +12,7 @@ import (
 type rollingWindow struct {
 	start, end Row
 	minutes    int64
+	tolerance  float64
 }
 
 type RollingEstimator struct {
@@ -42,7 +43,7 @@ func NewRollingEstimator(store *Store, config func() Row, changed func(), limits
 	return &RollingEstimator{store: store, config: config, changed: changed, limitID: limit, acceptAfter: float64(time.Now().UnixNano()) / 1e9}, nil
 }
 
-const rollingBoundaryTolerance = 5.0
+const rollingFutureTimestampTolerance = 5.0
 
 func (e *RollingEstimator) invalidate() {
 	e.anchor = nil
@@ -52,7 +53,8 @@ func (e *RollingEstimator) invalidate() {
 func (e *RollingEstimator) Sample(quota Row) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	interval := ValueInt(e.config()["week_estimate_interval_minutes"])
+	config := e.config()
+	interval := ValueInt(config["week_estimate_interval_minutes"])
 	if interval != 10 && interval != 30 && interval != 60 {
 		interval = 10
 	}
@@ -70,21 +72,18 @@ func (e *RollingEstimator) Sample(quota Row) {
 	if e.limitID == "claude" && plan == "" {
 		plan = "claude"
 	}
-	if dataString(quota, "status") != "ok" || !ok || at < e.acceptAfter || at > float64(time.Now().UnixNano())/1e9+rollingBoundaryTolerance || !uok || used < 0 || used > 100 || !rok || !reset.After(stamp) || account == "" || plan == "" || plan == "unknown" || plan == "legacy" || limit != e.limitID {
+	if dataString(quota, "status") != "ok" || !ok || at < e.acceptAfter || at > float64(time.Now().UnixNano())/1e9+rollingFutureTimestampTolerance || !uok || used < 0 || used > 100 || !rok || !reset.After(stamp) || account == "" || plan == "" || plan == "unknown" || plan == "legacy" || limit != e.limitID {
 		e.invalidate()
 		return
 	}
 	buckets := ValueRow(quota["rate_limits_by_limit_id"])
-	gap := float64(ValueInt(e.config()["refresh_interval_seconds"])) + 30
+	sampleInterval := math.Max(30, math.Min(300, float64(ValueInt(config["refresh_interval_seconds"]))))
 	if e.limitID == "claude" {
-		gap = 90
+		sampleInterval = 60
 	}
-	gap = math.Max(45, math.Min(330, gap))
-	boundary := true
-	if v, exists := quota["boundary_sample"]; exists {
-		boundary = ValueBool(v)
-	}
-	sample := Row{"timestamp": at, "used_percent": used, "reset_at": float64(reset.UnixNano()) / 1e9, "account_key": account, "plan_type": plan, "limit_id": limit, "sole_codex_pool": len(buckets) == 1 && len(ValueRow(buckets["codex"])) > 0, "max_gap_seconds": gap}
+	gap := math.Max(45, math.Min(330, sampleInterval+30))
+	sample := Row{"timestamp": at, "used_percent": used, "reset_at": float64(reset.UnixNano()) / 1e9, "account_key": account, "plan_type": plan, "limit_id": limit, "sole_codex_pool": len(buckets) == 1 && len(ValueRow(buckets["codex"])) > 0, "sample_interval_seconds": sampleInterval, "max_gap_seconds": gap}
+	previous := e.latest
 	if len(e.latest) > 0 {
 		previous, _ := ValueFloat(e.latest["timestamp"])
 		if at <= previous {
@@ -92,33 +91,38 @@ func (e *RollingEstimator) Sample(quota Row) {
 		}
 		prevReset, _ := ValueFloat(e.latest["reset_at"])
 		prevUsed, _ := ValueFloat(e.latest["used_percent"])
-		if account != dataString(e.latest, "account_key") || plan != dataString(e.latest, "plan_type") || sample["sole_codex_pool"] != e.latest["sole_codex_pool"] || math.Abs(float64(reset.UnixNano())/1e9-prevReset) > 1 || used < prevUsed || at-previous > gap {
+		if account != dataString(e.latest, "account_key") || plan != dataString(e.latest, "plan_type") || sample["sole_codex_pool"] != e.latest["sole_codex_pool"] || sample["sample_interval_seconds"] != e.latest["sample_interval_seconds"] || math.Abs(float64(reset.UnixNano())/1e9-prevReset) > 1 || used < prevUsed || at-previous > gap {
 			e.anchor = nil
 		}
 	}
 	e.latest = sample
 	if e.anchor == nil {
-		if boundary {
-			e.anchor = sample
-		}
+		e.anchor = sample
 		return
 	}
 	start, _ := ValueFloat(e.anchor["timestamp"])
 	due := start + float64(interval*60)
-	if at > due+rollingBoundaryTolerance {
-		e.anchor = nil
-		if boundary {
-			e.anchor = sample
-		}
+	if at < due {
 		return
 	}
-	if boundary && math.Abs(at-due) <= rollingBoundaryTolerance {
-		e.completed = append(e.completed, rollingWindow{e.anchor, sample, interval})
-		if len(e.completed) > 12 {
-			e.completed = e.completed[len(e.completed)-12:]
-		}
-		e.anchor = sample
+	// Wait until samples straddle the target, then select the nearer real
+	// reading instead of closing early on entry into the tolerance band.
+	end := sample
+	if before, ok := ValueFloat(previous["timestamp"]); ok && before > start && math.Abs(before-due) < math.Abs(at-due) {
+		end = previous
 	}
+	endAt, _ := ValueFloat(end["timestamp"])
+	tolerance, _ := ValueFloat(e.anchor["sample_interval_seconds"])
+	if math.Abs(endAt-due) > tolerance {
+		e.anchor = sample
+		return
+	}
+	e.completed = append(e.completed, rollingWindow{start: e.anchor, end: end, minutes: interval, tolerance: tolerance})
+	if len(e.completed) > 12 {
+		e.completed = e.completed[len(e.completed)-12:]
+	}
+	// Advance even when consumption or quota delta is zero.
+	e.anchor = end
 }
 
 func (e *RollingEstimator) Interrupt() {
@@ -165,7 +169,7 @@ func (e *RollingEstimator) process(now time.Time) {
 		before, _ := ValueFloat(window.start["used_percent"])
 		after, _ := ValueFloat(window.end["used_percent"])
 		delta := after - before
-		if delta <= 0 || math.Abs(end-start-float64(window.minutes*60)) > rollingBoundaryTolerance {
+		if delta <= 0 || math.Abs(end-start-float64(window.minutes*60)) > window.tolerance {
 			continue
 		}
 		startAt, _ := ParseStamp(start)
@@ -174,7 +178,7 @@ func (e *RollingEstimator) process(now time.Time) {
 		if err != nil || invalid || dollars <= 0 {
 			continue
 		}
-		r := Row{"start": UTCStamp(startAt), "end": UTCStamp(endAt), "account_key": window.end["account_key"], "plan_type": window.end["plan_type"], "limit_id": e.limitID, "reset_at": window.end["reset_at"], "sole_codex_pool": window.start["sole_codex_pool"], "start_percent": before, "end_percent": after, "delta_percent": delta, "consumed_tokens": tokens, "consumed_usd": dollars, "estimated_total_usd": 100 * dollars / delta, "price_version": version, "interval_minutes": window.minutes, "duration_seconds": end - start, "fixed_window_version": 1}
+		r := Row{"start": UTCStamp(startAt), "end": UTCStamp(endAt), "account_key": window.end["account_key"], "plan_type": window.end["plan_type"], "limit_id": e.limitID, "reset_at": window.end["reset_at"], "sole_codex_pool": window.start["sole_codex_pool"], "start_percent": before, "end_percent": after, "delta_percent": delta, "consumed_tokens": tokens, "consumed_usd": dollars, "estimated_total_usd": 100 * dollars / delta, "price_version": version, "interval_minutes": window.minutes, "duration_seconds": end - start, "boundary_tolerance_seconds": window.tolerance, "fixed_window_version": 2}
 		if _, err = e.store.db.Exec("INSERT INTO usage_week_intervals(end_at,data) VALUES(?,?)", UTCStamp(endAt), dataJSON(r)); err == nil && e.changed != nil {
 			e.changed()
 		}

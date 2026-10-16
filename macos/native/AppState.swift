@@ -301,7 +301,7 @@ final class AppState: ObservableObject {
         if let stamp = sample.number("captured_at"), String(stamp)+quota.account.string("identityKey") != claudeLastSample {
             claudeLastSample = String(stamp)+quota.account.string("identityKey")
             if fresh, let week = quota.week, let used = week.used, let reset = week.reset {
-                claudeEstimator.add(["timestamp":stamp,"used_percent":used,"reset_at":reset.timeIntervalSince1970,"account_key":quota.account.string("identityKey"),"plan_type":quota.account.string("planType").isEmpty ? "claude" : quota.account.string("planType"),"limit_id":"claude","boundary_sample":sample["boundary_sample"] ?? true,"max_gap_seconds":90],intervalMinutes:max(1,preferences.analytics.integer("week_estimate_interval_minutes") ?? 10))
+                claudeEstimator.add(["timestamp":stamp,"used_percent":used,"reset_at":reset.timeIntervalSince1970,"account_key":quota.account.string("identityKey"),"plan_type":quota.account.string("planType").isEmpty ? "claude" : quota.account.string("planType"),"limit_id":"claude","sample_interval_seconds":60,"max_gap_seconds":90],intervalMinutes:max(1,preferences.analytics.integer("week_estimate_interval_minutes") ?? 10))
             } else {claudeEstimator.invalidate()}
         }
         let contexts = sample.objects("contexts"), contextKey = identity(contexts)
@@ -404,7 +404,8 @@ final class AppState: ObservableObject {
                     if let identityAfter { next.account["identityKey"] = identityAfter.key }
                     if let week = next.week, let used = week.used, let reset = week.reset, let identity = identityAfter {
                         let buckets = limits.object("rateLimitsByLimitId")
-                        let sample: Object = ["timestamp":Date().timeIntervalSince1970,"used_percent":used,"reset_at":reset.timeIntervalSince1970,"account_key":identity.key,"plan_type":account.string("planType"),"limit_id":"codex","sole_codex_pool":Set(buckets.keys) == Set(["codex"]),"max_gap_seconds":max(45,min(330,(self.preferences.general.number("refresh_interval_seconds") ?? 60)+30))]
+                        let sampleInterval = max(30,min(300,self.preferences.general.number("refresh_interval_seconds") ?? 60))
+                        let sample: Object = ["timestamp":Date().timeIntervalSince1970,"used_percent":used,"reset_at":reset.timeIntervalSince1970,"account_key":identity.key,"plan_type":account.string("planType"),"limit_id":"codex","sole_codex_pool":Set(buckets.keys) == Set(["codex"]),"sample_interval_seconds":sampleInterval,"max_gap_seconds":max(45,min(330,sampleInterval+30))]
                         let interval = self.preferences.analytics.integer("week_estimate_interval_minutes") ?? 10
                         self.dataQueue.async { self.estimator.add(sample,intervalMinutes:interval) }
                     }
