@@ -256,23 +256,29 @@ final class AppState: ObservableObject {
         WidgetCenter.shared.reloadAllTimelines()
     }
     func refresh() { if selectedPage == "pricing" {syncPrices();return}; refreshUsage(); if pageClient == .codex || !["overview","logs","trends","subscription"].contains(selectedPage) { refreshQuota() }; if selectedPage == "subscription" && pageClient == .codex { refreshReports(force:true) } }
-    private var usageReportSourceKey: String { preferences.roots.map(\.path).sorted().joined(separator: "\n") + "\n" + accountRoot.path }
-    func prepareUsageReports(completion: @escaping (Result<UsageReportCollection, Error>) -> Void) {
-        let sourceKey = usageReportSourceKey
+    private func usageReportSourceKey(for client: DesktopClient) -> String {
+        client == .codex ? preferences.roots.map(\.path).sorted().joined(separator:"\n")+"\n"+accountRoot.path : "claude_code\n"+claudeLedger.root.path
+    }
+    func prepareUsageReports(client: DesktopClient = .codex,completion: @escaping (Result<UsageReportCollection, Error>) -> Void) {
+        let sourceKey = usageReportSourceKey(for:client)
         dataQueue.async { [weak self] in
-            guard let self else { return }
-            let result: Result<UsageReportCollection, Error>
+            guard let self else {return}
+            let result: Result<UsageReportCollection,Error>
             do {
-                let input = try self.database.transaction { () throws -> (UsageSnapshot, Int) in
-                    let snapshot = try self.usageCache.load()
-                    let generation = try self.database.query("SELECT revision FROM usage_revisions WHERE kind='ledger'").first?.integer("revision") ?? 0
-                    return (snapshot, generation)
+                if client == .claudeCode {
+                    result = .success(try self.usageReportStore.load(claude:self.claudeLedger,sourceKey:sourceKey))
+                } else {
+                    let input = try self.database.transaction { () throws -> (UsageSnapshot,Int) in
+                        let snapshot = try self.usageCache.load()
+                        let generation = try self.database.query("SELECT revision FROM usage_revisions WHERE kind='ledger'").first?.integer("revision") ?? 0
+                        return (snapshot,generation)
+                    }
+                    result = .success(try self.usageReportStore.load(snapshot:input.0,ledger:input.1,priceVersion:self.catalog.version,sourceKey:sourceKey))
                 }
-                result = .success(try self.usageReportStore.load(snapshot: input.0, ledger: input.1, priceVersion: self.catalog.version, sourceKey: sourceKey))
-            } catch { result = .failure(error) }
+            } catch {result = .failure(error)}
             DispatchQueue.main.async {
-                guard !self.stopped else { return }
-                guard sourceKey == self.usageReportSourceKey else { completion(.failure(AppFailure(L("数据源已变化，请重新打开报告", "The data source changed. Reopen the report.")))); return }
+                guard !self.stopped else {return}
+                guard sourceKey == self.usageReportSourceKey(for:client) else {completion(.failure(AppFailure(L("数据源已变化，请重新打开报告", "The data source changed. Reopen the report."))));return}
                 completion(result)
             }
         }

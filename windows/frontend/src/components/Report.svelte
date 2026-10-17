@@ -1,11 +1,12 @@
 <script lang="ts">
   import { tick, onMount, onDestroy } from 'svelte';
-  import { api, rows, text, numeric, number, type Row } from '../lib/api';
+  import { api, rows, text, numeric, number, type Row, type ClientKind } from '../lib/api';
   import { tr } from '../lib/i18n';
   import { toPng } from 'html-to-image';
   import Icon from './Icon.svelte';
   import {modelName} from './logFormat';
   export let initialPeriod = 'day';
+  export let initialClient:ClientKind='codex';
   export let settings: Row = {};
   export let onsave: (r: Row) => Promise<void>;
   export let onclose: () => void;
@@ -18,13 +19,14 @@
     afternoon: ['#FFFCF7','#493027','#785746','#DA855A','#F2C5AA','#D67650','#FEF1E8']
   };
   let period = initialPeriod;
+  let client:ClientKind=initialClient;
   let style = palettes[settings.usage_report_style] ? settings.usage_report_style : 'garden';
   let data: Row = {};
   let busy = false, exporting = false, savingStyle = false, presented = false;
   let sequence = 0, exported = '', error = '';
   let card: HTMLElement, reader: HTMLElement, dialog: HTMLDivElement, closeButton: HTMLButtonElement;
   let readerWidth = 480, readerHeight = 800, scrollTop = 0;
-  $: void load(period);
+  $: void load(period,client);
   $: summary = data.summary ?? {};
   $: top = rows(data.models).slice(0, 3);
   $: slices = rows(data.time_slices).slice(0, 4);
@@ -53,12 +55,12 @@
     return () => { observer.disconnect(); if (previousFocus?.isConnected) previousFocus.focus(); };
   });
   onDestroy(() => { sequence++; });
-  async function load(p: string) {
+  async function load(p: string,source:ClientKind) {
     const ticket = ++sequence;
     busy = true; error = ''; data = {}; exported = '';
     if (reader) reader.scrollTop = 0;
     try {
-      const next = await api('GetReports', p);
+      const next = await api('GetClientReports',source,p);
       if (ticket !== sequence) return;
       data = next;
       await tick();
@@ -77,13 +79,13 @@
   async function share() {
     if (!card || busy || exporting) return;
     exporting = true;
-    const ticket = sequence, selectedPeriod = period, selectedPaper = paper[6], cardHeight = height;
+    const ticket = sequence, selectedPeriod = period, selectedClient = client, selectedPaper = paper[6], cardHeight = height;
     try {
       await document.fonts.ready;
       // The live reader is scaled. Export the entire unscaled Mac artwork, at 2x.
       const png = await toPng(card, { width: 500, height: cardHeight, pixelRatio: 2, cacheBust: false, backgroundColor: selectedPaper, style: { transform: 'none', width: '500px', height: `${cardHeight}px`, maxWidth: 'none', maxHeight: 'none', overflow: 'visible' } });
       if (ticket !== sequence) return;
-      const saved = await api('SaveReportPNG', png, selectedPeriod);
+      const saved = await api('SaveClientReportPNG', png, selectedPeriod,selectedClient);
       if (ticket === sequence) exported = text(saved.path, '');
     } catch (e) { if (ticket === sequence) onerror(e); }
     finally { exporting = false; }
@@ -157,7 +159,7 @@
               {#if style === 'bookmark'}<path d={`M447 ${height*.19}C475 ${height*.29} 410 ${height*.43} 456 ${height*.58}C480 ${height*.72} 478 ${height-38} 431 ${height-70}C389 ${height-99} 384 ${height-50} 413 ${height-55}`} fill="none" stroke={paper[1]} stroke-opacity=".72" stroke-width="3" stroke-linecap="round"/>{/if}
             </svg>
             <div class="mac-report-content">
-              <header class="mac-report-header"><img src="/ReportCards/brand-mark.png" alt=""/><div><strong>Codexio</strong><span>{tr(period === 'day' ? 'AI日报' : period === 'week' ? 'AI周报' : 'AI月报')}</span></div><time>{text(data.date_label)}</time></header>
+              <header class="mac-report-header"><img src="/ReportCards/brand-mark.png" alt=""/><div><strong>{client==='claude_code'?'Claude':'ChatGPT'}</strong><span>{tr(period === 'day' ? 'AI日报' : period === 'week' ? 'AI周报' : 'AI月报')}</span></div><time>{text(data.date_label)}</time></header>
               <div class="mac-report-rule mac-report-header-rule"></div>
               <section class="mac-report-hero">
                 <div class="mac-report-hero-copy"><h1 style:font-size={style === 'bookmark' ? '41px' : '43px'}>{headline}</h1>
@@ -188,6 +190,11 @@
     </div>
     <aside class="mac-report-controls">
       <button bind:this={closeButton} class="mac-report-close" onclick={onclose} aria-label={tr('关闭报告')}><Icon name="close" size={14}/></button>
+      <div class="mac-report-agents" role="group" aria-label={tr('客户端来源')}>
+        {#each [['codex','ChatGPT','chatgpt'],['claude_code','Claude','claude-code']] as [source,label,icon]}
+          <button class:mac-report-selected={client===source} aria-label={label} title={label} aria-pressed={client===source} disabled={exporting} onclick={()=>{client=source as ClientKind;}}><span style:mask-image={`url(/client-icons/${icon}.svg)`} aria-hidden="true"></span></button>
+        {/each}
+      </div>
       <div class="mac-report-periods">{#each [['day','日报'],['week','周报'],['month','月报']] as [p,label]}<button class:mac-report-selected={period === p} aria-pressed={period === p} disabled={exporting} onclick={() => { period = p; }}>{tr(label)}</button>{/each}</div>
       <label class="mac-report-style"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18h1c3 0 3-4 1-5-1-1 0-3 2-3h2c6 0 3-10-6-10Z"/><circle cx="7" cy="9" r="1"/><circle cx="11" cy="6" r="1"/><circle cx="16" cy="7" r="1"/></svg><span>{tr('样式')}</span><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 9 7 6 7-6"/></svg><select aria-label={tr('样式')} value={style} disabled={savingStyle || exporting} onchange={e => selectStyle(e.currentTarget.value)}>{#each [['bookmark','奶油猫尾书签'],['garden','薄荷猫咪花园'],['afternoon','杏色时段图']] as [s,label]}<option value={s}>{tr(label)}</option>{/each}</select></label>
       <div class="mac-report-controls-spacer"></div>
@@ -262,6 +269,10 @@
   .mac-report-controls{width:116px;flex:none;padding:14px 14px 14px 6px;display:flex;align-items:center;gap:14px;flex-direction:column}
   .mac-report-controls button{color:var(--mac-ink);font-family:inherit;box-shadow:none;flex:none;justify-content:center}
   .mac-report-close{width:30px;height:30px;min-height:30px;padding:0;align-self:flex-end;background:transparent;border:0;display:flex;align-items:center}
+  .mac-report-agents{display:flex;gap:6px;padding:4px;border-radius:14px;background:color-mix(in srgb,var(--mac-secondary) 35%,transparent)}
+  .mac-report-agents button{width:36px;height:36px;min-height:36px;padding:0;border:0;border-radius:10px;display:flex;align-items:center;justify-content:center;background:transparent;color:var(--mac-ink)}
+  .mac-report-agents button.mac-report-selected{background:var(--mac-ink);color:var(--mac-paper)}
+  .mac-report-agents span{display:block;width:20px;height:20px;background:currentColor;mask-position:center;mask-repeat:no-repeat;mask-size:contain}
   .mac-report-periods{width:96px;display:flex;flex-direction:column;gap:5px;padding:4px;border-radius:16px;background:color-mix(in srgb,var(--mac-secondary) 35%,transparent)}
   .mac-report-periods button{border:0;width:100%;height:36px;padding:0;border-radius:12px;font-size:13px;font-weight:500;background:transparent}
   .mac-report-periods button.mac-report-selected{background:var(--mac-ink)!important;color:var(--mac-paper)!important}

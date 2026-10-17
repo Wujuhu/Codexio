@@ -29,15 +29,20 @@ final class UsageReportController: NSObject, NSWindowDelegate {
         model.onClose = { [weak self] in self?.close() }
         model.onRefresh = { [weak self] in self?.prepare() }
         model.onStyle = { [weak self] style in self?.selectStyle(style) }
+        model.onClient = { [weak self] client in self?.selectClient(client) }
         model.onShare = { [weak self] view in Task { @MainActor in self?.share(from: view) } }
         state.$loading.removeDuplicates().sink { [weak self] loading in
             guard let self, !loading, self.pendingAutomatic || self.pendingManual else { return }
             self.prepare()
         }.store(in: &subscriptions)
         state.$prices.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in
-            guard let self, self.isPresenting || self.pendingAutomatic || self.pendingManual else { return }
+            guard let self, self.model.client == .codex, self.isPresenting || self.pendingAutomatic || self.pendingManual else { return }
             self.prepare()
         }.store(in: &subscriptions)
+        state.$claudePrices.dropFirst().receive(on:DispatchQueue.main).sink { [weak self] _ in
+            guard let self, self.model.client == .claudeCode, self.isPresenting || self.pendingAutomatic || self.pendingManual else {return}
+            self.prepare()
+        }.store(in:&subscriptions)
         for name in [NSNotification.Name.NSCalendarDayChanged, NSNotification.Name.NSSystemTimeZoneDidChange] {
             NotificationCenter.default.publisher(for: name).receive(on: DispatchQueue.main).sink { [weak self] _ in
                 guard let self else { return }; self.checkedDay = ""
@@ -54,19 +59,30 @@ final class UsageReportController: NSObject, NSWindowDelegate {
         parent = window
         guard !state.paths.mock, !isPresenting, state.preferences.analytics.flag("usage_report_auto", true), Calendar.current.component(.hour, from: Date()) >= 8 else { return }
         guard checkedDay != dayKey, !shown.contains(dayKey) else { return }
+        model.client = state.pageClient
         pendingAutomatic = true
         if !state.loading { prepare() }
     }
     func requestManual(on window: NSWindow) {
         parent = window; pendingManual = true
+        if !isPresenting {model.client = state.pageClient}
         if !state.loading { prepare() }
+    }
+    private func selectClient(_ client: DesktopClient) {
+        guard client != model.client else {return}
+        model.client = client; model.documents = [:]; model.error = nil; model.busy = true
+        collection = nil
+        prepare()
     }
     private func prepare() {
         guard !preparing else { return }
         preparing = true; collection = nil; model.busy = true; model.error = nil
-        state.prepareUsageReports { [weak self] result in
+        let client = model.client
+        state.prepareUsageReports(client:client) { [weak self] result in
             guard let self else { return }
-            self.preparing = false; self.model.busy = false
+            self.preparing = false
+            guard self.model.client == client else {self.prepare();return}
+            self.model.busy = false
             switch result {
             case .success(let collection):
                 guard collection.presentationDay == self.dayKey, collection.documents[.day]?.timeZone == TimeZone.current.identifier else { self.prepare(); return }
@@ -167,7 +183,7 @@ final class UsageReportController: NSObject, NSWindowDelegate {
                     queue.async {
                         do {
                             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-                            let destination = folder.appendingPathComponent("Codexio-\(data.period.rawValue)-\(data.fileDate)-\(style.rawValue).png")
+                            let destination = folder.appendingPathComponent("\(data.agentTitle)-\(data.period.rawValue)-\(data.fileDate)-\(style.rawValue).png")
                             let bitmap = NSBitmapImageRep(cgImage: image)
                             guard let png = bitmap.representation(using: .png, properties: [:]) else { throw AppFailure(L("无法生成报告图片", "Could not create the report image")) }
                             try png.write(to: destination, options: .atomic)

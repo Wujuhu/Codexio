@@ -62,7 +62,9 @@ func (r *ReportManager) MarkSeen() error {
 	}
 	return WriteJSON(filepath.Join(r.directory, "presentation.json"), Row{"days": days})
 }
-func (r *ReportManager) Get(period string) (Row, error) {
+func (r *ReportManager) Get(period string) (Row, error) { return r.GetForClient(period, "codex") }
+func (r *ReportManager) GetForClient(period, client string) (Row, error) {
+	client = normalizedClient(client)
 	if period != "day" && period != "week" && period != "month" {
 		return nil, errors.New("无效报告周期")
 	}
@@ -71,28 +73,29 @@ func (r *ReportManager) Get(period string) (Row, error) {
 	now := time.Now()
 	_, offset := now.Zone()
 	cfg := r.config()
-	key := rowJSON([]any{r.store.Generation(), now.Format("2006-01-02"), offset, ValueString(cfg["language"])})
+	key := rowJSON([]any{r.store.Generation(), now.Format("2006-01-02"), offset, ValueString(cfg["language"]), claudeRoot()})
+	documentKey := client + "|" + period
 	if key != r.key {
 		r.documents = map[string]Row{}
 		r.key = key
 	}
-	if d := r.documents[period]; d != nil {
+	if d := r.documents[documentKey]; d != nil {
 		out := CloneRow(d)
 		out["style"] = cfg["usage_report_style"]
 		return out, nil
 	}
 	start, end, prior := reportBounds(period, now)
-	q := Query{Period: "all", Start: UTCStamp(start), End: UTCStamp(end), Source: "local"}
+	q := Query{ClientKind: client, Period: "all", Start: UTCStamp(start), End: UTCStamp(end), Source: "local"}
 	summary, e := r.store.Summary(q)
 	if e != nil {
 		return nil, e
 	}
 	summary = closedReportSummary(summary)
-	models, e := r.store.Models(q)
+	models, e := reportModels(r.store, q)
 	if e != nil {
 		return nil, e
 	}
-	previous, e := r.store.Summary(Query{Period: "all", Start: UTCStamp(prior), End: UTCStamp(start), Source: "local"})
+	previous, e := r.store.Summary(Query{ClientKind: client, Period: "all", Start: UTCStamp(prior), End: UTCStamp(start), Source: "local"})
 	if e != nil {
 		return nil, e
 	}
@@ -114,7 +117,7 @@ func (r *ReportManager) Get(period string) (Row, error) {
 	slices := []Row{{"name": "凌晨", "requests": 0}, {"name": "上午", "requests": 0}, {"name": "午后", "requests": 0}, {"name": "晚间", "requests": 0}}
 	var first, last any
 	firstClock, lastClock := 86400, -1
-	rows, e := r.store.Database().Query(`SELECT timestamp,data FROM usage_request_groups WHERE coalesce(json_extract(data,'$.client_kind'),'codex')='codex' AND timestamp>=? AND timestamp<? AND record_kind='user_request' AND is_subagent=0 ORDER BY timestamp`, reportIndexStamp(start), reportIndexStamp(end))
+	rows, e := r.store.Database().Query(`SELECT timestamp,data FROM usage_request_groups WHERE coalesce(json_extract(data,'$.client_kind'),'codex')=? AND timestamp>=? AND timestamp<? AND record_kind='user_request' AND is_subagent=0 ORDER BY timestamp`, client, reportIndexStamp(start), reportIndexStamp(end))
 	if e != nil {
 		return nil, e
 	}
@@ -152,8 +155,13 @@ func (r *ReportManager) Get(period string) (Row, error) {
 	if period == "month" {
 		label = start.Format("2006.01")
 	}
-	d := Row{"period": period, "start": start.Format("2006-01-02"), "end": end.Format("2006-01-02"), "date_label": label, "summary": summary, "models": models, "time_slices": slices, "first": first, "last": last, "previous": previous, "style": cfg["usage_report_style"], "source_id": HashString(r.store.path)[:16]}
-	p := filepath.Join(r.directory, HashString(r.store.path)[:16], period, start.Format("2006-01-02")+".json")
+	source := r.store.path
+	if client == "claude_code" {
+		source += "\nclaude_code\n" + claudeRoot()
+	}
+	sourceID := HashString(source)[:16]
+	d := Row{"client_kind": client, "period": period, "start": start.Format("2006-01-02"), "end": end.Format("2006-01-02"), "date_label": label, "summary": summary, "models": models, "time_slices": slices, "first": first, "last": last, "previous": previous, "style": cfg["usage_report_style"], "source_id": sourceID}
+	p := filepath.Join(r.directory, sourceID, period, start.Format("2006-01-02")+".json")
 	b, _ := json.MarshalIndent(d, "", "  ")
 	old, _ := os.ReadFile(p)
 	if string(old) != string(b) {
@@ -161,8 +169,35 @@ func (r *ReportManager) Get(period string) (Row, error) {
 			return nil, e
 		}
 	}
-	r.documents[period] = d
+	r.documents[documentKey] = d
 	return CloneRow(d), nil
+}
+
+// Reuse the ledger's streaming query and metric completeness rules. Claude
+// model breakdowns use the actual returned model, as its logs and pricing do.
+func reportModels(store *Store, q Query) ([]Row, error) {
+	if normalizedClient(q.ClientKind) != "claude_code" {
+		return store.Models(q)
+	}
+	groups := map[string]*metricSum{}
+	if e := store.stream(q, func(call Row) {
+		model := firstString(call["returned_model"], call["upstream_model"], call["model"], "—")
+		if groups[model] == nil {
+			groups[model] = newMetricSum()
+		}
+		groups[model].add(call)
+	}); e != nil {
+		return nil, e
+	}
+	result := []Row{}
+	for name, total := range groups {
+		row := total.row()
+		row["model"] = name
+		row["call_count"] = row["requests"]
+		result = append(result, row)
+	}
+	sort.Slice(result, func(i, j int) bool { return dataString(result[i], "model") < dataString(result[j], "model") })
+	return result, nil
 }
 func closedReportSummary(summary Row) Row {
 	if ValueInt(summary["records"]) == 0 {

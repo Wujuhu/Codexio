@@ -78,6 +78,8 @@ struct UsageReportData: Codable, Sendable {
     var previousRequests: Int
     var previousCostUSD: Double?
     var comparisonComplete = true
+    var clientKind: String? = nil
+    var agentTitle: String {DesktopClient(rawValue:clientKind ?? "codex")?.surfaceTitle ?? "ChatGPT"}
 
     var title: String { period.title }
     var cachePercent: Int { percent(cachedInputTokens, of: inputTokens) }
@@ -144,18 +146,18 @@ struct UsageReportCollection {
 }
 
 // Owned by AppState.dataQueue. Existing ledger generations, rather than polling
-// timestamps, control invalidation; only three small projections stay in memory.
+// timestamps, control invalidation; three small projections per agent stay in memory.
 final class UsageReportStore {
     let directory: URL
-    private var cachedKey = ""
-    private var cached: [UsageReportPeriod: UsageReportData] = [:]
+    private var cachedKeys: [String:String] = [:]
+    private var cached: [String:[UsageReportPeriod: UsageReportData]] = [:]
     private var seen: Set<String>?
     private let encoder: JSONEncoder = { let e = JSONEncoder(); e.outputFormatting = [.sortedKeys, .prettyPrinted]; e.dateEncodingStrategy = .millisecondsSince1970; return e }()
     private let dayFormatter: DateFormatter = { let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd"; return f }()
     private let labelFormatter = DateFormatter()
     init(directory: URL) { self.directory = directory }
 
-    private struct Aggregate {
+    struct Aggregate {
         var requests = 0, modelCalls = 0, input = 0, output = 0, cached = 0, total = 0, unknownTokens = 0, unknownCosts = 0, priced = 0
         var cost = 0.0
         var models: [String: UsageReportModel] = [:]
@@ -189,27 +191,38 @@ final class UsageReportStore {
     }
 
     func load(snapshot: UsageSnapshot, ledger: Int, priceVersion: String, sourceKey: String, now: Date = Date()) throws -> UsageReportCollection {
+        try load(ledger:ledger,priceVersion:priceVersion,sourceKey:sourceKey,client:.codex,now:now) {ranges,calendar in
+            let floor = ranges.map(\.start).min()!, ceiling = calendar.startOfDay(for:now)
+            var values = Array(repeating:Aggregate(),count:ranges.count)
+            for row in snapshot.calls where row.local {
+                guard let date = row.date, date >= floor, date < ceiling else {continue}
+                for index in ranges.indices where date >= ranges[index].start && date < ranges[index].end {values[index].call(row)}
+            }
+            for row in snapshot.requests where row.local && row.raw.string("record_kind") == "user_request" && !row.raw.flag("is_subagent") {
+                guard let date = row.date, date >= floor, date < ceiling else {continue}
+                for index in ranges.indices where date >= ranges[index].start && date < ranges[index].end {values[index].request(date:date,calendar:calendar)}
+            }
+            return values
+        }
+    }
+    func load(claude: ClaudeLedger,sourceKey: String,now: Date = Date()) throws -> UsageReportCollection {
+        try load(ledger:claude.revision,priceVersion:claude.pricing.version,sourceKey:sourceKey,client:.claudeCode,now:now) {ranges,_ in
+            try ranges.map {try claude.reportAggregate(range:$0)}
+        }
+    }
+    private func load(ledger: Int,priceVersion: String,sourceKey: String,client: DesktopClient,now: Date,aggregate: ([DateInterval],Calendar) throws -> [Aggregate]) throws -> UsageReportCollection {
         var calendar = Calendar(identifier: .gregorian); calendar.timeZone = .current; calendar.firstWeekday = 2; calendar.minimumDaysInFirstWeek = 4
         dayFormatter.timeZone = calendar.timeZone
         let todayKey = dayFormatter.string(from: now)
         let sourceID = String(digest(Data(sourceKey.utf8)).prefix(16))
         let inputKey = "\(ledger)|\(priceVersion)|\(sourceID)|\(todayKey)|\(calendar.timeZone.identifier)|\(calendar.timeZone.secondsFromGMT(for: now))|\(L("日报", "Daily"))"
         if seen == nil { seen = Set(readObject(directory.appendingPathComponent("presentation.json"))["days"] as? [String] ?? []) }
-        if inputKey != cachedKey {
+        if inputKey != cachedKeys[client.rawValue] {
             let periods = UsageReportPeriod.allCases
             let ranges = periods.map { $0.interval(now: now, calendar: calendar) }
             let prior = zip(periods, ranges).map { $0.0.previous($0.1, calendar: calendar) }
             let allRanges = ranges + prior
-            let floor = allRanges.map(\.start).min()!, ceiling = calendar.startOfDay(for: now)
-            var aggregates = Array(repeating: Aggregate(), count: allRanges.count)
-            for row in snapshot.calls where row.local {
-                guard let date = row.date, date >= floor, date < ceiling else { continue }
-                for index in allRanges.indices where date >= allRanges[index].start && date < allRanges[index].end { aggregates[index].call(row) }
-            }
-            for row in snapshot.requests where row.local && row.raw.string("record_kind") == "user_request" && !row.raw.flag("is_subagent") {
-                guard let date = row.date, date >= floor, date < ceiling else { continue }
-                for index in allRanges.indices where date >= allRanges[index].start && date < allRanges[index].end { aggregates[index].request(date: date, calendar: calendar) }
-            }
+            let aggregates = try aggregate(allRanges,calendar)
             var documents: [UsageReportPeriod: UsageReportData] = [:]
             for index in periods.indices {
                 let period = periods[index], range = ranges[index], value = aggregates[index], previous = aggregates[index+periods.count]
@@ -224,16 +237,16 @@ final class UsageReportStore {
                 labelFormatter.dateFormat = period == .month ? "yyyy.MM" : "yyyy.MM.dd"
                 var label = labelFormatter.string(from: range.start)
                 if period == .week { labelFormatter.dateFormat = "MM.dd"; label += " — " + labelFormatter.string(from: calendar.date(byAdding: .day, value: -1, to: range.end)!) }
-                let data = UsageReportData(period: period, start: range.start, end: range.end, timeZone: calendar.timeZone.identifier, dateLabel: label, fileDate: dayFormatter.string(from: range.start), sourceKey: sourceID, priceVersion: priceVersion, requests: value.requests, modelCalls: value.modelCalls, inputTokens: value.input, outputTokens: value.output, cachedInputTokens: value.cached, totalTokens: value.total, tokensComplete: value.unknownTokens == 0, costUSD: value.costValue, costComplete: value.unknownCosts == 0, models: models, projects: [], timeSlices: (0..<4).map { UsageReportTimeSlice(name: namesOfTimes[$0], requests: value.times[$0]) }, firstRequest: value.first, lastRequest: value.last, previousTokens: previous.total, previousRequests: previous.requests, previousCostUSD: previous.costValue, comparisonComplete: value.unknownTokens == 0 && previous.unknownTokens == 0)
+                let data = UsageReportData(period: period, start: range.start, end: range.end, timeZone: calendar.timeZone.identifier, dateLabel: label, fileDate: dayFormatter.string(from: range.start), sourceKey: sourceID, priceVersion: priceVersion, requests: value.requests, modelCalls: value.modelCalls, inputTokens: value.input, outputTokens: value.output, cachedInputTokens: value.cached, totalTokens: value.total, tokensComplete: value.unknownTokens == 0, costUSD: value.costValue, costComplete: value.unknownCosts == 0, models: models, projects: [], timeSlices: (0..<4).map { UsageReportTimeSlice(name: namesOfTimes[$0], requests: value.times[$0]) }, firstRequest: value.first, lastRequest: value.last, previousTokens: previous.total, previousRequests: previous.requests, previousCostUSD: previous.costValue, comparisonComplete: value.unknownTokens == 0 && previous.unknownTokens == 0,clientKind:client.rawValue)
                 let folder = directory.appendingPathComponent(sourceID).appendingPathComponent(period.rawValue)
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
                 let destination = folder.appendingPathComponent(data.fileDate + ".json"), bytes = try encoder.encode(data)
                 if (try? Data(contentsOf: destination)) != bytes { try bytes.write(to: destination, options: .atomic) }
                 documents[period] = data
             }
-            cached = documents; cachedKey = inputKey
+            cached[client.rawValue] = documents; cachedKeys[client.rawValue] = inputKey
         }
-        return UsageReportCollection(documents: cached, presentationDay: todayKey, alreadyPresented: seen?.contains(todayKey) == true)
+        return UsageReportCollection(documents: cached[client.rawValue] ?? [:], presentationDay: todayKey, alreadyPresented: seen?.contains(todayKey) == true)
     }
 
     func markPresented(_ day: String) throws {

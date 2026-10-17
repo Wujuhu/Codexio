@@ -300,7 +300,7 @@ struct ReportArtBrandHeader: View {
             reportResourceImage("brand-mark")
                 .resizable().scaledToFit().frame(width: 36, height: 36)
             VStack(alignment: .leading, spacing: 1) {
-                Text("Codexio").font(reportEditorial(27)).fontWeight(.semibold)
+                Text(data.agentTitle).font(reportEditorial(27)).fontWeight(.semibold)
                 Text(data.title).font(.system(size: 12, weight: .medium)).tracking(3)
                     .foregroundStyle(palette.muted)
             }

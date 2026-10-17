@@ -697,6 +697,33 @@ final class ClaudeLedger {
         let showYear = range.start == .distantPast ? first.map {Calendar.current.component(.year,from:$0) != year} ?? false : Calendar.current.component(.year,from:range.start) != year || Calendar.current.component(.year,from:range.end) != year
         return LogProjection(rows:rows,count:total,unassigned:orphans,showYear:showYear,page:selected)
     }
+    // The same closed periods and completeness rules as UsageReportStore,
+    // reduced in SQLite instead of loading historical calls or transcript text.
+    func reportAggregate(range: DateInterval) throws -> UsageReportStore.Aggregate {
+        let predicate = "id LIKE ? AND timestamp>=? AND timestamp<?"
+        let args: [Any] = [scope+"%",range.start.timeIntervalSince1970,range.end.timeIntervalSince1970]
+        let cost = "json_extract(data,'$.cost_usd')"
+        let inputKnown = "input IS NOT NULL AND cache_read IS NOT NULL AND cache_read<=input"
+        let row = try database.query("SELECT count(*) AS calls,COALESCE(sum(total),0) AS total,COALESCE(sum(output),0) AS output,COALESCE(sum(total IS NULL),0) AS unknown_tokens,COALESCE(sum(CASE WHEN \(inputKnown) THEN input ELSE 0 END),0) AS input,COALESCE(sum(CASE WHEN \(inputKnown) THEN cache_read ELSE 0 END),0) AS cached,COALESCE(sum(\(cost)),0) AS cost,count(\(cost)) AS priced,COALESCE(sum(\(cost) IS NULL),0) AS unknown_costs FROM claude_calls WHERE \(predicate)",args).first ?? [:]
+        var value = UsageReportStore.Aggregate()
+        value.modelCalls = row.integer("calls") ?? 0; value.total = row.integer("total") ?? 0
+        value.output = row.integer("output") ?? 0; value.input = row.integer("input") ?? 0; value.cached = row.integer("cached") ?? 0
+        value.unknownTokens = row.integer("unknown_tokens") ?? 0; value.unknownCosts = row.integer("unknown_costs") ?? 0
+        value.cost = row.number("cost") ?? 0; value.priced = row.integer("priced") ?? 0
+        let model = "COALESCE(NULLIF(json_extract(data,'$.upstream_model'),''),NULLIF(model,''),'—')"
+        for group in try database.query("SELECT \(model) AS name,count(*) AS calls,COALESCE(sum(total),0) AS tokens,sum(\(cost)) AS cost,COALESCE(sum(\(cost) IS NULL),0) AS unknown_costs FROM claude_calls WHERE \(predicate) GROUP BY \(model)",args) {
+            let name = group.string("name")
+            value.models[name] = UsageReportModel(name:name,calls:group.integer("calls") ?? 0,tokens:group.integer("tokens") ?? 0,costUSD:group.number("cost"),costComplete:group.integer("unknown_costs") == 0)
+        }
+        for group in try database.query("SELECT CAST(strftime('%H',timestamp,'unixepoch','localtime') AS INTEGER)/6 AS bucket,count(*) AS n FROM claude_requests WHERE \(predicate) GROUP BY bucket",args) {
+            let bucket = group.integer("bucket") ?? 0, count = group.integer("n") ?? 0
+            if value.times.indices.contains(bucket) {value.times[bucket] = count; value.requests += count}
+        }
+        let clock = "CAST(strftime('%H',timestamp,'unixepoch','localtime') AS INTEGER)*3600+CAST(strftime('%M',timestamp,'unixepoch','localtime') AS INTEGER)*60+CAST(strftime('%S',timestamp,'unixepoch','localtime') AS INTEGER)"
+        value.first = try database.query("SELECT timestamp FROM claude_requests WHERE \(predicate) ORDER BY (\(clock)),timestamp LIMIT 1",args).first?.number("timestamp").map {Date(timeIntervalSince1970:$0)}
+        value.last = try database.query("SELECT timestamp FROM claude_requests WHERE \(predicate) ORDER BY (\(clock)) DESC,timestamp LIMIT 1",args).first?.number("timestamp").map {Date(timeIntervalSince1970:$0)}
+        return value
+    }
     func trend(range: UsageRange,model: String = "all",granularity: String) throws -> TrendProjection {
         let (sql,args) = filtered("claude_calls",range:range,model:model)
         let sum = try sumColumns("claude_calls",where:sql,args:args)

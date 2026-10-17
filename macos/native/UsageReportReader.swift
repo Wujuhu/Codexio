@@ -11,11 +11,13 @@ final class UsageReportViewModel: ObservableObject {
     @Published var documents: [UsageReportPeriod: UsageReportData] = [:]
     @Published var period: UsageReportPeriod = .day
     @Published var style: UsageReportStyle = .garden
+    @Published var client: DesktopClient = .codex
     @Published var busy = false
     @Published var error: String?
     var onClose: (() -> Void)?
     var onRefresh: (() -> Void)?
     var onStyle: ((UsageReportStyle) -> Void)?
+    var onClient: ((DesktopClient) -> Void)?
     var onShare: ((NSView) -> Void)?
 }
 
@@ -44,6 +46,7 @@ struct UsageReportReader: View {
                         .onScrollGeometryChange(for: Bool.self) { value in value.visibleRect.maxY >= value.contentSize.height-8 } action: { _, value in atBottom = value }
                         .onChange(of: model.period) { _, _ in atBottom = false; proxy.scrollTo("report-top", anchor: .top) }
                         .onChange(of: model.style) { _, _ in atBottom = false; proxy.scrollTo("report-top", anchor: .top) }
+                        .onChange(of: model.client) { _, _ in atBottom = false; proxy.scrollTo("report-top", anchor: .top) }
                     }
                 }
             } else {
@@ -57,6 +60,18 @@ struct UsageReportReader: View {
                     Image(systemName: "xmark").font(.system(size: 12, weight: .medium)).frame(width: 30, height: 30)
                 }.buttonStyle(.plain).accessibilityLabel(L("关闭报告", "Close report"))
                     .frame(maxWidth: .infinity, alignment: .trailing)
+                HStack(spacing: 6) {
+                    ForEach(DesktopClient.allCases,id:\.self) {client in
+                        Button {model.onClient?(client)} label: {
+                            WidgetAgentLogo(agent:client.widgetAgent).frame(width:20,height:20)
+                                .foregroundStyle(model.client == client ? palette.paper : palette.ink)
+                                .frame(width:36,height:36)
+                                .background(model.client == client ? palette.ink : .clear,in:RoundedRectangle(cornerRadius:10))
+                                .contentShape(RoundedRectangle(cornerRadius:10))
+                        }.buttonStyle(.plain).help(client.surfaceTitle).accessibilityLabel(client.surfaceTitle)
+                            .accessibilityAddTraits(model.client == client ? .isSelected : [])
+                    }
+                }.padding(4).background(palette.secondary.opacity(0.35),in:RoundedRectangle(cornerRadius:14))
                 VStack(spacing: 5) {
                     ForEach(UsageReportPeriod.allCases) { period in
                         Button {

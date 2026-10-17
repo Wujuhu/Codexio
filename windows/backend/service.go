@@ -336,6 +336,9 @@ func (s *Service) SyncPrices() (Row, error) {
 	return s.GetPrices(), nil
 }
 func (s *Service) GetReports(period string) (Row, error) { return s.reports.Get(period) }
+func (s *Service) GetClientReports(client, period string) (Row, error) {
+	return s.reports.GetForClient(period, client)
+}
 
 func (s *Service) GetSettings() Row {
 	r := PublicConfig(s.Config())
@@ -498,6 +501,9 @@ func (s *Service) OpenChat(id string) error {
 	return s.callbacks.OpenURL("codex://threads/" + id)
 }
 func (s *Service) SaveReportPNG(data, period string) (Row, error) {
+	return s.SaveClientReportPNG(data, period, "codex")
+}
+func (s *Service) SaveClientReportPNG(data, period, client string) (Row, error) {
 	if len(data) > 24<<20 {
 		return nil, errors.New("报告图片超过容量限制")
 	}
@@ -509,7 +515,11 @@ func (s *Service) SaveReportPNG(data, period string) (Row, error) {
 	if period != "day" && period != "week" && period != "month" {
 		return nil, errors.New("无效报告周期")
 	}
-	name := "Codexio-" + period + "-" + time.Now().Format("20060102-150405") + ".png"
+	agent := "ChatGPT"
+	if normalizedClient(client) == "claude_code" {
+		agent = "Claude"
+	}
+	name := agent + "-" + period + "-" + time.Now().Format("20060102-150405") + ".png"
 	if s.callbacks.SavePNG != nil {
 		p, e := s.callbacks.SavePNG(b, name)
 		return Row{"path": p}, e
