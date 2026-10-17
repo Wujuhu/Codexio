@@ -365,7 +365,7 @@ enum LogFields {
             case "effort": return GridText(main:logEffortName(raw.string("reasoning_effort")))
             case "speed": return GridText(main:detailSpeedName(raw.string("service_tier")))
             case "context": return GridText(main:contextWindowText(raw.number("model_context_window")))
-            case "status": return GridText(main:raw.string("status") == "running" ? L("进行中", "In progress") : raw.string("status") == "completed" ? L("已完成", "Completed") : raw.string("status") == "aborted" ? L("已中止", "Aborted") : "—")
+            case "status": return GridText(main:logStatusName(raw.string("status")))
             default: return GridText(main:"—")
             }
         },dynamic:row.raw.flag("duration_running"),detail:{(row,details())})

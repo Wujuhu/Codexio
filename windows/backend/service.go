@@ -185,22 +185,27 @@ func (s *Service) notice(message string) {
 	}
 }
 
-func (s *Service) GetOverview(q Query) (Row, error) {
-	summary, e := s.store.Summary(q)
+func (s *Service) GetOverview(ctx context.Context, q Query) (Row, error) {
+	ctx, cancel := s.readContext(ctx)
+	defer cancel()
+	summary, e := s.store.Summary(q, ctx)
 	if e != nil {
-		return nil, e
+		return nil, queryError(ctx, e)
 	}
-	chart, e := s.store.Chart(q)
+	chart, e := s.store.Chart(q, ctx)
 	if e != nil {
-		return nil, e
+		return nil, queryError(ctx, e)
 	}
-	recent, e := s.store.Recent(q, 3)
+	recent, e := s.store.Recent(q, 3, ctx)
 	if e != nil {
-		return nil, e
+		return nil, queryError(ctx, e)
 	}
-	models, e := s.store.Models(q)
+	models, e := s.store.Models(q, ctx)
 	if e != nil {
-		return nil, e
+		return nil, queryError(ctx, e)
+	}
+	if err := queryError(ctx, nil); err != nil {
+		return nil, err
 	}
 	var quota any
 	if normalizedClient(q.ClientKind) == "codex" {
@@ -210,7 +215,12 @@ func (s *Service) GetOverview(q Query) (Row, error) {
 	}
 	return Row{"summary": summary, "chart": chart, "recent": recent, "models": models, "quota": quota, "state": s.store.ClientStatus(q.ClientKind), "generation": s.store.Generation()}, nil
 }
-func (s *Service) GetLogs(q Query) (PageResult, error) { return s.store.Page(q) }
+func (s *Service) GetLogs(ctx context.Context, q Query) (PageResult, error) {
+	ctx, cancel := s.readContext(ctx)
+	defer cancel()
+	result, err := s.store.Page(q, ctx)
+	return result, queryError(ctx, err)
+}
 func (s *Service) GetState() Row {
 	state := s.store.Status()
 	s.mu.RLock()
@@ -219,9 +229,14 @@ func (s *Service) GetState() Row {
 	s.mu.RUnlock()
 	return state
 }
-func (s *Service) GetDetails(id string, page int) (Row, error) {
-	raw, err := s.store.Detail(id, page)
+func (s *Service) GetDetails(ctx context.Context, id string, page int) (Row, error) {
+	ctx, cancel := s.readContext(ctx)
+	defer cancel()
+	raw, err := s.store.Detail(id, page, ctx)
 	if err != nil {
+		return nil, queryError(ctx, err)
+	}
+	if err := queryError(ctx, nil); err != nil {
 		return nil, err
 	}
 	if normalizedClient(dataString(ValueRow(raw["request"]), "client_kind")) == "claude_code" {
@@ -239,23 +254,28 @@ func (s *Service) GetRequestImage(ctx context.Context, requestID, imageID string
 	}
 	return s.store.requestImage(ctx, requestID, imageID)
 }
-func (s *Service) GetTrends(q Query) (Row, error) {
-	summary, e := s.store.Summary(q)
+func (s *Service) GetTrends(ctx context.Context, q Query) (Row, error) {
+	ctx, cancel := s.readContext(ctx)
+	defer cancel()
+	summary, e := s.store.Summary(q, ctx)
 	if e != nil {
-		return nil, e
+		return nil, queryError(ctx, e)
 	}
-	chart, e := s.store.Chart(q)
+	chart, e := s.store.Chart(q, ctx)
 	if e != nil {
-		return nil, e
+		return nil, queryError(ctx, e)
 	}
-	models, e := s.store.Models(q)
+	models, e := s.store.Models(q, ctx)
 	if e != nil {
-		return nil, e
+		return nil, queryError(ctx, e)
 	}
 	chatQuery := Query{ClientKind: q.ClientKind, Period: "all", Source: "local", Page: q.Page, PageSize: 25}
-	insights, e := s.store.Insights(chatQuery)
+	insights, e := s.store.Insights(chatQuery, ctx)
 	if e != nil {
-		return nil, e
+		return nil, queryError(ctx, e)
+	}
+	if err := queryError(ctx, nil); err != nil {
+		return nil, err
 	}
 	return Row{"state": s.store.ClientStatus(q.ClientKind), "summary": summary, "chart": chart, "models": models, "insights": insights, "heatmap": insights["heatmap"], "activity": Row{"rows": insights["activity"]}, "chats": insights["chats"], "chat_page": insights["chat_page"], "chat_pages": insights["chat_pages"], "chat_total": insights["chat_total"], "generation": s.store.Generation()}, nil
 }

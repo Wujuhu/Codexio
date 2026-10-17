@@ -198,6 +198,15 @@ func requestValueText(_ value: String) -> String {
     let text = value.trimmingCharacters(in:.whitespacesAndNewlines)
     return ["","unknown","auto","未知","-","–","—"].contains(text.lowercased()) ? "—" : text
 }
+func logStatusName(_ value: String) -> String {
+    switch value {
+    case "running": return L("进行中", "In progress")
+    case "completed": return L("已完成", "Completed")
+    case "aborted": return L("已中止", "Aborted")
+    case "failed": return L("失败", "Failed")
+    default: return "—"
+    }
+}
 func effortName(_ value: String) -> String {
     switch value {
     case "none": return L("无", "None")

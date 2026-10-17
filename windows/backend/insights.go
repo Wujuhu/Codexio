@@ -3,6 +3,7 @@ package backend
 // Local activity follows local_activity.py: mode percentages use confirmed
 // model calls, while heatmap requests use the shared true-user classification.
 import (
+	"context"
 	"database/sql"
 	"sort"
 	"strings"
@@ -71,16 +72,17 @@ func (s *Store) rebuildSessionRoots(tx *sql.Tx, metadata map[string]Row, links [
 	}
 	return nil
 }
-func (s *Store) localChatRows(q Query, page, size int) ([]Row, int, int, error) {
-	return s.localChatRowsSorted(q, page, size, "tokens")
+func (s *Store) localChatRows(q Query, page, size int, contexts ...context.Context) ([]Row, int, int, error) {
+	return s.localChatRowsSorted(q, page, size, "tokens", contexts...)
 }
-func (s *Store) localChatRowsSorted(q Query, page, size int, metric string) ([]Row, int, int, error) {
+func (s *Store) localChatRowsSorted(q Query, page, size int, metric string, contexts ...context.Context) ([]Row, int, int, error) {
+	reader := s.readDB(contexts)
 	q.Source = "local"
 	where, args := queryFilter(q, false)
 	where = strings.ReplaceAll(where, "usage_priced_calls.id", "p.id")
 	var total int
 	countSQL := `SELECT count(DISTINCT coalesce(roots.root_session_id,p.session_id)) FROM usage_priced_calls p LEFT JOIN usage_query_session_roots roots ON roots.session_id=p.session_id WHERE ` + where
-	if e := s.db.QueryRow(countSQL, args...).Scan(&total); e != nil {
+	if e := reader.QueryRow(countSQL, args...).Scan(&total); e != nil {
 		return nil, 0, 0, e
 	}
 	pages := max(1, (total+size-1)/size)
@@ -96,7 +98,7 @@ func (s *Store) localChatRowsSorted(q Query, page, size int, metric string) ([]R
 	}
 	query := `SELECT coalesce(roots.root_session_id,p.session_id),coalesce(t.title,max(CASE WHEN roots.root_session_id=p.session_id OR roots.root_session_id IS NULL THEN json_extract(p.data,'$.session_title') END),''),CASE WHEN coalesce(json_extract(p.data,'$.client_kind'),'codex')='claude_code' AND count(json_extract(p.metrics,'$.tokens'))<>count(*) THEN NULL ELSE sum(json_extract(p.metrics,'$.tokens')) END,CASE WHEN coalesce(json_extract(p.data,'$.client_kind'),'codex')='claude_code' AND count(json_extract(p.metrics,'$.usd'))<>count(*) THEN NULL ELSE sum(json_extract(p.metrics,'$.usd')) END,sum(coalesce(json_extract(p.metrics,'$.unpriced_calls'),0)),sum(CASE WHEN json_extract(p.data,'$.client_kind')='claude_code' AND (coalesce(json_extract(p.data,'$.usage_complete'),0)=0 OR json_extract(p.data,'$.usage_conflict')=1) THEN 1 ELSE 0 END) FROM usage_priced_calls p LEFT JOIN usage_query_session_roots roots ON roots.session_id=p.session_id LEFT JOIN usage_session_titles t ON t.session_id=coalesce(roots.root_session_id,p.session_id) WHERE ` + where + ` GROUP BY coalesce(roots.root_session_id,p.session_id) ORDER BY ` + orderExpression + ` DESC,coalesce(roots.root_session_id,p.session_id) LIMIT ? OFFSET ?`
 	params := append(append([]any{}, args...), size, (page-1)*size)
-	rows, e := s.db.Query(query, params...)
+	rows, e := reader.Query(query, params...)
 	if e != nil {
 		return nil, 0, 0, e
 	}
@@ -137,7 +139,7 @@ func (s *Store) localChatRowsSorted(q Query, page, size int, metric string) ([]R
 	for _, chat := range chats {
 		var requests int
 		values := append([]any{chat["session_id"]}, ga...)
-		if e = s.db.QueryRow(`SELECT count(*) FROM usage_request_groups WHERE record_kind='user_request' AND is_subagent=0 AND json_extract(data,'$.session_id') IN(SELECT session_id FROM usage_query_session_roots WHERE root_session_id=?) AND `+gw, values...).Scan(&requests); e != nil {
+		if e = reader.QueryRow(`SELECT count(*) FROM usage_request_groups WHERE record_kind='user_request' AND is_subagent=0 AND json_extract(data,'$.session_id') IN(SELECT session_id FROM usage_query_session_roots WHERE root_session_id=?) AND `+gw, values...).Scan(&requests); e != nil {
 			return nil, 0, 0, e
 		}
 		chat["user_requests"] = requests
@@ -145,7 +147,8 @@ func (s *Store) localChatRowsSorted(q Query, page, size int, metric string) ([]R
 	return chats, total, page, nil
 }
 
-func (s *Store) localInsights(q Query) (result Row, err error) {
+func (s *Store) localInsights(q Query, contexts ...context.Context) (result Row, err error) {
+	reader := s.readDB(contexts)
 	q.Source = "local"
 	key, cached, ok := s.cachedQuery("local-activity", q)
 	if ok {
@@ -200,12 +203,12 @@ func (s *Store) localInsights(q Query) (result Row, err error) {
 			}
 			efforts[effort]++
 		}
-	})
+	}, reader.ctx)
 	if err != nil {
 		return nil, err
 	}
 	where, args := queryFilter(q, true)
-	rows, e := s.db.Query(`SELECT timestamp FROM usage_request_groups WHERE record_kind='user_request' AND is_subagent=0 AND `+where, args...)
+	rows, e := reader.Query(`SELECT timestamp FROM usage_request_groups WHERE record_kind='user_request' AND is_subagent=0 AND `+where, args...)
 	if e != nil {
 		return nil, e
 	}
@@ -309,7 +312,7 @@ func (s *Store) localInsights(q Query) (result Row, err error) {
 	if normalizedClient(q.ClientKind) == "claude_code" && speeds["default"]+speeds["priority"] != int(calls) {
 		fast = nil
 	}
-	seconds, partial, e := s.localChatDuration(q)
+	seconds, partial, e := s.localChatDuration(q, reader.ctx)
 	if e != nil {
 		return nil, e
 	}
@@ -317,12 +320,13 @@ func (s *Store) localInsights(q Query) (result Row, err error) {
 	return Row{"stats": stats, "activity": calendar}, nil
 }
 
-func (s *Store) localChatDuration(q Query) (any, bool, error) {
+func (s *Store) localChatDuration(q Query, contexts ...context.Context) (any, bool, error) {
+	reader := s.readDB(contexts)
 	if normalizedClient(q.ClientKind) == "claude_code" {
-		return s.claudeLongestDuration(q)
+		return s.claudeLongestDuration(q, reader.ctx)
 	}
 	where, args := queryFilter(q, false)
-	rows, err := s.db.Query(`SELECT coalesce((SELECT json_extract(g.data,'$.session_id') FROM usage_request_groups g WHERE g.id=json_extract(t.data,'$.root_id')),json_extract(t.data,'$.session_id')),json_extract(t.data,'$.started_at'),json_extract(t.data,'$.ended_at'),json_extract(t.data,'$.duration_ms'),coalesce(json_extract(t.data,'$.started_inferred'),1),json_extract(t.data,'$.status') FROM usage_query_turns t WHERE EXISTS(SELECT 1 FROM usage_priced_calls WHERE session_id=json_extract(t.data,'$.session_id') AND turn_id=json_extract(t.data,'$.turn_id') AND `+where+`) ORDER BY 1,CASE WHEN (julianday(json_extract(t.data,'$.started_at')) IS NULL OR coalesce(json_extract(t.data,'$.started_inferred'),1)<>0) AND json_extract(t.data,'$.duration_ms')>=0 THEN julianday(json_extract(t.data,'$.ended_at'))-json_extract(t.data,'$.duration_ms')/86400000.0 ELSE julianday(json_extract(t.data,'$.started_at')) END`, args...)
+	rows, err := reader.Query(`SELECT coalesce((SELECT json_extract(g.data,'$.session_id') FROM usage_request_groups g WHERE g.id=json_extract(t.data,'$.root_id')),json_extract(t.data,'$.session_id')),json_extract(t.data,'$.started_at'),json_extract(t.data,'$.ended_at'),json_extract(t.data,'$.duration_ms'),coalesce(json_extract(t.data,'$.started_inferred'),1),json_extract(t.data,'$.status') FROM usage_query_turns t WHERE EXISTS(SELECT 1 FROM usage_priced_calls WHERE session_id=json_extract(t.data,'$.session_id') AND turn_id=json_extract(t.data,'$.turn_id') AND `+where+`) ORDER BY 1,CASE WHEN (julianday(json_extract(t.data,'$.started_at')) IS NULL OR coalesce(json_extract(t.data,'$.started_inferred'),1)<>0) AND json_extract(t.data,'$.duration_ms')>=0 THEN julianday(json_extract(t.data,'$.ended_at'))-json_extract(t.data,'$.duration_ms')/86400000.0 ELSE julianday(json_extract(t.data,'$.started_at')) END`, args...)
 	if err != nil {
 		return nil, false, err
 	}

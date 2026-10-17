@@ -13,33 +13,40 @@ import (
 	"time"
 )
 
-func (s *Service) GetClientFilters(clientKind string) Row {
-	r, e := s.store.ClientFilters(clientKind)
+func (s *Service) GetClientFilters(ctx context.Context, clientKind string) (Row, error) {
+	ctx, cancel := s.readContext(ctx)
+	defer cancel()
+	r, e := s.store.ClientFilters(clientKind, ctx)
 	if e != nil {
-		return Row{"models": []string{}, "tiers": []string{}, "error": e.Error()}
+		return nil, queryError(ctx, e)
 	}
 	r["client_kind"] = normalizedClient(clientKind)
 	if normalizedClient(clientKind) == "claude_code" {
 		r["tiers"] = []string{}
 		r["statuses"] = []string{"running", "completed", "failed", "aborted", "unknown"}
 	}
-	return r
+	return r, queryError(ctx, nil)
 }
-func (s *Service) GetClientChatRanking(clientKind, metric string, page int) (Row, error) {
+func (s *Service) GetClientChatRanking(ctx context.Context, clientKind, metric string, page int) (Row, error) {
+	ctx, cancel := s.readContext(ctx)
+	defer cancel()
 	client := normalizedClient(clientKind)
 	if client == "codex" {
-		return s.GetChatRanking(metric, page), nil
+		return s.GetChatRanking(ctx, metric, page)
 	}
 	q := Query{ClientKind: client, Period: "all", Source: "local", Page: max(1, page), PageSize: 25}
 	key, cached, ok := s.store.cachedQuery("client-chat-ranking:"+metric+":"+dataJSON(q.Page), q)
 	if ok {
-		return cached, nil
+		return cached, queryError(ctx, nil)
 	}
-	rows, total, index, e := s.store.localChatRowsSorted(q, q.Page, 25, metric)
+	rows, total, index, e := s.store.localChatRowsSorted(q, q.Page, 25, metric, ctx)
 	if e != nil {
-		return nil, e
+		return nil, queryError(ctx, e)
 	}
 	result := Row{"client_kind": client, "threads": rows, "page": index, "pages": max(1, (total+24)/25), "total": total, "data_as_of": s.store.ClientStatus(client)["updated_at"]}
+	if err := queryError(ctx, nil); err != nil {
+		return nil, err
+	}
 	s.store.cacheQuery(key, result)
 	return result, nil
 }
@@ -288,9 +295,10 @@ func (s *Store) rebuildClaudeGroups(tx *sql.Tx, dirty map[string]bool, full bool
 	_, e = tx.Exec(`UPDATE usage_query_session_roots AS roots SET root_session_id=(SELECT q.session_id FROM usage_priced_calls p JOIN claude_requests q ON q.id=json_extract(p.data,'$.claude_request_id') WHERE p.session_id=roots.session_id AND json_extract(p.data,'$.is_subagent')=1 LIMIT 1) WHERE EXISTS(SELECT 1 FROM usage_priced_calls p JOIN claude_requests q ON q.id=json_extract(p.data,'$.claude_request_id') WHERE p.session_id=roots.session_id AND json_extract(p.data,'$.is_subagent')=1) AND (SELECT count(DISTINCT q.session_id) FROM usage_priced_calls p JOIN claude_requests q ON q.id=json_extract(p.data,'$.claude_request_id') WHERE p.session_id=roots.session_id AND json_extract(p.data,'$.is_subagent')=1)=1`)
 	return e
 }
-func (s *Store) claudeLongestDuration(q Query) (any, bool, error) {
+func (s *Store) claudeLongestDuration(q Query, contexts ...context.Context) (any, bool, error) {
+	reader := s.readDB(contexts)
 	where, args := queryFilter(q, true)
-	rows, e := s.db.Query("SELECT sum(json_extract(data,'$.duration_ms')),sum(CASE WHEN json_extract(data,'$.duration_ms') IS NULL THEN 1 ELSE 0 END) FROM usage_request_groups WHERE record_kind='user_request' AND "+where+" GROUP BY json_extract(data,'$.session_id')", args...)
+	rows, e := reader.Query("SELECT sum(json_extract(data,'$.duration_ms')),sum(CASE WHEN json_extract(data,'$.duration_ms') IS NULL THEN 1 ELSE 0 END) FROM usage_request_groups WHERE record_kind='user_request' AND "+where+" GROUP BY json_extract(data,'$.session_id')", args...)
 	if e != nil {
 		return nil, false, e
 	}
@@ -313,16 +321,49 @@ func (s *Store) claudeLongestDuration(q Query) (any, bool, error) {
 	}
 	return longest, partial, rows.Err()
 }
-func (s *Store) claudeSourceFields(rows []Row) {
+func (s *Store) claudeSourceFields(rows []Row, contexts ...context.Context) error {
+	reader := s.readDB(contexts)
+	ids := map[string]bool{}
+	args := []any{}
 	for _, r := range rows {
 		if normalizedClient(dataString(r, "client_kind")) != "claude_code" {
 			continue
 		}
-		var available int
-		_ = s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM claude_locators WHERE item_id=? AND available=1)", strings.TrimPrefix(dataString(r, "id"), "unassigned:")).Scan(&available)
-		r["source_exists"] = available > 0
+		id := strings.TrimPrefix(dataString(r, "id"), "unassigned:")
+		if !ids[id] {
+			ids[id] = true
+			args = append(args, id)
+		}
+	}
+	if len(args) == 0 {
+		return nil
+	}
+	result, err := reader.Query("SELECT DISTINCT item_id FROM claude_locators WHERE available=1 AND item_id IN ("+strings.TrimSuffix(strings.Repeat("?,", len(args)), ",")+")", args...)
+	if err != nil {
+		return err
+	}
+	available := map[string]bool{}
+	for result.Next() {
+		var id string
+		if err = result.Scan(&id); err != nil {
+			result.Close()
+			return err
+		}
+		available[id] = true
+	}
+	err = result.Err()
+	result.Close()
+	if err != nil {
+		return err
+	}
+	for _, r := range rows {
+		if normalizedClient(dataString(r, "client_kind")) != "claude_code" {
+			continue
+		}
+		r["source_exists"] = available[strings.TrimPrefix(dataString(r, "id"), "unassigned:")]
 		r["source_revision"] = s.Generation()
 	}
+	return nil
 }
 func (s *Store) claudeReadLocator(locator Row) (Row, error) {
 	path := dataString(locator, "path")
@@ -351,8 +392,9 @@ func (s *Store) claudeReadLocator(locator Row) (Row, error) {
 	}
 	return entry, nil
 }
-func (s *Store) claudeLocators(item string, limit int) ([]Row, error) {
-	rows, e := s.db.Query("SELECT uuid,path,offset,identity,line_hash FROM claude_locators WHERE item_id=? AND available=1 ORDER BY path,offset LIMIT ?", item, limit)
+func (s *Store) claudeLocators(item string, limit int, contexts ...context.Context) ([]Row, error) {
+	reader := s.readDB(contexts)
+	rows, e := reader.Query("SELECT uuid,path,offset,identity,line_hash FROM claude_locators WHERE item_id=? AND available=1 ORDER BY path,offset LIMIT ?", item, limit)
 	if e != nil {
 		return nil, e
 	}
@@ -368,7 +410,8 @@ func (s *Store) claudeLocators(item string, limit int) ([]Row, error) {
 	}
 	return result, rows.Err()
 }
-func (s *Store) claudeDetail(request Row, call bool, page int) (Row, error) {
+func (s *Store) claudeDetail(request Row, call bool, page int, contexts ...context.Context) (Row, error) {
+	reader := s.readDB(contexts)
 	id := dataString(request, "id")
 	// Full bodies are recovered on demand from verified live locators. No cached
 	// body survives source deletion; prompt_preview remains solely a summary.
@@ -378,15 +421,15 @@ func (s *Store) claudeDetail(request Row, call bool, page int) (Row, error) {
 		item = strings.TrimPrefix(id, "unassigned:")
 		call = true
 	}
-	locators, e := s.claudeLocators(item, 513)
+	locators, e := s.claudeLocators(item, 513, reader.ctx)
 	if e != nil {
 		return nil, e
 	}
 	userUUID := dataString(request, "user_uuid")
 	if call && dataString(request, "claude_request_id") != "" {
-		owner := claudeGetRequestDB(s.db, dataString(request, "claude_request_id"))
+		owner := claudeGetRequestDB(s.db, dataString(request, "claude_request_id"), reader.ctx)
 		userUUID = dataString(owner, "user_uuid")
-		userLocators, err := s.claudeLocators(dataString(owner, "id"), 513)
+		userLocators, err := s.claudeLocators(dataString(owner, "id"), 513, reader.ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -409,6 +452,9 @@ func (s *Store) claudeDetail(request Row, call bool, page int) (Row, error) {
 		locators = locators[:512]
 	}
 	for _, locator := range locators {
+		if err := reader.ctx.Err(); err != nil {
+			return nil, err
+		}
 		uuid := dataString(locator, "uuid")
 		if seen[uuid] {
 			continue
@@ -498,12 +544,12 @@ func (s *Store) claudeDetail(request Row, call bool, page int) (Row, error) {
 		return result, nil
 	}
 	var count int
-	if e = s.db.QueryRow("SELECT count(*) FROM usage_request_members WHERE request_id=?", id).Scan(&count); e != nil {
+	if e = reader.QueryRow("SELECT count(*) FROM usage_request_members WHERE request_id=?", id).Scan(&count); e != nil {
 		return nil, e
 	}
 	pages := max(1, (count+49)/50)
 	page = min(max(1, page), pages)
-	rows, e := s.db.Query("SELECT p.data FROM usage_priced_calls p JOIN usage_request_members m ON m.record_id=p.id WHERE m.request_id=? ORDER BY p.timestamp,p.id LIMIT 50 OFFSET ?", id, (page-1)*50)
+	rows, e := reader.Query("SELECT p.data FROM usage_priced_calls p JOIN usage_request_members m ON m.record_id=p.id WHERE m.request_id=? ORDER BY p.timestamp,p.id LIMIT 50 OFFSET ?", id, (page-1)*50)
 	if e != nil {
 		return nil, e
 	}
@@ -518,7 +564,11 @@ func (s *Store) claudeDetail(request Row, call bool, page int) (Row, error) {
 		delete(member, "output_preview")
 		members = append(members, member)
 	}
+	e = rows.Err()
 	rows.Close()
+	if e != nil {
+		return nil, e
+	}
 	result["members"] = members
 	result["total_members"] = count
 	result["pages"] = pages
@@ -527,7 +577,7 @@ func (s *Store) claudeDetail(request Row, call bool, page int) (Row, error) {
 }
 func (s *Store) claudeImage(ctx context.Context, requestID, imageID string) (Row, error) {
 	item := strings.TrimPrefix(requestID, "unassigned:")
-	locators, e := s.claudeLocators(item, 512)
+	locators, e := s.claudeLocators(item, 512, ctx)
 	if e != nil {
 		return nil, e
 	}
@@ -574,8 +624,8 @@ func (s *Store) claudeImage(ctx context.Context, requestID, imageID string) (Row
 	return Row{"availability": "unavailable", "id": imageID}, nil
 }
 
-func claudeGetRequestDB(db *sql.DB, id string) Row {
+func claudeGetRequestDB(db *sql.DB, id string, contexts ...context.Context) Row {
 	var raw string
-	_ = db.QueryRow("SELECT data FROM claude_requests WHERE id=?", id).Scan(&raw)
+	_ = db.QueryRowContext(queryContext(contexts), "SELECT data FROM claude_requests WHERE id=?", id).Scan(&raw)
 	return dataRow(raw)
 }

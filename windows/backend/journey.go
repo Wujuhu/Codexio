@@ -4,6 +4,7 @@ package backend
 // come from the existing materialized ledger; process details are paginated.
 import (
 	"bufio"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -150,7 +151,10 @@ func (s *Service) GetJourneyCatalog(project, before string) (Row, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if s.mock {
-		ranking := s.GetChatRanking("tokens", 1)
+		ranking, err := s.GetChatRanking(context.Background(), "tokens", 1)
+		if err != nil {
+			return nil, err
+		}
 		threads := []Row{}
 		for _, r := range ValueRows(ranking["threads"]) {
 			threads = append(threads, Row{"id": r["thread_id"], "title": firstString(r["title"], r["thread_id"]), "project_id": "chats"})

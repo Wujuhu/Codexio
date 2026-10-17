@@ -84,3 +84,17 @@ Mac／Windows 的 Claude 用量活动页接入执行行程，沿用既有 UI 和
 用户确认以 Mac 当前逻辑统一 Windows 日志及概览最近请求。直接复用 `macos/native/ClaudeViews.swift:claudeGridRow` 的字段选择、去重排序及原请求模型回退；不额外采用 `returned_model`，不格式化 Claude 模型 ID。Codex 对照 `macos/native/CompactTable.swift:LogFields.row` 与 `Core.swift:modelName/requestValueText`，恢复上游在上、请求在下及折线箭头，即使型号相同也展示，按已有不一致标记或两字段比较着绿。Windows 共用既有 `Model.svelte` 渲染与箭头；详情仍保留完整上游观测，不改采集、账本、定价、版本或 Mac 源码。
 
 交付完成：Windows 前端类型检查及原有三项隔离冒烟通过，240 个构建输入与本机一致。0.3.10-beta EXE SHA-256 为 `458bba472056986737a7a8bf017750ab163e08f91029586033d2c1837a722679`。目标程序仍运行，原文件保留，新包及清单留在 Windows `build/dev/windows/pending`，本机副本在 `build/dev/windows`；共享清单保留既有 Mac／iOS 信息。临时交互构建任务已删除，未启动或重启真实应用。证据位于 `build/checks/windows-model-parity`。
+
+### 2026-10-17：正式版前计价与查询收尾
+
+用户授权只给对应模型计价、Windows 拼接全部上游、两端显示进行中，并处理后台读取阻塞及详情刷新。Claude 计价以实际 `upstream_model` 为唯一型号入口，官方 ID／官方别名或该返回 ID 已确认的同模型 label 绑定可用，不再借请求型号回退；规则版本更新为 `claude-code-2026-10-17-returned-model`，由原重计价与物化缓存机制纠正历史费用及关联汇总，不重采 Token。已知返回 Gemini／DeepSeek 的旧估算不得套 Haiku／Opus 的价格。
+
+Windows 复用 `observations.go` 的逐次响应关联及不一致次数，按 Mac `Analytics.swift` 拼接多上游，表格兼容已有数组；Mac 状态显示抽成共用函数，Windows 保留已有进行中文案。模型列的请求／返回布局不改。
+
+性能修复复用 `query_cache.go` 的 generation 缓存、有界 SQL 与 `requestMediaCache.work` 的有界可取消工作门；Wails 仍使用已固定的 beta.26 原生 cancellable 调用，将 context 传到原连接池和正文恢复。前台读取 30 秒，前端 35 秒兜底，跳转及筛选取消旧调用；处理 rows.Err 后才缓存结果。Claude 来源存在性由逐行 N 次查询改为当前页一次查询。Mac 的 AsyncProjection 原本支持保留旧值，移除同一 Claude 请求每次刷新都 discardVisible 的调用，Windows Details 也保留同一请求的已有内容；换请求仍清空以免串内容。版本保持 0.3.10-beta，既有三项隔离冒烟不扩展。
+
+直接问题核对使用 Windows 最近 2,000 条调用中的 39 条受影响计价元数据副本：修复后计价数从 39 降为 0，原模型及 Token 保持相同。另在 build 隔离数据库中占住唯一连接，给同一界面读取传入人为 100 ms 期限，约 100.997 ms 返回超时，不缓存取消结果，释放连接后日志读取成功、连接池占用为零；等待正文恢复工作门也能取消并重试。此为已发现故障的一次性诊断，不增加维护性测试文件或常规冒烟项，不代表生产查询耗时上限为 100 ms。证据位于 `build/checks/v0310-functional-fixes/diagnosis.json`。
+
+最终校对补充详情请求的 revision 依赖：复用 DetailPopover 已有来源／内容签名，相同参数且同 revision 才合并；新 revision 取消旧调用，保留已有展示，避免旧查询被误用作新状态。该补充只涉及 Windows 前端，重新打 Windows 开发包；Mac 包与已通过的直接诊断不重复执行。
+
+交付完成：Mac 与最终 Windows 开发包的原有三项隔离冒烟通过，Windows 前端检查无错误，241 个构建输入与本机一致。Mac ZIP SHA-256 为 `85f47d0405dfba7d907459f225374dcdfab930d8d6155712c6cba69f8e9b993f`，最终 EXE 为 `6c9e44fdb22d42f36bd2bef94a3f58c5a9de4bf88c705523b39756cd7f03cb4a`。两端版本保持 0.3.10-beta，Widget 保持 1.28／29；Windows 新包及清单保留在主机标准 `build/dev/windows`，本机复制回传，Mac／Windows 共享清单一致并保留既有 iOS 元数据。两个临时交互构建任务均已清理，未代用户启动真实程序，未推送或发布。Mac 交付及直接故障诊断位于 `build/checks/v0310-functional-fixes`，最终 Windows 交付位于 `build/checks/v0310-functional-fixes-final/windows`。

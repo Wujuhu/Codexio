@@ -565,7 +565,7 @@ func (s *Store) requestImage(ctx context.Context, requestID, imageID string) (Ro
 	}
 	// Resolve exclusively through the indexed request. No path or URL is ever
 	// accepted from the UI, including when a caller fabricates an image ID.
-	detail, err := s.Detail(requestID, 1)
+	detail, err := s.Detail(requestID, 1, ctx)
 	if err != nil {
 		return nil, err
 	}

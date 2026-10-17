@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -8,7 +9,8 @@ import (
 )
 
 // Historic response observations remain visible when active collection is off.
-func (s *Store) enrichUpstream(rows []Row, grouped bool) {
+func (s *Store) enrichUpstream(rows []Row, grouped bool, contexts ...context.Context) {
+	reader := s.readDB(contexts)
 	if len(rows) == 0 || s.options.Mock {
 		return
 	}
@@ -36,7 +38,7 @@ func (s *Store) enrichUpstream(rows []Row, grouped bool) {
 			for _, r := range batch {
 				args = append(args, r["response_id"])
 			}
-			observed, e := db.Query("SELECT response_id,model FROM observations WHERE response_id IN ("+strings.TrimSuffix(strings.Repeat("?,", len(args)), ",")+")", args...)
+			observed, e := db.QueryContext(reader.ctx, "SELECT response_id,model FROM observations WHERE response_id IN ("+strings.TrimSuffix(strings.Repeat("?,", len(args)), ",")+")", args...)
 			if e != nil {
 				return
 			}
@@ -61,7 +63,7 @@ func (s *Store) enrichUpstream(rows []Row, grouped bool) {
 		if !grouped {
 			consume([]Row{row})
 		} else {
-			members, e := s.db.Query("SELECT json_extract(p.data,'$.response_id'),p.model FROM usage_priced_calls p JOIN usage_request_members m ON p.id=m.record_id WHERE m.request_id=?", row["id"])
+			members, e := reader.Query("SELECT json_extract(p.data,'$.response_id'),p.model FROM usage_priced_calls p JOIN usage_request_members m ON p.id=m.record_id WHERE m.request_id=?", row["id"])
 			if e != nil {
 				continue
 			}
@@ -97,9 +99,8 @@ func (s *Store) enrichUpstream(rows []Row, grouped bool) {
 			if grouped {
 				row["upstream_total_calls"] = row["call_count"]
 			}
-			if len(models) == 1 {
-				row["upstream_model"] = models[0]
-			}
+			row["upstream_model"] = strings.Join(models, " + ")
+			row["upstream_mismatched"] = mismatches > 0
 		}
 	}
 }

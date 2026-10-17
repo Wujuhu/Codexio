@@ -145,9 +145,9 @@
    finally{if(dataFlight===request)dataFlight=null;if(mounted&&ticket===sequence)busy=false;}
  }
  function cancelScheduledDataReload(){eventSequence++;clearTimeout(eventTimer);}
- function go(next:string){cancelScheduledDataReload();pageQueries[pageKey(page)]={...query};page=next;query={...(pageQueries[pageKey(next)]??{...defaultQuery(),...(next==='trends'?{page_size:5}:{})}),client_kind:clientPages.has(next)?clientKind:'codex'};data=cache[pageKey(next)]??{};void reload()}
+ function go(next:string){cancelScheduledDataReload();invalidateClientReads();pageQueries[pageKey(page)]={...query};page=next;query={...(pageQueries[pageKey(next)]??{...defaultQuery(),...(next==='trends'?{page_size:5}:{})}),client_kind:clientPages.has(next)?clientKind:'codex'};data=cache[pageKey(next)]??{};void reload()}
  function selectClient(next:ClientKind){if(next===clientKind||!clientPages.has(page))return;cancelScheduledDataReload();invalidateClientReads();pageQueries[pageKey(page)]={...query,tier:''};clientKind=next;query={...(pageQueries[pageKey(page)]??defaultQuery()),client_kind:next,tier:''};data=cache[pageKey(page)]??{};error='';void reload()}
- function filter(next:Query){cancelScheduledDataReload();query={...next,...(page==='logs'?{tier:''}:{}),client_kind:clientPages.has(page)?clientKind:'codex'};pageQueries[pageKey(page)]=query;void reload()}
+ function filter(next:Query){cancelScheduledDataReload();invalidateClientReads();query={...next,...(page==='logs'?{tier:''}:{}),client_kind:clientPages.has(page)?clientKind:'codex'};pageQueries[pageKey(page)]=query;void reload()}
  async function save(changes:Row){saveQueue=saveQueue.catch(()=>{}).then(async()=>{settingsSequence++;try{const next=await api('SaveSettings',changes);if(mounted)adoptSettings(next);}catch(e){if(mounted)fail(e);}});await saveQueue;}
  function searchLogs(){go('logs');void tick().then(()=>document.querySelector<HTMLInputElement>('[data-search]')?.focus())}
  async function refresh(){if(busy||refreshActive)return;manualRefreshing=true;try{await api('RefreshClient',activeClient);await reload()}catch(e){fail(e)}finally{manualRefreshing=false}}

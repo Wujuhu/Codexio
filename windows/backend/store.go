@@ -24,7 +24,7 @@ type Store struct {
 	path                    string
 	options                 DataOptions
 	mu                      sync.RWMutex
-	work                    sync.Mutex
+	work                    queryWorkLock
 	config                  Row
 	status                  Row
 	lastScanAt              string

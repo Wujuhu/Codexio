@@ -1,7 +1,6 @@
 <script lang="ts">
   import {onDestroy} from 'svelte';
-  import {Call} from '@wailsio/runtime';
-  import {rows,text,kind,numeric,compact,priced,type Row} from '../lib/api';
+  import {revisionRead,rows,text,kind,numeric,compact,priced,type Row} from '../lib/api';
   import {tr} from '../lib/i18n';
   import {effort,speed,preview,fullTime,requestStatus,tpsLabel,ttftLabel} from './logFormat';
   import Markdown from './Markdown.svelte';
@@ -17,8 +16,8 @@
   onDestroy(()=>{sequence++;clearTimeout(copyTimer)});
   function reset(next:string,_revision:string){if(next){const changed=currentId!==next;if(changed){data={};callsOpen=false}currentId=next;void load(next,changed?1:page)}else{data={};sequence++;busy=false}}
   async function load(next:string,nextPage:number){
-    const ticket=++sequence;busy=true;data={};
-    try{const value=await Call.ByName('codexio/windows/backend.Service.GetDetails',next,nextPage) as Row;if(ticket===sequence){data=value;currentId=next;page=Number(value.page??nextPage)}}
+    const ticket=++sequence;busy=true;
+    try{const value=await revisionRead('GetDetails',reloadKey,next,nextPage);if(ticket===sequence){data=value;currentId=next;page=Number(value.page??nextPage)}}
     catch(error){if(ticket===sequence)onerror(error)}finally{if(ticket===sequence)busy=false}
   }
   function body(value:any){if(data.availability==='unavailable')return '';return typeof value==='string'?value:text(value?.text??value?.content??value?.markdown,'')}

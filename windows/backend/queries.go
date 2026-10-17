@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -103,7 +104,8 @@ func queryFilter(q Query, groups bool) (string, []any) {
 	}
 	return where, args
 }
-func (s *Store) Page(q Query) (PageResult, error) {
+func (s *Store) Page(q Query, contexts ...context.Context) (PageResult, error) {
+	reader := s.readDB(contexts)
 	groups := q.Mode != "model_call"
 	table := "usage_priced_calls"
 	if groups {
@@ -123,7 +125,7 @@ func (s *Store) Page(q Query) (PageResult, error) {
 	}
 	result := PageResult{Rows: []Row{}, Page: page, Counts: map[string]int{}, State: s.ClientStatus(q.ClientKind)}
 	var firstStamp sql.NullString
-	if e := s.db.QueryRow("SELECT count(*),min(timestamp) FROM "+table+" WHERE "+where, args...).Scan(&result.Total, &firstStamp); e != nil {
+	if e := reader.QueryRow("SELECT count(*),min(timestamp) FROM "+table+" WHERE "+where, args...).Scan(&result.Total, &firstStamp); e != nil {
 		return result, e
 	}
 	// Use the complete filtered range so every page shares the same date format.
@@ -142,7 +144,7 @@ func (s *Store) Page(q Query) (PageResult, error) {
 		result.Page = page
 	}
 	params := append(append([]any{}, args...), size, (page-1)*size)
-	rows, e := s.db.Query("SELECT data FROM "+table+" WHERE "+where+" ORDER BY timestamp DESC,id DESC LIMIT ? OFFSET ?", params...)
+	rows, e := reader.Query("SELECT data FROM "+table+" WHERE "+where+" ORDER BY timestamp DESC,id DESC LIMIT ? OFFSET ?", params...)
 	if e != nil {
 		return result, e
 	}
@@ -165,7 +167,7 @@ func (s *Store) Page(q Query) (PageResult, error) {
 		return result, e
 	}
 	gw, ga := queryFilter(q, true)
-	rows, e = s.db.Query("SELECT record_kind,count(*) FROM usage_request_groups WHERE "+gw+" GROUP BY record_kind", ga...)
+	rows, e = reader.Query("SELECT record_kind,count(*) FROM usage_request_groups WHERE "+gw+" GROUP BY record_kind", ga...)
 	if e != nil {
 		return result, e
 	}
@@ -181,16 +183,23 @@ func (s *Store) Page(q Query) (PageResult, error) {
 			result.Counts[key] = n
 		}
 	}
+	e = rows.Err()
 	rows.Close()
-	s.claudeSourceFields(result.Rows)
+	if e != nil {
+		return result, e
+	}
+	if e = s.claudeSourceFields(result.Rows, reader.ctx); e != nil {
+		return result, e
+	}
 	if normalizedClient(q.ClientKind) == "codex" {
-		s.enrichUpstream(result.Rows, groups)
+		s.enrichUpstream(result.Rows, groups, reader.ctx)
 	}
 	return result, nil
 }
-func (s *Store) stream(q Query, fn func(Row)) error {
+func (s *Store) stream(q Query, fn func(Row), contexts ...context.Context) error {
+	reader := s.readDB(contexts)
 	where, args := queryFilter(q, false)
-	rows, e := s.db.Query("SELECT data FROM usage_priced_calls WHERE "+where+" ORDER BY timestamp,id", args...)
+	rows, e := reader.Query("SELECT data FROM usage_priced_calls WHERE "+where+" ORDER BY timestamp,id", args...)
 	if e != nil {
 		return e
 	}
@@ -204,13 +213,15 @@ func (s *Store) stream(q Query, fn func(Row)) error {
 	}
 	return rows.Err()
 }
-func (s *Store) requestCount(q Query) (int, error) {
+func (s *Store) requestCount(q Query, contexts ...context.Context) (int, error) {
+	reader := s.readDB(contexts)
 	where, args := queryFilter(q, true)
 	var n int
-	e := s.db.QueryRow("SELECT count(*) FROM usage_request_groups WHERE record_kind='user_request' AND is_subagent=0 AND "+where, args...).Scan(&n)
+	e := reader.QueryRow("SELECT count(*) FROM usage_request_groups WHERE record_kind='user_request' AND is_subagent=0 AND "+where, args...).Scan(&n)
 	return n, e
 }
-func (s *Store) Summary(q Query) (result Row, err error) {
+func (s *Store) Summary(q Query, contexts ...context.Context) (result Row, err error) {
+	reader := s.readDB(contexts)
 	key, cached, ok := s.cachedQuery("summary", q)
 	if ok {
 		return cached, nil
@@ -221,10 +232,10 @@ func (s *Store) Summary(q Query) (result Row, err error) {
 		}
 	}()
 	sum := newMetricSum()
-	if e := s.stream(q, sum.add); e != nil {
+	if e := s.stream(q, sum.add, reader.ctx); e != nil {
 		return nil, e
 	}
-	n, e := s.requestCount(q)
+	n, e := s.requestCount(q, reader.ctx)
 	if e != nil {
 		return nil, e
 	}
@@ -234,7 +245,8 @@ func (s *Store) Summary(q Query) (result Row, err error) {
 	r["skipped"].(map[string]int)["user_requests"] = 0
 	return r, nil
 }
-func (s *Store) Recent(q Query, n int) ([]Row, error) {
+func (s *Store) Recent(q Query, n int, contexts ...context.Context) ([]Row, error) {
+	reader := s.readDB(contexts)
 	if n <= 0 {
 		n = 3
 	}
@@ -243,14 +255,16 @@ func (s *Store) Recent(q Query, n int) ([]Row, error) {
 	}
 	where, args := queryFilter(q, true)
 	args = append(args, n)
-	rows, e := s.db.Query("SELECT data FROM usage_request_groups WHERE record_kind='user_request' AND is_subagent=0 AND "+where+" ORDER BY timestamp DESC,id DESC LIMIT ?", args...)
+	rows, e := reader.Query("SELECT data FROM usage_request_groups WHERE record_kind='user_request' AND is_subagent=0 AND "+where+" ORDER BY timestamp DESC,id DESC LIMIT ?", args...)
 	if e != nil {
 		return nil, e
 	}
+	defer rows.Close()
 	result := []Row{}
 	for rows.Next() {
 		var raw string
 		if e = rows.Scan(&raw); e != nil {
+			rows.Close()
 			return nil, e
 		}
 		r := dataRow(raw)
@@ -260,9 +274,11 @@ func (s *Store) Recent(q Query, n int) ([]Row, error) {
 	e = rows.Err()
 	rows.Close()
 	if e == nil && normalizedClient(q.ClientKind) == "codex" {
-		s.enrichUpstream(result, true)
+		s.enrichUpstream(result, true, reader.ctx)
 	}
-	s.claudeSourceFields(result)
+	if e == nil {
+		e = s.claudeSourceFields(result, reader.ctx)
+	}
 	return result, e
 }
 func chartKey(t time.Time, granularity string) string {
@@ -328,7 +344,8 @@ func emptyChartMetric() Row {
 	return r
 }
 
-func (s *Store) Chart(q Query) (resultRows []Row, err error) {
+func (s *Store) Chart(q Query, contexts ...context.Context) (resultRows []Row, err error) {
+	reader := s.readDB(contexts)
 	key, cached, ok := s.cachedQuery("chart", q)
 	if ok {
 		return ValueRows(cached["rows"]), nil
@@ -366,11 +383,11 @@ func (s *Store) Chart(q Query) (resultRows []Row, err error) {
 			}
 			buckets[k].add(r)
 		}
-	}); e != nil {
+	}, reader.ctx); e != nil {
 		return nil, e
 	}
 	where, args := queryFilter(q, true)
-	rows, e := s.db.Query("SELECT timestamp FROM usage_request_groups WHERE record_kind='user_request' AND is_subagent=0 AND "+where, args...)
+	rows, e := reader.Query("SELECT timestamp FROM usage_request_groups WHERE record_kind='user_request' AND is_subagent=0 AND "+where, args...)
 	if e != nil {
 		return nil, e
 	}
@@ -391,7 +408,11 @@ func (s *Store) Chart(q Query) (resultRows []Row, err error) {
 			}
 		}
 	}
+	e = rows.Err()
 	rows.Close()
+	if e != nil {
+		return nil, e
+	}
 	bucketStart := start
 	if bucketStart.IsZero() {
 		bucketStart = firstBucket
@@ -425,7 +446,8 @@ func (s *Store) Chart(q Query) (resultRows []Row, err error) {
 	}
 	return result, nil
 }
-func (s *Store) Models(q Query) (resultRows []Row, err error) {
+func (s *Store) Models(q Query, contexts ...context.Context) (resultRows []Row, err error) {
+	reader := s.readDB(contexts)
 	key, cached, ok := s.cachedQuery("models", q)
 	if ok {
 		return ValueRows(cached["rows"]), nil
@@ -442,7 +464,7 @@ func (s *Store) Models(q Query) (resultRows []Row, err error) {
 			groups[model] = newMetricSum()
 		}
 		groups[model].add(r)
-	}); e != nil {
+	}, reader.ctx); e != nil {
 		return nil, e
 	}
 	result := []Row{}
@@ -452,7 +474,7 @@ func (s *Store) Models(q Query) (resultRows []Row, err error) {
 		r["call_count"] = r["requests"]
 		mq := q
 		mq.Model = model
-		n, e := s.requestCount(mq)
+		n, e := s.requestCount(mq, reader.ctx)
 		if e != nil {
 			return nil, e
 		}
@@ -462,7 +484,8 @@ func (s *Store) Models(q Query) (resultRows []Row, err error) {
 	sort.Slice(result, func(i, j int) bool { return ValueInt(result[i]["tokens"]) > ValueInt(result[j]["tokens"]) })
 	return result, nil
 }
-func (s *Store) Insights(q Query) (result Row, err error) {
+func (s *Store) Insights(q Query, contexts ...context.Context) (result Row, err error) {
+	reader := s.readDB(contexts)
 	size := q.PageSize
 	if size <= 0 {
 		size = 5
@@ -480,26 +503,27 @@ func (s *Store) Insights(q Query) (result Row, err error) {
 			s.cacheQuery(key, result)
 		}
 	}()
-	chats, total, page, e := s.localChatRows(q, page, size)
+	chats, total, page, e := s.localChatRows(q, page, size, reader.ctx)
 	if e != nil {
 		return nil, e
 	}
 	pages := max(1, (total+size-1)/size)
-	local, e := s.localInsights(Query{ClientKind: q.ClientKind, Period: "all", Source: "local"})
+	local, e := s.localInsights(Query{ClientKind: q.ClientKind, Period: "all", Source: "local"}, reader.ctx)
 	if e != nil {
 		return nil, e
 	}
 	return Row{"chats": chats, "chat_rankings": chats, "chat_page": page, "chat_pages": pages, "chat_total": total, "stats": local["stats"], "activity": local["activity"], "heatmap": local["activity"]}, nil
 }
 func (s *Store) Filters() (Row, error) { return s.ClientFilters("codex") }
-func (s *Store) ClientFilters(client string) (Row, error) {
+func (s *Store) ClientFilters(client string, contexts ...context.Context) (Row, error) {
+	reader := s.readDB(contexts)
 	result := Row{"models": []string{}, "tiers": []string{}, "statuses": []string{"running", "completed", "aborted", "unknown"}}
 	for _, field := range []string{"model", "tier"} {
 		statement := "SELECT DISTINCT " + field + " FROM usage_priced_calls WHERE coalesce(json_extract(data,'$.client_kind'),'codex')=? ORDER BY " + field + " LIMIT 500"
 		if normalizedClient(client) == "claude_code" && field == "model" {
 			statement = "SELECT DISTINCT model FROM (SELECT model FROM usage_priced_calls WHERE json_extract(data,'$.client_kind')=? UNION SELECT json_extract(data,'$.returned_model') AS model FROM usage_priced_calls WHERE json_extract(data,'$.client_kind')='claude_code') WHERE model IS NOT NULL AND model<>'' ORDER BY model LIMIT 500"
 		}
-		rows, e := s.db.Query(statement, normalizedClient(client))
+		rows, e := reader.Query(statement, normalizedClient(client))
 		if e != nil {
 			return nil, e
 		}
@@ -512,7 +536,11 @@ func (s *Store) ClientFilters(client string) (Row, error) {
 			}
 			values = append(values, v)
 		}
+		e = rows.Err()
 		rows.Close()
+		if e != nil {
+			return nil, e
+		}
 		key := "models"
 		if field == "tier" {
 			key = "tiers"
@@ -521,7 +549,8 @@ func (s *Store) ClientFilters(client string) (Row, error) {
 	}
 	return result, nil
 }
-func (s *Store) Detail(id string, page int) (Row, error) {
+func (s *Store) Detail(id string, page int, contexts ...context.Context) (Row, error) {
+	reader := s.readDB(contexts)
 	if id == "" || len(id) > 1024 {
 		return nil, errors.New("invalid request identity")
 	}
@@ -529,10 +558,10 @@ func (s *Store) Detail(id string, page int) (Row, error) {
 		page = 1
 	}
 	var raw string
-	e := s.db.QueryRow("SELECT data FROM usage_request_groups WHERE id=?", id).Scan(&raw)
+	e := reader.QueryRow("SELECT data FROM usage_request_groups WHERE id=?", id).Scan(&raw)
 	call := false
 	if e == sql.ErrNoRows {
-		e = s.db.QueryRow("SELECT data FROM usage_priced_calls WHERE id=?", id).Scan(&raw)
+		e = reader.QueryRow("SELECT data FROM usage_priced_calls WHERE id=?", id).Scan(&raw)
 		call = true
 	}
 	if e != nil {
@@ -540,14 +569,14 @@ func (s *Store) Detail(id string, page int) (Row, error) {
 	}
 	request := dataRow(raw)
 	if normalizedClient(dataString(request, "client_kind")) == "claude_code" {
-		return s.claudeDetail(request, call, page)
+		return s.claudeDetail(request, call, page, reader.ctx)
 	}
 	result := Row{"request": request, "user": request["prompt_preview"], "final": request["output_preview"], "attachments": []Row{}, "members": []Row{}, "composition": request["composition"], "page": page, "pages": 1, "user_complete": false, "final_complete": false, "availability": "legacy_preview"}
 	var message Row
 	if call {
-		message = s.sourceMessage(request)
+		message = s.sourceMessage(request, reader.ctx)
 	} else {
-		message, e = s.requestMessageDetail(request, true)
+		message, e = s.requestMessageDetail(request, true, reader.ctx)
 		if e != nil {
 			return nil, e
 		}
@@ -562,7 +591,7 @@ func (s *Store) Detail(id string, page int) (Row, error) {
 		count = 1
 		result["members"] = []Row{request}
 	} else {
-		if e = s.db.QueryRow("SELECT count(*) FROM usage_request_members WHERE request_id=?", id).Scan(&count); e != nil {
+		if e = reader.QueryRow("SELECT count(*) FROM usage_request_members WHERE request_id=?", id).Scan(&count); e != nil {
 			return nil, e
 		}
 		pages := (count + 49) / 50
@@ -574,7 +603,7 @@ func (s *Store) Detail(id string, page int) (Row, error) {
 			result["page"] = page
 		}
 		result["pages"] = pages
-		rows, e := s.db.Query("SELECT p.data FROM usage_priced_calls p JOIN usage_request_members m ON p.id=m.record_id WHERE m.request_id=? ORDER BY p.timestamp,p.id LIMIT 50 OFFSET ?", id, (page-1)*50)
+		rows, e := reader.Query("SELECT p.data FROM usage_priced_calls p JOIN usage_request_members m ON p.id=m.record_id WHERE m.request_id=? ORDER BY p.timestamp,p.id LIMIT 50 OFFSET ?", id, (page-1)*50)
 		if e != nil {
 			return nil, e
 		}
@@ -587,12 +616,16 @@ func (s *Store) Detail(id string, page int) (Row, error) {
 			}
 			members = append(members, dataRow(raw))
 		}
+		e = rows.Err()
 		rows.Close()
+		if e != nil {
+			return nil, e
+		}
 		result["members"] = members
 	}
 	result["total_members"] = count
-	s.enrichUpstream([]Row{request}, !call)
-	s.enrichUpstream(ValueRows(result["members"]), false)
+	s.enrichUpstream([]Row{request}, !call, reader.ctx)
+	s.enrichUpstream(ValueRows(result["members"]), false, reader.ctx)
 	// Continuation replies may advance the final output; agent/review replies never do.
 	composition := ValueRows(request["composition"])
 	if len(composition) > 100 {

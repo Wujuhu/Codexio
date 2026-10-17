@@ -4,18 +4,35 @@ export type ClientKind = 'codex' | 'claude_code';
 export type Query = { client_kind?: ClientKind; mode: string; period: string; start: string; end: string; model: string; tier: string; status: string; search: string; page: number; page_size: number; granularity: string };
 export const defaultQuery = (): Query => ({client_kind:'codex',mode:'user_request',period:'today',start:'',end:'',model:'',tier:'',status:'',search:'',page:1,page_size:50,granularity:''});
 const prefix = 'codexio/windows/backend.Service.';
-const reads = new Map<string, Promise<any>>();
-export function api<T = Row>(method: string, ...args: any[]): Promise<T> {
+const reads = new Map<string, {promise:Promise<any>;cancel:()=>void;revision?:string}>();
+export function api<T = Row>(method: string, ...args: any[]): Promise<T> {return invoke<T>(method,args);}
+export function revisionRead<T = Row>(method:string,revision:string,...args:any[]):Promise<T>{return invoke<T>(method,args,revision);}
+function invoke<T>(method:string,args:any[],revision?:string):Promise<T>{
   const key = method + JSON.stringify(args);
-  if (method.startsWith('Get') && reads.has(key)) return reads.get(key)!;
-  const promise = Call.ByName(prefix + method, ...args) as Promise<T>;
-  if (method.startsWith('Get')) { reads.set(key, promise); void promise.finally(() => { if(reads.get(key)===promise)reads.delete(key); }).catch(() => {}); }
+  const reading=method.startsWith('Get');
+  const existing=reading?reads.get(key):undefined;
+  if(existing&&(revision===undefined||existing.revision===revision))return existing.promise;
+  if(existing){reads.delete(key);existing.cancel();}
+  const call=Call.ByName(prefix + method,...args);
+  if(!reading)return call as Promise<T>;
+  let timer:ReturnType<typeof setTimeout>;
+  const promise=new Promise<T>((resolve,reject)=>{
+    timer=setTimeout(()=>{
+      const error=new Error(document.documentElement.lang==='en'?'Data read timed out. Please retry.':'数据读取超时，请重试');
+      reject(error);
+      void call.cancel(error);
+    },35000);
+    void call.then(resolve,reject);
+  });
+  const entry={promise,cancel:()=>{void call.cancel();},revision};
+  reads.set(key,entry);
+  void promise.finally(()=>{clearTimeout(timer);if(reads.get(key)===entry)reads.delete(key);}).catch(()=>{});
   return promise;
 }
 // Source changes abandon coalescing identities; in-flight callers still settle
 // under their existing sequence guards and cannot remove replacement reads.
 export function invalidateClientReads():void {
-  for(const key of reads.keys())if(/^(GetOverview|GetLogs|GetTrends|GetClientFilters|GetClientChatRanking|GetDetails)/.test(key))reads.delete(key);
+  for(const [key,entry] of reads)if(/^(GetOverview|GetLogs|GetTrends|GetClientFilters|GetClientChatRanking|GetDetails)/.test(key)){reads.delete(key);entry.cancel();}
 }
 export function listen(name: string, fn: (data: Row) => void): () => void {
   return Events.On(name, (event: any) => fn(event.data ?? {}));

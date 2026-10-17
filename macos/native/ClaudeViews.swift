@@ -41,7 +41,6 @@ private func claudeGridRow(_ row: UsageRow,state: AppState,showYear: Bool,timeOn
             return GridText(main:percent(rate,digits:1))
         }
         if key == "context" {return GridText(main:contextWindowText(row.raw.number("model_context_window")))}
-        if key == "status" && row.raw.string("status") == "failed" {return GridText(main:L("失败", "Failed"))}
         return original(key)
     }
     grid.detail = nil
@@ -271,10 +270,15 @@ struct ClaudeDetailView: View {
     @StateObject private var originals = AsyncProjection(ClaudeOriginalPayload())
     @StateObject private var members = AsyncProjection([UsageRow]())
     @State private var page = 0
+    @State private var loadedID = ""
     private var key: String {"claude_code|detail|\(state.claudeRevision)|\(row.id)|\(page)"}
     private func load() {
         let queue = state.dataQueue, ledger = state.claudeLedger, id = row.id, page = page
-        originals.discardVisible(ClaudeOriginalPayload())
+        if loadedID != id {
+            loadedID = id
+            originals.discardVisible(ClaudeOriginalPayload())
+            members.discardVisible([])
+        }
         originals.load(key:key,revision:state.claudeRevision) {queue.sync {claudeOriginalPayload((try? ledger.original(id)) ?? [])}}
         members.load(key:key,revision:state.claudeRevision) {queue.sync {(try? ledger.members(id,page:page)) ?? []}}
     }
@@ -289,7 +293,7 @@ struct ClaudeDetailView: View {
                 field(L("响应返回模型", "Response model"),requestValueText(((row.raw["upstream_models"] as? [String] ?? [])+[row.raw.string("upstream_model")]).filter {!$0.isEmpty}.joined(separator:" · ")))
                 field(L("推理强度", "Reasoning"),logEffortName(row.raw.string("reasoning_effort")))
                 field(L("速度", "Speed"),detailSpeedName(row.raw.string("service_tier"))); field(L("费用", "Cost"),row.costText)
-                field(L("状态", "Status"),row.raw.string("status") == "failed" ? L("失败", "Failed") : row.raw.string("status") == "completed" ? L("已完成", "Completed") : "—")
+                field(L("状态", "Status"),logStatusName(row.raw.string("status")))
                 field(L("耗时", "Duration"),durationText(row.duration))
                 field("TPS",outputRateText(row.outputTokensPerSecond,unit:"tokens/s")); field("TTFT",row.firstTokenSeconds.map {String(format:"%.2f",$0)+L(" 秒", " s")} ?? "—")
                 field(L("普通输入", "Uncached input"),compact(row.raw.number("raw_input_tokens")))

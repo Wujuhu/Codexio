@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"database/sql"
 	"sort"
 	"strings"
@@ -100,8 +101,9 @@ func queryJSON(tx *sql.Tx, q string, args ...any) ([]Row, error) {
 	}
 	return result, rows.Err()
 }
-func (s *Store) project() error {
-	tx, e := s.db.Begin()
+func (s *Store) project(contexts ...context.Context) error {
+	reader := s.readDB(contexts)
+	tx, e := reader.Begin()
 	if e != nil {
 		return e
 	}

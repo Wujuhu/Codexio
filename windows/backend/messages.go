@@ -11,13 +11,14 @@ import (
 
 // Mac Database.sourceFiles/recoverMessageDetails, backed by the existing Go
 // cursor/origin registry. Recovery is on demand and source-signature gated.
-func (s *Store) sourceMessage(request Row) Row {
-	if err := s.sourceMessageBatch([]Row{request}); err != nil {
+func (s *Store) sourceMessage(request Row, contexts ...context.Context) Row {
+	reader := s.readDB(contexts)
+	if err := s.sourceMessageBatch([]Row{request}, reader.ctx); err != nil {
 		return nil
 	}
 	id := turnKey(dataString(request, "session_id"), firstString(request["request_turn_id"], request["turn_id"]))
 	var raw string
-	_ = s.db.QueryRow("SELECT data FROM usage_request_messages WHERE id=?", id).Scan(&raw)
+	_ = reader.QueryRow("SELECT data FROM usage_request_messages WHERE id=?", id).Scan(&raw)
 	value := dataRow(raw)
 	final := ValueRows(value["final_attachments"])
 	if dataString(value, "final") == "" && len(final) == 0 && (dataString(value, "status") == "completed" || dataString(value, "status") == "aborted") {
@@ -29,8 +30,11 @@ func (s *Store) sourceMessage(request Row) Row {
 
 // Batch all explicit members and the prompt source before assembling details.
 // Each indexed file is decoded once even when every requested body is partial.
-func (s *Store) sourceMessageBatch(requests []Row) error {
-	s.work.Lock()
+func (s *Store) sourceMessageBatch(requests []Row, contexts ...context.Context) error {
+	reader := s.readDB(contexts)
+	if err := s.work.LockContext(reader.ctx); err != nil {
+		return err
+	}
 	defer s.work.Unlock()
 	if len(requests) == 0 {
 		return nil
@@ -39,7 +43,7 @@ func (s *Store) sourceMessageBatch(requests []Row) error {
 	if session == "" {
 		return nil
 	}
-	rows, e := s.db.Query(`SELECT DISTINCT c.key,c.data FROM usage_cursors c WHERE json_extract(c.data,'$.go_state.session_id')=? OR EXISTS(SELECT 1 FROM usage_origins o JOIN usage_turns t ON t.id=o.item_id WHERE o.kind='turn' AND o.file_key=c.key AND json_extract(t.data,'$.session_id')=?) ORDER BY c.key LIMIT 8`, session, session)
+	rows, e := reader.Query(`SELECT DISTINCT c.key,c.data FROM usage_cursors c WHERE json_extract(c.data,'$.go_state.session_id')=? OR EXISTS(SELECT 1 FROM usage_origins o JOIN usage_turns t ON t.id=o.item_id WHERE o.kind='turn' AND o.file_key=c.key AND json_extract(t.data,'$.session_id')=?) ORDER BY c.key LIMIT 8`, session, session)
 	if e != nil {
 		return e
 	}
@@ -93,7 +97,7 @@ func (s *Store) sourceMessageBatch(requests []Row) error {
 		}
 		id := turnKey(session, turn)
 		var raw string
-		_ = s.db.QueryRow("SELECT data FROM usage_request_messages WHERE id=?", id).Scan(&raw)
+		_ = reader.QueryRow("SELECT data FROM usage_request_messages WHERE id=?", id).Scan(&raw)
 		stored := dataRow(raw)
 		terminal := dataString(request, "status") == "completed" || dataString(request, "status") == "aborted" || dataString(request, "request_status") == "completed" || dataString(request, "request_status") == "aborted"
 		root := firstString(request["root_id"], id)
@@ -107,7 +111,7 @@ func (s *Store) sourceMessageBatch(requests []Row) error {
 		signature := pythonHash(signatureParts)
 		complete := len(stored) > 0 && !missingMedia && (!ownsInput || ValueBool(stored["user_complete"]) && ValueInt(stored["user_media_schema"]) == requestMediaSchema) && (!terminal || ValueBool(stored["final_complete"]) && ValueInt(stored["final_media_schema"]) == requestMediaSchema)
 		if complete || dataString(stored, "recovery_signature") == signature {
-			_, _ = s.db.Exec("UPDATE usage_request_messages SET accessed=? WHERE id=?", float64(time.Now().Unix()), id)
+			_, _ = reader.Exec("UPDATE usage_request_messages SET accessed=? WHERE id=?", float64(time.Now().Unix()), id)
 			continue
 		}
 		targets[id] = true
@@ -120,11 +124,11 @@ func (s *Store) sourceMessageBatch(requests []Row) error {
 		return nil
 	}
 	for _, file := range files {
-		if _, err := s.recoverSourceMetadata(context.Background(), file.path, file.source, file.key, file.generation, targets, false, 64<<20); err != nil {
+		if _, err := s.recoverSourceMetadata(reader.ctx, file.path, file.source, file.key, file.generation, targets, false, 64<<20); err != nil {
 			continue
 		}
 	}
-	tx, e := s.db.Begin()
+	tx, e := reader.Begin()
 	if e != nil {
 		return e
 	}
@@ -147,7 +151,10 @@ func (s *Store) sourceMessageBatch(requests []Row) error {
 	if e = tx.Commit(); e != nil {
 		return e
 	}
-	return s.project()
+	if err := reader.ctx.Err(); err != nil {
+		return err
+	}
+	return s.project(reader.ctx)
 }
 func (s *Store) verifiedMessagePath(path string) bool {
 	if !filepath.IsAbs(path) || !strings.EqualFold(filepath.Ext(path), ".jsonl") {
@@ -180,10 +187,10 @@ func (s *Store) verifiedMessagePath(path string) bool {
 	return false
 }
 
-func (s *Store) requestMessageDetail(request Row, recover bool) (Row, error) {
+func (s *Store) requestMessageDetail(request Row, recover bool, contexts ...context.Context) (Row, error) {
 	session, turn, canonical := ValueString(request["session_id"]), ValueString(request["turn_id"]), ValueString(request["id"])
 
-	db := s.db
+	db := s.readDB(contexts)
 	root := request
 	var rootRaw string
 	if db.QueryRow("SELECT data FROM usage_query_turns WHERE id=?", canonical).Scan(&rootRaw) == nil {
@@ -255,12 +262,12 @@ func (s *Store) requestMessageDetail(request Row, recover bool) (Row, error) {
 		if len(prompt) > 0 {
 			targets = append(targets, prompt)
 		}
-		if e := s.sourceMessageBatch(targets); e != nil {
+		if e := s.sourceMessageBatch(targets, db.ctx); e != nil {
 			return nil, e
 		}
 		// Recovery can repair ownership and rebuild the projection. Read its
 		// current members before assembling any user body, final text or media.
-		return s.requestMessageDetail(request, false)
+		return s.requestMessageDetail(request, false, db.ctx)
 	}
 	detail := Row{"user": "", "final": "", "user_complete": false, "final_complete": false, "attachments": []Row{}, "availability": "unavailable"}
 	read := func(member Row) Row {

@@ -599,7 +599,7 @@ func (s *Store) recoverSourceMetadataRange(ctx context.Context, path, source, fi
 		limit = min(limit, metadataRepairByteBudget)
 	}
 	reader := bufio.NewReaderSize(io.LimitReader(f, limit), 65536)
-	tx, e := s.db.Begin()
+	tx, e := s.db.BeginTx(ctx, nil)
 	if e != nil {
 		return nil, e
 	}

@@ -2,7 +2,7 @@
   "schema": 1,
   "unit": "USD per million tokens",
   "verified_at": "2026-10-16",
-  "rule_version": "claude-code-2026-10-16",
+  "rule_version": "claude-code-2026-10-17-returned-model",
   "sources": [
     "https://platform.claude.com/docs/en/about-claude/pricing",
     "https://code.claude.com/docs/en/fast-mode",

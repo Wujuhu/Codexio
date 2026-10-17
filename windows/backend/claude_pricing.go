@@ -186,14 +186,15 @@ func (s *Store) priceClaude(r Row) Row {
 	delete(r, "price_rates")
 	delete(r, "pricing_mode")
 	ids, _ := claudePriceIdentifiers(rows)
-	model := ids[claudePriceID(dataString(r, "upstream_model"))]
+	returned := dataString(r, "upstream_model")
+	if returned == "" {
+		return r
+	}
+	model := ids[claudePriceID(returned)]
 	estimated := false
 	if model == "" {
-		model = ids[claudePriceID(dataString(r, "model"))]
-		estimated = model != ""
-	}
-	if model == "" {
-		saved := ValueRow(aliases[HashString(filepath.Clean(claudeRoot()))+":"+dataString(r, "model")])
+		// Bind an alias only to the returned ID, never to a different request.
+		saved := ValueRow(aliases[HashString(filepath.Clean(claudeRoot()))+":"+returned])
 		history := ValueRows(saved["history"])
 		if len(history) == 0 {
 			history = []Row{saved}

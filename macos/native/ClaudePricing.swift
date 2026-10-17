@@ -86,10 +86,10 @@ final class ClaudePricingCatalog {
     }
     private func resolve(_ raw: Object,root: URL) -> (String,Bool)? {
         let returned = raw.string("upstream_model")
+        guard !returned.isEmpty else {return nil}
         if let model = ids[Self.id(returned)] {return (model,false)}
-        let requested = raw.string("model")
-        if let model = ids[Self.id(requested)] {return (model,true)}
-        let saved = aliases.object(identity(root.path)+":"+requested)
+        // An alias must identify this returned model, never a different request.
+        let saved = aliases.object(identity(root.path)+":"+returned)
         let history = saved.objects("history").isEmpty ? [saved] : saved.objects("history")
         if let time = parsedDate(raw["timestamp"])?.timeIntervalSince1970,
            let binding = history.last(where:{($0.number("since") ?? .infinity) <= time}), ids[binding.string("model")] != nil {

@@ -70,7 +70,7 @@ func (s *SmokeService) Ready(ctx context.Context, values backend.Row) error {
 	if backend.ValueString(values["page"]) != "overview" || tokens == "" || tokens == "—" || requests == "" || requests == "—" {
 		return s.finishError("基本用量未显示")
 	}
-	overview, e := h.service.GetOverview(backend.Query{Period: "today"})
+	overview, e := h.service.GetOverview(context.Background(), backend.Query{Period: "today"})
 	if e != nil || backend.ValueRow(overview["summary"])["tokens"] == nil {
 		return s.finishError("基本用量未读取")
 	}

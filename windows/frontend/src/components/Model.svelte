@@ -17,10 +17,12 @@
     }
     const format=(value:string)=>value.replaceAll('gpt-','GPT-').replaceAll('-astra',' Astra').replaceAll('-sol',' Sol').replaceAll('-luna',' Luna').replaceAll('-terra',' Terra');
     const label=format(requested).trim();
+    const models=Array.isArray(record.upstream_models)?record.upstream_models.filter((value:unknown):value is string=>typeof value==='string'&&!!value):[];
+    const upstreams=[...new Set(models.length?models:upstream?[upstream]:[])].sort();
     return{
       requested:['','unknown','auto','未知','-','–','—'].includes(label.toLowerCase())?'—':label,
-      upstream:format(upstream),
-      mismatch:typeof record.upstream_mismatched==='boolean'?record.upstream_mismatched:!!upstream&&!!requested&&upstream!==requested
+      upstream:upstreams.map(format).join(' + '),
+      mismatch:typeof record.upstream_mismatched==='boolean'?record.upstream_mismatched:record.upstream_mismatched_calls!=null?Number(record.upstream_mismatched_calls)>0:!!requested&&upstreams.some(model=>model!==requested)
     };
   }
   $: column=tableCell?columnLabels(record):null;
