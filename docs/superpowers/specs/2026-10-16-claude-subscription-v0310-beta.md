@@ -78,3 +78,9 @@ Mac／Windows 的 Claude 用量活动页接入执行行程，沿用既有 UI 和
 故障诊断使用现场一条记录的来源元数据，在 build 下独立源码／数据库副本中调用同一实现，诊断入口未进入产品源码。旧逻辑在人为设置的 1,200 ms 期限后返回 context deadline exceeded，连接池等待一次；修复约 0.998 ms 返回一条队列记录，连接池等待零次且占用为零，随后日志分页返回一行。该数值仅是此条元数据的阻塞诊断，不代表整机或全部历史性能。没有关闭、重启或改写用户正在运行的程序及账本。开发打包仍使用既有三项隔离冒烟，版本保持 0.3.10-beta。证据位于 `build/checks/windows-loading-fix`。
 
 交付完成：原有三项隔离冒烟通过，240 个 Windows 构建输入与本机逐项核对，EXE SHA-256 为 `b99dcf2cc70411e9345691a1da87770e0d81c89c60c1ffeddffc4f3e2d8935ae`。构建结束时目标程序已不在运行，修复包交付至该 Windows 主机标准目录 `build/dev/windows/Codexio.exe`，本机只复制回传；共享清单保留原 Mac／iOS 元数据。未代用户启动真实主程序，未推送或发布。
+
+### 2026-10-17：Windows 模型列以 Mac 为准
+
+用户确认以 Mac 当前逻辑统一 Windows 日志及概览最近请求。直接复用 `macos/native/ClaudeViews.swift:claudeGridRow` 的字段选择、去重排序及原请求模型回退；不额外采用 `returned_model`，不格式化 Claude 模型 ID。Codex 对照 `macos/native/CompactTable.swift:LogFields.row` 与 `Core.swift:modelName/requestValueText`，恢复上游在上、请求在下及折线箭头，即使型号相同也展示，按已有不一致标记或两字段比较着绿。Windows 共用既有 `Model.svelte` 渲染与箭头；详情仍保留完整上游观测，不改采集、账本、定价、版本或 Mac 源码。
+
+交付完成：Windows 前端类型检查及原有三项隔离冒烟通过，240 个构建输入与本机一致。0.3.10-beta EXE SHA-256 为 `458bba472056986737a7a8bf017750ab163e08f91029586033d2c1837a722679`。目标程序仍运行，原文件保留，新包及清单留在 Windows `build/dev/windows/pending`，本机副本在 `build/dev/windows`；共享清单保留既有 Mac／iOS 信息。临时交互构建任务已删除，未启动或重启真实应用。证据位于 `build/checks/windows-model-parity`。
