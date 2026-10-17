@@ -61,6 +61,7 @@ type Store struct {
 	claudeDiscovery         time.Time
 	claudeLastScan          string
 	claudeLastDisplay       string
+	claudeLivePrepared      bool
 	claudeCountRevision     int64
 	claudeIncomplete        int
 }

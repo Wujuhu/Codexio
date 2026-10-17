@@ -10,6 +10,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 )
 
 func (s *Service) GetClientFilters(clientKind string) Row {
@@ -20,7 +21,7 @@ func (s *Service) GetClientFilters(clientKind string) Row {
 	r["client_kind"] = normalizedClient(clientKind)
 	if normalizedClient(clientKind) == "claude_code" {
 		r["tiers"] = []string{}
-		r["statuses"] = []string{"completed", "failed", "aborted", "unknown"}
+		r["statuses"] = []string{"running", "completed", "failed", "aborted", "unknown"}
 	}
 	return r
 }
@@ -49,12 +50,18 @@ func (s *Store) rebuildClaudeGroups(tx *sql.Tx, dirty map[string]bool, full bool
 	if full {
 		query = "SELECT id FROM claude_requests"
 	} else {
-		query = `SELECT item_id AS id FROM usage_query_changes WHERE kind='claude_request' UNION SELECT json_extract(data,'$.claude_request_id') FROM usage_records WHERE id IN(SELECT item_id FROM usage_query_changes WHERE kind='record') AND json_extract(data,'$.client_kind')='claude_code' UNION SELECT id FROM claude_requests WHERE session_id IN(SELECT item_id FROM usage_query_changes WHERE kind='title')`
+		query = `SELECT item_id AS id FROM usage_query_changes WHERE kind='claude_request' UNION SELECT json_extract(data,'$.claude_request_id') FROM usage_records WHERE id IN(SELECT item_id FROM usage_query_changes WHERE kind='record') AND json_extract(data,'$.client_kind')='claude_code' UNION SELECT id FROM claude_requests WHERE session_id IN(SELECT item_id FROM usage_query_changes WHERE kind='title') UNION SELECT id FROM usage_request_groups WHERE json_extract(data,'$.client_kind')='claude_code' AND ((json_extract(data,'$.duration_refresh_at') IS NOT NULL AND json_extract(data,'$.duration_refresh_at')<=?) OR json_extract(data,'$.duration_valid_after')>?)`
 	}
 	lastRequest := ""
 	var e error
 	for {
-		rows, err := tx.Query("SELECT request_id FROM (SELECT id AS request_id FROM ("+query+")) WHERE request_id>? ORDER BY request_id LIMIT 250", lastRequest)
+		args := []any{}
+		if !full {
+			now := float64(time.Now().UnixNano()) / 1e9
+			args = append(args, now, now)
+		}
+		args = append(args, lastRequest)
+		rows, err := tx.Query("SELECT request_id FROM (SELECT id AS request_id FROM ("+query+")) WHERE request_id>? ORDER BY request_id LIMIT 250", args...)
 		if err != nil {
 			return err
 		}
@@ -207,6 +214,9 @@ func (s *Store) rebuildClaudeGroups(tx *sql.Tx, dirty map[string]bool, full bool
 			}
 			for key, value := range claudeRequestTiming(group, mainTiming) {
 				group[key] = value
+			}
+			if err := applyClaudeActivity(tx, group, time.Now()); err != nil {
+				return err
 			}
 			if duration, ok := ValueFloat(group["duration_ms"]); ok && duration > 0 && outputsComplete && dataString(group, "request_status") == "completed" {
 				if output, ok := ValueFloat(group["output_tokens"]); ok {

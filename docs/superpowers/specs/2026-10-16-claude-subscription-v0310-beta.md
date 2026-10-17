@@ -64,3 +64,9 @@ Mac／Windows 的 Claude 用量活动页接入执行行程，沿用既有 UI 和
 实现复用：执行行程沿用当前 `JourneyView.swift`／`JourneyReader.swift` 与 Windows `journey.go`、`Journey.svelte`，Claude 使用既有账本 UUID 归属、来源身份及偏移校验；手机投影沿用 `MobileSync.swift`、`MobileProtocol.swift` 和 `mobile_projection.go` 的独立 revision／digest、请求详情与图片缓存。Windows 复用 `usage_revisions` 为两方历史分别失效；额度变化只更新 live，跨日、时间回退及未来记录到期仍刷新对应投影。iOS 两方分别保留搜索条件，切换清除上一来源的详情导航及图表悬停选择。
 
 交付记录：Mac 与 Windows 的原有三项隔离冒烟通过；Mac 的 APP／ZIP、签名、0.3.10-beta 版本及 Widget 1.28／29 已核验，Windows 239 个构建输入与本机逐项核对，新 EXE 和清单保留在该主机 `build/dev/windows/pending`（原产物正在使用），本机复制到标准开发目录。iOS arm64 未签名 IPA 完成构建、归档与源码指纹校验，尚未完成 iPhone 真机验证。云端 Worker 已部署，100% 流量版本为 `b0589e0e-3143-4775-a9ec-75d18bd5589a`，回读模块与本地 bundle 的 SHA-256 一致，绑定／保留期／清理计划未改变；没有新增生产模拟数据，也没有 Git 推送或 GitHub Release。完整记录位于 `build/checks/claude-journey-ios-v0310-beta`。
+
+### 2026-10-17：Windows Claude 持续更新
+
+用户反馈日志、任务及 Token 未更新。排查确认 Windows 主请求默认状态为 unknown，缺少 Mac `ClaudeLedger.swift` 已有的主请求活动跟踪。现将该机制适配到 `claude_live.go`，由现有采集循环维护最多 256 条有明确归属的主请求活动；开始、完成、失败及过期／时间回退引起可见状态变化时才失效对应请求分组，普通进度只续期，不重新计量或计价。Windows 的筛选条件补上 running，布局不变，未完成请求的缺失耗时仍为 `—`。
+
+针对本次故障，使用现有 Store／SQLite 汇总在 Windows build 隔离目录读取一份实际日志的冻结副本：先保留回复前前缀，再在同一采集进程中追加真实后缀。前缀形成一条 running 用户请求、零模型调用；追加后形成三条 completed 用户请求、六次模型调用及 232,569 Token，generation 从 4 变为 5。该目录没有接入真实 Codex 目录，所以全局来源诊断包含 Codex 不可用；Claude 来源始终 ready。真实客户端、配置和账本均未改写，没有增加维护性测试套件。Windows 开发包沿用既有三项隔离冒烟，版本保持 0.3.10-beta。诊断和交付证据位于 `build/checks/windows-claude-data-fix`。

@@ -34,6 +34,8 @@ func (s *Store) claudeSchema() error {
  CREATE TRIGGER IF NOT EXISTS claude_search_insert AFTER INSERT ON claude_search BEGIN INSERT INTO claude_body_search(rowid,uuid,path,text) VALUES(NEW.rowid,NEW.uuid,NEW.path,NEW.text); END;
  CREATE TRIGGER IF NOT EXISTS claude_search_delete AFTER DELETE ON claude_search BEGIN INSERT INTO claude_body_search(claude_body_search,rowid,uuid,path,text) VALUES('delete',OLD.rowid,OLD.uuid,OLD.path,OLD.text); END;
  CREATE TRIGGER IF NOT EXISTS claude_search_update AFTER UPDATE ON claude_search BEGIN INSERT INTO claude_body_search(claude_body_search,rowid,uuid,path,text) VALUES('delete',OLD.rowid,OLD.uuid,OLD.path,OLD.text); INSERT INTO claude_body_search(rowid,uuid,path,text) VALUES(NEW.rowid,NEW.uuid,NEW.path,NEW.text); END;
+ CREATE TABLE IF NOT EXISTS claude_live_requests(id TEXT PRIMARY KEY,observed_at TEXT NOT NULL,status TEXT NOT NULL);
+ CREATE INDEX IF NOT EXISTS claude_live_requests_time ON claude_live_requests(observed_at);
  CREATE TABLE IF NOT EXISTS claude_nodes(id TEXT PRIMARY KEY,session_id TEXT NOT NULL,request_id TEXT NOT NULL,data TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS claude_nodes_request ON claude_nodes(request_id);
  CREATE TABLE IF NOT EXISTS claude_requests(id TEXT PRIMARY KEY,session_id TEXT NOT NULL,data TEXT NOT NULL);
@@ -88,6 +90,9 @@ func (s *Store) ClientStatus(client string) Row {
 }
 func (s *Store) collectClaude(ctx context.Context, force bool) error {
 	root := claudeRoot()
+	if err := s.prepareClaudeActivity(ctx, claudeNamespace(root)); err != nil {
+		return err
+	}
 	projects := filepath.Join(root, "projects")
 	status := Row{"status": "ready", "source_status": "ready", "client_kind": "claude_code"}
 	defer func() {
@@ -533,6 +538,11 @@ func (s *Store) claudeEntry(tx *sql.Tx, e, state Row, root, path, identity, gene
 	}
 	if human {
 		if err := claudeSaveSearch(tx, e, path, generation); err != nil {
+			return err
+		}
+	}
+	if request != "" && agent == "" && !ValueBool(e["isSidechain"]) {
+		if err := observeClaudeActivity(tx, request, timestamp, claudeActivityStatus(e), time.Now()); err != nil {
 			return err
 		}
 	}
