@@ -1537,22 +1537,6 @@
         }
       }
     },
-    "Codexio Logo": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Codexio Logo"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Codexio Logo"
-          }
-        }
-      }
-    },
     "Codexio · Codex 额度  1 week %s": {
       "localizations": {
         "en": {
