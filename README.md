@@ -4,7 +4,7 @@
 
 <h1 align="center">Codexio</h1>
 
-<p align="center">看清 Codex 的额度，以及 Codex 与 Claude Code 的用量和请求。</p>
+<p align="center">查看 ChatGPT／Codex 与 Claude Code 的额度、用量和请求。</p>
 
 <p align="center">
   <a href="https://github.com/Wujuhu/Codexio/releases/latest/download/Codexio.app.zip"><strong>下载 macOS 版</strong></a> ·
@@ -22,7 +22,7 @@ Codexio 是 Codex 与 Claude Code 的用量和请求看板。它读取本机日�
 
 ## 下载与安装
 
-正式版本、各平台包版本与更新说明以 **[最新 Release](https://github.com/Wujuhu/Codexio/releases/latest)** 和其中的 `latest.json` 为准。当前桌面源码版本为 **0.3.10-beta**，仅用于本地开发测试，不作为正式 Release。已发布安装包仍以 Release 页面为准。
+当前 Mac、Windows 与 iOS 源码版本统一为 **0.3.10**。正式安装包、各平台版本与更新说明以 **[最新 Release](https://github.com/Wujuhu/Codexio/releases/latest)** 和其中的 `latest.json` 为准；此前的 `0.3.10-beta` 只用于本地测试。
 
 | 平台 | 系统要求 | 安装包 |
 | --- | --- | --- |
@@ -73,11 +73,11 @@ Mac 使用 `/Applications/Codexio.app` 作为稳定安装位置。从其他目�
 
 执行行程位于 Mac／Windows 的 **用量 → 活动** 底部。两栏分别显示执行过程与资源详情：按整个线程、当前用户请求和选中步骤查看费用、Token、模型调用、耗时及可用配置。已有项目保留归属，其余对话统一归入“聊天”。命令通过工具名旁的按钮打开，支持自动换行与复制；模型调用和用户引导使用不同的淡色区分。
 
-过程来自本机可读取的 Codex 记录，按需分页加载。单个工具通常没有独立的 Token 或费用数据，应用不会分摊模型调用的消耗；日志缺失的摘要、计时等字段显示 `—`，不重建不可见的思考过程。文件操作展示路径和类型，不展开文件差异或完整命令输出。此执行行程仅在桌面端展示。
+过程来自本机可读取的 Codex／Claude Code 记录，按需分页加载。单个工具通常没有独立的 Token 或费用数据，应用不会分摊模型调用的消耗；日志缺失的摘要、计时等字段显示 `—`，不重建不可见的思考过程。文件操作展示路径和类型，不展开文件差异或完整命令输出。此执行行程仅在桌面端展示。
 
 Claude Code 入口合并本机终端与 Desktop 的 Code 会话，默认读取 `~/.claude/projects`（Windows 为 `%USERPROFILE%\.claude\projects`），启动时也可读取 Codexio 自身环境中的 `CLAUDE_CONFIG_DIR`；本轮不处理目录迁移。第三方 API 返回的 GPT／Gemini 等模型仍归 Claude 客户端来源；Token 按真实回复去重，完整输入包括缓存读取和创建，推理 Token 不再次加进输出。Claude 订阅页显示套餐／邮箱、5 小时和周额度、周额度估算，不提供套餐历史或主动重置。额度由 Claude Code 的官方 Mods 被动提供，旧 CLI 兼容 statusLine；不发模型请求、不直接请求 OAuth 额度接口。主 App 运行时默认安装本地桥接，保留已有配置与 statusLine 输出，已有会话在下一次加载插件后生效。CLI Mods 需 2.1.287+，Desktop 本地 Code 引擎需 2.1.286+，无需单独安装 CLI；未支持 Mods 的 Desktop、WSL 和未提供额度的数据源显示 `—`。公开数据不能确认账号时，邮箱／套餐保留 `—`；Desktop-only 有效额度仍可按本机来源和周周期生成估算，不要求额外账号接口查询。Codex／Claude 周估算默认使用 10 分钟完整窗口，也可选 30／60 分钟；采样中断的窗口作废，无消费或额度比例未变化时跳过，不跨窗口累计。费用只匹配实际返回模型及其确认的同模型别名，无法匹配时显示 `—`，不借用其他请求型号的价格；使用官方 Claude Standard API 基础价及明确的 Claude Code 规则，缓存读取、5 分钟和 1 小时写入分开计算；Fast 按当前受支持型号规则处理，无法确定的费用保留 `—` 或标为估算。速度仅使用原始记录，缺失显示 `—`。活动热图补齐最近 365 天；两种客户端的日志筛选、字段及列宽分别保存，默认隐藏命中率；请求副行显示上下文窗口容量，缺失为 `—`。Claude 用量活动页提供相同布局的执行行程，按项目／线程／请求分页读取明确归属的模型调用、工具和子代理过程；缺失正文或计时保留 `—`，不分摊工具费用或 Token。请求耗时优先采用明确轮次计时，缺少时使用最后一次主调用以 `end_turn`／`stop_sequence` 结束整轮的时间减请求开始时间，排除子代理结束时间；工具执行阶段显示 `—`。TPS 仅在请求完成且输出和正耗时有效时计算，TTFT 仍只采用原始首 Token 计时。普通 Chat、Cowork、未落盘的 side chat 和仅存在远端的会话不在本轮范围。
 
-本地 0.3.10-beta 的小猫报告支持在 ChatGPT／Claude 之间切换日报、周报和月报，使用各自的本地账本及计价结果。Mac 菜单栏可分别选择双方的任务、额度和用量字段，小组件为双方各提供六种展示；iOS 首页提供 ChatGPT／Claude Logo 切换，任务、额度、用量及请求记录分别读取各自的数据，局域网与云同步均支持。Claude 原始日志被清理或删除后，已经采集的统计和请求摘要保留，已删除正文／附件显示缺失。详细范围见 [Claude 适配规格](docs/superpowers/specs/2026-10-13-claude-code-desktop-design.md)。0.3.10-beta 的订阅、定价及版本比较范围见 [本地 beta 规格](docs/superpowers/specs/2026-10-16-claude-subscription-v0310-beta.md)。正式安装包以 Release 说明为准。
+v0.3.10 的小猫报告支持在 ChatGPT／Claude 之间切换日报、周报和月报，使用各自的本地账本及计价结果。Mac 菜单栏可分别选择双方的任务、额度和用量字段，小组件为双方各提供六种展示；iOS 首页提供 ChatGPT／Claude Logo 切换，任务、额度、用量及请求记录分别读取各自的数据，局域网与云同步均支持。Claude 原始日志被清理或删除后，已经采集的统计和请求摘要保留，已删除正文／附件显示缺失。详细范围见 [Claude 适配规格](docs/superpowers/specs/2026-10-13-claude-code-desktop-design.md)。v0.3.10 的订阅、定价及版本比较范围见 [实现规格](docs/superpowers/specs/2026-10-16-claude-subscription-v0310-beta.md)。正式安装包以 Release 说明为准。
 
 ## 数据与隐私
 

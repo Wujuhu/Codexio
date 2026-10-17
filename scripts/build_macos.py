@@ -20,7 +20,7 @@ from codexio.versions import AppVersion
 BUILD = ROOT / "build"
 STAGING = BUILD / "staging/macos"
 DESTINATION = BUILD / "dev/macos"
-WIDGET_VERSION = 29  # Integer context capacity in request widget model lines.
+WIDGET_VERSION = 30  # Formal v0.3.10 bundle registration.
 
 
 def run(*args, **kwargs):
