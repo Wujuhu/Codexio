@@ -68,6 +68,10 @@ final class ClaudeLedger {
         for (column,type) in [("generation","INTEGER NOT NULL DEFAULT 0"),("line_hash","TEXT NOT NULL DEFAULT ''"),("device","TEXT NOT NULL DEFAULT ''"),("inode","TEXT NOT NULL DEFAULT ''")] where !locationColumns.contains(column) {
             try database.script("ALTER TABLE claude_locations ADD COLUMN \(column) \(type)")
         }
+        let contextColumns = Set(try database.query("PRAGMA table_info(claude_context_windows)").map {$0.string("name")})
+        for column in ["model","reasoning_effort"] where !contextColumns.contains(column) {
+            try database.script("ALTER TABLE claude_context_windows ADD COLUMN \(column) TEXT NOT NULL DEFAULT ''")
+        }
         for table in ["claude_calls","claude_requests","claude_sessions","claude_locations","claude_search"] {
             for action in ["INSERT","UPDATE","DELETE"] {
                 try database.script("CREATE TRIGGER IF NOT EXISTS revision_\(table)_\(action.lowercased()) AFTER \(action) ON \(table) BEGIN UPDATE usage_revisions SET revision=revision+1 WHERE kind='claude'; END;")
@@ -610,13 +614,15 @@ final class ClaudeLedger {
     }
     private func saveCall(_ input: Object) throws {
         var input = input
-        if input.integer("model_context_window") == nil {input["model_context_window"] = contextWindow(session:input.string("session_id"),uuid:input.string("uuid"),prompt:"") as Any? ?? NSNull()}
+        let observed = contextFields(session:input.string("session_id"),uuid:input.string("uuid"),prompt:"")
+        for (key,value) in observed where input[key] == nil || input[key] is NSNull || (input[key] as? String) == "" {input[key] = value}
         let raw = pricing.price(input,root:root)
         try database.run("INSERT INTO claude_calls VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET request_id=excluded.request_id,session_id=excluded.session_id,input=excluded.input,cache_read=excluded.cache_read,cache_write=excluded.cache_write,output=excluded.output,total=excluded.total,model=excluded.model,data=excluded.data WHERE data<>excluded.data",[raw.string("id"),raw.string("request_id"),raw.string("session_id"),parsedDate(raw["timestamp"])?.timeIntervalSince1970 as Any? ?? NSNull(),raw.string("model"),raw["input_tokens"] ?? NSNull(),raw["cached_input_tokens"] ?? NSNull(),raw["cache_write_input_tokens"] ?? NSNull(),raw["output_tokens"] ?? NSNull(),raw["total_tokens"] ?? NSNull(),jsonString(raw)])
     }
     private func saveRequest(_ value: Object) throws {
         var raw = value
-        if raw.integer("model_context_window") == nil {raw["model_context_window"] = contextWindow(session:raw.string("session_id"),uuid:raw.string("main_uuid"),prompt:String(raw.string("id").components(separatedBy:"request:").last ?? "")) as Any? ?? NSNull()}
+        let observed = contextFields(session:raw.string("session_id"),uuid:raw.string("main_uuid"),prompt:String(raw.string("id").components(separatedBy:"request:").last ?? ""))
+        for (key,value) in observed where raw[key] == nil || raw[key] is NSNull || (raw[key] as? String) == "" {raw[key] = value}
         try database.run("INSERT INTO claude_requests(id,session_id,timestamp,model,status,input,cache_read,cache_write,output,total,data) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET model=excluded.model,status=excluded.status,input=excluded.input,cache_read=excluded.cache_read,cache_write=excluded.cache_write,output=excluded.output,total=excluded.total,data=excluded.data WHERE data<>excluded.data",[raw.string("id"),raw.string("session_id"),parsedDate(raw["timestamp"])?.timeIntervalSince1970 as Any? ?? NSNull(),raw.string("model"),raw.string("status"),raw["input_tokens"] ?? NSNull(),raw["cached_input_tokens"] ?? NSNull(),raw["cache_write_input_tokens"] ?? NSNull(),raw["output_tokens"] ?? NSNull(),raw["total_tokens"] ?? NSNull(),jsonString(raw)])
     }
     private func updateRequest(_ id: String,fields: Object) throws {
@@ -636,7 +642,6 @@ final class ClaudeLedger {
         fields["raw_input_tokens"] = extra["raw_input"] ?? NSNull(); fields["reasoning_output_tokens"] = extra["reasoning"] ?? NSNull()
         let context = try database.query("SELECT input,json_extract(data,'$.model_context_window') AS capacity FROM claude_calls WHERE request_id=? AND COALESCE(json_extract(data,'$.is_subagent'),0)=0 ORDER BY timestamp DESC,id DESC LIMIT 1",[id]).first
         fields["context_input_tokens"] = context?["input"] ?? NSNull()
-        if let capacity = context?.integer("capacity") {fields["model_context_window"] = capacity}
         fields["call_count"] = sums["calls"] ?? 0
         fields["cost_usd"] = sums["cost"] ?? NSNull()
         let priced = try database.query("SELECT max(json_extract(data,'$.pricing_status')='estimated') AS estimated FROM claude_calls WHERE request_id=?",[id]).first
@@ -646,6 +651,7 @@ final class ClaudeLedger {
         fields["upstream_models"] = try database.query("SELECT DISTINCT json_extract(data,'$.upstream_model') AS model FROM claude_calls WHERE request_id=? AND COALESCE(json_extract(data,'$.upstream_model'),'')<>'' ORDER BY model",[id]).map {$0.string("model")}
         if let stored = try database.query("SELECT data FROM claude_requests WHERE id=?",[id]).first {
             let request = jsonObject(Data(stored.string("data").utf8))
+            if request.integer("model_context_window") == nil, let capacity = context?.integer("capacity") {fields["model_context_window"] = capacity}
             var main = try database.query("SELECT data FROM claude_calls WHERE request_id=? AND COALESCE(json_extract(data,'$.is_subagent'),0)=0 AND COALESCE(json_extract(data,'$.agent_id'),'')='' ORDER BY COALESCE(json_extract(data,'$.call_timing.first'),json_extract(data,'$.timestamp')) DESC,id DESC LIMIT 2",[id]).map {jsonObject(Data($0.string("data").utf8))}
             let pending = try database.query("SELECT EXISTS(SELECT 1 FROM claude_calls WHERE request_id=? AND COALESCE(json_extract(data,'$.is_subagent'),0)=0 AND (COALESCE(json_extract(data,'$.call_timing_checked'),0)=0 OR COALESCE(json_extract(data,'$.call_timing_incomplete'),0)=1)) AS pending",[id]).first?.integer("pending") == 1
             if pending, !main.isEmpty {main[0]["call_timing_incomplete"] = true}
@@ -832,12 +838,19 @@ final class ClaudeLedger {
     }
 }
 
-// Context hints are bounded and correlated by explicit transcript UUID/prompt ID.
-// A current session window is never backfilled into unrelated historical turns.
+// Bounded request-start observations, correlated only by transcript UUID/prompt
+// ID. Current settings are never backfilled into unrelated historical turns.
 extension ClaudeLedger {
-    private func contextWindow(session: String,uuid: String,prompt: String) -> Int? {
-        guard !session.isEmpty, !uuid.isEmpty || !prompt.isEmpty else {return nil}
-        return try? database.query("SELECT window FROM claude_context_windows WHERE session_id=? AND ((message_uuid<>'' AND message_uuid=?) OR (prompt_id<>'' AND prompt_id=?)) ORDER BY observed_at DESC LIMIT 1",[session,uuid,prompt]).first?.integer("window")
+    private func contextFields(session: String,uuid: String,prompt: String) -> Object {
+        guard !session.isEmpty, !uuid.isEmpty || !prompt.isEmpty,
+              let point = try? database.query("SELECT window,model,reasoning_effort FROM claude_context_windows WHERE session_id=? AND ((message_uuid<>'' AND message_uuid=?) OR (prompt_id<>'' AND prompt_id=?)) ORDER BY observed_at DESC LIMIT 1",[session,uuid,prompt]).first else {return [:]}
+        return requestFields(point)
+    }
+    private func requestFields(_ point: Object) -> Object {
+        var fields: Object = [:]
+        if let window = point.integer("window"), window > 0 {fields["model_context_window"] = window}
+        for key in ["model","reasoning_effort"] where !point.string(key).isEmpty {fields[key] = point.string(key)}
+        return fields
     }
     func observeContexts(_ points: [Object]) throws {
         guard !points.isEmpty else {return}
@@ -847,20 +860,25 @@ extension ClaudeLedger {
         }
         try database.transaction {
             for point in points.prefix(32) {
-                guard let window = point.integer("window"), window > 0, let at = point.number("observed_at") else {continue}
+                guard let at = point.number("observed_at"), !point.string("session_id").isEmpty else {continue}
                 let session = namespaced(point.string("session_id")), uuid = point.string("message_uuid"), prompt = point.string("prompt_id")
-                guard !session.isEmpty, !uuid.isEmpty || !prompt.isEmpty else {continue}
-                let prior = try database.query("SELECT window,observed_at FROM claude_context_windows WHERE session_id=? AND message_uuid=? AND prompt_id=?",[session,uuid,prompt]).first
-                if let prior, prior.integer("window") == window || (prior.number("observed_at") ?? 0) > at {continue}
-                try database.run("INSERT INTO claude_context_windows VALUES(?,?,?,?,?) ON CONFLICT(session_id,message_uuid,prompt_id) DO UPDATE SET observed_at=excluded.observed_at,window=excluded.window",[session,uuid,prompt,at,window])
+                guard !uuid.isEmpty || !prompt.isEmpty else {continue}
+                let prior = try database.query("SELECT window,model,reasoning_effort,observed_at FROM claude_context_windows WHERE session_id=? AND message_uuid=? AND prompt_id=?",[session,uuid,prompt]).first ?? [:]
+                if (prior.number("observed_at") ?? 0) > at {continue}
+                var fields = requestFields(prior)
+                for (key,value) in requestFields(point) {fields[key] = value}
+                guard !fields.isEmpty, identity(fields) != identity(requestFields(prior)) else {continue}
+                try database.run("INSERT INTO claude_context_windows(session_id,message_uuid,prompt_id,observed_at,window,model,reasoning_effort) VALUES(?,?,?,?,?,?,?) ON CONFLICT(session_id,message_uuid,prompt_id) DO UPDATE SET observed_at=excluded.observed_at,window=excluded.window,model=excluded.model,reasoning_effort=excluded.reasoning_effort",[session,uuid,prompt,at,fields.integer("model_context_window") ?? 0,fields.string("model"),fields.string("reasoning_effort")])
                 if !uuid.isEmpty {
-                    for row in try database.query("SELECT id,request_id FROM claude_calls WHERE session_id=? AND json_extract(data,'$.uuid')=?",[session,uuid]) {
-                        try database.run("UPDATE claude_calls SET data=json_set(data,'$.model_context_window',?) WHERE id=? AND COALESCE(json_extract(data,'$.model_context_window'),0)<>?",[window,row.string("id"),window])
-                        if !row.string("request_id").isEmpty {affected.insert(row.string("request_id"))}
+                    for row in try database.query("SELECT data FROM claude_calls WHERE session_id=? AND json_extract(data,'$.uuid')=?",[session,uuid]) {
+                        var raw = jsonObject(Data(row.string("data").utf8))
+                        for (key,value) in fields {raw[key] = value}
+                        try saveCall(raw)
+                        if !raw.string("request_id").isEmpty {affected.insert(raw.string("request_id"))}
                     }
                 }
                 let ids = try database.query("SELECT id FROM claude_requests WHERE session_id=? AND ((?<>'' AND json_extract(data,'$.main_uuid')=?) OR (?<>'' AND id=?))",[session,uuid,uuid,prompt,namespaced("request:"+prompt)])
-                for row in ids {try updateRequest(row.string("id"),fields:["model_context_window":window]); affected.insert(row.string("id"))}
+                for row in ids {try updateRequest(row.string("id"),fields:fields); affected.insert(row.string("id"))}
             }
             try database.run("DELETE FROM claude_context_windows WHERE rowid NOT IN(SELECT rowid FROM claude_context_windows ORDER BY observed_at DESC LIMIT 256)")
         }

@@ -27,6 +27,12 @@ enum MobileFormat {
         let number = value >= 1_000_000 ? String(format:"%.2fM",Double(value)/1_000_000) : value >= 1_000 ? String(format:"%.1fK",Double(value)/1_000) : String(value)
         return number+(unit.isEmpty ? "" : " "+unit)
     }
+    static func contextWindow(_ value: Int?) -> String {
+        guard let value, value > 0 else {return "—"}
+        let factor = value >= 1_000_000 ? 1_000_000.0 : value >= 1_000 ? 1_000.0 : 1.0
+        let suffix = factor == 1_000_000 ? "M" : factor == 1_000 ? "K" : ""
+        return String(format:"%.2f",Double(value)/factor).replacingOccurrences(of:#"\.?0+$"#,with:"",options:.regularExpression)+suffix
+    }
     static func text(_ value: String?) -> String {
         guard let value, !value.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else { return "—" }
         return value
@@ -344,7 +350,7 @@ struct RequestSummary: View {
     var body: some View {
         VStack(alignment:.leading,spacing:7) {
             Text(item.isApproval ? "自动审批审查" : MobileFormat.text(item.preview)).font(.subheadline.weight(.medium)).lineLimit(2).foregroundStyle(.primary)
-            HStack {Text([MobileFormat.model(item.model),MobileFormat.effort(item.effort)].joined(separator:" · ")).lineLimit(1);Spacer();Text(MobileFormat.money(item.cost)).fixedSize()}.font(.caption).foregroundStyle(.secondary)
+            HStack {Text([MobileFormat.model(item.model),MobileFormat.effort(item.effort),MobileFormat.contextWindow(item.contextWindow)].joined(separator:" · ")).lineLimit(1);Spacer();Text(MobileFormat.money(item.cost)).fixedSize()}.font(.caption).foregroundStyle(.secondary)
             HStack {Text(MobileFormat.requestTime(item.started));Text("·");RequestDuration(item:item,active:active);Spacer();Text(MobileFormat.tokens(item.tokens,unit:"Token")).fixedSize()}.font(.caption2).foregroundStyle(.secondary)
         }.padding(.vertical,3)
     }
@@ -435,6 +441,7 @@ struct RequestDetails: View {
                 Section("请求信息") {
                     LabeledContent("模型",value:MobileFormat.model(item.model))
                     LabeledContent("思考强度",value:MobileFormat.effort(item.effort))
+                    LabeledContent("上下文容量",value:MobileFormat.contextWindow(item.contextWindow))
                     LabeledContent("速度",value:MobileFormat.speed(item.speed))
                     LabeledContent("状态",value:MobileFormat.status(item.status))
                     LabeledContent("费用",value:MobileFormat.money(item.cost))

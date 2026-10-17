@@ -58,7 +58,7 @@ func mobileRequest(r Row) Row {
 	if n, ok := ValueFloat(r["duration_ms"]); ok && n >= 0 && status != "running" && !ValueBool(r["duration_running"]) {
 		duration = n / 1000
 	}
-	result := Row{"id": HashString(ValueString(r["id"])), "started": mobileUnixSeconds(t), "status": status, "preview": mobilePrefix(string(preview), 240), "model": requestModelName(r["model"]), "effort": requestEffortName(r["reasoning_effort"]), "speed": requestSpeed(r["service_tier"]), "tokens": r["total_tokens"], "cost": r["cost_usd"], "duration": duration, "durationStarted": nil, "durationBase": nil}
+	result := Row{"id": HashString(ValueString(r["id"])), "started": mobileUnixSeconds(t), "status": status, "preview": mobilePrefix(string(preview), 240), "model": requestModelName(r["model"]), "effort": requestEffortName(r["reasoning_effort"]), "speed": requestSpeed(r["service_tier"]), "tokens": r["total_tokens"], "cost": r["cost_usd"], "duration": duration, "durationStarted": nil, "durationBase": nil, "contextWindow": r["model_context_window"]}
 	if ValueString(r["request_status"]) == "completed" && !ValueBool(r["duration_running"]) {
 		output, validOutput := ValueFloat(r["output_tokens"])
 		seconds, validDuration := duration.(float64)

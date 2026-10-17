@@ -320,10 +320,18 @@ final class AppState: ObservableObject {
                 claudeEstimator.add(["timestamp":stamp,"used_percent":used,"reset_at":reset.timeIntervalSince1970,"account_key":quota.account.string("identityKey"),"plan_type":quota.account.string("planType").isEmpty ? "claude" : quota.account.string("planType"),"limit_id":"claude","sample_interval_seconds":60,"max_gap_seconds":90],intervalMinutes:max(1,preferences.analytics.integer("week_estimate_interval_minutes") ?? 10))
             } else {claudeEstimator.invalidate()}
         }
-        let contexts = sample.objects("contexts"), contextKey = identity(contexts)
+        let contexts = sample.objects("contexts")
+        // Observation timestamps renew quota freshness, not request metadata.
+        let contextKey = identity(contexts.map {point -> Object in var value = point; value.removeValue(forKey:"observed_at"); return value})
         if contextKey != claudeContextKey {
-            do {try claudeLedger.observeContexts(contexts); claudeContextKey = contextKey; publishClaude()}
-            catch {DispatchQueue.main.async {self.claudeWarning = error.localizedDescription}}
+            do {
+                try claudeLedger.observeContexts(contexts)
+                // The append event may precede the normal file-change check.
+                // scan() reuses unchanged cursors and reads only changed files.
+                if !contexts.isEmpty {try claudeLedger.scan()}
+                claudeContextKey = contextKey
+                publishClaude()
+            } catch {DispatchQueue.main.async {self.claudeWarning = error.localizedDescription}}
         }
         let estimates = (try? claudeEstimator.process(calls:[],priceVersion:claudeCatalog.version,accountKey:quota.account.string("identityKey"))) ?? []
         let estimateRevision = claudeEstimator.revision

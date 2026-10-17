@@ -20,7 +20,7 @@ from codexio.versions import AppVersion
 BUILD = ROOT / "build"
 STAGING = BUILD / "staging/macos"
 DESTINATION = BUILD / "dev/macos"
-WIDGET_VERSION = 27  # Separate ChatGPT and Claude widget data and configurations.
+WIDGET_VERSION = 28  # Separate ChatGPT and Claude widget data and configurations.
 
 
 def run(*args, **kwargs):

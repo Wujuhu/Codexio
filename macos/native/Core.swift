@@ -157,6 +157,13 @@ func compact(_ value: Double?) -> String {
     }
     return String(format: "%.0f", value)
 }
+func contextWindowText(_ value: Double?) -> String {
+    guard let value, value.isFinite, value > 0 else {return "—"}
+    let factor = value >= 1_000_000 ? 1_000_000.0 : value >= 1_000 ? 1_000.0 : 1.0
+    let suffix = factor == 1_000_000 ? "M" : factor == 1_000 ? "K" : ""
+    let text = String(format:"%.2f",value/factor).replacingOccurrences(of:#"\.?0+$"#,with:"",options:.regularExpression)
+    return text+suffix
+}
 func money(_ value: Double?) -> String { value.map { String(format: "$%.2f", $0) } ?? "—" }
 func percent(_ value: Double?, digits: Int = 0) -> String {
     guard let value else { return "—" }; if value > 0 && value < pow(10, -Double(digits)) { return "<" + String(format: "%.*f%%", digits, pow(10, -Double(digits))) }

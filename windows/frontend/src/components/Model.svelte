@@ -12,7 +12,7 @@
     : Array.isArray(record.upstream_models) ? record.upstream_models.map((value:any)=>text(value,'')).filter(Boolean) : record.upstream_model ? [String(record.upstream_model)] : [];
   $: requested=text(record.model??record.models?.join(', '));
   $: returnedModels=[...new Set([record.returned_model,record.upstream_model,...(Array.isArray(record.upstream_models)?record.upstream_models:[])].map((value:unknown)=>typeof value==='string'?value.trim():'').filter(Boolean))];
-  $: requestedLabel=useReturnedModel?(returnedModels.join(' · ')||'—'):modelName(requested);
+  $: requestedLabel=useReturnedModel?(returnedModels.join(' · ')||modelName(requested)):modelName(requested);
   $: mismatch=record.upstream_mismatched_calls!=null ? Number(record.upstream_mismatched_calls)>0 : record.upstream_mismatched!=null ? !!record.upstream_mismatched : !['—','unknown','mixed'].includes(requested)&&upstream.some((model:string)=>model!==requested);
   $: upstreamLabel=[...new Set(upstream)].map(modelName).join(' · ');
   $: effortLabel=showEffort?effort(record.reasoning_effort):'';

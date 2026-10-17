@@ -132,6 +132,7 @@ struct MobileRequest: Codable, Identifiable, Equatable {
     // Average output tokens/s and explicitly recorded first-token latency in seconds.
     var tps: Double? = nil
     var ttft: Double? = nil
+    var contextWindow: Int? = nil
     var isApproval: Bool { kind == "approval_review" || model.lowercased() == "codex-auto-review" }
 }
 struct MobileQuota: Codable, Equatable {

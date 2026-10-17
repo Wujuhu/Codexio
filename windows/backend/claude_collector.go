@@ -46,6 +46,20 @@ func (s *Store) claudeSchema() error {
  CREATE INDEX IF NOT EXISTS claude_records_request ON usage_records(json_extract(data,'$.client_kind'),json_extract(data,'$.claude_request_id'));
  CREATE TRIGGER IF NOT EXISTS claude_request_insert AFTER INSERT ON claude_requests BEGIN UPDATE usage_revisions SET revision=revision+1 WHERE kind='ledger'; INSERT INTO usage_query_changes(kind,item_id) VALUES('claude_request',NEW.id); END;
  CREATE TRIGGER IF NOT EXISTS claude_request_update AFTER UPDATE ON claude_requests BEGIN UPDATE usage_revisions SET revision=revision+1 WHERE kind='ledger'; INSERT INTO usage_query_changes(kind,item_id) VALUES('claude_request',NEW.id); END;`)
+	if e != nil {
+		return e
+	}
+	for _, column := range []string{"model", "reasoning_effort"} {
+		var found int
+		if e = s.db.QueryRow("SELECT count(*) FROM pragma_table_info('claude_context_windows') WHERE name=?", column).Scan(&found); e != nil {
+			return e
+		}
+		if found == 0 {
+			if _, e = s.db.Exec("ALTER TABLE claude_context_windows ADD COLUMN " + column + " TEXT NOT NULL DEFAULT ''"); e != nil {
+				return e
+			}
+		}
+	}
 	return e
 }
 func claudeRoot() string {
@@ -398,6 +412,11 @@ func claudeGetRequest(tx *sql.Tx, id string) Row {
 	return dataRow(raw)
 }
 func claudeSaveRequest(tx *sql.Tx, r Row) error {
+	for key, value := range claudeContextFields(tx, dataString(r, "session_id"), dataString(r, "user_uuid"), dataString(r, "turn_id")) {
+		if r[key] == nil || dataString(r, key) == "" {
+			r[key] = value
+		}
+	}
 	_, e := tx.Exec("INSERT INTO claude_requests VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data WHERE data<>excluded.data", r["id"], r["session_id"], dataJSON(r))
 	return e
 }
@@ -468,9 +487,6 @@ func (s *Store) claudeEntry(tx *sql.Tx, e, state Row, root, path, identity, gene
 		if len(r) == 0 {
 			text, _ := claudeText(message["content"])
 			r = Row{"id": request, "client_kind": "claude_code", "session_id": session, "turn_id": prompt, "timestamp": timestamp, "started_at": timestamp, "prompt_preview": clip(text, 320), "request_status": "unknown", "status": "unknown", "record_kind": "user_request", "has_user_message": true, "source_id": "local:claude:" + HashString(root)[:16], "client_origin": state["client_origin"], "user_uuid": uuid, "model": e["requestedModel"], "reasoning_effort": e["effort"]}
-		}
-		if r["model_context_window"] == nil {
-			r["model_context_window"] = claudeContextWindow(tx, session, uuid, prompt)
 		}
 		if err := claudeSaveRequest(tx, r); err != nil {
 			return err
@@ -647,6 +663,20 @@ func (s *Store) claudeEntry(tx *sql.Tx, e, state Row, root, path, identity, gene
 	return nil
 }
 func (s *Store) saveClaudeRecord(tx *sql.Tx, r Row) error {
+	uuid := dataString(r, "node_id")
+	if at := strings.LastIndex(uuid, ":uuid:"); at >= 0 {
+		uuid = uuid[at+6:]
+	} else {
+		uuid = ""
+	}
+	for key, value := range claudeContextFields(tx, dataString(r, "session_id"), uuid, "") {
+		if r[key] == nil || dataString(r, key) == "" {
+			r[key] = value
+		}
+	}
+	if dataString(r, "requested_model") == "" {
+		r["requested_model"] = r["model"]
+	}
 	var raw string
 	_ = tx.QueryRow("SELECT data FROM usage_records WHERE id=?", r["id"]).Scan(&raw)
 	r = mergeClaudeUsage(dataRow(raw), r)

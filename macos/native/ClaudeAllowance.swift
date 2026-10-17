@@ -85,7 +85,9 @@ final class ClaudeAllowance {
             windows.append(["kind":window.string("kind"),"used":used,"reset":reset?.timeIntervalSince1970 as Any? ?? NSNull()])
         }
         let contexts = payload.objects("contexts").prefix(32).filter {point in
-            guard let window = point.integer("window"), window > 0, window <= 2_147_483_647,
+            let window = point.integer("window") ?? 0
+            guard window >= 0, window <= 2_147_483_647, point.string("model").count <= 256, point.string("reasoning_effort").count <= 32,
+                  window > 0 || !point.string("model").isEmpty || !point.string("reasoning_effort").isEmpty,
                   let at = point.number("observed_at"), at >= startedAt, at <= captured+5 else {return false}
             return point.string("session_id").count <= 256 && !point.string("session_id").isEmpty &&
                 ((!point.string("message_uuid").isEmpty && point.string("message_uuid").count <= 256) || (!point.string("prompt_id").isEmpty && point.string("prompt_id").count <= 256))
@@ -151,8 +153,13 @@ final class ClaudeAllowance {
                 return ["kind":key,"percentUsed":used,"resetsAt":window.number("resets_at").map {iso(Date(timeIntervalSince1970:$0))} as Any? ?? NSNull()]
             }
             var contexts: [Object] = []
-            if let window = raw.object("context_window").integer("context_window_size"), window > 0, !raw.string("prompt_id").isEmpty {
-                contexts = [["session_id":raw.string("session_id"),"prompt_id":raw.string("prompt_id"),"window":window,"observed_at":Date().timeIntervalSince1970]]
+            if !raw.string("prompt_id").isEmpty {
+                var point: Object = ["session_id":raw.string("session_id"),"prompt_id":raw.string("prompt_id"),"observed_at":Date().timeIntervalSince1970]
+                if let window = raw.object("context_window").integer("context_window_size"), window > 0 {point["window"] = window}
+                let model = raw.object("model").string("id"), effort = raw.object("effort").string("level")
+                if !model.isEmpty {point["model"] = model}
+                if !effort.isEmpty {point["reasoning_effort"] = effort}
+                contexts = [point]
             }
             let body: Object = ["contexts":contexts,"schema":1,"source":"statusline","surface":"cli","session_id":raw.string("session_id"),"config_root":prior.string("root"),"captured_at":Date().timeIntervalSince1970,"windows":windows]
             var request = URLRequest(url:url,timeoutInterval:1); request.httpMethod = "POST"; request.httpBody = try? jsonData(body)

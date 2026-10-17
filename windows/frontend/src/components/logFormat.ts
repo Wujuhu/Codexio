@@ -50,10 +50,17 @@ export function contextTokens(record:Row):number|null {
   return number(record.model_context_window);
 }
 
+export function contextWindowText(value:unknown):string {
+  const n=number(value);
+  if(n===null||n<=0)return '—';
+  const [factor,suffix]=n>=1e6?[1e6,'M']:n>=1e3?[1e3,'K']:[1,''];
+  return (n/Number(factor)).toLocaleString('en-US',{maximumFractionDigits:2})+suffix;
+}
+
 export function requestMetadata(record: Row, query: Query, showYear?: boolean): string {
   const context = contextTokens(record);
   const tier = speed(record.service_tier);
-  return [logTime(record.timestamp,query,showYear), effort(record.reasoning_effort), ['Fast','Ultra Fast'].includes(tier) ? tier : '', context !== null ? compact(context,0) : '—'].filter(Boolean).join(' · ');
+  return [logTime(record.timestamp,query,showYear), effort(record.reasoning_effort), ['Fast','Ultra Fast'].includes(tier) ? tier : '', contextWindowText(context)].filter(Boolean).join(' · ');
 }
 
 function startedMillis(value:unknown):number|null {

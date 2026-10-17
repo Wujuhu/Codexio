@@ -151,11 +151,11 @@ func (q *ClaudeAllowance) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	contexts := []Row{}
 	for _, point := range ValueRows(payload["contexts"]) {
-		window, known := knownCount(point["window"])
+		window := ValueInt(point["window"])
 		stamp, valid := ValueFloat(point["observed_at"])
 		session := dataString(point, "session_id")
 		uuid, prompt := dataString(point, "message_uuid"), dataString(point, "prompt_id")
-		if known && window > 0 && window <= 2147483647 && valid && stamp >= q.startedAt && stamp <= at+5 && session != "" && len(session) <= 256 && ((uuid != "" && len(uuid) <= 256) || (prompt != "" && len(prompt) <= 256)) {
+		if window >= 0 && window <= 2147483647 && len(claudePointFields(point)) > 0 && len(dataString(point, "model")) <= 256 && len(dataString(point, "reasoning_effort")) <= 32 && valid && stamp >= q.startedAt && stamp <= at+5 && session != "" && len(session) <= 256 && ((uuid != "" && len(uuid) <= 256) || (prompt != "" && len(prompt) <= 256)) {
 			contexts = append(contexts, point)
 		}
 		if len(contexts) >= 32 {
@@ -400,8 +400,18 @@ func RunClaudeStatusline(args []string) (bool, int) {
 			}
 		}
 		contexts := []Row{}
-		if window, ok := knownCount(ValueRow(raw["context_window"])["context_window_size"]); ok && window > 0 && dataString(raw, "prompt_id") != "" {
-			contexts = append(contexts, Row{"session_id": raw["session_id"], "prompt_id": raw["prompt_id"], "window": window, "observed_at": float64(time.Now().UnixNano()) / 1e9})
+		if dataString(raw, "prompt_id") != "" {
+			point := Row{"session_id": raw["session_id"], "prompt_id": raw["prompt_id"], "observed_at": float64(time.Now().UnixNano()) / 1e9}
+			if window, ok := knownCount(ValueRow(raw["context_window"])["context_window_size"]); ok && window > 0 {
+				point["window"] = window
+			}
+			if model := dataString(ValueRow(raw["model"]), "id"); model != "" {
+				point["model"] = model
+			}
+			if effort := dataString(ValueRow(raw["effort"]), "level"); effort != "" {
+				point["reasoning_effort"] = effort
+			}
+			contexts = append(contexts, point)
 		}
 		body := Row{"contexts": contexts, "schema": 1, "source": "statusline", "surface": "cli", "session_id": raw["session_id"], "config_root": prior["root"], "captured_at": float64(time.Now().UnixMilli()) / 1000, "windows": windows}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)

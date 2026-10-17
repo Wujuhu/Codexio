@@ -118,9 +118,9 @@ func (s *Store) rebuildClaudeGroups(tx *sql.Tx, dirty map[string]bool, full bool
 					}
 					if _, ok := knownCount(r["context_input_tokens"]); ok {
 						group["context_input_tokens"] = r["context_input_tokens"]
-						if capacity, known := knownCount(r["model_context_window"]); known && capacity > 0 {
-							group["model_context_window"] = capacity
-						}
+					}
+					if capacity, known := knownCount(r["model_context_window"]); known && capacity > 0 && group["model_context_window"] == nil {
+						group["model_context_window"] = capacity
 					}
 					if dataString(group, "model") == "" {
 						group["model"] = r["requested_model"]
@@ -172,7 +172,9 @@ func (s *Store) rebuildClaudeGroups(tx *sql.Tx, dirty map[string]bool, full bool
 			if group["cost_usd"] == nil {
 				group["pricing_status"] = "unpriced"
 			}
-			group["service_tier"] = nil
+			if calls > 0 {
+				group["service_tier"] = nil
+			}
 			group["service_tiers"] = sortedKeys(tiers)
 			if !tiers[""] && len(tiers) > 0 {
 				if len(tiers) == 1 {
@@ -182,6 +184,9 @@ func (s *Store) rebuildClaudeGroups(tx *sql.Tx, dirty map[string]bool, full bool
 				}
 			}
 			group["call_count"] = calls
+			if calls == 0 && dataString(group, "model") != "" {
+				models[dataString(group, "model")] = true
+			}
 			group["models"] = sortedKeys(models)
 			group["upstream_models"] = sortedKeys(returnedModels)
 			group["upstream_mismatched"] = false
@@ -191,7 +196,6 @@ func (s *Store) rebuildClaudeGroups(tx *sql.Tx, dirty map[string]bool, full bool
 			group["tps"] = nil
 
 			group["ttft"] = nil
-			group["model_context_window"] = nil
 			if calls == 0 {
 				group["source_ids"] = []string{dataString(group, "source_id")}
 			}

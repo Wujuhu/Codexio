@@ -16,20 +16,29 @@ func (s *Store) ObserveClaudeContexts(sample Row) {
 	changed := false
 	for _, point := range ValueRows(sample["contexts"]) {
 		session, uuid, prompt := dataString(point, "session_id"), dataString(point, "message_uuid"), dataString(point, "prompt_id")
-		window, ok := knownCount(point["window"])
 		at, known := ValueFloat(point["observed_at"])
-		if session == "" || uuid == "" && prompt == "" || !ok || window <= 0 || !known {
+		if session == "" || uuid == "" && prompt == "" || len(claudePointFields(point)) == 0 || !known {
 			continue
 		}
 		key := session + "|" + uuid + "|" + prompt
 		old := s.claudeContexts[key]
 		if len(old) > 0 {
 			oldAt, _ := ValueFloat(old["observed_at"])
-			if oldAt > at || ValueInt(old["window"]) == window {
+			if oldAt > at {
 				continue
 			}
 		}
-		s.claudeContexts[key] = CloneRow(point)
+		merged := CloneRow(old)
+		if merged == nil {
+			merged = Row{}
+		}
+		for k, v := range point {
+			merged[k] = v
+		}
+		if dataJSON(claudePointFields(merged)) == dataJSON(claudePointFields(old)) {
+			continue
+		}
+		s.claudeContexts[key] = merged
 		s.claudeContextDirty[key] = true
 		changed = true
 	}
@@ -51,16 +60,35 @@ func (s *Store) ObserveClaudeContexts(sample Row) {
 		s.Refresh()
 	}
 }
-func claudeContextWindow(tx *sql.Tx, session, uuid, prompt string) any {
+
+// Reuse the ledger's model/effort/context fields; these bounded observations
+// are keyed by explicit source IDs, never the current global configuration.
+func claudePointFields(point Row) Row {
+	fields := Row{}
+	if window, ok := knownCount(point["window"]); ok && window > 0 {
+		fields["model_context_window"] = window
+	}
+	for _, key := range []string{"model", "reasoning_effort"} {
+		if value := dataString(point, key); value != "" {
+			fields[key] = value
+		}
+	}
+	return fields
+}
+func claudeContextFields(tx *sql.Tx, session, uuid, prompt string) Row {
 	if session == "" || uuid == "" && prompt == "" {
-		return nil
+		return Row{}
 	}
 	var window int64
-	e := tx.QueryRow("SELECT window FROM claude_context_windows WHERE session_id=? AND ((message_uuid<>'' AND message_uuid=?) OR (prompt_id<>'' AND prompt_id=?)) ORDER BY observed_at DESC LIMIT 1", session, uuid, prompt).Scan(&window)
-	if e == nil && window > 0 {
-		return window
+	var model, effort string
+	e := tx.QueryRow("SELECT window,model,reasoning_effort FROM claude_context_windows WHERE session_id=? AND ((message_uuid<>'' AND message_uuid=?) OR (prompt_id<>'' AND prompt_id=?)) ORDER BY observed_at DESC LIMIT 1", session, uuid, prompt).Scan(&window, &model, &effort)
+	if e != nil {
+		return Row{}
 	}
-	return nil
+	return claudePointFields(Row{"window": window, "model": model, "reasoning_effort": effort})
+}
+func claudeContextWindow(tx *sql.Tx, session, uuid, prompt string) any {
+	return claudeContextFields(tx, session, uuid, prompt)["model_context_window"]
 }
 func (s *Store) applyClaudeContexts() error {
 	s.mu.RLock()
@@ -87,16 +115,31 @@ func (s *Store) applyClaudeContexts() error {
 	for _, point := range pending {
 		session := ns + "session:" + dataString(point, "session_id")
 		uuid, prompt := dataString(point, "message_uuid"), dataString(point, "prompt_id")
-		window := point["window"]
-		if _, e = tx.Exec("INSERT INTO claude_context_windows VALUES(?,?,?,?,?) ON CONFLICT(session_id,message_uuid,prompt_id) DO UPDATE SET observed_at=excluded.observed_at,window=excluded.window WHERE excluded.observed_at>=observed_at AND excluded.window<>window", session, uuid, prompt, point["observed_at"], window); e != nil {
+		fields := claudeContextFields(tx, session, uuid, prompt)
+		var oldAt float64
+		_ = tx.QueryRow("SELECT observed_at FROM claude_context_windows WHERE session_id=? AND message_uuid=? AND prompt_id=?", session, uuid, prompt).Scan(&oldAt)
+		at, _ := ValueFloat(point["observed_at"])
+		if oldAt > at {
+			continue
+		}
+		for key, value := range claudePointFields(point) {
+			fields[key] = value
+		}
+		if _, e = tx.Exec("INSERT INTO claude_context_windows(session_id,message_uuid,prompt_id,observed_at,window,model,reasoning_effort) VALUES(?,?,?,?,?,?,?) ON CONFLICT(session_id,message_uuid,prompt_id) DO UPDATE SET observed_at=excluded.observed_at,window=excluded.window,model=excluded.model,reasoning_effort=excluded.reasoning_effort", session, uuid, prompt, at, ValueInt(fields["model_context_window"]), dataString(fields, "model"), dataString(fields, "reasoning_effort")); e != nil {
 			return e
 		}
 		if uuid != "" {
-			if _, e = tx.Exec("UPDATE usage_records SET data=json_set(data,'$.model_context_window',?) WHERE session_id=? AND json_extract(data,'$.client_kind')='claude_code' AND json_extract(data,'$.node_id')=? AND coalesce(json_extract(data,'$.model_context_window'),0)<>?", window, session, ns+"uuid:"+uuid, window); e != nil {
+			callFields := CloneRow(fields)
+			if model := dataString(fields, "model"); model != "" {
+				callFields["requested_model"] = model
+			}
+			patch := dataJSON(callFields)
+			if _, e = tx.Exec("UPDATE usage_records SET model=coalesce(nullif(json_extract(?, '$.model'),''),model),data=json_patch(data,?) WHERE session_id=? AND json_extract(data,'$.client_kind')='claude_code' AND json_extract(data,'$.node_id')=? AND data<>json_patch(data,?)", patch, patch, session, ns+"uuid:"+uuid, patch); e != nil {
 				return e
 			}
 		}
-		if _, e = tx.Exec("UPDATE claude_requests SET data=json_set(data,'$.model_context_window',?) WHERE session_id=? AND ((?<>'' AND json_extract(data,'$.user_uuid')=?) OR (?<>'' AND id=?)) AND coalesce(json_extract(data,'$.model_context_window'),0)<>?", window, session, uuid, uuid, prompt, ns+"request:"+prompt, window); e != nil {
+		patch := dataJSON(fields)
+		if _, e = tx.Exec("UPDATE claude_requests SET data=json_patch(data,?) WHERE session_id=? AND ((?<>'' AND json_extract(data,'$.user_uuid')=?) OR (?<>'' AND id=?)) AND data<>json_patch(data,?)", patch, session, uuid, uuid, prompt, ns+"request:"+prompt, patch); e != nil {
 			return e
 		}
 	}
