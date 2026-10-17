@@ -143,14 +143,9 @@ private func compactNumber(_ value: Int?) -> String {
 
 private func compactContext(_ count: Int?) -> String? {
     guard let count, count > 0 else { return nil }
-    if count >= 1_000_000 {
-        if count % 1_000_000 == 0 { return "\(count / 1_000_000)M" }
-        let value = String(format: "%.2f", Double(count) / 1_000_000)
-            .replacingOccurrences(of: #"0+$"#, with: "", options: .regularExpression)
-            .replacingOccurrences(of: #"\.$"#, with: "", options: .regularExpression)
-        return value + "M"
-    }
-    return "\(Int((Double(count) / 1_000).rounded()))K"
+    let factor = count >= 1_000_000 ? 1_000_000.0 : count >= 1_000 ? 1_000.0 : 1.0
+    let suffix = factor == 1_000_000 ? "M" : factor == 1_000 ? "K" : ""
+    return String(format:"%.0f",(Double(count)/factor).rounded())+suffix
 }
 
 private func modelDetail(_ request: RequestSnapshot, family: WidgetFamily) -> String {

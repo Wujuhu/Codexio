@@ -135,8 +135,8 @@ final class MenuBarController {
                 frameObserver = NotificationCenter.default.addObserver(forName:NSView.frameDidChangeNotification,object:button,queue:.main) { [weak self] _ in self?.layoutReadout() }
             }
         }
-        let text = MenuBarField.text(state), running = state.menuFields.contains("task") && state.menuTaskRunning == true
-        let key = state.menuClient.rawValue+"|"+state.menuFields.joined(separator:",")+"|"+text+"|"+String(running)
+        let text = MenuBarField.text(state)
+        let key = state.menuFields.joined(separator:",")+"|"+text
         guard key != displayed else { return }; displayed = key
         readout?.rootView = MenuBarReadout(state:state)
         readout?.layoutSubtreeIfNeeded()

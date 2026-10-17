@@ -88,10 +88,11 @@ final class AppState: ObservableObject {
     @Published var menuVisible = true
     @Published private(set) var menuFields = MenuBarField.defaults
     @Published private(set) var menuClient: DesktopClient = .codex
-    var menuSummary: UsageSummary {menuClient == .codex ? usage.summaries["today"] ?? UsageSummary() : claudeSurface.today}
+    var menuSummary: UsageSummary {menuSummary(for:menuClient)}
+    func menuSummary(for client: DesktopClient) -> UsageSummary {client == .codex ? usage.summaries["today"] ?? UsageSummary() : claudeSurface.today}
     var menuDays: [DayUsage] {menuClient == .codex ? Array(usage.activity.days.suffix(7)) : claudeSurface.days}
-    var menuRequest: UsageRow? {menuClient == .codex ? usage.widgetRequest : claudeSurface.request}
-    var menuTaskRunning: Bool? {menuClient == .codex ? taskRunning : claudeSurface.ready ? claudeSurface.hasRunningTask : nil}
+    func menuRequest(for client: DesktopClient) -> UsageRow? {client == .codex ? usage.widgetRequest : claudeSurface.request}
+    func menuTaskRunning(for client: DesktopClient) -> Bool? {client == .codex ? taskRunning : claudeSurface.ready ? claudeSurface.hasRunningTask : nil}
     func menuWindow(_ client: DesktopClient,week: Bool) -> QuotaWindow? {
         let window = client == .codex ? (week ? menuQuota.week : menuQuota.five) : (claudeQuotaFresh ? (week ? claudeQuota.week : claudeQuota.five) : nil)
         return window.flatMap {window in window.reset.map {$0 <= Date()} == true ? nil : window}

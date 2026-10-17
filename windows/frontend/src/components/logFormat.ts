@@ -54,7 +54,7 @@ export function contextWindowText(value:unknown):string {
   const n=number(value);
   if(n===null||n<=0)return '—';
   const [factor,suffix]=n>=1e6?[1e6,'M']:n>=1e3?[1e3,'K']:[1,''];
-  return (n/Number(factor)).toLocaleString('en-US',{maximumFractionDigits:2})+suffix;
+  return (n/Number(factor)).toLocaleString('en-US',{maximumFractionDigits:0})+suffix;
 }
 
 export function requestMetadata(record: Row, query: Query, showYear?: boolean): string {

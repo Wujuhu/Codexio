@@ -3,36 +3,43 @@ import QuartzCore
 import SwiftUI
 
 enum MenuBarField {
-    static let all = ["logo","week","task","today_cost","today_tokens","task_cost","task_tokens"]
-    static let defaults = ["logo","week","task"]
+    static let metrics = ["week","task","today_cost","today_tokens","task_cost","task_tokens"]
+    // Existing IDs retain their ChatGPT meaning when upgrading saved choices.
+    static let all = ["logo"]+metrics+metrics.map {"claude_"+$0}
+    static let defaults = ["task","week","claude_task","claude_week"]
     static func normalize(_ values: [String]) -> [String] {
         var seen = Set<String>()
         let fields = values.filter {all.contains($0) && seen.insert($0).inserted}
         if fields.isEmpty { return ["logo"] }
         return fields.contains("logo") ? ["logo"]+fields.filter {$0 != "logo"} : fields
     }
+    static func client(_ field: String) -> DesktopClient {field.hasPrefix("claude_") ? .claudeCode : .codex}
+    static func metric(_ field: String) -> String {field.hasPrefix("claude_") ? String(field.dropFirst(7)) : field}
+    static func isTask(_ field: String) -> Bool {metric(field) == "task"}
     static func title(_ field: String) -> String {
-        switch field {
-        case "logo": return L("Codexio Logo", "Codexio Logo")
-        case "week": return L("周额度", "Weekly allowance")
-        case "task": return L("当前任务状态", "Current task status")
-        case "today_cost": return L("今日总费用", "Today's total cost")
-        case "today_tokens": return L("今日总 Token", "Today's total tokens")
-        case "task_cost": return L("当前任务费用", "Current task cost")
-        default: return L("当前任务 Token", "Current task tokens")
+        if field == "logo" {return "Codexio Logo"}
+        let title: String
+        switch metric(field) {
+        case "week": title = L("周额度", "Weekly allowance")
+        case "task": title = L("当前任务状态", "Current task status")
+        case "today_cost": title = L("今日总费用", "Today's total cost")
+        case "today_tokens": title = L("今日总 Token", "Today's total tokens")
+        case "task_cost": title = L("当前任务费用", "Current task cost")
+        default: title = L("当前任务 Token", "Current task tokens")
         }
+        return title+" · "+client(field).surfaceTitle
     }
     static func value(_ field: String,state: AppState) -> String {
         if field == "logo" { return "" }
-        let today = state.menuSummary
-        let recent = state.menuRequest
-        let ready = state.menuTaskRunning != nil
-        let current = !ready || (state.menuTaskRunning == true && recent?.raw.string("status") != "running") ? nil : recent
+        let client = Self.client(field), today = state.menuSummary(for:client)
+        let recent = state.menuRequest(for:client), running = state.menuTaskRunning(for:client)
+        let ready = running != nil
+        let current = !ready || (running == true && recent?.raw.string("status") != "running") ? nil : recent
         let todayCost = ready ? today.cost ?? (today.unknownCosts == 0 ? 0 : nil) : nil
         let todayTokens = ready ? today.tokens ?? (today.unknownCosts == 0 ? 0 : nil) : nil
-        switch field {
-        case "week": return percent(state.menuWindow(state.menuClient,week:true)?.remaining)
-        case "task": return state.menuTaskRunning.map {$0 ? L("运行中", "Running") : L("已完成", "Completed")} ?? "—"
+        switch metric(field) {
+        case "week": return percent(state.menuWindow(client,week:true)?.remaining)
+        case "task": return running.map {$0 ? L("运行中", "Running") : L("已完成", "Completed")} ?? "—"
         case "today_cost": return money(todayCost)
         case "today_tokens": return compact(todayTokens.map(Double.init))
         case "task_cost": return money(current?.cost)
@@ -124,9 +131,13 @@ private extension VerticalAlignment {
 struct MenuBarReadout: View {
     let fields: [String]
     let values: [String:String]
-    let running: Bool?
+    let running: [String:Bool]
     init(state: AppState) {
-        fields = state.menuFields; running = state.menuTaskRunning
+        fields = state.menuFields
+        running = Dictionary(uniqueKeysWithValues:fields.compactMap {field -> (String,Bool)? in
+            guard MenuBarField.isTask(field), let active = state.menuTaskRunning(for:MenuBarField.client(field)) else {return nil}
+            return (field,active)
+        })
         values = Dictionary(uniqueKeysWithValues:fields.map {($0,MenuBarField.value($0,state:state))})
     }
     var body: some View {
@@ -135,8 +146,8 @@ struct MenuBarReadout: View {
                 if field == "logo" {
                     Image(nsImage:Branding.menuIcon()).resizable().frame(width:18,height:18)
                         .alignmentGuide(.menuVisualCenter) { $0[VerticalAlignment.center]-0.65 }
-                } else if field == "task", let running {
-                    TaskStatusImage(running:running).frame(width:MenuBarMetrics.taskSize,height:MenuBarMetrics.taskSize)
+                } else if MenuBarField.isTask(field), let active = running[field] {
+                    TaskStatusImage(running:active).frame(width:MenuBarMetrics.taskSize,height:MenuBarMetrics.taskSize)
                 } else {
                     let size = MenuBarMetrics.numberSize
                     Text(values[field] ?? "—").font(.system(size:size,weight:.medium))

@@ -31,7 +31,7 @@ enum MobileFormat {
         guard let value, value > 0 else {return "—"}
         let factor = value >= 1_000_000 ? 1_000_000.0 : value >= 1_000 ? 1_000.0 : 1.0
         let suffix = factor == 1_000_000 ? "M" : factor == 1_000 ? "K" : ""
-        return String(format:"%.2f",Double(value)/factor).replacingOccurrences(of:#"\.?0+$"#,with:"",options:.regularExpression)+suffix
+        return String(format:"%.0f",(Double(value)/factor).rounded())+suffix
     }
     static func text(_ value: String?) -> String {
         guard let value, !value.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else { return "—" }

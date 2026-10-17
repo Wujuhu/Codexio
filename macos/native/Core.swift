@@ -161,8 +161,7 @@ func contextWindowText(_ value: Double?) -> String {
     guard let value, value.isFinite, value > 0 else {return "—"}
     let factor = value >= 1_000_000 ? 1_000_000.0 : value >= 1_000 ? 1_000.0 : 1.0
     let suffix = factor == 1_000_000 ? "M" : factor == 1_000 ? "K" : ""
-    let text = String(format:"%.2f",value/factor).replacingOccurrences(of:#"\.?0+$"#,with:"",options:.regularExpression)
-    return text+suffix
+    return String(format:"%.0f",(value/factor).rounded())+suffix
 }
 func money(_ value: Double?) -> String { value.map { String(format: "$%.2f", $0) } ?? "—" }
 func percent(_ value: Double?, digits: Int = 0) -> String {
@@ -376,11 +375,11 @@ final class Preferences {
         }
         let defaults: Object = ["theme":"system", "menu_bar_visible":true, "menu_bar_content":"week", "menu_bar_agent":"codex", "macos_auto_update":true, "usage_refresh_interval_seconds":10, "week_estimate_interval_minutes":10, "sidebar_collapsed":false, "native_sidebar_width":258]
         for (key,value) in defaults where analytics[key] == nil { analytics[key] = value }
-        if analytics["menu_bar_fields"] == nil { analytics["menu_bar_fields"] = ["week","task"] }
-        if analytics.integer("menu_bar_logo_field_version") != 1 {
-            let fields = analytics["menu_bar_fields"] as? [String] ?? ["week","task"]
-            analytics["menu_bar_fields"] = ["logo"]+fields.filter {$0 != "logo"}
-            analytics["menu_bar_logo_field_version"] = 1
+        if analytics.integer("menu_bar_agent_fields_version") != 1 {
+            let fields = analytics["menu_bar_fields"] as? [String]
+            let wasDefault = fields == nil || fields == ["logo","week","task"] || fields == ["week","task"]
+            analytics["menu_bar_fields"] = wasDefault ? MenuBarField.defaults : MenuBarField.normalize(fields ?? MenuBarField.defaults)
+            analytics["menu_bar_agent_fields_version"] = 1
         }
         if analytics.integer("native_sidebar_resize_version") != 1 {
             analytics["native_sidebar_width"] = analytics.number("sidebar_width") ?? 238
