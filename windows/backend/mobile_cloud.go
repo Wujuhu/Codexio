@@ -289,6 +289,7 @@ func (m *MobileHost) uploadWork() {
 	}
 	m.mu.Lock()
 	probe := time.Now().After(m.nextCapability)
+	agents := m.cloudAgents
 	supports, kinds, metrics, images := m.cloudDetails, m.cloudRequestKinds, m.cloudRequestMetrics, m.cloudImages
 	previousImageSupport := images
 	m.mu.Unlock()
@@ -297,22 +298,26 @@ func (m *MobileHost) uploadWork() {
 		capability, e := request(base+"/capabilities", "GET", nil, false)
 		if e == nil {
 			supports, kinds, metrics, images = false, false, false, false
+			agents = false
 			for _, c := range ValueStrings(capability["capabilities"]) {
 				supports = supports || c == "request-details-v1"
 				kinds = kinds || c == "request-kinds-v1"
 				metrics = metrics || c == "request-metrics-v1"
 				images = images || c == "request-images-v1"
+				agents = agents || c == "agent-sources-v1"
 			}
 		} else {
 			var failure *mobileHTTPError
 			if errors.As(e, &failure) && (failure.status == 404 || failure.reason == "NOT_FOUND") {
 				supports, kinds, metrics, images = false, false, false, false
+				agents = false
 			} else {
 				probeError = e
 			}
 		}
 		m.mu.Lock()
 		m.cloudDetails, m.cloudRequestKinds, m.cloudRequestMetrics, m.cloudImages = supports, kinds, metrics, supports && images
+		m.cloudAgents = agents
 		images = m.cloudImages
 		if images != previousImageSupport {
 			m.sentDetails = map[string]string{}
@@ -323,7 +328,10 @@ func (m *MobileHost) uploadWork() {
 		}
 		m.mu.Unlock()
 	}
-	for _, name := range []string{"live", "recent", "trends"} {
+	for _, name := range mobileDatasets {
+		if strings.HasSuffix(name, "-claude_code") && !agents {
+			continue
+		}
 		m.mu.Lock()
 		envelope := CloneRow(m.datasets[name])
 		revision := ValueInt(envelope["revision"])
@@ -350,6 +358,11 @@ func (m *MobileHost) uploadWork() {
 						}
 						recent = filtered
 					}
+					if !agents {
+						for _, r := range recent {
+							delete(r, "contextWindow")
+						}
+					}
 					if !metrics {
 						for _, r := range recent {
 							delete(r, "tps")
@@ -362,6 +375,9 @@ func (m *MobileHost) uploadWork() {
 					if e := json.Unmarshal([]byte(ValueString(envelope["payload"])), &live); e != nil {
 						m.cloudFailure(e)
 						return
+					}
+					if !agents {
+						delete(ValueRow(live["task"]), "contextWindow")
 					}
 					if !metrics {
 						task := ValueRow(live["task"])
@@ -399,6 +415,14 @@ func (m *MobileHost) uploadWork() {
 			m.mu.Lock()
 			m.sent[name] = revision
 			envelope["revision"] = max(ValueInt(envelope["revision"]), ValueInt(ack["revision"]))
+			if strings.HasSuffix(name, "-claude_code") {
+				if current := m.datasets[name]; current != nil && ValueInt(current["revision"]) <= ValueInt(envelope["revision"]) {
+					current["revision"] = ValueInt(envelope["revision"]) + 1
+					if ValueString(current["digest"]) == localDigest {
+						m.sent[name] = ValueInt(current["revision"])
+					}
+				}
+			}
 			if name == "recent" || name == "live" {
 				if name == "recent" {
 					m.cloudRecent = CloneRow(envelope)

@@ -10,6 +10,7 @@ struct PairedMac: Codable, Identifiable {
     var id: String { code.host }
 }
 private struct MobileDiskCache: Codable {
+    var agents:[String:MobileAgentData]? = nil
     var versions: [String:Int64]
     var digests: [String:String]
     var live: MobileLive?
@@ -25,6 +26,8 @@ private struct MobileDetailTransfer {
 @MainActor final class MobileStore: ObservableObject {
     @Published var devices: [PairedMac] = []
     @Published var selected = ""
+    @Published private(set) var agent=MobileAgent(rawValue:UserDefaults.standard.string(forKey:"selected-agent") ?? "") ?? .chatgpt
+    private var agentData:[String:MobileAgentData]=[:]
     @Published var live: MobileLive?
     @Published var recent: [MobileRequest] = []
     @Published var trends = MobileTrends(daily:[],periods:[])
@@ -103,6 +106,11 @@ private struct MobileDetailTransfer {
             } catch { Task { @MainActor in self.error = error.localizedDescription } }
         }
     }
+    func selectAgent(_ value:MobileAgent) {
+        guard value != agent else{return};agent=value;recordPath=[]
+        UserDefaults.standard.set(value.rawValue,forKey:"selected-agent");publishAgent()
+    }
+    private func publishAgent(){let value=agentData[agent.rawValue] ?? MobileAgentData();live=value.live;recent=value.recent;trends=value.trends}
     var device: PairedMac? { attempt ?? devices.first {$0.id == selected} }
     var overviewTask: MobileRequest? {
         if let task = live?.task { return request(task.id) ?? task }
@@ -111,7 +119,7 @@ private struct MobileDetailTransfer {
     func request(_ id: String) -> MobileRequest? {
         let recentRequest = recent.first {$0.id == id}
         if let task = live?.task, task.id == id,
-           recentRequest == nil || (envelopes["live"]?.revision ?? 0) >= (envelopes["recent"]?.revision ?? 0) { return task }
+           recentRequest == nil || (envelopes[agent.dataset("live")]?.revision ?? 0) >= (envelopes[agent.dataset("recent")]?.revision ?? 0) { return task }
         return recentRequest
     }
     func showRequest(_ item: MobileRequest) { tab = 2; recordPath = [item.id] }
@@ -164,7 +172,7 @@ private struct MobileDetailTransfer {
             for image in resume { loadImage(image) }
             return
         }
-        live = nil; recent = []; trends = MobileTrends(daily:[],periods:[]); envelopes = [:]; updated = nil
+        agentData=[:];live = nil; recent = []; trends = MobileTrends(daily:[],periods:[]); envelopes = [:]; updated = nil
         recordPath = []; detailValues = [:]; detailErrors = [:]; detailEnvelopes = [:]; detailAccess = [:]; detailVersions = [:]; supportsDetails = false
         clearImages()
         guard device != nil else { status = "扫描电脑上的二维码开始配对"; return }
@@ -174,7 +182,7 @@ private struct MobileDetailTransfer {
             let cache = data.flatMap {try? JSONDecoder().decode(MobileDiskCache.self,from:$0)}
             Task { @MainActor in
                 guard stamp == self.generation, self.envelopes.isEmpty, let cache else { return }
-                self.live = cache.live; self.recent = cache.recent.filter {$0.started >= Date().timeIntervalSince1970-MobileProtocol.detailRetention}.prefix(200).map {$0}; self.trends = cache.trends.singleModelsOnly()
+                self.agentData=cache.agents ?? [MobileAgent.chatgpt.rawValue:MobileAgentData(live:cache.live,recent:cache.recent,trends:cache.trends.singleModelsOnly())];self.publishAgent()
                 self.envelopes = cache.versions.mapValues {_ in MobileEnvelope(dataset:"",revision:0,digest:"",payload:"")}
                 for (key,revision) in cache.versions { self.envelopes[key] = MobileEnvelope(dataset:key,revision:revision,digest:cache.digests[key] ?? "",payload:"") }
                 self.pruneRetainedContent()
@@ -271,7 +279,7 @@ private struct MobileDetailTransfer {
         localWaiting = Date(); localOperation = beginSync()
         var reader = device.reader; reader.name = String(phoneName.prefix(40))
         let stamp = generation
-        MobileProtocol.send(MobileMessage(action:pairing ? "pair" : "sync",ticket:pairing ? device.code.ticket : nil,reader:reader,known:envelopes.mapValues(\.revision)),over:connection) { [weak self] error in
+        MobileProtocol.send(MobileMessage(action:pairing ? "pair" : "sync",ticket:pairing ? device.code.ticket : nil,reader:reader,known:envelopes.mapValues(\.revision),capabilities:[MobileProtocol.agentCapability]),over:connection) { [weak self] error in
             if error != nil { Task { @MainActor in guard let self, stamp == self.generation, self.connection === connection else { return }; self.localReady = false; self.finishLocalSync(); self.retryLocalImages() } }
         }
     }
@@ -344,7 +352,7 @@ private struct MobileDetailTransfer {
         task = Task {
             defer { endSync(operation); if stamp == generation { cloudInFlight = false } }
             do {
-                let data = try await http.request("/v1/hosts/\(device.id)/sync?"+query,token:device.reader.cloudSecret)
+                let data = try await http.request("/v1/hosts/\(device.id)/sync?agents=1&"+query,token:device.reader.cloudSecret)
                 let response = try await Task.detached(priority:.utility) {try JSONDecoder().decode(MobileMessage.self,from:data)}.value
                 guard stamp == generation, !Task.isCancelled else { return }
                 cloudImageSupport = response.capabilities?.contains(MobileProtocol.imageCapability) == true
@@ -379,37 +387,40 @@ private struct MobileDetailTransfer {
         let stamp = generation
         let decoded = await Task.detached(priority:.utility) {
             values.filter {$0.valid()}.map { value in
-                (value, value.dataset == "live" ? try? value.decode(MobileLive.self) : nil,
-                 value.dataset == "recent" ? try? value.decode([MobileRequest].self) : nil,
-                 value.dataset == "trends" ? try? value.decode(MobileTrends.self).singleModelsOnly() : nil)
+                (value, MobileProtocol.baseDataset(value.dataset) == "live" ? try? value.decode(MobileLive.self) : nil,
+                 MobileProtocol.baseDataset(value.dataset) == "recent" ? try? value.decode([MobileRequest].self) : nil,
+                 MobileProtocol.baseDataset(value.dataset) == "trends" ? try? value.decode(MobileTrends.self).singleModelsOnly() : nil)
             }
         }.value
         guard stamp == generation else { return }
         var changed = false
         var renamed = false
-        for (value,liveValue,recentValue,trendsValue) in decoded where ["live","recent","trends"].contains(value.dataset) {
+        for (value,liveValue,recentValue,trendsValue) in decoded where MobileProtocol.datasets.contains(value.dataset) {
             if let old = envelopes[value.dataset], old.revision >= value.revision {
                 if old.revision == value.revision && old.digest != value.digest { error = "同步版本冲突，已保留原数据" }
                 continue
             }
             do {
-                switch value.dataset {
+                let source=MobileAgent.source(value.dataset).rawValue
+                var stored=agentData[source] ?? MobileAgentData()
+                switch MobileProtocol.baseDataset(value.dataset) {
                 case "live":
-                    guard let liveValue else { throw MobileError.message("invalid live") }; live = liveValue
+                    guard let liveValue else { throw MobileError.message("invalid live") }; stored.live = liveValue
                     if !liveValue.name.isEmpty, let index = devices.firstIndex(where:{$0.id == selected}), devices[index].code.name != liveValue.name {
                         devices[index].code.name = liveValue.name; renamed = true
                     }
-                case "recent": guard let recentValue else { throw MobileError.message("invalid recent") }; recent = recentValue.filter {$0.started >= Date().timeIntervalSince1970-MobileProtocol.detailRetention}.prefix(200).map {$0}
-                case "trends": guard let trendsValue else { throw MobileError.message("invalid trends") }; trends = trendsValue
+                case "recent": guard let recentValue else { throw MobileError.message("invalid recent") }; stored.recent = recentValue.filter {$0.started >= Date().timeIntervalSince1970-MobileProtocol.detailRetention}.prefix(200).map {$0}
+                case "trends": guard let trendsValue else { throw MobileError.message("invalid trends") }; stored.trends = trendsValue
                 default: break
                 }
+                agentData[source]=stored
                 // Only revision/digest participate in subsequent syncs. Keep
                 // message text in the bounded, expiring decoded stores.
                 var version = value; version.payload = ""; envelopes[value.dataset] = version; changed = true
             } catch { self.error = "同步数据格式不兼容，请更新 Codexio" }
         }
         if renamed { do {try await saveDevices()} catch {self.error = error.localizedDescription}; guard stamp == generation else { return } }
-        pruneRetainedContent()
+        publishAgent();pruneRetainedContent()
         if changed { persistCache() }
     }
     private func setDetailVersions(_ values: [String:Int64]) {
@@ -607,14 +618,13 @@ private struct MobileDetailTransfer {
     private func pruneRetainedContent() {
         let now = Date().timeIntervalSince1970, cutoff = Date().timeIntervalSince1970-MobileProtocol.detailRetention
         var changed = false
-        if recent.contains(where:{$0.started < cutoff}) {
-            recent.removeAll {$0.started < cutoff}; changed = true
-            if var value = envelopes["recent"] { value.payload = ""; envelopes["recent"] = value }
+        for source in Array(agentData.keys) {
+            guard var value=agentData[source] else{continue}
+            if value.recent.contains(where:{$0.started < cutoff}){value.recent.removeAll{$0.started < cutoff};changed=true}
+            if let task=value.live?.task,task.started < cutoff{value.live?.task=nil;changed=true}
+            agentData[source]=value
         }
-        if let task = live?.task, task.started < cutoff {
-            live?.task = nil; changed = true
-            if var value = envelopes["live"] { value.payload = ""; envelopes["live"] = value }
-        }
+        if changed{publishAgent()}
         if changed { persistCache() }
         if detailValues.values.contains(where:{$0.expires <= now}) { pruneDetails(); persistDetails() }
         if imageDeadlines.values.contains(where:{$0 <= now}) { pruneImages() }
@@ -774,7 +784,7 @@ private struct MobileDetailTransfer {
     }
     private func persistCache() {
             guard !selected.isEmpty else { return }
-            let values = MobileDiskCache(versions:envelopes.mapValues(\.revision),digests:envelopes.mapValues(\.digest),live:live,recent:recent,trends:trends)
+            let values = MobileDiskCache(agents:agentData,versions:envelopes.mapValues(\.revision),digests:envelopes.mapValues(\.digest),live:agentData[MobileAgent.chatgpt.rawValue]?.live,recent:agentData[MobileAgent.chatgpt.rawValue]?.recent ?? [],trends:agentData[MobileAgent.chatgpt.rawValue]?.trends ?? MobileTrends(daily:[],periods:[]))
             let directory = cacheDirectory, url = directory.appendingPathComponent(selected+".json")
             files.async {
                 do {

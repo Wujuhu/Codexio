@@ -7,10 +7,13 @@ enum MobileProtocol {
     static let version = 1
     static let service = "_codexio._tcp"
     static let cloudOrigin = "https://codexio-sync.503948883.workers.dev"
-    static let limit = 262_144
+    static let limit = 1_048_576
     static let detailCapability = "request-details-v1"
     static let requestKindCapability = "request-kinds-v1"
     static let requestMetricsCapability = "request-metrics-v1"
+    static let agentCapability = "agent-sources-v1"
+    static let datasets = ["live","recent","trends","live-claude_code","recent-claude_code","trends-claude_code"]
+    static func baseDataset(_ name:String)->String {name.replacingOccurrences(of:"-claude_code",with:"")}
     static let detailLimit = 1_048_576
     static let detailChunkBytes = 65_536
     static let detailRows = 64
@@ -105,6 +108,19 @@ enum MobileKeychain {
         if status == errSecItemNotFound { status = SecItemAdd(query.merging(fields) {$1} as CFDictionary,nil) }
         guard status == errSecSuccess else { throw MobileError.message("无法保存设备凭据（\(status)）") }
     }
+}
+
+enum MobileAgent:String,Codable,CaseIterable {
+    case chatgpt,claude
+    var title:String {self == .chatgpt ? "ChatGPT":"Claude"}
+    var logo:String {self == .chatgpt ? "AgentChatGPT":"AgentClaude"}
+    func dataset(_ kind:String)->String {kind+(self == .claude ? "-claude_code":"")}
+    static func source(_ dataset:String)->Self {dataset.hasSuffix("-claude_code") ? .claude:.chatgpt}
+}
+struct MobileAgentData:Codable {
+    var live:MobileLive? = nil
+    var recent:[MobileRequest] = []
+    var trends=MobileTrends(daily:[],periods:[])
 }
 
 struct MobileMetric: Codable, Equatable {

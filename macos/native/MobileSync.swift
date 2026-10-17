@@ -81,6 +81,11 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
     private var cloudDetails: Bool?
     private var cloudRequestKinds = false
     private var cloudRequestMetrics = false
+    private var cloudAgents = false
+    private var agentPeers=Set<ObjectIdentifier>()
+    private var detailKeeps:[String:Set<String>]=[:]
+    private var detailCanonical:[String:String]=[:]
+    private var claudeExportRevision=""
     private var cloudRecent: MobileEnvelope?
     private var cloudLive: MobileEnvelope?
     private var nextCapabilityCheck = Date.distantPast
@@ -125,7 +130,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
     private var imageStateURL: URL { paths.data.appendingPathComponent("mobile-image-revisions.json") }
     private var cloudRecentURL: URL { paths.data.appendingPathComponent("mobile-cloud-recent.json") }
     private var cloudLiveURL: URL { paths.data.appendingPathComponent("mobile-cloud-live.json") }
-    private var capabilities: [String] { [MobileProtocol.requestKindCapability,MobileProtocol.requestMetricsCapability] + (detailProvider == nil ? [] : [MobileProtocol.detailCapability,MobileProtocol.imageCapability]) }
+    private var capabilities: [String] { [MobileProtocol.agentCapability,MobileProtocol.requestKindCapability,MobileProtocol.requestMetricsCapability] + (detailProvider == nil ? [] : [MobileProtocol.detailCapability,MobileProtocol.imageCapability]) }
     private func saveDetailStamps() throws {
         try MobileProtocol.encode(detailStamps).write(to:detailStateURL,options:.atomic)
         try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:detailStateURL.path)
@@ -215,7 +220,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                 self.cloudDetails = nil; self.cloudRequestMetrics = false; self.cloudImages = self.host?.imageCapability == true; self.nextCapabilityCheck = .distantPast
                 if let data = try? Data(contentsOf:self.imageStateURL), data.count <= 64*1024 { self.sentImages = (try? JSONDecoder().decode([String:MobileImageStamp].self,from:data)) ?? [:] }
                 self.sentImages = self.sentImages.filter {$0.value.expires > Date().timeIntervalSince1970}
-                self.exportRevision = nil; self.nextHistory = .distantPast
+                self.exportRevision = nil;self.claudeExportRevision="";self.detailKeeps=[:];self.detailCanonical=[:]; self.nextHistory = .distantPast
                 if let value = self.datasets["trends"], let trends = try? value.decode(MobileTrends.self) { try self.put("trends",trends.singleModelsOnly()); try self.persist() }
                 self.active = true; self.generation = UUID(); self.transport = MobileHTTP()
                 UserDefaults.standard.set(true,forKey:"codexio.mobile.enabled")
@@ -243,7 +248,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
         queue.async {
             self.active = false; self.imageCache.stop(); self.generation = UUID(); self.timer?.cancel(); self.timer = nil
             self.listener?.cancel(); self.listener = nil
-            self.connections.values.forEach {$0.cancel()}; self.connections.removeAll(); self.authenticated.removeAll()
+            self.connections.values.forEach {$0.cancel()}; self.connections.removeAll(); self.authenticated.removeAll();self.agentPeers.removeAll()
             self.transport.stop(); self.sending = false; self.ticket = nil; self.candidate = nil
             self.details.removeAll(); self.detailSources.removeAll(); self.detailSizes.removeAll(); self.detailDates.removeAll()
             DispatchQueue.main.async { self.enabled = false; self.qrImage = nil; self.pending = nil }
@@ -362,7 +367,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
             guard let self, let connection else { return }
             if case .ready = state { self.receive(connection) }
             if case .failed = state { self.connections.removeValue(forKey:key); self.authenticated.removeValue(forKey:key); connection.cancel() }
-            if case .cancelled = state { self.connections.removeValue(forKey:key); self.authenticated.removeValue(forKey:key) }
+            if case .cancelled = state { self.connections.removeValue(forKey:key); self.authenticated.removeValue(forKey:key);self.agentPeers.remove(key) }
         }
         connection.start(queue:queue)
         queue.asyncAfter(deadline:.now()+10) { [weak self,weak connection] in
@@ -385,6 +390,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                     catch { self.report(error.localizedDescription) }
                 }
                 self.authenticated[key] = reader.id
+                if message.capabilities?.contains(MobileProtocol.agentCapability) == true {self.agentPeers.insert(key)}
                 if message.action == "image", let id = message.imageID, id.count == 64 {
                     let response = self.imageCache.message(id,part:message.imagePart ?? 0) { [weak self] request in _ = try? self?.loadDetail(request) }
                     MobileProtocol.send(response,over:connection)
@@ -399,7 +405,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                     self.receive(connection); return
                 }
                 let known = message.known ?? [:]
-                MobileProtocol.send(MobileMessage(action:"sync",known:self.datasets.mapValues(\.revision),datasets:self.datasets.values.filter {$0.revision > known[$0.dataset,default:0]},seen:Date().timeIntervalSince1970,cloud:self.cloudReaders.contains(reader.id) ? MobileProtocol.cloudOrigin : nil,supportsAck:true,capabilities:self.capabilities,detailVersions:self.details.mapValues(\.revision)),over:connection)
+                MobileProtocol.send(MobileMessage(action:"sync",known:self.datasets.mapValues(\.revision),datasets:self.datasets.values.filter {(!$0.dataset.hasSuffix("-claude_code") || self.agentPeers.contains(key)) && $0.revision > known[$0.dataset,default:0]},seen:Date().timeIntervalSince1970,cloud:self.cloudReaders.contains(reader.id) ? MobileProtocol.cloudOrigin : nil,supportsAck:true,capabilities:self.capabilities,detailVersions:self.details.mapValues(\.revision)),over:connection)
             } else if message.action == "pair", let reader = message.reader,
                       reader.id.count <= 64, reader.name.count <= 40, reader.localSecret.count == 43, reader.cloudSecret.count == 43,
                       let ticket = self.ticket, ticket.expires > Date().timeIntervalSince1970,
@@ -414,7 +420,8 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
     }
     private func put<T: Encodable>(_ dataset: String,_ value: T) throws {
         let data = try MobileProtocol.encode(value)
-        let limit = dataset == "live" ? 8000 : dataset == "recent" ? 120000 : 80000
+        let kind=MobileProtocol.baseDataset(dataset)
+        let limit = kind == "live" ? 8000 : kind == "recent" ? 120000 : 80000
         guard data.count < limit else { throw MobileError.message("手机摘要超过容量限制") }
         let hash = MobileProtocol.hash(data)
         guard datasets[dataset]?.digest != hash else { return }
@@ -434,7 +441,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
         }
     }
     private func loadDetail(_ requestID: String) throws -> MobileEnvelope? {
-        guard let raw = try detailProvider?(requestID) else { return nil }
+        guard let raw = try detailProvider?(detailCanonical[requestID] ?? requestID) else { return nil }
         let canonical = raw.string("id"), id = MobileProtocol.hash(Data(canonical.utf8))
         guard !canonical.isEmpty else { return nil }
         let started = raw.number("started_at") ?? 0, completed = raw.number("completed_at")
@@ -491,13 +498,16 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
         let data = try MobileProtocol.encode(value.preview())
         return MobileMessage(action:"detail",detailID:id,full:false,detail:MobileEnvelope(dataset:envelope.dataset,revision:envelope.revision,digest:MobileProtocol.hash(data),payload:String(decoding:data,as:UTF8.self)))
     }
-    private func updateDetails(_ rows: [UsageRow]) throws {
+    private func updateDetails(_ rows: [UsageRow],agent:MobileAgent = .chatgpt) throws {
         imageCache.prune()
         guard detailProvider != nil else { return }
-        let keep = Set(rows.prefix(MobileProtocol.detailRows).map {MobileProtocol.hash(Data($0.id.utf8))})
+        for row in rows {detailCanonical[MobileProtocol.hash(Data(row.id.utf8))]=row.id}
+        detailKeeps[agent.rawValue]=Set(rows.prefix(MobileProtocol.detailRows/2).map {MobileProtocol.hash(Data($0.id.utf8))})
+        let keep=Set(detailKeeps.values.flatMap{Array($0)})
+        if detailCanonical.count>400{detailCanonical=detailCanonical.filter{keep.contains($0.key)}}
         var changed = false
         var pending: [(UsageRow,String,String)] = []
-        for row in rows.prefix(MobileProtocol.detailRows).reversed() {
+        for row in rows.prefix(MobileProtocol.detailRows/2).reversed() {
             let id = MobileProtocol.hash(Data(row.id.utf8))
             // The ledger's content digest excludes scan/fetch timestamps. Legacy
             // rows use only business fields, and recovery is bounded per request.
@@ -595,11 +605,39 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                 if old != self.datasets || oldDetails != self.details.mapValues(\.revision) {
                     if old != self.datasets { try self.persist() }
                     for (key,connection) in self.connections where self.authenticated[key] != nil {
-                        MobileProtocol.send(MobileMessage(action:"sync",known:self.datasets.mapValues(\.revision),datasets:self.datasets.values.filter {old[$0.dataset] != $0},seen:Date().timeIntervalSince1970,supportsAck:true,capabilities:self.capabilities,detailVersions:self.details.mapValues(\.revision)),over:connection)
+                        MobileProtocol.send(MobileMessage(action:"sync",known:self.datasets.mapValues(\.revision),datasets:self.datasets.values.filter {(!$0.dataset.hasSuffix("-claude_code") || self.agentPeers.contains(key)) && old[$0.dataset] != $0},seen:Date().timeIntervalSince1970,supportsAck:true,capabilities:self.capabilities,detailVersions:self.details.mapValues(\.revision)),over:connection)
                     }
                 }
                 if urgent || self.lastPrivacy != previews { self.lastPrivacy = previews; self.lastTaskKey = taskKey; self.urgentPending = true; self.upload() }
             } catch { self.report(error.localizedDescription) }
+        }
+    }
+    func updateClaude(_ snapshot:ClaudeMobileSnapshot,surface:AgentSurfaceData,quota:QuotaState,fresh:Bool,observed:Date?,name:String){
+        queue.async{
+            guard self.active else{return}
+            do{
+                func request(_ value:UsageRow)->MobileRequest{
+                    let returned=(value.raw["upstream_models"] as? [String] ?? []).filter{!$0.isEmpty},model=returned.isEmpty ? value.raw.string("model") : returned.joined(separator:" · ")
+                    return MobileRequest(id:MobileProtocol.hash(Data(value.id.utf8)),started:value.date?.timeIntervalSince1970 ?? 0,status:value.raw.string("status"),preview:MobileProtocol.prefix(String(value.raw.string("prompt_preview").prefix(80)),bytes:240),model:model,effort:logEffortName(value.raw.string("reasoning_effort")),speed:value.raw.string("service_tier"),tokens:value.tokens,cost:value.cost,duration:value.raw.number("duration_ms").map{$0/1000},durationStarted:value.runningSince?.timeIntervalSince1970,durationBase:value.raw.number("duration_base_ms").map{$0/1000},tps:value.outputTokensPerSecond,ttft:value.firstTokenSeconds,contextWindow:value.raw.integer("model_context_window"))
+                }
+                func window(_ value:QuotaWindow?)->MobileQuota{MobileQuota(remaining:fresh ? value?.remaining:nil,reset:fresh ? value?.reset?.timeIntervalSince1970:nil,observed:quota.updated?.timeIntervalSince1970,retained:!fresh)}
+                let old=self.datasets,task=surface.request.map(request),sum=surface.today
+                let live=MobileLive(name:name,timeZone:TimeZone.current.identifier,observed:observed.map{floor($0.timeIntervalSince1970/300)*300},task:task,runningCount:surface.hasRunningTask ? max(1,snapshot.recent.filter{$0.raw.string("status")=="running"}.count):0,today:MobileMetric(tokens:sum.tokens,cost:sum.cost,requests:sum.requests,costComplete:sum.unknownCosts==0,hitRate:sum.cacheRate),five:window(quota.five),week:window(quota.week))
+                try self.put("live-claude_code",live)
+                if self.claudeExportRevision != snapshot.revision{
+                    try self.put("recent-claude_code",snapshot.recent.map(request))
+                    try self.put("trends-claude_code",MobileTrends(daily:self.trendDays(snapshot.days,calendar:Calendar.current,today:Calendar.current.startOfDay(for:Date())),periods:snapshot.periods))
+                    try self.updateDetails(snapshot.recent,agent:.claude)
+                    self.claudeExportRevision=snapshot.revision
+                }
+                if old != self.datasets{
+                    try self.persist()
+                    for (key,connection) in self.connections where self.authenticated[key] != nil && self.agentPeers.contains(key){
+                        MobileProtocol.send(MobileMessage(action:"sync",known:self.datasets.mapValues(\.revision),datasets:self.datasets.values.filter{old[$0.dataset] != $0},seen:Date().timeIntervalSince1970,supportsAck:true,capabilities:self.capabilities,detailVersions:self.details.mapValues(\.revision)),over:connection)
+                    }
+                    if old["live-claude_code"]?.digest != self.datasets["live-claude_code"]?.digest {self.upload()}
+                }
+            }catch{self.report(error.localizedDescription)}
         }
     }
     private func upload() {
@@ -613,6 +651,7 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
         let allDetails = Array(details.values)
         imageCache.prune()
         let imageChanges = Array(imageCache.uploadRecords.lazy.filter { self.sentImages[$0.id]?.digest != $0.digest && Date() >= (self.imageDeferred[$0.id] ?? .distantPast) }.prefix(2))
+        let knownAgents=cloudAgents
         let knownKinds = cloudRequestKinds, knownMetrics = cloudRequestMetrics, previousRecent = cloudRecent, previousLive = cloudLive
         if probe {
             for name in ["live","recent"] {
@@ -628,7 +667,9 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                     let body = try JSONSerialization.data(withJSONObject:["id":reader.id,"secret":reader.cloudSecret])
                     _ = try await transport.request("/v1/hosts/\(host.id)/readers",method:"PUT",token:host.writer,body:body)
                 }
+                var claudeAcknowledgments:[String:Int64]=[:]
                 var supported = support, uploaded: [MobileEnvelope] = [], capacityIDs: [String] = []
+                var agents=knownAgents
                 var detailFailure: String?, kinds = knownKinds, metrics = knownMetrics, imagesSupported = imageSupport, probeFailed = false
                 var cloudSucceeded = !readers.isEmpty || !host.revoked.isEmpty, transientDetailFailure = false
                 var uploadedImages: [MobileImageCache.Stored] = [], deferredImages: [String] = []
@@ -639,10 +680,11 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                         supported = message.capabilities?.contains(MobileProtocol.detailCapability) == true
                         kinds = message.capabilities?.contains(MobileProtocol.requestKindCapability) == true
                         metrics = message.capabilities?.contains(MobileProtocol.requestMetricsCapability) == true
+                        agents = message.capabilities?.contains(MobileProtocol.agentCapability) == true
                         imagesSupported = message.capabilities?.contains(MobileProtocol.imageCapability) == true
                         cloudSucceeded = true
                     } catch {
-                        if case MobileError.http(let code,_,let reason) = error, code == 404 || reason == "NOT_FOUND" { supported = false; kinds = false; metrics = false; imagesSupported = false }
+                        if case MobileError.http(let code,_,let reason) = error, code == 404 || reason == "NOT_FOUND" { supported = false; kinds = false; metrics = false; agents=false; imagesSupported = false }
                         else { probeFailed = true; detailFailure = error.localizedDescription; transientDetailFailure = Self.temporaryNetworkFailure(error) }
                     }
                 }
@@ -650,27 +692,31 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                 // compatible while local connections carry kinds and timing metrics.
                 var sentRecent: MobileEnvelope?, sentLive: MobileEnvelope?
                 for value in changed {
+                    if value.dataset.hasSuffix("-claude_code"),!agents {continue}
                     var cloudValue = value
                     if value.dataset == "recent" || value.dataset == "live" {
                         let body: Data
-                        let previous = value.dataset == "recent" ? previousRecent : previousLive
-                        if value.dataset == "recent" {
+                        let previous = value.dataset.hasSuffix("-claude_code") ? nil : value.dataset == "recent" ? previousRecent : previousLive
+                        if MobileProtocol.baseDataset(value.dataset) == "recent" {
                             var requests = try value.decode([MobileRequest].self)
                             if !kinds { requests.removeAll {$0.isApproval} }
                             if !metrics { for index in requests.indices { requests[index].tps = nil; requests[index].ttft = nil } }
+                            if !agents {for index in requests.indices {requests[index].contextWindow=nil}}
                             body = try MobileProtocol.encode(requests)
                         } else {
                             var live = try value.decode(MobileLive.self)
                             if !metrics { live.task?.tps = nil; live.task?.ttft = nil }
+                            if !agents {live.task?.contextWindow=nil}
                             body = try MobileProtocol.encode(live)
                         }
                         let hash = MobileProtocol.hash(body)
                         if previous?.digest == hash, let previous { cloudValue = previous }
                         else { cloudValue = MobileEnvelope(dataset:value.dataset,revision:max(previous?.revision ?? 0,value.revision,Int64(Date().timeIntervalSince1970*1000))+1,digest:hash,payload:String(decoding:body,as:UTF8.self)) }
-                        if value.dataset == "recent" { sentRecent = cloudValue } else { sentLive = cloudValue }
+                        if value.dataset == "recent" { sentRecent = cloudValue } else if value.dataset == "live" { sentLive = cloudValue }
                         if cloudValue == previous { continue }
                     }
-                    _ = try await transport.request("/v1/hosts/\(host.id)/data/\(value.dataset)",method:"PUT",token:host.writer,body:MobileProtocol.encode(cloudValue))
+                    let acknowledgment = try await transport.request("/v1/hosts/\(host.id)/data/\(value.dataset)",method:"PUT",token:host.writer,body:MobileProtocol.encode(cloudValue))
+                    if value.dataset.hasSuffix("-claude_code"),let revision=jsonObject(acknowledgment).integer("revision"){claudeAcknowledgments[value.dataset]=Int64(revision)}
                     cloudSucceeded = true
                 }
                 let imageCapabilityChanged = imagesSupported != imageSupport
@@ -716,11 +762,12 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                 }
                 let resolvedImages = imagesSupported, sentImageValues = uploadedImages, delayedImages = deferredImages, newDetailRevisions = submittedDetailRevisions
                 let resetCloudDetails = imageCapabilityChanged, didSynchronizeCloud = cloudSucceeded, temporaryDetailFailure = transientDetailFailure
-                let resolvedSupport = supported, resolvedKinds = kinds, resolvedMetrics = metrics, resolvedRecent = sentRecent, resolvedLive = sentLive, failedProbe = probeFailed, sentDetails = uploaded, failure = detailFailure, deferred = capacityIDs, sentDatasets = changed
+                let acknowledgedClaude=claudeAcknowledgments
+                let resolvedSupport = supported, resolvedKinds = kinds, resolvedMetrics = metrics,resolvedAgents=agents, resolvedRecent = sentRecent, resolvedLive = sentLive, failedProbe = probeFailed, sentDetails = uploaded, failure = detailFailure, deferred = capacityIDs, sentDatasets = changed.filter{!$0.dataset.hasSuffix("-claude_code") || agents}
                 self.queue.async {
                     guard self.generation == generation else { return }
                     self.cloudDetails = resolvedSupport
-                    self.cloudRequestKinds = resolvedKinds; self.cloudRequestMetrics = resolvedMetrics; self.cloudImages = resolvedImages; self.host?.imageCapability = resolvedImages
+                    self.cloudRequestKinds = resolvedKinds; self.cloudRequestMetrics = resolvedMetrics;self.cloudAgents=resolvedAgents; self.cloudImages = resolvedImages; self.host?.imageCapability = resolvedImages
                     for image in sentImageValues {
                         self.sentImages[image.id] = MobileImageStamp(digest:image.digest,expires:image.expires)
                     }
@@ -739,7 +786,13 @@ final class MobileSync: ObservableObject, @unchecked Sendable {
                         try? FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:self.cloudLiveURL.path)
                     }
                     if probe { self.nextCapabilityCheck = Date().addingTimeInterval(failedProbe ? 60 : 3_600) }
-                    for value in sentDatasets { self.sent[value.dataset] = value.revision }
+                    for value in sentDatasets {
+                        self.sent[value.dataset] = value.revision
+                        if let revision=acknowledgedClaude[value.dataset],var current=self.datasets[value.dataset],current.revision<=revision {
+                            current.revision=revision+1;self.datasets[value.dataset]=current
+                            if current.digest==value.digest{self.sent[value.dataset]=current.revision};try? self.persist()
+                        }
+                    }
                     for resolved in [resolvedRecent,resolvedLive].compactMap({$0}) {
                         guard var current = self.datasets[resolved.dataset], current.revision <= resolved.revision else { continue }
                         let submitted = sentDatasets.first {$0.dataset == resolved.dataset}

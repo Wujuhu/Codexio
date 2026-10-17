@@ -290,6 +290,9 @@ func (s *Service) GetJourneyCatalog(project, before string) (Row, error) {
 }
 
 func (s *Service) GetJourneyThread(thread string, page int) (Row, error) {
+	if strings.HasPrefix(thread, "claude:") {
+		return s.claudeJourneyThread(thread, page)
+	}
 	page = max(1, page)
 	where, args := queryFilter(Query{Period: "all", Source: "local"}, true)
 	args = append(args, thread)
@@ -514,6 +517,9 @@ func journeyReadLine(reader *bufio.Reader) ([]byte, int64, error) {
 }
 
 func (s *Service) GetJourneyFlow(request, child, cursor string) (Row, error) {
+	if strings.HasPrefix(request, "claude:") {
+		return s.claudeJourneyFlow(request, child, cursor)
+	}
 	j := s.journeyReader()
 	j.mu.Lock()
 	defer j.mu.Unlock()

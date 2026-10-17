@@ -25,6 +25,8 @@ struct JourneyBlock: Identifiable {
 }
 
 final class JourneyModel: ObservableObject {
+    let client: DesktopClient
+    init(client:DesktopClient = .codex){self.client=client}
     @Published var projects:[Object]=[]
     @Published var threads:[Object]=[]
     @Published var requests:[Object]=[]
@@ -51,7 +53,8 @@ final class JourneyModel: ObservableObject {
         state.dataQueue.async{[weak self] in
             do {
                 let data:Object
-                if state.paths.mock {data=["projects":[["id":"chats","name":L("聊天","Chats")]],"threads":snapshot.chatCandidates.map {["id":$0.string("thread_id"),"title":snapshot.chatTitles[$0.string("thread_id")] ?? "—","project_id":"chats"]},"next":""]}
+                if self?.client == .claudeCode {data=try state.claudeJourney.catalog(project:target,before:before)}
+                else if state.paths.mock {data=["projects":[["id":"chats","name":L("聊天","Chats")]],"threads":snapshot.chatCandidates.map {["id":$0.string("thread_id"),"title":snapshot.chatTitles[$0.string("thread_id")] ?? "—","project_id":"chats"]},"next":""]}
                 else{data=try state.journeyCatalog.load(roots:roots,project:target,before:before)}
                 DispatchQueue.main.async{
                     guard let self,self.catalogTicket==ticket else{return}
@@ -70,6 +73,14 @@ final class JourneyModel: ObservableObject {
         guard !thread.isEmpty else{return};let id=thread.string("id"),index=page ?? requestPage;threadTicket+=1;let ticket=threadTicket,snapshot=state.usage
         state.dataQueue.async{[weak self] in
             do {
+                if self?.client == .claudeCode {
+                    let data=try state.claudeJourney.thread(id,page:index)
+                    DispatchQueue.main.async {
+                        guard let self,self.threadTicket==ticket,self.thread.string("id")==id else{return}
+                        self.requests=data.objects("requests");self.requestPages=data.integer("pages") ?? 1;self.requestPage=data.integer("page") ?? 1;self.summary=data.object("summary")
+                        if self.request.isEmpty,let first=self.requests.first{self.chooseRequest(state,first)}else if let refreshed=self.requests.first(where:{$0.string("id")==self.request.string("id")}){self.request=refreshed;self.flow(state,cursor:self.cursors.last ?? "")}
+                    };return
+                }
                 if state.paths.mock{try LocalChatRankingStore.update(snapshot,database:state.database)}
                 let total=try state.database.query("SELECT count(*) AS n FROM usage_journey_requests WHERE session_id=?",[id]).first?.integer("n") ?? 0
                 let pages=max(1,(total+24)/25),current=min(max(1,index),pages)
@@ -92,6 +103,14 @@ final class JourneyModel: ObservableObject {
         guard !id.isEmpty else{return};flowTicket+=1;let ticket=flowTicket;loading=blocks.isEmpty
         state.dataQueue.async{[weak self] in
             do{
+                if self?.client == .claudeCode {
+                    let data=try state.claudeJourney.page(id,child:scope,cursor:cursor),events=data.objects("events"),blocks=JourneyBlock.build(events),signature=id+"|"+scope+"|"+cursor+"|"+identity(data)
+                    DispatchQueue.main.async{
+                        guard let self,self.flowTicket==ticket,self.request.string("id")==id,self.scope==scope else{return}
+                        if self.flowSignature != signature{self.flowSignature=signature;self.blocks=blocks;self.selected=events.first(where:{$0.string("id")==self.selected.string("id")}) ?? events.first(where:{$0.string("kind")=="model"}) ?? events.first ?? [:]}
+                        self.next=data.string("next");self.loading=false;self.error=nil
+                    };return
+                }
                 let raw=try state.database.query("SELECT data FROM usage_journey_requests WHERE id=?",[id]).first?.string("data") ?? "{}",record=jsonObject(Data(raw.utf8))
                 let session=scope.isEmpty ? thread.string("id") : scope
                 var turns=Set((record["member_turn_keys"] as? [String] ?? []).compactMap{ key->String? in let parts=key.split(separator:":",maxSplits:2).map(String.init);return parts.count==3 && parts[1]==session ? parts[2] : nil})
@@ -120,7 +139,9 @@ final class JourneyModel: ObservableObject {
 
 struct JourneyView:View{
     @ObservedObject var state:AppState
-    @StateObject private var model=JourneyModel()
+    let client:DesktopClient
+    @StateObject private var model:JourneyModel
+    init(state:AppState,client:DesktopClient = .codex){self.state=state;self.client=client;_model=StateObject(wrappedValue:JourneyModel(client:client))}
     @State private var collapsed=Set<String>()
     var body:some View{
         VStack(alignment:.leading,spacing:16){
@@ -163,14 +184,14 @@ struct JourneyView:View{
                                     HStack{Button(L("上一页","Previous")){if model.cursors.count>1{model.cursors.removeLast();model.flow(state,cursor:model.cursors.last ?? "")}}.disabled(model.cursors.count<=1);Spacer();Button(L("下一页","Next")){model.cursors.append(model.next);model.flow(state,cursor:model.next)}.disabled(model.next.isEmpty)}.controlSize(.small)
                                 }.padding(14).padding(.bottom,10)
                             }.frame(minHeight:0,maxHeight:.infinity)
-                            Divider();HStack{Spacer();Button(L("在 Codex 中继续 ↗","Continue in Codex ↗")){open()}.buttonStyle(.bordered)}.padding(12)
+                            Divider();HStack{Spacer();Button(client == .codex ? L("在 Codex 中继续 ↗","Continue in Codex ↗") : L("查看本地记录 ↗","View local records ↗")){open()}.buttonStyle(.bordered)}.padding(12)
                         }.frame(minWidth:300,idealWidth:geometry.size.width*48/77,maxWidth:.infinity).frame(height:geometry.size.height)
                         JourneyInspector(thread:model.thread,request:model.request,summary:model.summary,event:model.selected).frame(minWidth:230,idealWidth:geometry.size.width*29/77,maxWidth:.infinity).frame(height:geometry.size.height)
                     }.frame(width:geometry.size.width,height:geometry.size.height)
                 }.containerRelativeFrame(.vertical){height,_ in max(320,min(650,height-140))}.clipShape(RoundedRectangle(cornerRadius:14)).overlay(RoundedRectangle(cornerRadius:14).stroke(.secondary.opacity(0.18)))
             }
         }.onAppear{model.catalog(state)}.onDisappear{model.cancel()}
-        .onChange(of:state.usage.revision){_,_ in guard state.mainWindowVisible else{return};model.catalog(state);model.loadThread(state)}
+        .onChange(of:client == .codex ? state.usage.revision : state.claudeRevision){_,_ in guard state.mainWindowVisible else{return};model.catalog(state);model.loadThread(state)}
     }
     private var threadOptions:[CompactFilterPicker.Item]{
         model.threads.map{CompactFilterPicker.Item(id:$0.string("id"),title:$0.string("title"))} + (model.threadNext.isEmpty ? [] : [.init(id:"__more",title:L("显示更多","Show more"))])
@@ -178,7 +199,7 @@ struct JourneyView:View{
     private var requestOptions:[CompactFilterPicker.Item]{
         model.requests.map{CompactFilterPicker.Item(id:$0.string("id"),title:requestValueText($0.string("prompt_preview")))} + (model.requestPage>1 ? [.init(id:"__newer",title:L("较新的请求","Newer requests"))] : []) + (model.requestPage<model.requestPages ? [.init(id:"__older",title:L("较早的请求","Earlier requests"))] : [])
     }
-    private func open(){let id=model.thread.string("id");guard UUID(uuidString:id) != nil,let url=URL(string:"codex://threads/"+id),NSWorkspace.shared.urlForApplication(toOpen:url) != nil else{state.errorMessage=L("无法在本机定位此聊天","This chat cannot be opened locally");return};NSWorkspace.shared.open(url)}
+    private func open(){if client == .claudeCode {NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath:model.thread.string("root"))]);return};let id=model.thread.string("id");guard UUID(uuidString:id) != nil,let url=URL(string:"codex://threads/"+id),NSWorkspace.shared.urlForApplication(toOpen:url) != nil else{state.errorMessage=L("无法在本机定位此聊天","This chat cannot be opened locally");return};NSWorkspace.shared.open(url)}
 }
 
 // The native bordered control matches other filters; the anchored popover keeps

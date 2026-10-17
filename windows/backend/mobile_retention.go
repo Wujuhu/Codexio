@@ -24,6 +24,7 @@ func mobileDetailExpires(value Row) int64 {
 // Match the Worker retention projection. Removing an expired preview never
 // touches the local raw ledger or its aggregate metric datasets.
 func mobileRetainValue(kind string, value any, now int64) (any, bool, int64) {
+	kind = mobileBaseDataset(kind)
 	changed := false
 	next := int64(0)
 	deadline := func(at int64) {
@@ -119,7 +120,7 @@ func (m *MobileHost) retainContentLocked() bool {
 		changed = true
 		return Row{"dataset": envelope["dataset"], "revision": max(ValueInt(envelope["revision"]), time.Now().UnixMilli()) + 1, "digest": HashString(string(raw)), "payload": string(raw)}
 	}
-	for _, name := range []string{"live", "recent"} {
+	for _, name := range []string{"live", "recent", "live-claude_code", "recent-claude_code"} {
 		if envelope := m.datasets[name]; envelope != nil {
 			m.datasets[name] = retain(name, envelope)
 		}

@@ -24,7 +24,7 @@ def desktop_version(root: Path) -> str:
 
 def source_digest(root: Path) -> str:
     paths = sorted((root / "apple/shared").glob("*.swift")) + sorted((root / "ios/App").glob("*.swift"))
-    paths += [root / name for name in ("ios/VERSION", "scripts/build_ios.py", "scripts/ios_release.py", "src/codexio/versions.py", "src/codexio/icons/wordmark.png", "src/codexio/icons/app-light.png")]
+    paths += [root / name for name in ("ios/VERSION", "scripts/build_ios.py", "scripts/ios_release.py", "src/codexio/versions.py", "src/codexio/icons/wordmark.png", "src/codexio/icons/app-light.png", "windows/frontend/public/client-icons/chatgpt.svg", "windows/frontend/public/client-icons/claude-code.svg")]
     digest = hashlib.sha256()
     for path in paths:
         digest.update(path.relative_to(root).as_posix().encode("utf-8") + b"\0")

@@ -6609,6 +6609,22 @@
         }
       }
     },
+    "工具结果": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tool result"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工具结果"
+          }
+        }
+      }
+    },
     "左侧": {
       "localizations": {
         "en": {
@@ -12461,6 +12477,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "查看最近请求、费用与剩余额度"
+          }
+        }
+      }
+    },
+    "查看本地记录 ↗": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "View local records ↗"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查看本地记录 ↗"
           }
         }
       }

@@ -20,11 +20,11 @@ import (
 	"time"
 )
 
-const mobileLocalGroup = `coalesce(json_extract(g.data,'$.client_kind'),'codex')='codex' AND (EXISTS(SELECT 1 FROM json_each(json_extract(g.data,'$.source_ids')) WHERE value='local' OR value LIKE 'local:%') OR json_extract(g.data,'$.source_id')='local' OR json_extract(g.data,'$.source_id') LIKE 'local:%')`
-const mobileLocalCall = `coalesce(json_extract(c.data,'$.client_kind'),'codex')='codex' AND EXISTS(SELECT 1 FROM usage_query_sources s WHERE s.record_id=c.id AND (s.source_id='local' OR s.source_id LIKE 'local:%'))`
+const mobileLocalGroup = `(EXISTS(SELECT 1 FROM json_each(json_extract(g.data,'$.source_ids')) WHERE value='local' OR value LIKE 'local:%') OR json_extract(g.data,'$.source_id')='local' OR json_extract(g.data,'$.source_id') LIKE 'local:%')`
+const mobileLocalCall = `EXISTS(SELECT 1 FROM usage_query_sources s WHERE s.record_id=c.id AND (s.source_id='local' OR s.source_id LIKE 'local:%'))`
 
 func mobileIsLocal(r Row) bool {
-	if normalizedClient(dataString(r, "client_kind")) != "codex" {
+	if kind := normalizedClient(dataString(r, "client_kind")); kind != "codex" && kind != "claude_code" {
 		return false
 	}
 	sources := ValueStrings(r["source_ids"])
@@ -46,7 +46,7 @@ func mobileRequest(r Row) Row {
 	if !ok {
 		return nil
 	}
-	status := ValueString(r["request_status"])
+	status := firstString(r["request_status"], r["status"])
 	if status == "" {
 		status = "completed"
 	}
@@ -57,6 +57,14 @@ func mobileRequest(r Row) Row {
 	var duration any
 	if n, ok := ValueFloat(r["duration_ms"]); ok && n >= 0 && status != "running" && !ValueBool(r["duration_running"]) {
 		duration = n / 1000
+	}
+	if normalizedClient(dataString(r, "client_kind")) == "claude_code" {
+		r = CloneRow(r)
+		if models := ValueStrings(r["upstream_models"]); len(models) > 0 {
+			r["model"] = strings.Join(models, " · ")
+		} else {
+			r["model"] = firstString(r["returned_model"], r["upstream_model"], r["model"])
+		}
 	}
 	result := Row{"id": HashString(ValueString(r["id"])), "started": mobileUnixSeconds(t), "status": status, "preview": mobilePrefix(string(preview), 240), "model": requestModelName(r["model"]), "effort": requestEffortName(r["reasoning_effort"]), "speed": requestSpeed(r["service_tier"]), "tokens": r["total_tokens"], "cost": r["cost_usd"], "duration": duration, "durationStarted": nil, "durationBase": nil, "contextWindow": r["model_context_window"]}
 	if ValueString(r["request_status"]) == "completed" && !ValueBool(r["duration_running"]) {
@@ -121,7 +129,7 @@ func (m *MobileHost) putLocked(dataset string, value any) error {
 	if e != nil {
 		return e
 	}
-	limit := map[string]int{"live": 8000, "recent": 120000, "trends": 80000}[dataset]
+	limit := map[string]int{"live": 8000, "recent": 120000, "trends": 80000}[mobileBaseDataset(dataset)]
 	if limit == 0 || len(raw) >= limit {
 		return errors.New("移动摘要超过容量限制")
 	}
@@ -134,7 +142,23 @@ func (m *MobileHost) putLocked(dataset string, value any) error {
 	m.datasets[dataset] = Row{"dataset": dataset, "revision": revision, "digest": digest, "payload": string(raw)}
 	return nil
 }
+
+type mobileAgentProjection struct {
+	projectionKey, historyKey string
+	todayMetric, currentTask  Row
+	runningCount              int
+	nextBoundary, projectedAt time.Time
+}
+
 func (m *MobileHost) project(ctx context.Context) {
+	for _, client := range []string{"codex", "claude_code"} {
+		if ctx.Err() != nil {
+			return
+		}
+		m.projectAgent(ctx, client)
+	}
+}
+func (m *MobileHost) projectAgent(ctx context.Context, client string) {
 	m.mu.Lock()
 	if !m.enabled || m.closed {
 		m.mu.Unlock()
@@ -142,16 +166,29 @@ func (m *MobileHost) project(ctx context.Context) {
 	}
 	retained := m.retainContentLocked()
 	name := m.name
+	if m.projections[client] == nil {
+		m.projections[client] = &mobileAgentProjection{}
+	}
+	cached := m.projections[client]
 	before := m.datasetRevisionLocked()
 	m.mu.Unlock()
 	now := time.Now()
 	generation := m.store.Generation()
-	historyKey := fmt.Sprintf("%d:%s:%s", generation, now.Format("2006-01-02"), mobileTimeZone())
+	sourceRevision, err := m.projectionRevision(ctx, client)
+	if err != nil {
+		m.failure(err)
+		return
+	}
+	historyKey := fmt.Sprintf("%d:%s:%s", sourceRevision, now.Format("2006-01-02"), mobileTimeZone())
 	quota := m.quota.Snapshot()
+	if client == "claude_code" && m.claudeQuota != nil {
+		quota = m.claudeQuota()
+	}
 	quotaRaw, _ := mobileJSON(Row{"status": quota["status"], "updated_at": quota["updated_at"], "account": quota["account"], "primary": quota["primary"], "secondary": quota["secondary"]})
 	key := historyKey + ":" + HashString(string(quotaRaw)) + ":" + name
 	m.mu.Lock()
-	if m.projectionKey == key {
+	timeChanged := (!cached.nextBoundary.IsZero() && !now.Before(cached.nextBoundary)) || (!cached.projectedAt.IsZero() && now.Before(cached.projectedAt))
+	if cached.projectionKey == key && !timeChanged {
 		m.mu.Unlock()
 		if retained {
 			m.notify()
@@ -159,10 +196,10 @@ func (m *MobileHost) project(ctx context.Context) {
 		}
 		return
 	}
-	rebuild := m.historyKey != historyKey
+	rebuild := cached.historyKey != historyKey || timeChanged
 	m.mu.Unlock()
 	if rebuild {
-		if e := m.projectHistory(ctx, generation, historyKey, now); e != nil {
+		if e := m.projectHistory(ctx, generation, historyKey, now, client, cached); e != nil {
 			m.failure(e)
 			return
 		}
@@ -173,12 +210,12 @@ func (m *MobileHost) project(ctx context.Context) {
 		m.RequestProjection()
 		return
 	}
-	today := CloneRow(m.todayMetric)
-	task := CloneRow(m.currentTask)
+	today := CloneRow(cached.todayMetric)
+	task := CloneRow(cached.currentTask)
 	if len(task) == 0 {
 		task = nil
 	}
-	running := m.runningCount
+	running := cached.runningCount
 	sampled := now
 	if t, ok := ParseStamp(quota["updated_at"]); ok {
 		sampled = t
@@ -201,9 +238,9 @@ func (m *MobileHost) project(ctx context.Context) {
 		return Row{"remaining": remaining, "reset": reset, "observed": observed, "retained": status == "stale" || status == "error"}
 	}
 	live := Row{"name": name, "timeZone": mobileTimeZone(), "observed": sampled.Unix() / 300 * 300, "task": task, "runningCount": running, "today": today, "five": window(quota["primary"]), "week": window(quota["secondary"])}
-	e := m.putLocked("live", live)
+	e := m.putLocked(mobileDataset("live", client), live)
 	if e == nil {
-		m.projectionKey = key
+		cached.projectionKey = key
 	}
 	changed := before != m.datasetRevisionLocked()
 	if e == nil && changed {
@@ -220,7 +257,11 @@ func (m *MobileHost) project(ctx context.Context) {
 	m.upload()
 }
 func (m *MobileHost) datasetRevisionLocked() string {
-	return fmt.Sprintf("%d:%d:%d", ValueInt(m.datasets["live"]["revision"]), ValueInt(m.datasets["recent"]["revision"]), ValueInt(m.datasets["trends"]["revision"]))
+	var key strings.Builder
+	for _, name := range mobileDatasets {
+		fmt.Fprintf(&key, "%s:%d|", name, ValueInt(m.datasets[name]["revision"]))
+	}
+	return key.String()
 }
 
 type mobileHistoryBucket struct {
@@ -259,7 +300,9 @@ func mobileHistorySum(buckets []mobileHistoryBucket, t time.Time) *mobileSum {
 	return buckets[index].sum
 }
 
-func (m *MobileHost) projectHistory(ctx context.Context, generation int64, key string, now time.Time) error {
+func (m *MobileHost) projectHistory(ctx context.Context, generation int64, key string, now time.Time, client string, cached *mobileAgentProjection) error {
+	groupWhere := `coalesce(json_extract(g.data,'$.client_kind'),'codex')='` + client + `' AND ` + mobileLocalGroup
+	callWhere := `coalesce(json_extract(c.data,'$.client_kind'),'codex')='` + client + `' AND ` + mobileLocalCall
 	now = now.In(time.Local)
 	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
 	recentStart := now.Add(-7 * 24 * time.Hour)
@@ -270,9 +313,9 @@ func (m *MobileHost) projectHistory(ctx context.Context, generation int64, key s
 	endStamp := ledgerStamp(now)
 	var firstStamp string
 	e := db.QueryRowContext(ctx, `SELECT coalesce(min(first_stamp),'') FROM (
-		SELECT min(c.timestamp) AS first_stamp FROM usage_priced_calls c WHERE c.timestamp<=? AND `+mobileLocalCall+`
+		SELECT min(c.timestamp) AS first_stamp FROM usage_priced_calls c WHERE c.timestamp<=? AND `+callWhere+`
 		UNION ALL
-		SELECT min(g.timestamp) AS first_stamp FROM usage_request_groups g WHERE g.timestamp<=? AND g.record_kind='user_request' AND g.is_subagent=0 AND `+mobileLocalGroup+`
+		SELECT min(g.timestamp) AS first_stamp FROM usage_request_groups g WHERE g.timestamp<=? AND g.record_kind='user_request' AND g.is_subagent=0 AND `+groupWhere+`
 	)`, endStamp, endStamp).Scan(&firstStamp)
 	if e != nil {
 		return e
@@ -289,7 +332,7 @@ func (m *MobileHost) projectHistory(ctx context.Context, generation int64, key s
 		periods[n] = mobileNewSum()
 		models[n] = map[string]*mobileSum{}
 	}
-	rows, e := db.QueryContext(ctx, `SELECT c.data,c.timestamp FROM usage_priced_calls c WHERE c.timestamp<=? AND `+mobileLocalCall+` ORDER BY c.timestamp,c.id`, endStamp)
+	rows, e := db.QueryContext(ctx, `SELECT c.data,c.timestamp FROM usage_priced_calls c WHERE c.timestamp<=? AND `+callWhere+` ORDER BY c.timestamp,c.id`, endStamp)
 	if e != nil {
 		return e
 	}
@@ -308,6 +351,9 @@ func (m *MobileHost) projectHistory(ctx context.Context, generation int64, key s
 			continue
 		}
 		t = t.In(time.Local)
+		if client == "claude_code" {
+			r["model"] = firstString(r["returned_model"], r["upstream_model"], r["model"])
+		}
 		if d := mobileHistorySum(buckets, t); d != nil {
 			d.calls.add(r)
 		}
@@ -333,7 +379,7 @@ func (m *MobileHost) projectHistory(ctx context.Context, generation int64, key s
 	}
 	// User-request counts cover all history; approval rows are only needed for
 	// the existing seven-day recent list. No historical request bodies are kept.
-	rows, e = db.QueryContext(ctx, `SELECT g.data,g.timestamp FROM usage_request_groups g WHERE g.timestamp<=? AND ((g.record_kind='user_request' AND g.is_subagent=0) OR (g.timestamp>=? AND g.record_kind IN ('automatic_approval_review','approval_review'))) AND `+mobileLocalGroup+` ORDER BY g.timestamp DESC,g.id DESC`, endStamp, ledgerStamp(recentStart))
+	rows, e = db.QueryContext(ctx, `SELECT g.data,g.timestamp FROM usage_request_groups g WHERE g.timestamp<=? AND ((g.record_kind='user_request' AND g.is_subagent=0) OR (g.timestamp>=? AND g.record_kind IN ('automatic_approval_review','approval_review'))) AND `+groupWhere+` ORDER BY g.timestamp DESC,g.id DESC`, endStamp, ledgerStamp(recentStart))
 	if e != nil {
 		return e
 	}
@@ -404,7 +450,7 @@ func (m *MobileHost) projectHistory(ctx context.Context, generation int64, key s
 				if !approval {
 					ids[ValueString(public["id"])] = ValueString(r["id"])
 				}
-				if !approval && len(preload) < 64 {
+				if !approval && len(preload) < 32 {
 					preload = append(preload, ValueString(public["id"]))
 				}
 			}
@@ -436,20 +482,37 @@ func (m *MobileHost) projectHistory(ctx context.Context, generation int64, key s
 		}
 		pp = append(pp, Row{"days": n, "total": periods[n].metric(), "models": mm})
 	}
+	var futureStamp string
+	if err := db.QueryRowContext(ctx, `SELECT coalesce(min(t),'') FROM (
+        SELECT min(c.timestamp) AS t FROM usage_priced_calls c WHERE c.timestamp>? AND `+callWhere+`
+        UNION ALL SELECT min(g.timestamp) AS t FROM usage_request_groups g WHERE g.timestamp>? AND `+groupWhere+`
+    )`, endStamp, endStamp).Scan(&futureStamp); err != nil {
+		return err
+	}
+	boundary, _ := ParseStamp(futureStamp)
 	m.mu.Lock()
 	if ctx.Err() != nil || !m.enabled || m.store.Generation() != generation {
 		m.mu.Unlock()
 		return nil
 	}
-	if e = m.putLocked("recent", recent); e == nil {
-		e = m.putLocked("trends", Row{"daily": daily, "periods": pp})
+	if e = m.putLocked(mobileDataset("recent", client), recent); e == nil {
+		e = m.putLocked(mobileDataset("trends", client), Row{"daily": daily, "periods": pp})
 	}
 	if e == nil {
-		m.historyKey = key
-		m.requests = ids
-		m.todayMetric = buckets[len(buckets)-1].sum.metric()
-		m.currentTask = task
-		m.runningCount = running
+		cached.historyKey = key
+		cached.projectedAt = now
+		cached.nextBoundary = boundary
+		for hash, id := range m.requests {
+			if strings.HasPrefix(id, "claude:") == (client == "claude_code") {
+				delete(m.requests, hash)
+			}
+		}
+		for hash, id := range ids {
+			m.requests[hash] = id
+		}
+		cached.todayMetric = buckets[len(buckets)-1].sum.metric()
+		cached.currentTask = task
+		cached.runningCount = running
 	}
 	m.pruneDetailsLocked()
 	m.mu.Unlock()
@@ -509,7 +572,13 @@ func (m *MobileHost) pruneDetailsLocked() {
 func (m *MobileHost) getDetail(id string, thumbnails bool) (Row, error) {
 	return m.getDetailWithForce(id, thumbnails, false)
 }
-func mobileDetailSource(request Row) string {
+func mobileDetailSource(request Row, store ...*Store) string {
+	request = CloneRow(request)
+	if len(store) > 0 && normalizedClient(dataString(request, "client_kind")) == "claude_code" {
+		if rows, err := journeyRows(store[0].db, "SELECT uuid,path,offset,line_hash,available,generation FROM claude_locators WHERE item_id=? ORDER BY offset DESC LIMIT 64", dataString(request, "id")); err == nil {
+			request["message_digest"] = HashString(dataJSON(rows))
+		}
+	}
 	raw, _ := mobileJSON(Row{"digest": request["message_digest"], "revision": request["message_revision"], "status": request["request_status"], "preview": request["prompt_preview"], "tokens": request["total_tokens"], "started": request["timestamp"], "completed": request["ended_at"]})
 	return HashString(string(raw))
 }
@@ -531,7 +600,7 @@ func (m *MobileHost) getDetailWithForce(id string, thumbnails, force bool) (Row,
 	}
 	// Match Mac's content dependency: ledger scan generation is a consistency
 	// boundary, not a reason to reread an unchanged request's source messages.
-	sourceKey := mobileDetailSource(request)
+	sourceKey := mobileDetailSource(request, m.store)
 	m.mu.Lock()
 	m.retainContentLocked()
 	if cached := m.details[id]; !force && cached != nil && cached.Expires > float64(time.Now().Unix()) && cached.Source == sourceKey && (!thumbnails || cached.Thumbnails) {
@@ -569,7 +638,7 @@ func (m *MobileHost) getDetailWithForce(id string, thumbnails, force bool) (Row,
 	if e != nil {
 		return nil, e
 	}
-	sourceKey = mobileDetailSource(request)
+	sourceKey = mobileDetailSource(request, m.store)
 	start, ok = ParseStamp(request["timestamp"])
 	if !ok {
 		return nil, errors.New("invalid request timestamp")
@@ -734,4 +803,42 @@ func mobileThumbnail(path string) string {
 		return ""
 	}
 	return base64.StdEncoding.EncodeToString(out.Bytes())
+}
+
+// Reuse the ledger's revision mechanism. Codex activity must not invalidate a
+// Claude history projection, or vice versa. Quota-only changes remain live-only.
+func (m *MobileHost) projectionRevision(ctx context.Context, client string) (int64, error) {
+	db := m.store.db
+	if !m.projectionDependenciesReady {
+		if _, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO usage_revisions(kind,revision) VALUES('mobile:codex',0),('mobile:claude_code',0)`); err != nil {
+			return 0, err
+		}
+		for _, table := range []string{"usage_priced_calls", "usage_request_groups"} {
+			for _, action := range []string{"INSERT", "UPDATE", "DELETE"} {
+				reference := "NEW"
+				if action == "DELETE" {
+					reference = "OLD"
+				}
+				predicate := ""
+				if action == "UPDATE" {
+					predicate = " WHEN NEW.data<>OLD.data"
+					if table == "usage_priced_calls" {
+						predicate += " OR NEW.metrics<>OLD.metrics"
+					}
+				}
+				kinds := `'mobile:'||coalesce(json_extract(` + reference + `.data,'$.client_kind'),'codex')`
+				if action == "UPDATE" {
+					kinds += `, 'mobile:'||coalesce(json_extract(OLD.data,'$.client_kind'),'codex')`
+				}
+				sql := `CREATE TRIGGER IF NOT EXISTS mobile_revision_` + table + `_` + strings.ToLower(action) + ` AFTER ` + action + ` ON ` + table + predicate + ` BEGIN UPDATE usage_revisions SET revision=revision+1 WHERE kind IN (` + kinds + `); END;`
+				if _, err := db.ExecContext(ctx, sql); err != nil {
+					return 0, err
+				}
+			}
+		}
+		m.projectionDependenciesReady = true
+	}
+	var revision int64
+	err := db.QueryRowContext(ctx, "SELECT revision FROM usage_revisions WHERE kind=?", "mobile:"+client).Scan(&revision)
+	return revision, err
 }

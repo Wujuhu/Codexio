@@ -5,7 +5,9 @@ const digest = async value => Array.from(new Uint8Array(await crypto.subtle.dige
 const id = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{16,64}$/.test(value);
 const requestID = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const secret = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{43}$/.test(value);
-const datasets = ['live','recent','trends'];
+const datasets = ['live','recent','trends','live-claude_code','recent-claude_code','trends-claude_code'];
+const baseDataset = value => value.replace(/-claude_code$/,'');
+const agentCapability = 'agent-sources-v1';
 const capability = 'request-details-v1';
 const requestKindCapability = 'request-kinds-v1';
 const requestMetricsCapability = 'request-metrics-v1';
@@ -15,7 +17,7 @@ const imageLimit = 1048576, imageEnvelopeLimit = 1500000, imageRows = 128, image
 const imageMimes = new Set(['image/jpeg','image/png','image/gif','image/webp','image/heic','image/tiff','image/bmp']);
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const dimensions = (width,height) => Number.isSafeInteger(width) && Number.isSafeInteger(height) && width > 0 && height > 0 && Math.max(width,height) <= 2048 && width*height <= 4194304;
-const fields = new Set(['name','timeZone','observed','task','runningCount','today','five','week','remaining','reset','retained','tokens','cost','requests','costComplete','hitRate','id','started','status','preview','model','effort','speed','duration','durationStarted','durationBase','tps','ttft','kind','daily','periods','start','metric','days','total','models']);
+const fields = new Set(['name','timeZone','observed','task','runningCount','today','five','week','remaining','reset','retained','tokens','cost','requests','costComplete','hitRate','id','started','status','preview','model','effort','speed','duration','durationStarted','durationBase','tps','ttft','contextWindow','kind','daily','periods','start','metric','days','total','models']);
 function validPayload(value, depth = 0) {
   if (depth > 8) return false;
   if (value === null || typeof value === 'boolean') return true;
@@ -68,7 +70,7 @@ async function storage(env) {
 }
 async function hasDetails(env) { const tables=await storage(env); return env.DETAILS_ENABLED === '1' && tables.has('request_details') && tables.has('payload_retention'); }
 async function hasImages(env) { const tables=await storage(env); return await hasDetails(env) && env.IMAGES_ENABLED === '1' && tables.has('request_images') && tables.has('image_lifetimes'); }
-async function capabilities(env) { return [requestKindCapability,requestMetricsCapability,...(await hasDetails(env)?[capability]:[]),...(await hasImages(env)?[imageCapability]:[])]; }
+async function capabilities(env) { return [agentCapability,requestKindCapability,requestMetricsCapability,...(await hasDetails(env)?[capability]:[]),...(await hasImages(env)?[imageCapability]:[])]; }
 function validImageReference(item) {
   if(!object(item) || Object.keys(item).some(key=>!['id','name','mime','placement','width','height','expires','availability'].includes(key))
     || !requestID(item.id) || typeof item.name!=='string' || encoder.encode(item.name).length>240
@@ -177,8 +179,9 @@ function validImage(value,record,now) {
   try {const raw=atob(value.data);if(raw.length<1 || raw.length>imageLimit)return false;const bytes=Uint8Array.from(raw,value=>value.charCodeAt(0)), size=rasterDimensions(bytes,value.mime);return size && size[0]===value.width && size[1]===value.height;} catch {return false;}
 }
 function validDataset(value,dataset) {
+  dataset=baseDataset(dataset);
   if(!validPayload(value))return false;
-  const requestKeys=new Set(['id','started','status','preview','model','effort','speed','tokens','cost','duration','durationStarted','durationBase','tps','ttft','kind']);
+  const requestKeys=new Set(['id','started','status','preview','model','effort','speed','tokens','cost','duration','durationStarted','durationBase','tps','ttft','contextWindow','kind']);
   const summaryKeys=new Set(['remaining','reset','observed','retained','tokens','cost','requests','costComplete','hitRate']);
   const safeSummary=item=>object(item) && Object.keys(item).every(key=>summaryKeys.has(key));
   const safeRequest=item=>object(item) && requestID(item.id) && Number.isFinite(item.started) && item.started>0
@@ -186,6 +189,7 @@ function validDataset(value,dataset) {
     && (item.durationBase==null || Number.isFinite(item.durationBase) && item.durationBase>=0)
     && (item.tps==null || item.status==='completed' && Number.isFinite(item.tps) && item.tps>=0)
     && (item.ttft==null || Number.isFinite(item.ttft) && item.ttft>=0)
+    && (item.contextWindow==null || Number.isSafeInteger(item.contextWindow) && item.contextWindow>0)
     && Object.keys(item).every(key=>requestKeys.has(key));
   if(dataset==='recent')return Array.isArray(value) && value.every(safeRequest);
   if(dataset==='live')return object(value) && Object.keys(value).every(key=>['name','timeZone','observed','task','runningCount','today','five','week'].includes(key)) && (value.task==null || safeRequest(value.task)) && safeSummary(value.today) && safeSummary(value.five) && safeSummary(value.week);
@@ -194,6 +198,7 @@ function validDataset(value,dataset) {
   return object(value) && Array.isArray(value.daily) && value.daily.length<=90 && Array.isArray(value.periods) && value.periods.length<=3 && aggregate(value);
 }
 function retainPayload(kind,payload,now) {
+  kind=baseDataset(kind);
   let value=JSON.parse(payload),changed=false;const deadlines=[];
   const recent=item=>object(item) && Number.isFinite(item.started) && item.started>now-retention && item.started<=now+300;
   if(kind==='recent') {const retained=value.filter(recent);changed=retained.length!==value.length;value=retained;deadlines.push(...value.map(item=>item.started+retention));}
@@ -309,7 +314,7 @@ export default {
       if(parts[3]==='data') {
         if(!(await storage(env)).has('payload_retention'))return json({error:'RETENTION_UNSUPPORTED'},503);
         const b=await body(request), dataset=parts[4];
-        if(b.dataset!==dataset||!Number.isSafeInteger(b.revision)||b.revision<1||typeof b.payload!=='string'||encoder.encode(b.payload).length>({live:8000,recent:120000,trends:80000}[dataset])||await digest(b.payload)!==b.digest)return json({error:'INVALID'},400);
+        if(b.dataset!==dataset||!Number.isSafeInteger(b.revision)||b.revision<1||typeof b.payload!=='string'||encoder.encode(b.payload).length>({live:8000,recent:120000,trends:80000}[baseDataset(dataset)])||await digest(b.payload)!==b.digest)return json({error:'INVALID'},400);
         const p=JSON.parse(b.payload);if(!validDataset(p,dataset))return json({error:'INVALID'},400);
         let old=await db.prepare("SELECT d.*,r.source_revision,r.source_digest,r.due FROM datasets d LEFT JOIN payload_retention r ON r.host=d.host AND r.kind='dataset' AND r.name=d.dataset WHERE d.host=? AND d.dataset=?").bind(host,dataset).first();
         if(old && old.due!=null && old.due<=now)old=await retainRow(db,'dataset',old,now,tokenHash);
@@ -424,7 +429,7 @@ export default {
       }
       if(parts[3]==='sync') {
         if(!(await storage(env)).has('payload_retention'))return json({error:'RETENTION_UNSUPPORTED'},503);
-        const rows=await db.prepare("SELECT d.*,r.source_revision,r.source_digest,r.due FROM datasets d LEFT JOIN payload_retention r ON r.host=d.host AND r.kind='dataset' AND r.name=d.dataset WHERE d.host=? AND d.updated>? LIMIT 3").bind(host,now-retention).all();
+        const rows=await db.prepare("SELECT d.*,r.source_revision,r.source_digest,r.due FROM datasets d LEFT JOIN payload_retention r ON r.host=d.host AND r.kind='dataset' AND r.name=d.dataset WHERE d.host=? AND d.updated>? LIMIT 6").bind(host,now-retention).all();
         const retained=[];
         for(const row of rows.results)retained.push(row.source_revision==null || row.due!=null && row.due<=now?await retainRow(db,'dataset',row,now):row);
         const supported=await hasDetails(env);
@@ -438,7 +443,7 @@ export default {
           if(due.results.length) for(const item of due.results.slice(0,2))await retainDetailIfDue(db,host,item.name,now);
         }
         const versions=supported?await db.prepare('SELECT id,revision FROM request_details WHERE host=? AND expires>? LIMIT 64').bind(host,now).all():{results:[]};
-        return json({action:'sync',capabilities:await capabilities(env),detailVersions:Object.fromEntries(versions.results.map(row=>[row.id,row.revision])),seen:Math.max(0,...retained.map(row=>row.updated)),datasets:retained.filter(row=>row.revision>Number(url.searchParams.get(row.dataset)??0)).map(({dataset,revision,digest,payload})=>({dataset,revision,digest,payload}))});
+        return json({action:'sync',capabilities:await capabilities(env),detailVersions:Object.fromEntries(versions.results.map(row=>[row.id,row.revision])),seen:Math.max(0,...retained.map(row=>row.updated)),datasets:retained.filter(row=>(url.searchParams.get('agents')==='1' || !row.dataset.endsWith('-claude_code')) && row.revision>Number(url.searchParams.get(row.dataset)??0)).map(({dataset,revision,digest,payload})=>({dataset,revision,digest,payload}))});
       }
       return json({error:'NOT_FOUND'},404);
     } catch { return json({error:'SYNC_UNAVAILABLE'},503); }

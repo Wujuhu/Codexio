@@ -43,6 +43,11 @@ def main():
     shutil.copy2(ROOT / "src/codexio/icons/wordmark.png", wordmark / "wordmark.png")
     (wordmark / "Contents.json").write_text(json.dumps({"images":[{"filename":"wordmark.png","idiom":"universal"}],"info":{"author":"xcode","version":1},"properties":{"template-rendering-intent":"template"}}), encoding="utf-8")
     (assets / "Contents.json").write_text(json.dumps({"images":[{"filename":"AppIcon.png","idiom":"universal","platform":"ios","size":"1024x1024"}],"info":{"author":"xcode","version":1}}), encoding="utf-8")
+    for name, source in [("AgentChatGPT", "chatgpt"), ("AgentClaude", "claude-code")]:
+        image = assets.parent / (name + ".imageset")
+        image.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / "windows/frontend/public/client-icons" / (source + ".svg"), image / "logo.svg")
+        (image / "Contents.json").write_text(json.dumps({"images":[{"filename":"logo.svg","idiom":"universal"}],"info":{"author":"xcode","version":1},"properties":{"template-rendering-intent":"template","preserves-vector-representation":True}}), encoding="utf-8")
     run("xcrun", "actool", assets.parent, "--compile", APP, "--platform", "iphoneos", "--minimum-deployment-target", "26.0", "--app-icon", "AppIcon", "--target-device", "iphone", "--output-partial-info-plist", STAGE / "asset-info.plist")
     info = plistlib.loads((STAGE / "asset-info.plist").read_bytes())
     info.update({"CFBundleIdentifier":"com.wujuhu.codexio.ios", "CFBundleExecutable":"Codexio", "CFBundleName":"Codexio", "CFBundleDisplayName":"Codexio",

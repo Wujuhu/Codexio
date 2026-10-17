@@ -488,6 +488,11 @@ func (s *Store) claudeEntry(tx *sql.Tx, e, state Row, root, path, identity, gene
 			text, _ := claudeText(message["content"])
 			r = Row{"id": request, "client_kind": "claude_code", "session_id": session, "turn_id": prompt, "timestamp": timestamp, "started_at": timestamp, "prompt_preview": clip(text, 320), "request_status": "unknown", "status": "unknown", "record_kind": "user_request", "has_user_message": true, "source_id": "local:claude:" + HashString(root)[:16], "client_origin": state["client_origin"], "user_uuid": uuid, "model": e["requestedModel"], "reasoning_effort": e["effort"]}
 		}
+		for _, key := range []string{"projectId", "projectName"} {
+			if dataString(e, key) != "" {
+				r[key] = e[key]
+			}
+		}
 		if err := claudeSaveRequest(tx, r); err != nil {
 			return err
 		}

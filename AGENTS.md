@@ -143,3 +143,6 @@
 - Mac／Windows 使用报告在右侧提供 ChatGPT／Claude 两个 Logo，切换日报、周报、月报的数据来源；报告顶部字样显示所选 Agent，其余样式、指标和导出 UI 共用。首次打开跟随主页面 Agent，报告内切换独立；双方使用各自本地账本与价格规则，缓存和归档包含 Agent／来源身份，不重新采集日志或查询额度。自动日报仍共用每日一次的已读状态，导出使用所选 Agent 的数据和标题。
 
 - Claude 定价页按用户确认继续显示 API 模型 ID（例如 `claude-opus-5-5`），搜索、编辑和计价复用已有 `model`；不以 `display_name` 替换定价页的 ID，不改写账本或模型标识。
+
+- Claude 的执行行程复用现有 Mac／Windows 两栏 UI、筛选、详情与分页，只切换数据提供方；使用既有 UUID 归属和经验证的日志偏移读取所选请求，缺少明确归属不按时间或正文猜测。项目仅采用明确项目元数据，其余归“聊天”。
+- iOS 首页通过 ChatGPT／Claude Logo 切换任务、额度、用量和请求记录，切换只读取本机已同步缓存。局域网和云端使用 `agent-sources-v1` 协商，原 `live/recent/trends` 保留 ChatGPT，Claude 使用对应的 `-claude_code` 数据集；旧端仍按原协议工作，正文／图片共用既有总容量和保留期，不新增采集器或额度 HTTP 查询。

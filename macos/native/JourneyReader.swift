@@ -95,7 +95,7 @@ final class JourneyReader {
     }
 }
 
-private final class JourneyLines {
+final class JourneyLines {
     let handle: FileHandle;let end: UInt64
     private var offset:UInt64;private var buffer=Data();private var discarded=0
     private var prefix=Data(),tail=Data()

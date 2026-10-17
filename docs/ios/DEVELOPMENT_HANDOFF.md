@@ -1,6 +1,6 @@
 # iOS 主 App 与 Mac 同步开发交付 · 2026-09-28
 
-> 最新发布约定：用户已要求以后每次 Release 必须上传 `Codexio.ipa`。默认附件为 Mac ZIP、IPA、latest.json；IPA 版本独立管理，不暗自改版。以下记录中“不增加 IPA 为正式附件”属于当时历史约定，现已由本条取代；现有 v0.3.2 不自动补传。
+> 当前开发版为 `0.3.10-beta`，iOS 默认跟随 Mac／Windows 中较新的源码版本；beta 仅供本地测试。正式发布默认同时提供 Mac ZIP、Windows EXE、iOS IPA 和共享 `latest.json`，由发布协调脚本核验后交付；历史版本附件不自动补传。下文早期版本号、独立版本管理及三附件约定保留为历史记录，以当前 AGENTS.md 为准。
 
 本次是 **0.3.1 本地开发版**，不是正式发布。用户已授权使用其 Cloudflare 账号、默认 workers.dev 域名，供自己和少量朋友使用。未推送 Git、未发布 GitHub Release、未升级套餐，未启动或替换用户正在使用的 Mac 安装版。
 
@@ -128,3 +128,9 @@ Codexio 配置每天最多 20,000 次进入业务处理的请求预算，持久�
 ### 用户最终调整：订阅页复用概览额度布局
 
 撤回上述左侧资料栏和订阅专用英文短日期。标题下只显示一行“套餐名称  邮箱”，下方直接复用概览页同参数的 `AdaptiveRow(spacing:12)` 与两张默认 `QuotaCard`，因此字号、横向标题／数字布局、进度条和重置时间均与概览一致。移除额外价格／续费信息展示，但不删除已保存资料；“编辑资料”入口仍不恢复。最新 Mac 开发日志为 `build/logs/subscription-overview-layout-build.log`；仅改 Mac，版本不变。
+
+## 2026-10-17：0.3.10-beta 双 Agent 阅读
+
+首页新增 ChatGPT／Claude 两个原生模板 Logo，选择持久保存，概览任务、5 小时／周额度、用量趋势和请求记录共用原有 UI，并切换到各自已同步缓存。旧缓存继续作为 ChatGPT 数据读取；切换 Agent 清理详情导航，不触发采集或历史聚合。
+
+Mac／Windows 共用 `agent-sources-v1` 能力与六份有界摘要；局域网新手机声明能力，云同步使用 `agents=1`，旧手机只收原三份。上下文容量按可选正整数传输。正文、附件与图片复用原有按需读取、总容量和保留期限，所有采集与额度观察仍依赖桌面主 App；Claude 不增加 OAuth／密钥 HTTP 查询。图标复用 `windows/frontend/public/client-icons` 的矢量源，并纳入 IPA 源码指纹。该改动没有 iPhone 真机端到端验证。

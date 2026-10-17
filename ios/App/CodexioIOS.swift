@@ -207,6 +207,9 @@ struct OverviewPage: View {
                         Text("概览").font(.largeTitle.bold())
                         if store.refreshing { ProgressView().controlSize(.small).frame(width:16,height:16).accessibilityLabel("正在同步") }
                         Spacer()
+                        HStack(spacing:4){ForEach(MobileAgent.allCases,id:\.self){agent in
+                            Button{store.selectAgent(agent)}label:{Image(agent.logo).renderingMode(.template).resizable().scaledToFit().frame(width:22,height:22).padding(7).background(store.agent == agent ? Color.primary.opacity(0.09):Color.clear,in:RoundedRectangle(cornerRadius:9))}.buttonStyle(.plain).accessibilityLabel(agent.title).accessibilityAddTraits(store.agent == agent ? .isSelected:[])
+                        }}
                         Button(action:{store.refresh()}) {Label("刷新",systemImage:"arrow.clockwise")}.buttonStyle(.glass).disabled(store.refreshing || store.device == nil)
                     }
                     HStack(alignment:.firstTextBaseline) {
@@ -326,7 +329,7 @@ struct UsagePage: View {
                     }
                 }
             }.padding(20)
-        }.background(Color(uiColor:.systemGroupedBackground)).onChange(of:range) {_,_ in selected=nil}
+        }.background(Color(uiColor:.systemGroupedBackground)).onChange(of:range) {_,_ in selected=nil}.onChange(of:store.agent){_,_ in selected=nil}
     }
     private func legend(_ label: String,_ color: Color) -> some View { HStack(spacing:5) {Circle().fill(color).frame(width:6,height:6);Text(label).foregroundStyle(.secondary)} }
     private var chart: some View {
@@ -358,13 +361,14 @@ struct RequestSummary: View {
 struct RecordsPage: View {
     @EnvironmentObject var store: MobileStore
     @State private var query = ""
+    @State private var queries:[MobileAgent:String]=[:]
     @State private var count = 20
     private var rows: [MobileRequest] {store.recent.filter {query.isEmpty || ($0.preview ?? "").localizedCaseInsensitiveContains(query) || $0.model.localizedCaseInsensitiveContains(query)}}
     var body: some View {
         List {
             ForEach(Array(rows.prefix(count))) {item in NavigationLink(value:item.id) {RequestSummary(item:store.request(item.id) ?? item,active:store.tab == 2 && store.recordPath.isEmpty)}}
             if count < rows.count {Button("显示更多") {count+=20}.frame(maxWidth:.infinity)}
-        }.searchable(text:$query,prompt:"搜索请求或模型").overlay {if rows.isEmpty {ContentUnavailableView("暂无记录",systemImage:"list.bullet")}}.onChange(of:query) {_,_ in count=20}.refreshable {store.refresh()}
+        }.searchable(text:$query,prompt:"搜索请求或模型").overlay {if rows.isEmpty {ContentUnavailableView("暂无记录",systemImage:"list.bullet")}}.onChange(of:query) {_,_ in count=20}.onChange(of:store.agent){previous,current in queries[previous]=query;query=queries[current] ?? "";count=20}.refreshable {store.refresh()}
     }
 }
 struct RequestDetails: View {

@@ -22,7 +22,7 @@ final class ClaudeLedger {
     private var files: [URL] = []
     private var discoveredAt: TimeInterval = -.infinity
     private(set) var warning: String?
-    private let scope: String
+    let scope: String
     private var affected = Set<String>()
     private var affectedSessions = Set<String>()
     private var changedFiles = false
@@ -260,6 +260,7 @@ final class ClaudeLedger {
         if !entry.isEmpty { sessionInfo["client_origin"] = ["cli","claude-desktop-3p"].contains(entry) ? entry : NSNull() }
         if !row.string("version").isEmpty {sessionInfo["version"] = row.string("version")}
         if !row.string("cwd").isEmpty {sessionInfo["cwd"] = row.string("cwd")}
+        for key in ["projectId","projectName"] where !row.string(key).isEmpty {sessionInfo[key] = row.string(key)}
         var title = existingSession?.string("title") ?? ""
         if type == "custom-title", !row.string("customTitle").isEmpty {title = String(row.string("customTitle").prefix(400))}
         try database.run("INSERT INTO claude_sessions VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,data=excluded.data WHERE title<>excluded.title OR data<>excluded.data",[session,title,jsonString(sessionInfo)])

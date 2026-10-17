@@ -185,11 +185,11 @@ final class MobileImageCache {
         for item in attachments where item.string("mime").hasPrefix("image/") {
             let placement = item.string("placement","user") == "final" ? "final" : "user"
             let path = item.string("path"), reference = item.string("reference")
-            let source = path.isEmpty && ["https","http"].contains(URL(string:reference)?.scheme?.lowercased() ?? "") ? reference : path
+            let source = path.isEmpty && (["https","http"].contains(URL(string:reference)?.scheme?.lowercased() ?? "") || reference.hasPrefix("data:image/")) ? reference : path
             let name = MobileProtocol.prefix(item.string("name","图片"),bytes:240)
             let created = floor(item.number("created_at") ?? started)
             let expires = created+MobileProtocol.imageRetention
-            let key = requestID+"|"+placement+"|"+(source.isEmpty ? item.string("id",name) : source)
+            let key = requestID+"|"+placement+"|"+(source.isEmpty ? item.string("id",name) : source.hasPrefix("data:image/") ? MobileProtocol.hash(Data(source.utf8)) : source)
             guard used.insert(key).inserted else { continue }
             sourceRequests[key] = requestID
             var image = MobileImageReference(id:MobileProtocol.hash(Data(key.utf8)),name:name,mime:item.string("mime","image/png"),placement:placement,width:0,height:0,expires:expires,availability:expires <= Date().timeIntervalSince1970 ? "expired" : "unavailable")
@@ -198,7 +198,11 @@ final class MobileImageCache {
                 if let url {
                     let stamp: String
                     var bytes: Data?
-                    if url.isFileURL {
+                    if url.scheme == "data" {
+                        stamp=MobileProtocol.hash(Data(source.utf8))+"|\(expires)"
+                        if let old=cached[key],old.stamp==stamp,old.image.availability=="available",stored[old.image.id].map(available)==true{image=retain(old,key:key).image;append(image,item:item,to:&result);continue}
+                        if source.utf8.count<=16_777_316,let comma=source.firstIndex(of:","),source[..<comma].hasSuffix(";base64"){bytes=Data(base64Encoded:String(source[source.index(after:comma)...]))}
+                    } else if url.isFileURL {
                         let file = url.resolvingSymlinksInPath(), value = FileStamp(file)
                         localSources[key] = file
                         stamp = "\(file.path)|\(value.size)|\(value.modified?.timeIntervalSince1970 ?? 0)|\(value.inode)|\(expires)"

@@ -34,7 +34,18 @@ import (
 )
 
 const mobileOrigin = "https://codexio-sync.503948883.workers.dev"
-const mobileLimit = 262144
+const mobileLimit = 1048576
+
+var mobileDatasets = []string{"live", "recent", "trends", "live-claude_code", "recent-claude_code", "trends-claude_code"}
+
+func mobileDataset(kind, client string) string {
+	if client == "claude_code" {
+		return kind + "-claude_code"
+	}
+	return kind
+}
+func mobileBaseDataset(kind string) string { return strings.TrimSuffix(kind, "-claude_code") }
+
 const mobileDetailLimit = 1048576
 const mobileDetailChunk = 65536
 
@@ -52,62 +63,66 @@ type mobileDetail struct {
 	ImageRetry int64
 }
 type MobileHost struct {
-	mu                        sync.Mutex
-	actionMu                  sync.Mutex
-	directory                 string
-	store                     *Store
-	quota                     *QuotaService
-	config                    func() Row
-	mock                      bool
-	changed                   func()
-	host                      Row
-	lastSaved                 Row
-	name, status, lastError   string
-	lastErrorAction           string
-	lastErrorTemporary        bool
-	cloudError                string
-	cloudErrorTemporary       bool
-	uploadRetry               time.Time
-	uploadFailures            int
-	enabled, closed           bool
-	ticket, pending           Row
-	qrData, qrURL             string
-	listener                  net.Listener
-	bonjour                   *zeroconf.Server
-	connections               map[net.Conn]bool
-	ctx                       context.Context
-	cancel                    context.CancelFunc
-	workerCancel              context.CancelFunc
-	workerCtx                 context.Context
-	wake                      chan struct{}
-	clients                   chan struct{}
-	datasets                  map[string]Row
-	requests                  map[string]string
-	details                   map[string]*mobileDetail
-	projectionKey, historyKey string
-	sent                      map[string]int64
-	sentDetails               map[string]string
-	cloudReaders              map[string]bool
-	cloudDetails              bool
-	cloudRequestKinds         bool
-	cloudRequestMetrics       bool
-	cloudImages               bool
-	imagesPending             bool
-	parentsPending            bool
-	detailDeferred            map[string]int64
-	nextContentExpiry         int64
-	cloudRecent               Row
-	cloudRecentNeedsUpload    bool
-	cloudLive                 Row
-	cloudLiveNeedsUpload      bool
-	cloudDetailStamps         map[string]Row
-	nextCapability            time.Time
-	uploading, uploadAgain    bool
-	cloudMu                   sync.Mutex
-	detailMu                  sync.Mutex
-	todayMetric               Row
-	currentTask               Row
-	runningCount              int
+	mu                          sync.Mutex
+	actionMu                    sync.Mutex
+	directory                   string
+	store                       *Store
+	quota                       *QuotaService
+	claudeQuota                 func() Row
+	projections                 map[string]*mobileAgentProjection
+	projectionDependenciesReady bool
+	config                      func() Row
+	mock                        bool
+	changed                     func()
+	host                        Row
+	lastSaved                   Row
+	name, status, lastError     string
+	lastErrorAction             string
+	lastErrorTemporary          bool
+	cloudError                  string
+	cloudErrorTemporary         bool
+	uploadRetry                 time.Time
+	uploadFailures              int
+	enabled, closed             bool
+	ticket, pending             Row
+	qrData, qrURL               string
+	listener                    net.Listener
+	bonjour                     *zeroconf.Server
+	connections                 map[net.Conn]bool
+	ctx                         context.Context
+	cancel                      context.CancelFunc
+	workerCancel                context.CancelFunc
+	workerCtx                   context.Context
+	wake                        chan struct{}
+	clients                     chan struct{}
+	datasets                    map[string]Row
+	requests                    map[string]string
+	details                     map[string]*mobileDetail
+	projectionKey, historyKey   string
+	sent                        map[string]int64
+	sentDetails                 map[string]string
+	cloudReaders                map[string]bool
+	cloudDetails                bool
+	cloudRequestKinds           bool
+	cloudRequestMetrics         bool
+	cloudAgents                 bool
+	cloudImages                 bool
+	imagesPending               bool
+	parentsPending              bool
+	detailDeferred              map[string]int64
+	nextContentExpiry           int64
+	cloudRecent                 Row
+	cloudRecentNeedsUpload      bool
+	cloudLive                   Row
+	cloudLiveNeedsUpload        bool
+	cloudDetailStamps           map[string]Row
+	nextCapability              time.Time
+	uploading, uploadAgain      bool
+	cloudMu                     sync.Mutex
+	detailMu                    sync.Mutex
+	todayMetric                 Row
+	currentTask                 Row
+	runningCount                int
 }
 
 func NewMobileHost(directory string, store *Store, quota *QuotaService, config func() Row, mock bool, changed func()) *MobileHost {
@@ -115,7 +130,7 @@ func NewMobileHost(directory string, store *Store, quota *QuotaService, config f
 	if name == "" {
 		name = "Windows PC"
 	}
-	return &MobileHost{directory: directory, store: store, quota: quota, config: config, mock: mock, changed: changed, name: mobilePrefix(name, 40), status: "尚未开启", connections: map[net.Conn]bool{}, wake: make(chan struct{}, 1), clients: make(chan struct{}, 8), datasets: map[string]Row{}, requests: map[string]string{}, details: map[string]*mobileDetail{}, sent: map[string]int64{}, sentDetails: map[string]string{}, cloudReaders: map[string]bool{}, cloudDetailStamps: map[string]Row{}, detailDeferred: map[string]int64{}}
+	return &MobileHost{directory: directory, store: store, quota: quota, projections: map[string]*mobileAgentProjection{}, config: config, mock: mock, changed: changed, name: mobilePrefix(name, 40), status: "尚未开启", connections: map[net.Conn]bool{}, wake: make(chan struct{}, 1), clients: make(chan struct{}, 8), datasets: map[string]Row{}, requests: map[string]string{}, details: map[string]*mobileDetail{}, sent: map[string]int64{}, sentDetails: map[string]string{}, cloudReaders: map[string]bool{}, cloudDetailStamps: map[string]Row{}, detailDeferred: map[string]int64{}}
 }
 func (m *MobileHost) notify() {
 	if m.changed != nil {
@@ -270,7 +285,7 @@ func (m *MobileHost) loadProjectionLocked() error {
 		_, isString := envelope["payload"].(string)
 		return isString && ValueString(envelope["dataset"]) == dataset && ValueInt(envelope["revision"]) > 0 && len(payload) <= mobileLimit && json.Valid([]byte(payload)) && HashString(payload) == ValueString(envelope["digest"])
 	}
-	for _, dataset := range []string{"live", "recent", "trends"} {
+	for _, dataset := range mobileDatasets {
 		if envelope := ValueRow(ValueRow(value["datasets"])[dataset]); valid(envelope, dataset) {
 			m.datasets[dataset] = envelope
 		}
@@ -512,6 +527,7 @@ func (m *MobileHost) enable() error {
 	m.lastErrorAction = ""
 	m.nextCapability = time.Time{}
 	m.projectionKey = ""
+	m.projections = map[string]*mobileAgentProjection{}
 	m.historyKey = ""
 	m.mu.Unlock()
 	go m.serve(ctx, listener)
@@ -715,6 +731,7 @@ func (m *MobileHost) Action(action string, v Row) (Row, error) {
 				e = m.saveLocked()
 			}
 			m.projectionKey = ""
+			m.projections = map[string]*mobileAgentProjection{}
 			m.mu.Unlock()
 			m.RequestProjection()
 		}

@@ -1,7 +1,7 @@
 <script lang="ts">
  import{onMount,onDestroy,tick}from'svelte';import{api,listen,rows,text,compact,cost,number,type Row}from'../lib/api';import{tr}from'../lib/i18n';
  import{modelName,effort,speed,requestStatus,fullTime}from'./logFormat';import{journeyBlocks,journeyTitle,journeyDuration,eventFields,fileAction}from'./journey';import JourneyEvent from './JourneyEvent.svelte';import JourneyPicker from './JourneyPicker.svelte';import JourneyCommand from './JourneyCommand.svelte';import JourneyIcon from './JourneyIcon.svelte';
- export let revision:any;export let onerror:((e:any)=>void)|undefined;
+ export let client="codex";export let revision:any;export let onerror:((e:any)=>void)|undefined;
  let projects:Row[]=[],threads:Row[]=[],requests:Row[]=[],project='',thread:Row={},request:Row={},summary:Row={},selected:Row={},events:Row[]=[];
  let threadNext='',requestPage=1,requestPages=1,next='',scope='',cursors=[''],scopeLabel='',busy=false,error='',ready=false,lastRevision:any;
  let catalogTicket=0,threadTicket=0,flowTicket=0,collapsed=new Set<string>(),catalogSignature='',flowSignature='';let pane:HTMLDivElement,flowScroll:HTMLDivElement;
@@ -12,7 +12,7 @@
  $: requestFields=[[tr('费用'),cost(request.cost_usd)],['Token',compact(request.total_tokens)],[tr('模型调用'),text(request.call_count)],[tr('耗时'),journeyDuration(request.duration_ms)],[tr('模型'),modelName(request.model)],[tr('推理强度'),effort(request.reasoning_effort)||'—'],[tr('速度'),speed(request.service_tier)],[tr('状态'),requestStatus(request)],[tr('开始'),fullTime(request.started_at??request.timestamp)],[tr('结束'),fullTime(request.ended_at)]];
  onMount(()=>{ready=true;lastRevision=revision;void loadCatalog('');const stop=listen('codexio:clock',()=>{if(document.visibilityState==='visible')void loadCatalog(project)});return stop});
  onDestroy(()=>{ready=false;catalogTicket++;threadTicket++;flowTicket++});
- async function loadCatalog(target:string,before='',preferred?:Row){const ticket=++catalogTicket;try{const data=await api('GetJourneyCatalog',target,before);if(ticket!==catalogTicket)return;if(!project&&rows(data.threads).length){const latest=rows(data.threads)[0];project=String(latest.project_id??'chats');await loadCatalog(project,'',latest);return}projects=rows(data.projects);threadNext=text(data.next,'');const signature=JSON.stringify(rows(data.threads).map(t=>[t.id,t.title,t.project_id]));if(signature!==catalogSignature){catalogSignature=signature;threads=rows(data.threads)}if(preferred)chooseThread(preferred);else if(!thread.id&&threads.length)chooseThread(threads[0]);}catch(e){if(ticket===catalogTicket)error=String(e)}}
+ async function loadCatalog(target:string,before='',preferred?:Row){const ticket=++catalogTicket;try{const data=await api('GetClientJourneyCatalog',client,target,before);if(ticket!==catalogTicket)return;if(!project&&rows(data.threads).length){const latest=rows(data.threads)[0];project=String(latest.project_id??'chats');await loadCatalog(project,'',latest);return}projects=rows(data.projects);threadNext=text(data.next,'');const signature=JSON.stringify(rows(data.threads).map(t=>[t.id,t.title,t.project_id]));if(signature!==catalogSignature){catalogSignature=signature;threads=rows(data.threads)}if(preferred)chooseThread(preferred);else if(!thread.id&&threads.length)chooseThread(threads[0]);}catch(e){if(ticket===catalogTicket)error=String(e)}}
  function chooseProject(id:string){error='';project=id;thread={};request={};selected={};requests=[];events=[];flowSignature='';threads=[];catalogSignature='';threadTicket++;flowTicket++;void loadCatalog(project)}
  function chooseThread(row:Row){error='';thread=row;request={};selected={};events=[];flowSignature='';scope='';ancestors=[];cursors=[''];flowTicket++;void loadThread(1)}
  async function loadThread(page=requestPage){const id=thread.id,ticket=++threadTicket;try{const data=await api('GetJourneyThread',id,page);if(ticket!==threadTicket||thread.id!==id)return;requests=rows(data.requests);summary=data.summary??{};requestPage=Number(data.page??page);requestPages=Number(data.pages??1);if(!request.id&&requests.length)chooseRequest(requests[0]);else{const current=requests.find(r=>r.id===request.id);if(current){request=current;void loadFlow(cursors.at(-1)??'')}}}catch(e){if(ticket===threadTicket)error=String(e)}}
@@ -21,7 +21,7 @@
  function chooseAgent(event:Row){ancestors=[...ancestors.slice(-7),{scope,label:scopeLabel,cursors:[...cursors],scroll:flowScroll?.scrollTop??0}];scope=event.agent_id;scopeLabel=text(event.preview,tr('子代理'));cursors=[''];selected={};events=[];flowSignature='';void loadFlow('',0)}
  function back(){const previous=ancestors.at(-1);ancestors=ancestors.slice(0,-1);scope=previous?.scope??'';scopeLabel=previous?.label??'';cursors=previous?.cursors??[''];selected={};events=[];flowSignature='';void loadFlow(cursors.at(-1)??'',previous?.scroll??0)}
  function toggle(row:Row){selected=row;const set=new Set(collapsed);set.has(row.id)?set.delete(row.id):set.add(row.id);collapsed=set}
- async function open(){try{await api('OpenChat',thread.id)}catch(e){onerror?.(e)}}
+ async function open(){try{await api('OpenJourneySource',client,thread.id)}catch(e){onerror?.(e)}}
  // Same stable viewport coordinates as Logs.svelte's native column handles.
  function begin(event:PointerEvent){if(event.button!==0)return;event.preventDefault();drag={x:event.clientX,split,width:pane.clientWidth}}
  function move(event:PointerEvent){if(drag)split=Math.max(.38,Math.min(.75,drag.split+(event.clientX-drag.x)/drag.width))}
@@ -49,7 +49,7 @@
     {#if !busy&&!blocks.length}<p class="muted">—</p>{/if}
     <div class="flow-pages"><button disabled={cursors.length<=1} onclick={()=>{cursors=cursors.slice(0,-1);void loadFlow(cursors.at(-1)??'',0)}}>{tr('上一页')}</button><span>{cursors.length}</span><button disabled={!next} onclick={()=>{cursors=[...cursors,next];void loadFlow(next,0)}}>{tr('下一页')}</button></div>
    </div>
-   <footer><button disabled={!thread.id} onclick={open}>{tr('在 Codex 中继续 ↗')}</button></footer>
+   <footer><button disabled={!thread.id} onclick={open}>{tr(client==='claude_code'?'查看本地记录 ↗':'在 Codex 中继续 ↗')}</button></footer>
   </div>
   <button class="pane-handle" aria-label={tr('调整详情栏宽度')} onpointerdown={begin} onkeydown={resizeKey} ondblclick={()=>split=48/77}></button>
   <aside class="journey-inspector"><h4>{text(thread.title)}</h4><div class="metrics">{#each [[tr('费用'),cost(summary.cost_usd)],['Token',compact(summary.tokens)],[tr('请求'),text(summary.requests)],[tr('模型调用'),text(summary.calls)]] as [label,value]}<div><small>{label}</small><strong>{value}</strong></div>{/each}</div>

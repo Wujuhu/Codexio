@@ -47,12 +47,23 @@ final class AppState: ObservableObject {
     let fetchActivity = FetchActivity()
     let quotaClock = ScanClock()
     let menuQuotaClock = ScanClock()
-    lazy var mobileSync = MobileSync(paths: paths, detailProvider: { [weak self] id in try self?.database.requestMessageDetail(id) }, detailPreparer: { [weak self] ids in try self?.database.prepareRequestMessageDetails(ids) })
+    lazy var mobileSync = MobileSync(paths: paths, detailProvider: { [weak self] id in
+        guard let self else{return nil}
+        return try self.dataQueue.sync {id.hasPrefix("claude_code:") ? try self.claudeLedger.mobileDetail(id) : try self.database.requestMessageDetail(id)}
+    }, detailPreparer: { [weak self] ids in try self?.dataQueue.sync {try self?.database.prepareRequestMessageDetails(ids.filter{!$0.hasPrefix("claude_code:")})} })
+    private var claudeMobilePending=false
+    private var claudeMobileKey=""
+    private var claudeMobileNext=Date.distantPast
+    private var claudeMobileTimeBoundary=Date.distantFuture
+    private var claudeMobileLastObserved=Date.distantPast
+    private var claudeMobileDayKey=""
+    private var claudeMobileSnapshot:ClaudeMobileSnapshot?
     var usageReportDirectory: URL { paths.data.appendingPathComponent("Reports", isDirectory: true) }
     private lazy var usageReportStore = UsageReportStore(directory: usageReportDirectory)
     private let brandingQueue = DispatchQueue(label:"com.wujuhu.codexio.branding",qos:.utility)
     private lazy var usageCache = UsageSnapshotCache(database:database,catalog:catalog)
     lazy var journeyReader = JourneyReader(database)
+    lazy var claudeJourney = ClaudeJourney(claudeLedger)
     let journeyCatalog = JourneyCatalog()
     private let objectFiles = ObjectFileCache()
     let overviewProjection = AsyncProjection(TrendProjection())
@@ -679,6 +690,22 @@ final class AppState: ObservableObject {
     func publishWidget() {
         guard !paths.mock, !stopped else { return }
         mobileSync.update(usage,quota:menuQuota,observed:clock.updated)
+        if mobileSync.enabled,!claudeMobilePending,!paths.mock {
+            claudeMobilePending=true
+            let sync=mobileSync,name=mobileSync.deviceName,surface=claudeSurface,quota=claudeQuota,fresh=claudeQuotaFresh,observed=claudeClock.updated
+            dataQueue.async{[weak self] in
+                guard let self else{return}
+                let now=Date(),dayKey=String(Calendar.current.startOfDay(for:now).timeIntervalSince1970)+TimeZone.current.identifier
+                let key=String(self.claudeLedger.revision)+"|"+dayKey
+                let timeChanged=dayKey != self.claudeMobileDayKey || now < self.claudeMobileLastObserved || now >= self.claudeMobileTimeBoundary
+                self.claudeMobileLastObserved=now
+                if self.claudeMobileSnapshot == nil || timeChanged || (key != self.claudeMobileKey && now >= self.claudeMobileNext){
+                    if var prepared=try? self.claudeLedger.mobileSnapshot(){prepared.revision=key+"|"+String(now.timeIntervalSince1970);self.claudeMobileSnapshot=prepared;self.claudeMobileKey=key;self.claudeMobileDayKey=dayKey;self.claudeMobileTimeBoundary=self.claudeNextBoundary;self.claudeMobileNext=now.addingTimeInterval(60)}
+                }
+                if let snapshot=self.claudeMobileSnapshot {sync.updateClaude(snapshot,surface:surface,quota:quota,fresh:fresh,observed:observed,name:name)}
+                DispatchQueue.main.async{self.claudeMobilePending=false}
+            }
+        }
         let codex = AgentWidgetPayload.make(request:usage.widgetRequest,today:usage.summaries["today"],quota:quota,fresh:quota.fresh,observed:clock.updated)
         let claude = AgentWidgetPayload.make(request:claudeSurface.request,today:claudeSurface.ready ? claudeSurface.today : nil,quota:claudeQuota,fresh:claudeQuotaFresh,observed:claudeClock.updated)
         // Retain the Codex root fields for older extensions during atomic host

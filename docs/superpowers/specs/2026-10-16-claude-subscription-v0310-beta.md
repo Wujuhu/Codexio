@@ -56,3 +56,11 @@
 - Claude 统计依赖账本 revision、来源目录、价格实际物化结果、本机日期／时区和未来记录边界；纯运行观测依赖独立 revision 与到期边界，不使账本、用量页或价格缓存失效。无展示内容变化不发布 surface 状态；Widget 快照复用内容签名和五分钟保活，两个来源只由同一主 App 写入，退出统一离线。
 - 菜单栏沿用当前 `MenuBar.swift` 的 420 点面板及两张用量卡片，上方左右显示 ChatGPT、Claude 的额度。选择保存在 `menu_bar_agent`，独立于主窗口来源切换；下方汇总、趋势与已有菜单栏字段使用所选来源，点击不访问数据库、不发起采集。复用 `MenuBarReadout` 供实际状态项与设置预览。
 - 最小三项隔离冒烟保持不变。沿用已有 MockGallery 的单张按需原生排版预览，模拟窗口屏外运行且无 Dock／菜单栏条目；不增加测试文件、测试项或界面遍历。交付继续核验版本、Widget 构建、签名和 ZIP。
+
+### 2026-10-17 后续范围
+
+Mac／Windows 的 Claude 用量活动页接入执行行程，沿用既有 UI 和分页，按选中请求及明确 UUID 关系读取经校验的本地来源。iOS 首页增加两方 Logo，局域网及云同步均支持两组独立数据；通过 `agent-sources-v1` 与独立数据集保持旧端兼容。版本继续为 0.3.10-beta，本地开发包不作为正式 Release。
+
+实现复用：执行行程沿用当前 `JourneyView.swift`／`JourneyReader.swift` 与 Windows `journey.go`、`Journey.svelte`，Claude 使用既有账本 UUID 归属、来源身份及偏移校验；手机投影沿用 `MobileSync.swift`、`MobileProtocol.swift` 和 `mobile_projection.go` 的独立 revision／digest、请求详情与图片缓存。Windows 复用 `usage_revisions` 为两方历史分别失效；额度变化只更新 live，跨日、时间回退及未来记录到期仍刷新对应投影。iOS 两方分别保留搜索条件，切换清除上一来源的详情导航及图表悬停选择。
+
+交付记录：Mac 与 Windows 的原有三项隔离冒烟通过；Mac 的 APP／ZIP、签名、0.3.10-beta 版本及 Widget 1.28／29 已核验，Windows 239 个构建输入与本机逐项核对，新 EXE 和清单保留在该主机 `build/dev/windows/pending`（原产物正在使用），本机复制到标准开发目录。iOS arm64 未签名 IPA 完成构建、归档与源码指纹校验，尚未完成 iPhone 真机验证。云端 Worker 已部署，100% 流量版本为 `b0589e0e-3143-4775-a9ec-75d18bd5589a`，回读模块与本地 bundle 的 SHA-256 一致，绑定／保留期／清理计划未改变；没有新增生产模拟数据，也没有 Git 推送或 GitHub Release。完整记录位于 `build/checks/claude-journey-ios-v0310-beta`。

@@ -98,7 +98,7 @@ func (m *MobileHost) pendingImageDetails(ctx context.Context, images bool, limit
 		if err := rows.Scan(&id, &source, &digest, &payload, &revision, &current); err != nil {
 			return nil, err
 		}
-		item := Row{"id": id, "refresh": len(payload) == 0 || source != mobileDetailSource(dataRow(current))}
+		item := Row{"id": id, "refresh": len(payload) == 0 || source != mobileDetailSource(dataRow(current), m.store)}
 		if !ValueBool(item["refresh"]) {
 			item["envelope"] = Row{"dataset": "detail-" + id, "revision": revision, "digest": digest, "payload": string(payload)}
 		}

@@ -96,7 +96,12 @@ func NewService(directory, executable, version string, mock bool, callbacks Desk
 		cancel()
 		return nil, err
 	}
-	s.claudeQuota = NewClaudeAllowance(directory, executable, func() { s.notify("claude_quota") }, func(r Row) {
+	s.claudeQuota = NewClaudeAllowance(directory, executable, func() {
+		s.notify("claude_quota")
+		if s.mobile != nil {
+			s.mobile.RequestProjection()
+		}
+	}, func(r Row) {
 		s.claudeEstimate.Sample(r)
 		s.store.ObserveClaudeContexts(r)
 		if callbacks.Changed != nil {
@@ -122,6 +127,7 @@ func NewService(directory, executable, version string, mock bool, callbacks Desk
 	s.reports = NewReportManager(s.store, directory, s.Config)
 	s.upstream = NewUpstreamProxy(directory, version, s.Config, mock, func() { s.notify("upstream") })
 	s.mobile = NewMobileHost(directory, s.store, s.quota, s.Config, mock, func() { s.notify("mobile") })
+	s.mobile.claudeQuota = s.claudeQuota.Snapshot
 	return s, nil
 }
 

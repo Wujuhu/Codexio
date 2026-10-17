@@ -38,7 +38,7 @@
   <ActivityCalendar data={data.heatmap??data.activity?.rows??[]} clientKind={query.client_kind??'codex'} onselect={selectRange}/>
   <Insights stats={data.insights?.stats??{}} clientKind={query.client_kind??'codex'} section="insights"/>
   <button class="ranking-link" onclick={()=>changeTab('chats')}><span>{tr('聊天用量排行')}</span><svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 10h13m-5-5 5 5-5 5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-  {#if query.client_kind!=='claude_code'}<Journey revision={data.generation} {onerror}/>{/if}
+  {#key query.client_kind}<Journey client={query.client_kind??'codex'} revision={data.generation} {onerror}/>{/key}
  </div>
 {:else if tab==='trend'}
  <div class="usage-section trend-section" role="tabpanel" id="usage-panel-trend" aria-labelledby="usage-tab-trend">

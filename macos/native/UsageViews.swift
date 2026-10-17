@@ -79,7 +79,7 @@ struct LocalActivityView: View {
             }.font(.system(size:16))
             Divider()
             Button { state.usageSection = "threads" } label: { HStack { Text(L("聊天用量排行", "Chat usage ranking")); Spacer(); Image(systemName:"arrow.right") } }.buttonStyle(.plain)
-            if scopedActivity == nil { JourneyView(state:state) }
+            JourneyView(state:state,client:scopedActivity == nil ? .codex : .claudeCode).id(scopedActivity == nil ? DesktopClient.codex : .claudeCode)
         }
     }
     @ViewBuilder private func activityMetrics(separators: Bool) -> some View {
