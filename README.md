@@ -61,9 +61,9 @@ Mac 使用 `/Applications/Codexio.app` 作为稳定安装位置。从其他目�
 
 | 功能 | 内容 |
 | --- | --- |
-| **客户端切换** | Mac／Windows 概览、日志、用量支持切换到本地 Claude Code CLI 与 Claude Desktop Code；每次启动默认 ChatGPT／Codex |
+| **客户端切换** | Mac／Windows 概览、日志、用量、订阅及定价支持切换到本地 Claude Code CLI 与 Claude Desktop Code；每次启动默认 ChatGPT／Codex |
 | **额度与任务** | 5 小时／周剩余额度、重置时间、当前任务与最近请求 |
-| **请求记录** | 按日期、模型、速度和状态筛选，查看 Token、费用、思考强度、耗时与可用正文 |
+| **请求记录** | 按日期、模型和状态筛选，查看 Token、费用、思考强度、速度、耗时与可用正文 |
 | **用量分析** | 费用、总 Token、用户请求、命中率，以及趋势、活动热图、模型构成；聊天排行按本地线程费用或 Token 排序 |
 | **执行行程** | 按项目、线程和用户请求查看模型调用、工具与命令、文件操作、子代理和中断／继续事件，支持返回 Codex 对话 |
 | **AI 使用报告** | 日报、周报与月报，回顾用量和模型偏好，并导出报告图片 |
@@ -77,7 +77,7 @@ Mac 使用 `/Applications/Codexio.app` 作为稳定安装位置。从其他目�
 
 Claude Code 入口合并本机终端与 Desktop 的 Code 会话，默认读取 `~/.claude/projects`（Windows 为 `%USERPROFILE%\.claude\projects`），启动时也可读取 Codexio 自身环境中的 `CLAUDE_CONFIG_DIR`；本轮不处理目录迁移。第三方 API 返回的 GPT／Gemini 等模型仍归 Claude 客户端来源；Token 按真实回复去重，完整输入包括缓存读取和创建，推理 Token 不再次加进输出。Claude 订阅页显示套餐／邮箱、5 小时和周额度、周额度估算，不提供套餐历史或主动重置。额度由 Claude Code 的官方 Mods 被动提供，旧 CLI 兼容 statusLine；不发模型请求、不直接请求 OAuth 额度接口。主 App 运行时默认安装本地桥接，保留已有配置与 statusLine 输出，已有会话在下一次加载插件后生效。CLI Mods 需 2.1.287+，Desktop 本地 Code 引擎需 2.1.286+，无需单独安装 CLI；未支持 Mods 的 Desktop、WSL 和未提供额度的数据源显示 `—`。公开数据不能确认账号时，邮箱／套餐保留 `—`；Desktop-only 有效额度仍可按本机来源和周周期生成估算，不要求额外账号接口查询。Codex／Claude 周估算默认使用 10 分钟完整窗口，也可选 30／60 分钟；采样中断的窗口作废，无消费或额度比例未变化时跳过，不跨窗口累计。费用使用官方 Claude Standard API 基础价及明确的 Claude Code 规则，缓存读取、5 分钟和 1 小时写入分开计算；Fast 按当前受支持型号规则处理，无法确定的费用保留 `—` 或标为估算。速度仅使用原始记录，缺失显示 `—`。活动热图补齐最近 365 天；两种客户端的日志筛选、字段及列宽分别保存，默认隐藏命中率；请求副行显示上下文窗口容量，缺失为 `—`。Claude 暂不提供执行行程；请求耗时优先采用明确轮次计时，缺少时使用最后一次主调用以 `end_turn`／`stop_sequence` 结束整轮的时间减请求开始时间，排除子代理结束时间；工具执行阶段显示 `—`。TPS 仅在请求完成且输出和正耗时有效时计算，TTFT 仍只采用原始首 Token 计时。普通 Chat、Cowork、未落盘的 side chat 和仅存在远端的会话不在本轮范围。
 
-小猫报告按钮始终保留，报告只统计 Codex。Mac 菜单栏、小组件和手机同步继续使用 Codex 数据。Claude 原始日志被清理或删除后，已经采集的统计和请求摘要保留，已删除正文／附件显示缺失。详细范围见 [Claude 适配规格](docs/superpowers/specs/2026-10-13-claude-code-desktop-design.md)。0.3.10-beta 的订阅、定价及版本比较范围见 [本地 beta 规格](docs/superpowers/specs/2026-10-16-claude-subscription-v0310-beta.md)。正式安装包以 Release 说明为准。
+本地 0.3.10-beta 的小猫报告支持在 ChatGPT／Claude 之间切换日报、周报和月报，使用各自的本地账本及计价结果。Mac 菜单栏可分别选择双方的任务、额度和用量字段，小组件为双方各提供六种展示；手机同步目前仍使用 Codex 数据。Claude 原始日志被清理或删除后，已经采集的统计和请求摘要保留，已删除正文／附件显示缺失。详细范围见 [Claude 适配规格](docs/superpowers/specs/2026-10-13-claude-code-desktop-design.md)。0.3.10-beta 的订阅、定价及版本比较范围见 [本地 beta 规格](docs/superpowers/specs/2026-10-16-claude-subscription-v0310-beta.md)。正式安装包以 Release 说明为准。
 
 ## 数据与隐私
 

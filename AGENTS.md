@@ -90,6 +90,7 @@
 # GitHub Release 发布约定
 
 - 仅在用户明确授权发布后执行。Tag 和 Release 标题统一为 `v<版本号>`，例如 `v0.2.4`；以后每次新 Release 默认包含正文，简短、重要内容在前。正文使用 `## Mac`、`## Windows`、`## iOS` 分区，按实际发布差异填写有变化的平台；每段优先说明用户可感知的重要功能与修复，再列次要改进，合并重复项，不堆砌构建过程、技术流水账或附件描述。iOS 版本高于已发布版本时，必须有非空的 iOS 更新说明。发布准备阶段先写好正文，正文缺失或空白时阻止发布；不自动改写历史 Release。
+- 正式版 Release 正文必须覆盖上一个正式 Release 到本次正式版的完整更新，包含期间所有本地 beta 的功能和修复；本地 beta 不作为发布说明的比较基线。v0.3.10 的比较范围固定为 v0.3.9 → v0.3.10，不能只描述 v0.3.10-beta → v0.3.10。
 - 默认附件为已验证的 `Codexio.app.zip`、`Codexio.ipa`、`Codexio.exe`、`latest.json`。清单顶层 Windows 字段记录本次已验证 EXE；`macos` 记录 Mac 包，`ios` 记录 IPA 实际版本、当前 Release 下载 URL、大小、SHA-256、最低系统和未签名状态。iOS 包必须校验 Bundle／设备架构／ZIP 完整性与本机源码指纹；未签名 IPA 仍需用户自行重签。发布后下载同一组四附件到 `release/<版本号>/` 再次核验。仅用户明确要求 Mac/iOS 时使用 `--apple-only`，从上一份正式清单保留 Windows 字段，不带入未发布的开发 EXE。
 - 先验证 Mac 开发包并提交，再在用户明确发布后由协调脚本推送 `main`，确认远程精确包含本次提交。新 Tag 基于远程 `main` 创建；已有 Tag 或正式 Release 不自动覆盖。
 - 发布协调命令（替换版本号）为 `.venv/bin/python scripts/publish_release_from_macos.py --version 0.3.2 --confirm-publish`。需要继续同一提交的失败草稿时必须显式加 `--resume-draft`；远程已成功而本地归档缺失时只可用 `--sync-only` 补齐。
@@ -140,3 +141,5 @@
 - 日志默认及恢复默认均隐藏命中率，手动选择仍可用，Codex／Claude 各自保存字段。三端日志与 Mac 小组件中的上下文容量按 K／M 显示整数，四舍五入且不保留小数。Claude 请求副行和上下文列统一使用已有 model_context_window 容量；Mods／statusLine 的容量按明确消息 UUID／prompt ID 关联，缺失显示 —，不使用输入 Token 替代，也不拿当前容量回填历史。
 
 - Mac／Windows 使用报告在右侧提供 ChatGPT／Claude 两个 Logo，切换日报、周报、月报的数据来源；报告顶部字样显示所选 Agent，其余样式、指标和导出 UI 共用。首次打开跟随主页面 Agent，报告内切换独立；双方使用各自本地账本与价格规则，缓存和归档包含 Agent／来源身份，不重新采集日志或查询额度。自动日报仍共用每日一次的已读状态，导出使用所选 Agent 的数据和标题。
+
+- Claude 定价页按用户确认继续显示 API 模型 ID（例如 `claude-opus-5-5`），搜索、编辑和计价复用已有 `model`；不以 `display_name` 替换定价页的 ID，不改写账本或模型标识。
