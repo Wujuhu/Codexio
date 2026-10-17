@@ -70,3 +70,11 @@ Mac／Windows 的 Claude 用量活动页接入执行行程，沿用既有 UI 和
 用户反馈日志、任务及 Token 未更新。排查确认 Windows 主请求默认状态为 unknown，缺少 Mac `ClaudeLedger.swift` 已有的主请求活动跟踪。现将该机制适配到 `claude_live.go`，由现有采集循环维护最多 256 条有明确归属的主请求活动；开始、完成、失败及过期／时间回退引起可见状态变化时才失效对应请求分组，普通进度只续期，不重新计量或计价。Windows 的筛选条件补上 running，布局不变，未完成请求的缺失耗时仍为 `—`。
 
 针对本次故障，使用现有 Store／SQLite 汇总在 Windows build 隔离目录读取一份实际日志的冻结副本：先保留回复前前缀，再在同一采集进程中追加真实后缀。前缀形成一条 running 用户请求、零模型调用；追加后形成三条 completed 用户请求、六次模型调用及 232,569 Token，generation 从 4 变为 5。该目录没有接入真实 Codex 目录，所以全局来源诊断包含 Codex 不可用；Claude 来源始终 ready。真实客户端、配置和账本均未改写，没有增加维护性测试套件。Windows 开发包沿用既有三项隔离冒烟，版本保持 0.3.10-beta。诊断和交付证据位于 `build/checks/windows-claude-data-fix`。
+
+### 2026-10-17：Windows 日志／用量持续加载阻塞
+
+用户再次反馈主程序持续转圈，现场为运行中的 0.3.10-beta：CPU 低、账本写入停在启动后几秒，同时有五条待上传的 Claude 图片详情。根因在 `mobile_outbox.go:pendingImageDetails`：队列查询保留结果集时调用 `mobileDetailSource(...,store)`，后者为 Claude 来源再查同一个只允许一条连接的 SQLite 连接池，造成自我等待并阻断其他页面及采集。现按最多四条的既有发送批次读出队列，显式处理读取／关闭错误并关闭游标，再按原规则核对来源摘要；连接数、同步内容、保留期和界面保持原口径。
+
+故障诊断使用现场一条记录的来源元数据，在 build 下独立源码／数据库副本中调用同一实现，诊断入口未进入产品源码。旧逻辑在人为设置的 1,200 ms 期限后返回 context deadline exceeded，连接池等待一次；修复约 0.998 ms 返回一条队列记录，连接池等待零次且占用为零，随后日志分页返回一行。该数值仅是此条元数据的阻塞诊断，不代表整机或全部历史性能。没有关闭、重启或改写用户正在运行的程序及账本。开发打包仍使用既有三项隔离冒烟，版本保持 0.3.10-beta。证据位于 `build/checks/windows-loading-fix`。
+
+交付完成：原有三项隔离冒烟通过，240 个 Windows 构建输入与本机逐项核对，EXE SHA-256 为 `b99dcf2cc70411e9345691a1da87770e0d81c89c60c1ffeddffc4f3e2d8935ae`。构建结束时目标程序已不在运行，修复包交付至该 Windows 主机标准目录 `build/dev/windows/Codexio.exe`，本机只复制回传；共享清单保留原 Mac／iOS 元数据。未代用户启动真实主程序，未推送或发布。

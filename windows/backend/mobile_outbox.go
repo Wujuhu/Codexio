@@ -89,22 +89,43 @@ func (m *MobileHost) pendingImageDetails(ctx context.Context, images bool, limit
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	result := []Row{}
+	// The store intentionally uses one SQLite connection. Finish this bounded
+	// queue read before checking Claude source locators, which query that same
+	// connection; retaining the cursor here would block every ledger consumer.
+	type pending struct {
+		id, source, digest, current string
+		payload                     []byte
+		revision                    int64
+	}
+	batch := make([]pending, 0, max(0, min(limit, 4)))
 	for rows.Next() {
-		var id, source, digest, current string
-		var payload []byte
-		var revision int64
-		if err := rows.Scan(&id, &source, &digest, &payload, &revision, &current); err != nil {
+		var item pending
+		if err := rows.Scan(&item.id, &item.source, &item.digest, &item.payload, &item.revision, &item.current); err != nil {
+			rows.Close()
 			return nil, err
 		}
-		item := Row{"id": id, "refresh": len(payload) == 0 || source != mobileDetailSource(dataRow(current), m.store)}
+		batch = append(batch, item)
+	}
+	readError := rows.Err()
+	closeError := rows.Close()
+	if readError != nil {
+		return nil, readError
+	}
+	if closeError != nil {
+		return nil, closeError
+	}
+	result := make([]Row, 0, len(batch))
+	for _, value := range batch {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		item := Row{"id": value.id, "refresh": len(value.payload) == 0 || value.source != mobileDetailSource(dataRow(value.current), m.store)}
 		if !ValueBool(item["refresh"]) {
-			item["envelope"] = Row{"dataset": "detail-" + id, "revision": revision, "digest": digest, "payload": string(payload)}
+			item["envelope"] = Row{"dataset": "detail-" + value.id, "revision": value.revision, "digest": value.digest, "payload": string(value.payload)}
 		}
 		result = append(result, item)
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 func (m *MobileHost) deferImageDetail(ctx context.Context, id string, seconds int64) {
