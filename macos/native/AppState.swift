@@ -325,10 +325,10 @@ final class AppState: ObservableObject {
         let contextKey = identity(contexts.map {point -> Object in var value = point; value.removeValue(forKey:"observed_at"); return value})
         if contextKey != claudeContextKey {
             do {
-                try claudeLedger.observeContexts(contexts)
+                let changed = try claudeLedger.observeContexts(contexts)
                 // The append event may precede the normal file-change check.
                 // scan() reuses unchanged cursors and reads only changed files.
-                if !contexts.isEmpty {try claudeLedger.scan()}
+                if changed {try claudeLedger.scan()}
                 claudeContextKey = contextKey
                 publishClaude()
             } catch {DispatchQueue.main.async {self.claudeWarning = error.localizedDescription}}

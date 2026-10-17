@@ -175,7 +175,14 @@ func (q *ClaudeAllowance) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	oldAt, _ := ValueFloat(q.cached["captured_at"])
 	if (oldAt > at && oldAt <= float64(time.Now().UnixMilli())/1000) || (source == "statusline" && dataString(q.cached, "source") == "mods" && dataString(ValueRow(q.cached["account"]), "identityKey") == dataString(ValueRow(value["account"]), "identityKey") && at-oldAt < 120) {
+		// Keep newer/preferred quota while accepting explicit request facts
+		// from other sessions or the statusline compatibility path.
+		observation := q.snapshotLocked()
+		observation["contexts"] = contexts
 		q.mu.Unlock()
+		if len(contexts) > 0 && q.sample != nil {
+			q.sample(observation)
+		}
 		w.WriteHeader(200)
 		return
 	}

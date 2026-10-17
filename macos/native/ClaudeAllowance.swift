@@ -73,10 +73,8 @@ final class ClaudeAllowance {
         guard payload.integer("schema") == 1, payload.string("config_root") == root.path,
               ["mods","statusline"].contains(payload.string("source")), payload.string("session_id").count <= 256,
               let captured = payload.number("captured_at"), abs(Date().timeIntervalSince1970-captured) <= 60 else {return false}
-        if let previous = cached.number("captured_at"), previous > captured, previous <= Date().timeIntervalSince1970 {return true}
         let source = payload.string("source"), surface = payload.string("surface") == "desktop" ? "desktop" : "cli"
         let currentAccount = account(surface:surface,session:payload.string("session_id"))
-        if source == "statusline", cached.string("source") == "mods", cached.object("account").string("identityKey") == currentAccount.string("identityKey"), let observed = cached.number("captured_at"), captured-observed < 120 {return true}
         var windows: [Object] = []
         for window in payload.objects("windows").prefix(4) {
             guard ["five_hour","seven_day"].contains(window.string("kind")), let used = window.number("percentUsed"), used.isFinite, (0...100).contains(used) else {continue}
@@ -91,6 +89,14 @@ final class ClaudeAllowance {
                   let at = point.number("observed_at"), at >= startedAt, at <= captured+5 else {return false}
             return point.string("session_id").count <= 256 && !point.string("session_id").isEmpty &&
                 ((!point.string("message_uuid").isEmpty && point.string("message_uuid").count <= 256) || (!point.string("prompt_id").isEmpty && point.string("prompt_id").count <= 256))
+        }
+        let previous = cached.number("captured_at") ?? 0
+        let keepQuota = (previous > captured && previous <= Date().timeIntervalSince1970) ||
+            (source == "statusline" && cached.string("source") == "mods" && cached.object("account").string("identityKey") == currentAccount.string("identityKey") && captured-previous < 120)
+        if keepQuota {
+            // Quota precedence must not discard another request's start data.
+            if !contexts.isEmpty {var observation = cached; observation["contexts"] = Array(contexts); onSample?(observation)}
+            return true
         }
         let value: Object = ["boundary_sample":payload["scheduled"] as? Bool ?? true,"contexts":Array(contexts),"source":source,"surface":surface,"captured_at":captured,"windows":windows,
                              "account":currentAccount,"session_id":payload.string("session_id")]

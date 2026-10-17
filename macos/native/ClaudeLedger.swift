@@ -852,8 +852,9 @@ extension ClaudeLedger {
         for key in ["model","reasoning_effort"] where !point.string(key).isEmpty {fields[key] = point.string(key)}
         return fields
     }
-    func observeContexts(_ points: [Object]) throws {
-        guard !points.isEmpty else {return}
+    func observeContexts(_ points: [Object]) throws -> Bool {
+        guard !points.isEmpty else {return false}
+        var changed = false
         if !contextIndexReady {
             try database.script("CREATE INDEX IF NOT EXISTS claude_calls_context_uuid ON claude_calls(session_id,json_extract(data,'$.uuid'))")
             contextIndexReady = true
@@ -869,6 +870,7 @@ extension ClaudeLedger {
                 for (key,value) in requestFields(point) {fields[key] = value}
                 guard !fields.isEmpty, identity(fields) != identity(requestFields(prior)) else {continue}
                 try database.run("INSERT INTO claude_context_windows(session_id,message_uuid,prompt_id,observed_at,window,model,reasoning_effort) VALUES(?,?,?,?,?,?,?) ON CONFLICT(session_id,message_uuid,prompt_id) DO UPDATE SET observed_at=excluded.observed_at,window=excluded.window,model=excluded.model,reasoning_effort=excluded.reasoning_effort",[session,uuid,prompt,at,fields.integer("model_context_window") ?? 0,fields.string("model"),fields.string("reasoning_effort")])
+                changed = true
                 if !uuid.isEmpty {
                     for row in try database.query("SELECT data FROM claude_calls WHERE session_id=? AND json_extract(data,'$.uuid')=?",[session,uuid]) {
                         var raw = jsonObject(Data(row.string("data").utf8))
@@ -883,5 +885,6 @@ extension ClaudeLedger {
             try database.run("DELETE FROM claude_context_windows WHERE rowid NOT IN(SELECT rowid FROM claude_context_windows ORDER BY observed_at DESC LIMIT 256)")
         }
         try materializeAffected()
+        return changed
     }
 }
