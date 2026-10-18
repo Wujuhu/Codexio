@@ -56,7 +56,11 @@ class OfficialModelPrices:
         self.catalog_rows = []
         for descriptor in rules["models"]:
             base = next(row for row in self.prices[descriptor["model"]] if not row.get("threshold", 0))
-            self.catalog_rows.append(dict(base, **descriptor, service_tier="default", threshold=0))
+            row = dict(base, **descriptor, service_tier="default", threshold=0)
+            if descriptor["group"] == "other":
+                row.pop("cache_write_1h", None)
+                row["cache_write_ttl"] = rules["other_cache_write_ttl"]
+            self.catalog_rows.append(row)
         self.display_rows = [row for row in self.catalog_rows if row["group"] not in rules["client_models"] or row["model"] in rules["client_models"][row["group"]]]
         for row in all_rows + rules["models"]:
             for name in [row["model"], row.get("display_name", "")] + row.get("aliases", []):
@@ -182,9 +186,11 @@ class OfficialModelPrices:
                         multiple = change["multiplier"]
             for key in FIELDS:
                 rates[key] = base[key] * multiple if base.get(key) is not None else None
+            rates.pop("cache_write_1h", None)
+            rates["cache_write_ttl"] = self.rules["other_cache_write_ttl"]
             tier = "default"
         five, hour = write, 0
-        if write and rates.get("cache_write_1h") is not None:
+        if family == "claude" and write and rates.get("cache_write_1h") is not None:
             k5, kh = count("cache_write_5m_tokens", None), count("cache_write_1h_tokens", None)
             if record.get("cache_write_5m_tokens") is not None and k5 is None or record.get("cache_write_1h_tokens") is not None and kh is None:
                 return result

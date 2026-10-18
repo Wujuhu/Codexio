@@ -39,7 +39,7 @@ struct PricingView: View {
             GridColumn(id:"model",title:L("模型","Model"),width:220,maximum:260,alignment:.center),
             GridColumn(id:"input",title:L("输入","Input"),width:90,maximum:110,alignment:.center),
             GridColumn(id:"cache_read",title:L("缓存读取","Cache read"),width:100,maximum:120,alignment:.center),
-            GridColumn(id:"cache_write",title:ttl ? L("缓存写入 5 分钟","Cache write 5 minutes"):L("缓存写入","Cache write"),width:ttl ? 120:100,maximum:140,alignment:.center)
+            GridColumn(id:"cache_write",title:ttl || group=="other" ? L("缓存写入 5 分钟","Cache write 5 minutes"):L("缓存写入","Cache write"),width:ttl ? 120:100,maximum:140,alignment:.center)
         ]+(ttl ? [GridColumn(id:"cache_write_1h",title:L("缓存写入 1 小时","Cache write 1 hour"),width:120,maximum:140,alignment:.center)]:[])+[GridColumn(id:"output",title:L("输出","Output"),width:90,maximum:110,alignment:.center)]
         return CompactTable(columns:columns,rows:values.map {row in GridRow(id:row.id,text:{column in
             if column=="model" {

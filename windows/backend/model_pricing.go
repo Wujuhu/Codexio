@@ -63,6 +63,10 @@ func newModelPriceReference() *modelPriceReference {
 				for k, v := range r {
 					copy[k] = v
 				}
+				if dataString(r, "group") == "other" {
+					delete(copy, "cache_write_1h")
+					copy["cache_write_ttl"] = "5m"
+				}
 				copy["service_tier"] = "default"
 				copy["threshold"] = 0
 				p.catalog = append(p.catalog, copy)
@@ -331,6 +335,8 @@ func (p *modelPriceReference) rates(model string, input int64, r Row) (Row, bool
 			}
 		}
 		tier = "default"
+		delete(rates, "cache_write_1h")
+		rates["cache_write_ttl"] = p.rules["other_cache_write_ttl"]
 		rates["pricing_basis"] = "official_api_reference"
 	}
 	rates["model"] = model
@@ -399,7 +405,7 @@ func (p *modelPriceReference) price(input Row, model string, aliasEstimated bool
 	}
 	estimated = estimated || aliasEstimated
 	five, hour := write, int64(0)
-	if write > 0 && rates["cache_write_1h"] != nil {
+	if dataString(p.definitions[model], "group") == "claude" && write > 0 && rates["cache_write_1h"] != nil {
 		knownFive, okFive := knownCount(input["cache_write_5m_tokens"])
 		knownHour, okHour := knownCount(input["cache_write_1h_tokens"])
 		if input["cache_write_5m_tokens"] != nil && !okFive || input["cache_write_1h_tokens"] != nil && !okHour {

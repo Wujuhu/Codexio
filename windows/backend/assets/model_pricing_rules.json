@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "rule_version": "unified-official-2026-10-18-v2-validation",
+  "rule_version": "unified-official-2026-10-18-v3-other-5m",
   "verified_at": "2026-10-18T00:00:00+00:00",
   "models": [
     {
@@ -518,8 +518,8 @@
       "aliases": [
         "Kimi K3"
       ],
-      "tooltip": "缓存写入：5 分钟 ×1 · 1 小时 ×2",
-      "tooltip_en": "Cache write: 5 minutes ×1 · 1 hour ×2"
+      "tooltip": "按基础价计费",
+      "tooltip_en": "Base prices apply"
     }
   ],
   "other_rows": [
@@ -661,5 +661,6 @@
   "client_model_sources": {
     "gpt": "https://learn.chatgpt.com/docs/models",
     "claude": "https://support.claude.com/en/articles/11940350-claude-code-model-configuration"
-  }
+  },
+  "other_cache_write_ttl": "5m"
 }

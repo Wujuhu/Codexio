@@ -53,6 +53,7 @@ final class ModelPricing {
             let model=descriptor.string("model")
             guard var row=allPrices.first(where:{$0.string("model")==model && ($0.integer("threshold") ?? 0)==0}) else {return nil}
             for (key,value) in descriptor {row[key]=value}
+            if descriptor.string("group")=="other" {row.removeValue(forKey:"cache_write_1h");row["cache_write_ttl"]="5m"}
             row["service_tier"]="default";row["threshold"]=0;return PriceRow(raw:row)
         }
         catalogRows=catalog
@@ -148,6 +149,7 @@ final class ModelPricing {
                 if let change=scheduled.last(where:{$0.0<=date}) {multiple *= change.1}
             }
             for field in ["input","cache_read","cache_write","cache_write_1h","output"] {rates[field]=base.number(field).map {$0*multiple} as Any?}
+            rates.removeValue(forKey:"cache_write_1h");rates["cache_write_ttl"]=rules.string("other_cache_write_ttl","5m")
             rates["pricing_basis"]="official_api_reference"
         }
         rates["model"]=model;rates["service_tier"]=family=="other" ? "default":tier
@@ -174,7 +176,7 @@ final class ModelPricing {
         guard let selected=rates(resolved.0,input:contextInput,raw:input) else {return raw}
         var estimated=selected.1 || resolved.1
         var five=write,hour=0
-        if write>0,selected.0.number("cache_write_1h") != nil {
+        if group(resolved.0)=="claude",write>0,selected.0.number("cache_write_1h") != nil {
             let knownFive=input.integer("cache_write_5m_tokens"),knownHour=input.integer("cache_write_1h_tokens")
             if input["cache_write_5m_tokens"] is NSNumber && knownFive == nil || input["cache_write_1h_tokens"] is NSNumber && knownHour == nil {return raw}
             if let knownFive,let knownHour {five=knownFive;hour=knownHour}

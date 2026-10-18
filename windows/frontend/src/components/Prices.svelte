@@ -18,7 +18,7 @@
  {@const list=group.rows}
  {@const ttl=list.some(row=>number(row.cache_write_1h)!==null)}
  {@const fields=['input','cache_read','cache_write',...(ttl?['cache_write_1h']:[]),'output']}
- {@const labels=['输入','缓存读取',ttl?'缓存写入 5 分钟':'缓存写入',...(ttl?['缓存写入 1 小时']:[]),'输出']}
+ {@const labels=['输入','缓存读取',ttl||group.id==='other'?'缓存写入 5 分钟':'缓存写入',...(ttl?['缓存写入 1 小时']:[]),'输出']}
  <details class="price-group" bind:open={expanded[group.id]}>
   <summary><span>{tr(group.name)}</span><span class="muted price-count">{list.length}</span></summary>
   <div class="price-table-shell"><table class="price-table"><thead><tr><th>{tr('模型')}</th>{#each labels as label}<th>{tr(label)}</th>{/each}</tr></thead><tbody>{#each list as row (row.model)}{@const condition=hint(row)}<tr><td><span class="price-model"><span>{text(row.model)}</span>{#if condition}<DetailPopover hint={condition}/>{/if}</span></td>{#each fields as key}<td>{price(row[key])}</td>{/each}</tr>{/each}</tbody></table>{#if !list.length}<div class="empty">{tr('暂无数据')}</div>{/if}</div>
