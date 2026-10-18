@@ -171,6 +171,7 @@ struct OverviewView: View {
                 }
                 if let error = state.quota.error { StatusNote(text:error) }
                 HStack { SectionHeading(title:L("用量", "Usage")); Spacer(); PeriodPicker(selection:$period).fixedSize() }
+                IncompleteUsageNotice(state:state,hasIncomplete:projection.value.summary.incompleteRecords>0)
                 SummaryMetrics(summary:projection.value.summary)
                 VStack(alignment:.leading,spacing:16) { SectionHeading(title:L("详情", "Details")); TrendChart(days:projection.value.days) }.padding(18).overlay(RoundedRectangle(cornerRadius:13).stroke(.secondary.opacity(0.15)))
                 ModelShareCard(projection:projection.value)

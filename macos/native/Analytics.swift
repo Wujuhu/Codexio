@@ -88,11 +88,14 @@ struct UsageSummary {
     var cached = 0
     var output = 0
     var unknownCosts = 0
+    var incompleteRecords = 0
     var cacheRate: Double? { input > 0 ? Double(cached)/Double(input) : nil }
-    var json: Object { ["tokens":tokens as Any? ?? NSNull(),"usd":cost as Any? ?? NSNull(),"user_requests":requests,"cache_hit_rate":cacheRate as Any? ?? NSNull()] }
+    var json: Object { ["tokens":tokens as Any? ?? NSNull(),"usd":cost as Any? ?? NSNull(),"user_requests":requests,"cache_hit_rate":cacheRate as Any? ?? NSNull(),"cost_complete":unknownCosts==0,"incomplete_records":incompleteRecords] }
     init(rows: [UsageRow] = [], requests: Int = 0) {
         self.requests = requests
         for row in rows {
+            let cacheKnown=row.inputTokens.flatMap {input in row.cachedTokens.map {$0<=input}} ?? false
+            if row.tokens == nil || row.cost == nil || !cacheKnown {incompleteRecords += 1}
             if let n = row.tokens { tokens = (tokens ?? 0)+n }
             if let n = row.cost { cost = (cost ?? 0)+n } else { unknownCosts += 1 }
             if row.confirmedCall { calls += 1 }

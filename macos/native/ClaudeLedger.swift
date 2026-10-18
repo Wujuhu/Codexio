@@ -458,13 +458,13 @@ final class ClaudeLedger {
         if let expiry = try database.query("SELECT min(observed_at+900) AS expiry FROM claude_live_requests WHERE id LIKE ? AND status='running' AND observed_at>? AND observed_at<=?",[scope+"%",stamp-900,stamp]).first?.number("expiry") {result.nextBoundary = Date(timeIntervalSince1970:expiry)}
         if includeUsage {
             let range = UsageRange(period:"today"), (sql,args) = filtered("claude_calls",range:range)
-            let sums = try sumColumns("claude_calls",where:sql,args:args)
+            let sums = try sumColumns("claude_calls",where:sql,args:args,allowPartial:true)
             let (requestSQL,requestArgs) = filtered("claude_requests",range:range)
             var summary = UsageSummary(); summary.calls = sums.integer("calls") ?? 0
             summary.requests = try database.query("SELECT count(*) AS n FROM claude_requests WHERE \(requestSQL)",requestArgs).first?.integer("n") ?? 0
             summary.tokens = summary.calls == 0 ? 0 : sums.integer("total"); summary.cost = summary.calls == 0 ? 0 : sums.number("cost")
             summary.input = sums.integer("input") ?? 0; summary.cached = sums.integer("cache_read") ?? 0; summary.output = sums.integer("output") ?? 0
-            summary.unknownCosts = summary.calls > 0 && summary.cost == nil ? 1 : 0
+            summary.unknownCosts = sums.integer("unknown_costs") ?? 0; summary.incompleteRecords = sums.integer("incomplete_records") ?? 0
             result.today = summary; result.days = try days(range:UsageRange(period:"week"),model:"all",granularity:"day")
         }
         return result
@@ -630,9 +630,18 @@ final class ClaudeLedger {
         guard let row = try database.query("SELECT data FROM claude_requests WHERE id=?",[id]).first else {return}
         var raw = jsonObject(Data(row.string("data").utf8)); for (key,value) in fields {raw[key] = value}; try saveRequest(raw)
     }
-    private func sumColumns(_ table: String,where predicate: String,args: [Any]) throws -> Object {
-        let sums = ["input","cache_read","cache_write","output","total"].map {"CASE WHEN count(*)>0 AND count(\($0))=count(*) THEN sum(\($0)) END AS \($0)"}.joined(separator:",")
-        return try database.query("SELECT count(*) AS calls,\(sums),CASE WHEN count(*)>0 AND count(json_extract(data,'$.cost_usd'))=count(*) THEN sum(json_extract(data,'$.cost_usd')) END AS cost FROM \(table) WHERE \(predicate)",args).first ?? [:]
+    private func sumColumns(_ table: String,where predicate: String,args: [Any],allowPartial: Bool = false) throws -> Object {
+        let cachedInput="input IS NOT NULL AND cache_read IS NOT NULL AND cache_read<=input"
+        let sums=["input","cache_read","cache_write","output","total"].map {column -> String in
+            if allowPartial {
+                let value=["input","cache_read"].contains(column) ? "CASE WHEN \(cachedInput) THEN \(column) END":column
+                return "sum(\(value)) AS \(column)"
+            }
+            return "CASE WHEN count(*)>0 AND count(\(column))=count(*) THEN sum(\(column)) END AS \(column)"
+        }.joined(separator:",")
+        let cost="json_extract(data,'$.cost_usd')"
+        let amount=allowPartial ? "sum(\(cost))":"CASE WHEN count(*)>0 AND count(\(cost))=count(*) THEN sum(\(cost)) END"
+        return try database.query("SELECT count(*) AS calls,\(sums),\(amount) AS cost,count(*)-count(\(cost)) AS unknown_costs,sum(CASE WHEN total IS NULL OR \(cost) IS NULL OR NOT(\(cachedInput)) THEN 1 ELSE 0 END) AS incomplete_records FROM \(table) WHERE \(predicate)",args).first ?? [:]
     }
     private func materializeRequest(_ id: String) throws {
         let sums = try sumColumns("claude_calls",where:"request_id=?",args:[id])
@@ -727,19 +736,21 @@ final class ClaudeLedger {
     }
     func trend(range: UsageRange,model: String = "all",granularity: String) throws -> TrendProjection {
         let (sql,args) = filtered("claude_calls",range:range,model:model)
-        let sum = try sumColumns("claude_calls",where:sql,args:args)
+        let sum = try sumColumns("claude_calls",where:sql,args:args,allowPartial:true)
         let (requestSQL,requestArgs) = filtered("claude_requests",range:range,model:model)
         let requests = try database.query("SELECT count(*) AS n FROM claude_requests WHERE \(requestSQL)",requestArgs).first?.integer("n") ?? 0
         var summary = UsageSummary(); summary.tokens = sum.integer("total"); summary.cost = sum.number("cost"); summary.calls = sum.integer("calls") ?? 0; summary.requests = requests
         if let input = sum.integer("input"), let read = sum.integer("cache_read") {summary.input = input; summary.cached = read}
         summary.output = sum.integer("output") ?? 0
-        let rows = try database.query("SELECT model,count(*) AS calls,CASE WHEN count(total)=count(*) THEN sum(total) END AS tokens,CASE WHEN count(json_extract(data,'$.cost_usd'))=count(*) THEN sum(json_extract(data,'$.cost_usd')) END AS cost FROM claude_calls WHERE \(sql) GROUP BY model ORDER BY tokens DESC",args)
+        summary.unknownCosts = sum.integer("unknown_costs") ?? 0; summary.incompleteRecords = sum.integer("incomplete_records") ?? 0
+        let rows = try database.query("SELECT model,count(*) AS calls,sum(total) AS tokens,sum(json_extract(data,'$.cost_usd')) AS cost,sum(json_extract(data,'$.cost_usd') IS NULL) AS unknown_costs FROM claude_calls WHERE \(sql) GROUP BY model ORDER BY tokens DESC",args)
         let requestRows = try database.query("SELECT model,count(*) AS n FROM claude_requests WHERE \(requestSQL) GROUP BY model ORDER BY n DESC",requestArgs)
         let requestCounts = Dictionary(uniqueKeysWithValues:requestRows.map {($0.string("model"),$0.integer("n") ?? 0)})
         let costs = Dictionary(uniqueKeysWithValues:rows.map {($0.string("model"),$0.number("cost"))})
+        let costComplete = Dictionary(uniqueKeysWithValues:rows.map {($0.string("model"),$0.integer("unknown_costs")==0)})
         let tokenCounts = Dictionary(uniqueKeysWithValues:rows.map {($0.string("model"),$0.integer("tokens"))})
-        let groups = rows.map {row -> MobileModel in MobileModel(id:row.string("model"),name:requestValueText(modelName(row.string("model"))),metric:MobileMetric(tokens:row.integer("tokens"),cost:row.number("cost"),requests:requestCounts[row.string("model")] ?? 0,costComplete:row.number("cost") != nil,hitRate:nil))}
-        let requestGroups = requestRows.map {row in MobileModel(id:row.string("model"),name:requestValueText(modelName(row.string("model"))),metric:MobileMetric(tokens:tokenCounts[row.string("model")] ?? nil,cost:costs[row.string("model")] ?? nil,requests:row.integer("n") ?? 0,costComplete:(costs[row.string("model")] ?? nil) != nil,hitRate:nil))}
+        let groups = rows.map {row -> MobileModel in MobileModel(id:row.string("model"),name:requestValueText(modelName(row.string("model"))),metric:MobileMetric(tokens:row.integer("tokens"),cost:row.number("cost"),requests:requestCounts[row.string("model")] ?? 0,costComplete:row.integer("unknown_costs")==0,hitRate:nil))}
+        let requestGroups = requestRows.map {row in MobileModel(id:row.string("model"),name:requestValueText(modelName(row.string("model"))),metric:MobileMetric(tokens:tokenCounts[row.string("model")] ?? nil,cost:costs[row.string("model")] ?? nil,requests:row.integer("n") ?? 0,costComplete:costComplete[row.string("model")] ?? false,hitRate:nil))}
         let recent = try database.query("SELECT data FROM claude_requests WHERE \(requestSQL) ORDER BY timestamp DESC LIMIT 3",requestArgs).map {UsageRow(raw:jsonObject(Data($0.string("data").utf8)))}
         return TrendProjection(summary:summary,days:try days(range:range,model:model,granularity:granularity),recent:recent,modelRows:[groups,groups,requestGroups])
     }
@@ -748,17 +759,17 @@ final class ClaudeLedger {
         // timezone/calendar bucket mapping on these small values, never bodies.
         let (sql,args) = filtered("claude_calls",range:range,model:model)
         let grouping = granularity == "hour" ? "strftime('%Y-%m-%d %H',timestamp,'unixepoch','localtime')" : granularity == "week" ? "strftime('%Y-%W',timestamp,'unixepoch','localtime')" : "strftime('%Y-%m-%d',timestamp,'unixepoch','localtime')"
-        let calls = try database.query("SELECT min(timestamp) AS t,count(*) AS n,CASE WHEN count(total)=count(*) THEN sum(total) END AS tokens,CASE WHEN count(json_extract(data,'$.cost_usd'))=count(*) THEN sum(json_extract(data,'$.cost_usd')) END AS cost FROM claude_calls WHERE \(sql) GROUP BY \(grouping)",args)
+        let calls = try database.query("SELECT min(timestamp) AS t,count(*) AS n,sum(total) AS tokens,sum(json_extract(data,'$.cost_usd')) AS cost FROM claude_calls WHERE \(sql) GROUP BY \(grouping)",args)
         let (requestSQL,requestArgs) = filtered("claude_requests",range:range,model:model)
         let requests = try database.query("SELECT min(timestamp) AS t,count(*) AS n FROM claude_requests WHERE \(requestSQL) GROUP BY \(grouping)",requestArgs)
         var calendar = Calendar.current; calendar.firstWeekday = 2
         let component: Calendar.Component = granularity == "hour" ? .hour : granularity == "week" ? .weekOfYear : .day
-        var groups: [Date:DayUsage] = [:], missing = Set<Date>(), missingCosts = Set<Date>()
+        var groups: [Date:DayUsage] = [:]
         for row in calls {
             guard let t = row.number("t"), let start = calendar.dateInterval(of:component,for:Date(timeIntervalSince1970:t))?.start else {continue}
-            var value = groups[start] ?? DayUsage(date:start,tokens:0,cost:0,calls:0)
-            if let tokens = row.integer("tokens") {value.tokens = (value.tokens ?? 0)+tokens} else {missing.insert(start)}
-            if let cost = row.number("cost") {value.cost = (value.cost ?? 0)+cost} else {missingCosts.insert(start)}
+            var value = groups[start] ?? DayUsage(date:start,tokens:nil,cost:nil,calls:0)
+            if let tokens = row.integer("tokens") {value.tokens = (value.tokens ?? 0)+tokens}
+            if let cost = row.number("cost") {value.cost = (value.cost ?? 0)+cost}
             value.calls += row.integer("n") ?? 0; groups[start] = value
         }
         for row in requests {
@@ -768,8 +779,8 @@ final class ClaudeLedger {
         var cursor = calendar.dateInterval(of:component,for:range.start == .distantPast ? groups.keys.min() ?? range.end : range.start)!.start
         var result: [DayUsage] = []
         while cursor <= range.end && result.count < 20_000 {
-            var value = groups[cursor] ?? DayUsage(date:cursor,tokens:0,cost:0,calls:0)
-            if missing.contains(cursor) {value.tokens = nil}; if missingCosts.contains(cursor) {value.cost = nil}; result.append(value)
+            let value = groups[cursor] ?? DayUsage(date:cursor,tokens:0,cost:0,calls:0)
+            result.append(value)
             guard let next = calendar.date(byAdding:component,value:1,to:cursor), next > cursor else {break}; cursor = next
         }
         return result

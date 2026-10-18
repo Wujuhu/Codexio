@@ -45,6 +45,8 @@ type Service struct {
 	journey          *localJourney
 	refreshActivity  map[string]bool
 	refreshRevision  int64
+
+	incompleteUsageNoticeDismissed bool
 }
 
 func NewService(directory, executable, version string, mock bool, callbacks DesktopCallbacks) (*Service, error) {
@@ -362,7 +364,17 @@ func (s *Service) GetSettings() Row {
 	r["update"] = s.updater.Snapshot()
 	r["report_due"] = s.reports.Due()
 	r["report_preferred_period"] = PreferredReportPeriod(time.Now())
+	s.mu.RLock()
+	r["incomplete_usage_notice_dismissed"] = s.incompleteUsageNoticeDismissed
+	s.mu.RUnlock()
 	return r
+}
+
+// Session state belongs to the service, so hiding/recreating a window keeps it.
+func (s *Service) DismissIncompleteUsageNotice() {
+	s.mu.Lock()
+	s.incompleteUsageNoticeDismissed = true
+	s.mu.Unlock()
 }
 func normalizeFloatingChanges(old, changes Row) Row {
 	next := CloneRow(changes)
@@ -403,6 +415,8 @@ func normalizeFloatingChanges(old, changes Row) Row {
 	return next
 }
 func (s *Service) SaveSettings(changes Row) (Row, error) {
+	changes = CloneRow(changes)
+	delete(changes, "incomplete_usage_notice_dismissed")
 	if s.mock && (ValueBool(changes["upstream_detection_enabled"]) || ValueBool(changes["mobile_sync_enabled"])) {
 		return nil, errors.New("模拟模式不会修改真实服务或 Codex 配置")
 	}

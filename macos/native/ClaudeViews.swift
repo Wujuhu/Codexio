@@ -64,8 +64,8 @@ struct ClaudeOverviewView: View {
                     QuotaCard(window:state.claudeQuota.five,title:L("5 小时额度", "5-hour limit"),fresh:state.claudeQuotaFresh,compactLayout:true)
                     QuotaCard(window:state.claudeQuota.week,title:L("周额度", "Weekly limit"),fresh:state.claudeQuotaFresh,compactLayout:true)
                 }
-                if let warning = state.claudeWarning {StatusNote(text:warning)}
                 HStack {SectionHeading(title:L("用量", "Usage")); Spacer(); PeriodPicker(selection:$period).fixedSize()}
+                IncompleteUsageNotice(state:state,hasIncomplete:projection.value.summary.incompleteRecords>0 || state.claudeWarning != nil,message:state.claudeWarning)
                 SummaryMetrics(summary:projection.value.summary)
                 VStack(alignment:.leading,spacing:16) {SectionHeading(title:L("详情", "Details")); TrendChart(days:projection.value.days)}.padding(18).overlay(RoundedRectangle(cornerRadius:13).stroke(.secondary.opacity(0.15)))
                 ModelShareCard(projection:projection.value,client:.claudeCode)
@@ -113,7 +113,7 @@ struct ClaudeLogsView: View {
     var body: some View {
         VStack(alignment:.leading,spacing:14) {
             LogFilterBar(period:$period,mode:$mode,model:$model,status:$status,query:$query,from:$from,through:$through,models:state.claudeModels,fields:fields) {state.setPreference("claude_log_columns",$0)}
-            if let warning = state.claudeWarning {StatusNote(text:warning)}
+            IncompleteUsageNotice(state:state,hasIncomplete:state.claudeWarning != nil,message:state.claudeWarning)
             // Reload when the asynchronous result arrives, not only when its query changes.
             CompactTable(columns:LogFields.columns(fields),rows:projection.value.rows.map {claudeGridRow($0,state:state,showYear:projection.value.showYear,timeOnly:period == "today")},revision:projection.value.revision.uuidString+period,preferences:state.preferences,storageKey:"claude-logs",scrollResetKey:filterKey+String(page))
                 .overlay {if projection.value.rows.isEmpty {EmptyState(title:L("暂无 Claude 记录", "No Claude records yet"))}}
@@ -140,7 +140,7 @@ struct ClaudeUsageView: View {
             Divider().padding(.horizontal,PageLayout.inset)
             ScrollView {
                 VStack(alignment:.leading,spacing:28) {
-                    if let warning = state.claudeWarning {StatusNote(text:warning)}
+                    IncompleteUsageNotice(state:state,hasIncomplete:state.claudeWarning != nil,message:state.claudeWarning)
                     switch state.usageSection {
                     case "threads": ClaudeRankingView(state:state)
                     case "trend": ClaudeTrendsView(state:state)
@@ -181,6 +181,7 @@ struct ClaudeTrendsView: View {
                 CompactFilterPicker(title:model == "all" ? L("全部模型", "All models") : model,label:L("模型", "Model"),selection:model,items:[.init(id:"all",title:L("全部模型", "All models"))]+state.claudeModels.map {.init(id:$0,title:$0)},choose:{model = $0}).frame(width:170)
                 Picker("",selection:$granularity) {Text(L("每小时", "Hourly")).tag("hour"); Text(L("每天", "Daily")).tag("day"); Text(L("每周", "Weekly")).tag("week")}.labelsHidden().pickerStyle(.segmented).fixedSize()
             }}.scrollIndicators(.hidden).frame(height:30)
+            IncompleteUsageNotice(state:state,hasIncomplete:projection.value.summary.incompleteRecords>0 && state.claudeWarning == nil)
             SummaryMetrics(summary:projection.value.summary)
             TrendChart(days:projection.value.days).padding(18).overlay(RoundedRectangle(cornerRadius:14).stroke(.secondary.opacity(0.15)))
             ModelShareCard(projection:projection.value,client:.claudeCode)

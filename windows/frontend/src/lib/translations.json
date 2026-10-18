@@ -976,5 +976,6 @@
   "尚未开启": "Not enabled",
   "计价条件": "Pricing conditions",
   "其他": "Other",
-  "官方价格目录为只读": "The official price catalog is read-only"
+  "官方价格目录为只读": "The official price catalog is read-only",
+  "部分记录数据不完整，已跳过相应指标的计算。": "Some records are incomplete and have been excluded from the affected metrics."
 }

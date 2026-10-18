@@ -89,6 +89,7 @@ final class AppState: ObservableObject {
     @Published var priceWarning: String?
     @Published var weeklyEstimates: [Object] = []
     @Published var selectedPage = "overview"
+    @Published var incompleteUsageNoticeDismissed = false
     @Published var settingsSection = "appearance"
     @Published var usageSection = "activity"
     @Published var theme = "system"

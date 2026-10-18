@@ -239,7 +239,7 @@ func (s *Store) Summary(q Query, contexts ...context.Context) (result Row, err e
 	if e != nil {
 		return nil, e
 	}
-	r := sum.row()
+	r := sum.summaryRow()
 	r["user_requests"] = n
 	r["valid_counts"].(map[string]int)["user_requests"] = n
 	r["skipped"].(map[string]int)["user_requests"] = 0
@@ -432,7 +432,7 @@ func (s *Store) Chart(q Query, contexts ...context.Context) (resultRows []Row, e
 	for _, key := range keys {
 		r := emptyChartMetric()
 		if buckets[key] != nil && buckets[key].records > 0 {
-			r = buckets[key].row()
+			r = buckets[key].summaryRow()
 		}
 		if normalizedClient(q.ClientKind) == "claude_code" {
 			r["client_kind"] = "claude_code"
@@ -469,7 +469,7 @@ func (s *Store) Models(q Query, contexts ...context.Context) (resultRows []Row, 
 	}
 	result := []Row{}
 	for model, totals := range groups {
-		r := totals.row()
+		r := totals.summaryRow()
 		r["model"] = model
 		r["call_count"] = r["requests"]
 		mq := q

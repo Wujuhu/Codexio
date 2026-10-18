@@ -11441,22 +11441,6 @@
         }
       }
     },
-    "未定价调用": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Unpriced calls"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "未定价调用"
-          }
-        }
-      }
-    },
     "未归属调用": {
       "localizations": {
         "en": {
@@ -18109,6 +18093,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "部分来源读取失败"
+          }
+        }
+      }
+    },
+    "部分记录数据不完整，已跳过相应指标的计算。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Some records are incomplete and have been excluded from the affected metrics."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "部分记录数据不完整，已跳过相应指标的计算。"
           }
         }
       }

@@ -847,6 +847,7 @@ type metricSum struct {
 	cost, compensation       float64
 	cacheInput, cacheRead    int64
 	cacheValid, cacheSkipped int
+	incompleteRecords        int
 	strict                   bool
 }
 
@@ -910,23 +911,33 @@ func (m *metricSum) add(r Row) {
 	} else {
 		m.cacheSkipped++
 	}
+	if !tok || !priced || !(ok && ok2 && cache <= in && !strings.HasPrefix(dataString(r, "quality"), "invalid")) {
+		m.incompleteRecords++
+	}
 }
 func (m *metricSum) row() Row {
-	r := Row{"records": m.records, "valid_counts": m.valid, "skipped": m.skipped, "unpriced_calls": m.unpriced, "unpriced_tokens": m.unpricedTokens, "cost_complete": m.unpriced == 0, "cache_input_tokens": m.cacheInput, "cache_read_tokens": m.cacheRead, "cache_valid_records": m.cacheValid, "cache_skipped_records": m.cacheSkipped, "cache_hit_rate": nil, "usd": nil}
+	return m.result(m.strict)
+}
+
+// Page aggregates skip missing metrics; individual request totals remain strict.
+func (m *metricSum) summaryRow() Row { return m.result(false) }
+
+func (m *metricSum) result(strict bool) Row {
+	r := Row{"records": m.records, "incomplete_records": m.incompleteRecords, "valid_counts": m.valid, "skipped": m.skipped, "unpriced_calls": m.unpriced, "unpriced_tokens": m.unpricedTokens, "cost_complete": m.unpriced == 0, "cache_input_tokens": m.cacheInput, "cache_read_tokens": m.cacheRead, "cache_valid_records": m.cacheValid, "cache_skipped_records": m.cacheSkipped, "cache_hit_rate": nil, "usd": nil}
 	for _, k := range append([]string{"tokens", "requests"}, tokenFields[:5]...) {
 		r[k] = nil
-		if m.valid[k] > 0 && (!m.strict || m.valid[k] == m.records) {
+		if m.valid[k] > 0 && (!strict || m.valid[k] == m.records) {
 			r[k] = m.totals[k]
 		}
 	}
-	if m.strict && m.cacheValid != m.records {
+	if strict && m.cacheValid != m.records {
 		r["cache_input_tokens"] = nil
 		r["cache_read_tokens"] = nil
 	}
-	if m.valid["usd"] > 0 && (!m.strict || m.unpriced == 0) {
+	if m.valid["usd"] > 0 && (!strict || m.unpriced == 0) {
 		r["usd"] = m.cost
 	}
-	if m.cacheInput > 0 && (!m.strict || m.cacheValid == m.records) {
+	if m.cacheInput > 0 && (!strict || m.cacheValid == m.records) {
 		r["cache_hit_rate"] = float64(m.cacheRead) / float64(m.cacheInput)
 	}
 	return r

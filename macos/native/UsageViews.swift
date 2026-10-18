@@ -181,10 +181,10 @@ struct UsageTrendsView: View {
                 Picker("",selection:$model) { Text(L("全部模型", "All models")).tag("all"); ForEach(state.usage.models.filter(MobileTrends.isSingleModel),id:\.self) { Text($0).tag($0) } }.labelsHidden().frame(width:112)
                 Picker("",selection:$granularity) { Text(L("每小时", "Hourly")).tag("hour"); Text(L("每天", "Daily")).tag("day"); Text(L("每周", "Weekly")).tag("week") }.labelsHidden().pickerStyle(.segmented).fixedSize()
             }}.scrollIndicators(.hidden).frame(height:30)
+            IncompleteUsageNotice(state:state,hasIncomplete:projection.value.summary.incompleteRecords>0)
             SummaryMetrics(summary:projection.value.summary)
             TrendChart(days:projection.value.days).padding(18).overlay(RoundedRectangle(cornerRadius:14).stroke(.secondary.opacity(0.15)))
             ModelShareCard(projection:projection.value)
-            if projection.value.summary.unknownCosts > 0 { StatusNote(text:L("未定价调用", "Unpriced calls")+" · \(projection.value.summary.unknownCosts)") }
         }.onAppear(perform:load).onChange(of:key) { _,_ in load() }
         .onChange(of:period) { _,value in granularity = value == "today" ? "hour" : value == "all" ? "week" : "day"; if value == "custom" {datesOpen = true} }
     }

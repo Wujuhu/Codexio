@@ -62,6 +62,21 @@ struct StatusNote: View {
     var body: some View { Text(text).font(.system(size:12)).foregroundStyle(.secondary).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading) }
 }
 
+struct IncompleteUsageNotice: View {
+    @ObservedObject var state: AppState
+    let hasIncomplete: Bool
+    var message: String? = nil
+    var body: some View {
+        if hasIncomplete && !state.incompleteUsageNoticeDismissed {
+            HStack(spacing:12) {
+                StatusNote(text:message ?? L("部分记录数据不完整，已跳过相应指标的计算。", "Some records are incomplete and have been excluded from the affected metrics."))
+                Button {state.incompleteUsageNoticeDismissed=true} label: {Image(systemName:"xmark").font(.system(size:11))}
+                    .buttonStyle(.plain).help(L("关闭", "Close")).accessibilityLabel(L("关闭", "Close"))
+            }.padding(12).background(Color.primary.opacity(0.025),in:RoundedRectangle(cornerRadius:10))
+        }
+    }
+}
+
 struct SegmentedMeter: View {
     var value: Double?
     var color: Color = .blue
