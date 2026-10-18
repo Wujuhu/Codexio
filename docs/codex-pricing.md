@@ -54,7 +54,9 @@ API 模式始终保留缓存写入的 API 单列基础价，按速度和长上�
 
 `pricing_seed.json`、`claude_pricing_seed.json` 保存官方基础价；`model_pricing_rules.json` 保存经确认的型号范围、别名、倍率文案和实际计价条件。三个文件在 Windows assets 中保存字节相同的副本，Mac 打包时复制为 Bundle 资源。GPT／Claude／其他三组默认展开，切换 Agent 不切换目录、搜索或展开状态。前两组仅展示客户端官方支持清单：GPT 7 款（6.1 Sol、6 Astra、6 Sol／Luna、5.6 Sol／Terra／Luna），Claude 14 款（Fable 5.1／5、Opus 5.5／5／4.8／4.7／4.6／4.5、Sonnet 5.5／5／4.6／4.5、Haiku 5.5／4.5）。Claude 4.x 中仍获客户端官方支持的型号继续显示；Mythos、已退役及仅 API 可用的旧型号不显示。历史计价目录完整保留；显示清单与来源链接不参与价格版本，不因隐藏型号重算费用。GPT／Claude 目录只读，移除手动编辑、恢复和自动同步入口，旧缓存／覆盖配置保留在磁盘但不参与计算。
 
-Mac `ModelPricing.swift`、Windows `model_pricing.go` 与 Python `model_pricing.py` 使用相同规则。型号匹配先处理明确的供应商边界、大小写和分隔符，再匹配官方型号或白名单别名；保留 Flash／FlashX／Pro 及代际数字，不使用编辑距离猜型号。已确认的 `gemin`／`falsh` 拼写变体、DeepSeek V4.1 Flash 1017 等纳入别名。Windows 实际返回的 `gemini-3.8-flash-n` 明确映射到 `gemini-3.8-flash` 官方参考价；不将 `-n` 当作可任意删除的通用后缀，也不把该次路由的请求模型 magpie 全局绑定到 Gemini。`high` 等仅分离为强度修饰，`gemini-3.8-high` 不能据此认成 Flash。
+Mac `ModelPricing.swift`、Windows `model_pricing.go` 与 Python `model_pricing.py` 共用 `model_matching` 的结构化规则。初始化时预编译表达式；完整官方型号／已有明确别名优先于强度剥离，避免把型号本体的 Max 当成修饰词。匹配时先处理宽字符、大小写、驼峰和上下文容量，再分离供应商边界，识别品牌、核心代际和型号。完整基础型号可位于供应商前后缀之间，日期、构建号、版本标签、思考强度及 `-n` 等路由修饰不再依赖逐项追加完整别名。支持分开的代际数字（如 `gemini-3-8-flash`）、DeepSeek V4 系列、GLM Flash／FlashX 的不同写法及 Kimi K3。
+
+Flash、FlashX、Pro、Lite、Air、视觉／图像专用型号等语义标记独立判断，不通过编辑距离猜型号。DeepSeek 的明确代际须属于当前 V4 系列；Gemini／GLM／Kimi 的新核心代际仍需新增已核对的价格和对应规则。多个基础型号、未知核心代际或冲突变体保持无法确定，不能将新型号套用旧价。`gemini-3.8-high` 缺少 Flash／Pro 依据时仍不认成 Flash。实际返回的 `gemini-3.8-flash-n` 及其供应商、日期和强度组合按 Gemini 3.8 Flash 参考价计算，不把请求模型 magpie 全局绑定到 Gemini。
 
 返回模型按原有 response ID／逐次调用关联后优先匹配，不把一次 `magpie → Gemini` 观测永久绑定到所有 magpie。Codex 无明确可识别返回时可用已知请求模型作参考；Claude 继续保留返回模型缺失或无法识别时费用缺失的保护。Claude 配置 label 的别名沿用来源隔离、生效时间和有界历史，只影响确认后的记录。原模型、来源、Token 和原始日志不改写；规范型号仅写入选用的 price_rates。
 

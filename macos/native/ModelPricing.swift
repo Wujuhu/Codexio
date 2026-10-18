@@ -1,5 +1,19 @@
 import Foundation
 
+private struct StructuredPriceModel {
+    let model: String
+    let prefix: NSRegularExpression
+}
+private struct StructuredPriceFamily {
+    let anchor: NSRegularExpression
+    let shape: NSRegularExpression
+    let reject: NSRegularExpression?
+    let generationMajor: String
+    let variantTokens: Set<String>
+    let variantPrefixes: [String]
+    let models: [StructuredPriceModel]
+}
+
 /// Immutable official prices, approved aliases and rules used by both ledgers.
 /// Original request/response IDs stay intact; price_rates records the match.
 final class ModelPricing {
@@ -16,6 +30,10 @@ final class ModelPricing {
     private let byModel: [String:[Object]]
     private var identifiers: [String:String] = [:]
     private var ambiguous = Set<String>()
+    private let modelFamilies: [StructuredPriceFamily]
+    private let ignoredModelTokens: Set<String>
+    private let modelNormalization: [(expression:NSRegularExpression,replacement:String)]
+    private static let modelTokens = try! NSRegularExpression(pattern:#"[a-z]+|[0-9]+(?:\.[0-9]+)*"#)
     private let holidays: Set<String>
     private let calendarYears: Set<Int>
     private let china: Calendar
@@ -26,6 +44,21 @@ final class ModelPricing {
         let gpt=resource("pricing_seed"), claude=resource("claude_pricing_seed"), approved=resource("model_pricing_rules")
         let descriptions=approved.objects("models"), allPrices=gpt.objects("rows")+claude.objects("rows")+approved.objects("other_rows"), policyObject=gpt.object("billing_policies")
         rules=approved;descriptors=descriptions;prices=allPrices;policies=policyObject
+        let matching=approved.object("model_matching")
+        ignoredModelTokens=Set(matching["ignored_tokens"] as? [String] ?? [])
+        func expression(_ pattern: String) -> NSRegularExpression? {pattern.isEmpty ? nil:try! NSRegularExpression(pattern:pattern)}
+        modelNormalization=matching.objects("normalization").compactMap {row in
+            guard let pattern=expression(row.string("pattern")) else {return nil}
+            return (pattern,row.string("replacement"))
+        }
+        modelFamilies=matching.objects("families").compactMap {family in
+            guard let anchor=expression(family.string("anchor")),let shape=expression(family.string("shape")) else {return nil}
+            let models=family.objects("models").compactMap {model -> StructuredPriceModel? in
+                guard let prefix=expression(model.string("prefix")) else {return nil}
+                return StructuredPriceModel(model:model.string("model"),prefix:prefix)
+            }
+            return StructuredPriceFamily(anchor:anchor,shape:shape,reject:expression(family.string("reject")),generationMajor:family.string("generation_major"),variantTokens:Set(family["variant_tokens"] as? [String] ?? []),variantPrefixes:family["variant_prefixes"] as? [String] ?? [],models:models)
+        }
         definitions=Dictionary(descriptions.map {($0.string("model"),$0)},uniquingKeysWith:{$1})
         byModel=Dictionary(grouping:allPrices,by:{$0.string("model")})
         holidays=Set(approved.object("calendar")["holidays"] as? [String] ?? [])
@@ -75,16 +108,58 @@ final class ModelPricing {
     private static func key(_ value: String) -> String {
         value.folding(options:[.caseInsensitive,.widthInsensitive],locale:Locale(identifier:"en_US_POSIX")).unicodeScalars.filter {($0.value>=97 && $0.value<=122) || ($0.value>=48 && $0.value<=57)}.map(String.init).joined()
     }
+    private func decoratedModels(_ value: String) -> (seen:Bool,uncertain:Bool,models:Set<String>) {
+        var seen=false,uncertain=false,found=Set<String>()
+        for segment in value.components(separatedBy:CharacterSet(charactersIn:"/·|:@,;")) {
+            var folded=segment.folding(options:.widthInsensitive,locale:Locale(identifier:"en_US_POSIX"))
+            for (pattern,replacement) in modelNormalization {
+                folded=pattern.stringByReplacingMatches(in:folded,range:NSRange(location:0,length:(folded as NSString).length),withTemplate:replacement)
+            }
+            folded=folded.lowercased()
+            let text=Self.modelTokens.matches(in:folded,range:NSRange(location:0,length:(folded as NSString).length)).map {(folded as NSString).substring(with:$0.range)}.filter {!ignoredModelTokens.contains($0)}.joined(separator:" ")
+            let ns=text as NSString,range=NSRange(location:0,length:ns.length)
+            var anchors: [(range:NSRange,family:StructuredPriceFamily)] = []
+            for family in modelFamilies {for match in family.anchor.matches(in:text,range:range) {anchors.append((match.range,family))}}
+            anchors.sort {$0.range.location<$1.range.location}
+            for (index,anchor) in anchors.enumerated() {
+                let start=NSMaxRange(anchor.range),end=index+1<anchors.count ? anchors[index+1].range.location:ns.length
+                let body=ns.substring(with:NSRange(location:start,length:max(0,end-start))).trimmingCharacters(in:.whitespaces)
+                let bodyRange=NSRange(location:0,length:(body as NSString).length),family=anchor.family
+                guard family.shape.firstMatch(in:body,range:bodyRange) != nil else {continue}
+                seen=true
+                let tokens=body.split(separator:" ").map(String.init)
+                let leadingVersion=tokens.first=="v" ? tokens.dropFirst().first:tokens.first
+                let badVersion = !family.generationMajor.isEmpty && leadingVersion?.first?.isNumber != true && tokens.indices.dropLast().contains {i in
+                    tokens[i]=="v" && tokens[i+1].first?.isNumber==true && tokens[i+1].split(separator:".").first.map(String.init) != family.generationMajor
+                }
+                if badVersion || family.reject?.firstMatch(in:body,range:bodyRange) != nil {uncertain=true;continue}
+                var models=Set<String>()
+                for rule in family.models {
+                    guard let match=rule.prefix.firstMatch(in:body,range:bodyRange),match.range.location==0 else {continue}
+                    let remainder=(body as NSString).substring(from:NSMaxRange(match.range)).split(separator:" ").map(String.init)
+                    if family.variantTokens.isDisjoint(with:remainder) && !remainder.contains(where:{token in family.variantPrefixes.contains(where:{token.hasPrefix($0)})}) {models.insert(rule.model)}
+                }
+                if models.count==1 {found.formUnion(models)} else {uncertain=true}
+            }
+        }
+        return (seen,uncertain,found)
+    }
     func model(_ value: String) -> String? {
         guard !value.isEmpty,value.count<=512 else {return nil}
         let text=value.replacingOccurrences(of:"[1m]",with:"",options:.caseInsensitive)
         var found=Set<String>()
         for candidate in [text]+text.components(separatedBy:CharacterSet(charactersIn:"/·|:")) {
+            if let exact=identifiers[Self.key(candidate)] {found.insert(exact);continue}
             let effort=candidate.replacingOccurrences(of:#"[-_\s(\[]+(?:minimal|low|medium|high|xhigh|max)[)\]]?\s*$"#,with:"",options:[.regularExpression,.caseInsensitive])
             for variant in [candidate,effort] {
                 let dated=variant.replacingOccurrences(of:#"[-_](?:\d{8}|\d{4}-\d{2}-\d{2})$"#,with:"",options:.regularExpression)
                 for name in [variant,dated] {if let match=identifiers[Self.key(name)] {found.insert(match)}}
             }
+        }
+        let decorated=decoratedModels(text)
+        if decorated.seen {
+            guard !decorated.uncertain else {return nil}
+            found.formUnion(decorated.models)
         }
         return found.count==1 ? found.first : nil
     }

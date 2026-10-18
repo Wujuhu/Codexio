@@ -663,5 +663,190 @@
     "gpt": "https://learn.chatgpt.com/docs/models",
     "claude": "https://support.claude.com/en/articles/11940350-claude-code-model-configuration"
   },
-  "other_cache_write_ttl": "5m"
+  "other_cache_write_ttl": "5m",
+  "model_matching": {
+    "revision": 1,
+    "ignored_tokens": [
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra",
+      "light",
+      "thinking",
+      "reasoning",
+      "nonthinking",
+      "nothinking",
+      "effort",
+      "mode",
+      "enabled",
+      "disabled",
+      "standard",
+      "default",
+      "normal",
+      "auto",
+      "n"
+    ],
+    "families": [
+      {
+        "name": "gemini",
+        "anchor": "\\b(?:gemini|gemin)\\b",
+        "shape": "^(?:v )?[0-9]|^(?:flash|falsh|pro|lite|ultra)(?: |$)",
+        "variant_tokens": [
+          "flash",
+          "falsh",
+          "flashx",
+          "x",
+          "pro",
+          "lite",
+          "nano",
+          "mini",
+          "plus",
+          "image",
+          "imagen",
+          "vision",
+          "live",
+          "audio",
+          "tts",
+          "embedding",
+          "embeddings",
+          "rerank"
+        ],
+        "models": [
+          {
+            "model": "gemini-3.8-flash",
+            "prefix": "^(?:v )?(?:3\\.8|3 8) (?:flash|falsh)(?: |$)"
+          }
+        ]
+      },
+      {
+        "name": "deepseek",
+        "anchor": "\\b(?:deepseekv?|deep seekv?)\\b",
+        "shape": "^(?:v )?[0-9]|^(?:flash|pro|reasoner|chat)(?: |$)",
+        "generation_major": "4",
+        "variant_tokens": [
+          "flash",
+          "flashx",
+          "pro",
+          "lite",
+          "mini",
+          "nano",
+          "distill",
+          "embedding",
+          "embeddings",
+          "rerank"
+        ],
+        "models": [
+          {
+            "model": "deepseek-flash",
+            "prefix": "^(?:(?:v )?(?:4(?:\\.[0-9]+)*|4(?: [0-9]+)+) )?flash(?: |$)"
+          },
+          {
+            "model": "deepseek-v4-pro",
+            "prefix": "^(?:(?:v )?(?:4(?:\\.[0-9]+)*|4(?: [0-9]+)+) )?pro(?: |$)"
+          }
+        ]
+      },
+      {
+        "name": "glm",
+        "anchor": "\\bglm\\b",
+        "shape": "^(?:v )?[0-9]",
+        "reject": "\\bv(?:$| [a-z])",
+        "variant_tokens": [
+          "flash",
+          "flashx",
+          "falsh",
+          "x",
+          "air",
+          "lite",
+          "pro",
+          "plus",
+          "turbo",
+          "mini",
+          "nano",
+          "vision",
+          "image",
+          "audio",
+          "embedding",
+          "embeddings",
+          "rerank"
+        ],
+        "models": [
+          {
+            "model": "glm-5.3-flashx",
+            "prefix": "^(?:v )?(?:5\\.3|5 3) (?:flashx|flash x)(?: |$)"
+          },
+          {
+            "model": "glm-5.3-flash",
+            "prefix": "^(?:v )?(?:5\\.3|5 3) flash(?: |$)"
+          },
+          {
+            "model": "glm-5.3",
+            "prefix": "^(?:v )?(?:5\\.3|5 3)(?: |$)"
+          }
+        ],
+        "variant_prefixes": [
+          "flash",
+          "falsh"
+        ]
+      },
+      {
+        "name": "kimi",
+        "anchor": "\\b(?:kimi|kimik)\\b",
+        "shape": "^(?:k )?[0-9]",
+        "variant_tokens": [
+          "k",
+          "flash",
+          "flashx",
+          "pro",
+          "lite",
+          "mini",
+          "nano",
+          "plus",
+          "turbo",
+          "highspeed",
+          "vision",
+          "image",
+          "audio",
+          "embedding",
+          "embeddings",
+          "rerank"
+        ],
+        "models": [
+          {
+            "model": "kimi-k3",
+            "prefix": "^(?:k )?3(?: |$)"
+          }
+        ]
+      }
+    ],
+    "normalization": [
+      {
+        "pattern": "(?i)\\b(?:litellm|openrouter|siliconflow|togetherai|fireworksai|moonshotai|zhipuai)\\b",
+        "replacement": "provider"
+      },
+      {
+        "pattern": "\\b[0-9]+(?:\\.[0-9]+)?[kKmM]\\b",
+        "replacement": " "
+      },
+      {
+        "pattern": "(?i)(^|[^a-z])(flashx|flash|falsh|pro|lite|air)(minimal|low|medium|high|xhigh|max|ultra|light|thinking|reasoning|nonthinking|nothinking|normal|standard|auto|n)",
+        "replacement": "$1$2 $3"
+      },
+      {
+        "pattern": "([A-Z])([A-Z][a-z])",
+        "replacement": "$1 $2"
+      },
+      {
+        "pattern": "([a-z])([A-Z])",
+        "replacement": "$1 $2"
+      },
+      {
+        "pattern": "(?i)\\b(?:lite llm|open router|silicon flow|together ai|fireworks ai|moonshot ai|zhipu ai)\\b",
+        "replacement": "provider"
+      }
+    ]
+  }
 }

@@ -12,6 +12,8 @@ FIELDS = ("input", "cache_read", "cache_write", "cache_write_1h", "output")
 _EFFORT = re.compile(r"[-_\s(\[]+(?:minimal|low|medium|high|xhigh|max)[)\]]?\s*$", re.I)
 _SNAPSHOT = re.compile(r"[-_](?:\d{8}|\d{4}-\d{2}-\d{2})$")
 _CHINA = timezone(timedelta(hours=8))
+_MODEL_TOKENS = re.compile(r"[a-z]+|[0-9]+(?:\.[0-9]+)*")
+_PROVIDER_BOUNDARY = re.compile(r"[/·|:@,;]")
 
 
 def _stamp(value):
@@ -45,6 +47,10 @@ class OfficialModelPrices:
         read = lambda name: json.loads((directory / name).read_text(encoding="utf-8"))
         gpt, claude, rules = (read(name) for name in ("pricing_seed.json", "claude_pricing_seed.json", "model_pricing_rules.json"))
         self.rules = rules
+        matching = rules["model_matching"]
+        self.ignored_model_tokens = set(matching["ignored_tokens"])
+        self.model_normalization = [(re.compile(row["pattern"]), re.sub(r"\$(\d+)", lambda m: "\\g<" + m[1] + ">", row["replacement"])) for row in matching["normalization"]]
+        self.model_families = [dict(family, anchor=re.compile(family["anchor"]), shape=re.compile(family["shape"]), reject=re.compile(family["reject"]) if family.get("reject") else None, variant_tokens=set(family["variant_tokens"]), models=[(model["model"], re.compile(model["prefix"])) for model in family["models"]]) for family in matching["families"]]
         self.policies = gpt.get("billing_policies", {})
         self.definitions = {row["model"]: row for row in rules["models"]}
         self.prices = {}
@@ -89,16 +95,58 @@ class OfficialModelPrices:
         policies = {model: {key: value for key, value in policy.items() if key not in ("sources", "verified_at")} for model, policy in self.policies.items()}
         self.version = hashlib.sha256(json.dumps([content, rate_content, policies], sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
 
+    def decorated_models(self, value):
+        seen, uncertain, found = False, False, set()
+        for segment in _PROVIDER_BOUNDARY.split(value):
+            folded = unicodedata.normalize("NFKC", segment)
+            for pattern, replacement in self.model_normalization:
+                folded = pattern.sub(replacement, folded)
+            folded = folded.lower()
+            text = " ".join(token for token in _MODEL_TOKENS.findall(folded) if token not in self.ignored_model_tokens)
+            anchors = sorted(((match.start(), match.end(), family) for family in self.model_families for match in family["anchor"].finditer(text)), key=lambda hit: hit[0])
+            for i, (_, end, family) in enumerate(anchors):
+                body = text[end:anchors[i+1][0] if i+1 < len(anchors) else len(text)].strip()
+                if not family["shape"].search(body):
+                    continue
+                seen = True
+                tokens = body.split()
+                major = family.get("generation_major")
+                leading_version = tokens[1] if len(tokens) > 1 and tokens[0] == "v" else tokens[0]
+                bad_version = major and not leading_version[0].isdigit() and any(token == "v" and tokens[j+1][0].isdigit() and tokens[j+1].split(".")[0] != major for j, token in enumerate(tokens[:-1]))
+                if bad_version or family["reject"] and family["reject"].search(body):
+                    uncertain = True
+                    continue
+                models = set()
+                for model, prefix in family["models"]:
+                    match = prefix.search(body)
+                    if match:
+                        remaining = body[match.end():].split()
+                        if not family["variant_tokens"].intersection(remaining) and not any(token.startswith(prefix) for token in remaining for prefix in family.get("variant_prefixes", [])):
+                            models.add(model)
+                if len(models) == 1:
+                    found.update(models)
+                else:
+                    uncertain = True
+        return seen, uncertain, found
+
     def model(self, value):
         if not isinstance(value, str) or not value or len(value) > 512:
             return None
         value = re.sub(r"\[1m\]", "", value, flags=re.I)
         found = set()
         for part in [value] + re.split(r"[/·|:]", value):
+            if exact := self.identifiers.get(_key(part)):
+                found.add(exact)
+                continue
             for variant in (part, _EFFORT.sub("", part)):
                 for candidate in (variant, _SNAPSHOT.sub("", variant)):
                     if canonical := self.identifiers.get(_key(candidate)):
                         found.add(canonical)
+        seen, uncertain, decorated = self.decorated_models(value)
+        if seen:
+            if uncertain:
+                return None
+            found.update(decorated)
         return next(iter(found)) if len(found) == 1 else None
 
     def resolve(self, record):

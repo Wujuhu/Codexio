@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -16,15 +17,44 @@ import (
 var modelPricingRules []byte
 
 type modelPriceReference struct {
-	rules       Row
-	definitions map[string]Row
-	prices      map[string][]Row
-	identifiers map[string]string
-	catalog     []Row
-	display     []Row
-	holidays    map[string]bool
-	years       map[int]bool
-	version     string
+	rules              Row
+	definitions        map[string]Row
+	prices             map[string][]Row
+	identifiers        map[string]string
+	catalog            []Row
+	display            []Row
+	holidays           map[string]bool
+	years              map[int]bool
+	version            string
+	modelFamilies      []structuredPriceFamily
+	ignoredModelTokens map[string]bool
+	modelNormalization []structuredPriceReplacement
+}
+
+type structuredPriceReplacement struct {
+	expression  *regexp.Regexp
+	replacement string
+}
+
+type structuredPriceModel struct {
+	model  string
+	prefix *regexp.Regexp
+}
+type structuredPriceFamily struct {
+	anchor, shape, reject *regexp.Regexp
+	generationMajor       string
+	variantTokens         map[string]bool
+	variantPrefixes       []string
+	models                []structuredPriceModel
+}
+
+var modelStructureTokens = regexp.MustCompile(`[a-z]+|[0-9]+(?:\.[0-9]+)*`)
+
+func modelExpression(pattern string) *regexp.Regexp {
+	if pattern == "" {
+		return nil
+	}
+	return regexp.MustCompile(pattern)
 }
 
 var modelEffortSuffix = regexp.MustCompile(`(?i)[-_\s(\[]+(minimal|low|medium|high|xhigh|max)[)\]]?\s*$`)
@@ -49,6 +79,31 @@ func newModelPriceReference() *modelPriceReference {
 	gpt, _ := DecodeRow(priceSeed)
 	claude, _ := DecodeRow(claudePriceSeed)
 	p := &modelPriceReference{rules: rules, definitions: map[string]Row{}, prices: map[string][]Row{}, identifiers: map[string]string{}, holidays: map[string]bool{}, years: map[int]bool{}}
+	matching := ValueRow(rules["model_matching"])
+	for _, raw := range ValueRows(matching["normalization"]) {
+		if pattern := modelExpression(dataString(raw, "pattern")); pattern != nil {
+			p.modelNormalization = append(p.modelNormalization, structuredPriceReplacement{pattern, dataString(raw, "replacement")})
+		}
+	}
+	p.ignoredModelTokens = map[string]bool{}
+	for _, token := range ValueStrings(matching["ignored_tokens"]) {
+		p.ignoredModelTokens[token] = true
+	}
+	for _, raw := range ValueRows(matching["families"]) {
+		family := structuredPriceFamily{anchor: modelExpression(dataString(raw, "anchor")), shape: modelExpression(dataString(raw, "shape")), reject: modelExpression(dataString(raw, "reject")), generationMajor: dataString(raw, "generation_major"), variantTokens: map[string]bool{}, variantPrefixes: ValueStrings(raw["variant_prefixes"])}
+		if family.anchor == nil || family.shape == nil {
+			continue
+		}
+		for _, token := range ValueStrings(raw["variant_tokens"]) {
+			family.variantTokens[token] = true
+		}
+		for _, model := range ValueRows(raw["models"]) {
+			if prefix := modelExpression(dataString(model, "prefix")); prefix != nil {
+				family.models = append(family.models, structuredPriceModel{dataString(model, "model"), prefix})
+			}
+		}
+		p.modelFamilies = append(p.modelFamilies, family)
+	}
 	all := append(append(ValueRows(gpt["rows"]), ValueRows(claude["rows"])...), ValueRows(rules["other_rows"])...)
 	for _, r := range all {
 		model := dataString(r, "model")
@@ -144,20 +199,133 @@ func newModelPriceReference() *modelPriceReference {
 	p.version = HashString(dataJSON(Row{"rules": signature, "prices": content, "policies": solPolicyContent()}))
 	return p
 }
+func (p *modelPriceReference) decoratedModels(value string) (bool, bool, map[string]bool) {
+	seen, uncertain, found := false, false, map[string]bool{}
+	for _, segment := range strings.FieldsFunc(value, func(r rune) bool { return strings.ContainsRune("/·|:@,;", r) }) {
+		folded := strings.Map(func(r rune) rune {
+			if r >= 0xff01 && r <= 0xff5e {
+				return r - 0xfee0
+			}
+			return r
+		}, segment)
+		for _, rule := range p.modelNormalization {
+			folded = rule.expression.ReplaceAllString(folded, rule.replacement)
+		}
+		folded = strings.ToLower(folded)
+		tokens := []string{}
+		for _, token := range modelStructureTokens.FindAllString(folded, -1) {
+			if !p.ignoredModelTokens[token] {
+				tokens = append(tokens, token)
+			}
+		}
+		text := strings.Join(tokens, " ")
+		type anchor struct {
+			start, end int
+			family     *structuredPriceFamily
+		}
+		anchors := []anchor{}
+		for i := range p.modelFamilies {
+			family := &p.modelFamilies[i]
+			for _, hit := range family.anchor.FindAllStringIndex(text, -1) {
+				anchors = append(anchors, anchor{hit[0], hit[1], family})
+			}
+		}
+		sort.Slice(anchors, func(i, j int) bool { return anchors[i].start < anchors[j].start })
+		for i, hit := range anchors {
+			end := len(text)
+			if i+1 < len(anchors) {
+				end = anchors[i+1].start
+			}
+			body := strings.TrimSpace(text[hit.end:end])
+			family := hit.family
+			if !family.shape.MatchString(body) {
+				continue
+			}
+			seen = true
+			words := strings.Fields(body)
+			badVersion := false
+			leadingVersion := words[0]
+			if leadingVersion == "v" && len(words) > 1 {
+				leadingVersion = words[1]
+			}
+			if family.generationMajor != "" && !(leadingVersion[0] >= '0' && leadingVersion[0] <= '9') {
+				for j := 0; j+1 < len(words); j++ {
+					next := words[j+1]
+					if words[j] == "v" && next[0] >= '0' && next[0] <= '9' && strings.SplitN(next, ".", 2)[0] != family.generationMajor {
+						badVersion = true
+					}
+				}
+			}
+			if badVersion || family.reject != nil && family.reject.MatchString(body) {
+				uncertain = true
+				continue
+			}
+			models := map[string]bool{}
+			for _, rule := range family.models {
+				match := rule.prefix.FindStringIndex(body)
+				if match == nil || match[0] != 0 {
+					continue
+				}
+				blocked := false
+				for _, token := range strings.Fields(body[match[1]:]) {
+					if family.variantTokens[token] {
+						blocked = true
+						break
+					}
+					for _, prefix := range family.variantPrefixes {
+						if strings.HasPrefix(token, prefix) {
+							blocked = true
+							break
+						}
+					}
+					if blocked {
+						break
+					}
+				}
+				if !blocked {
+					models[rule.model] = true
+				}
+			}
+			if len(models) == 1 {
+				for model := range models {
+					found[model] = true
+				}
+			} else {
+				uncertain = true
+			}
+		}
+	}
+	return seen, uncertain, found
+}
+
 func (p *modelPriceReference) model(v string) string {
 	if v == "" || utf8.RuneCountInString(v) > 512 {
 		return ""
 	}
+	original := v
 	v = strings.ReplaceAll(strings.ToLower(v), "[1m]", "")
 	found := map[string]bool{}
 	candidates := append([]string{v}, strings.FieldsFunc(v, func(r rune) bool { return strings.ContainsRune("/·|:", r) })...)
 	for _, candidate := range candidates {
+		if exact := p.identifiers[modelPriceKey(candidate)]; exact != "" {
+			found[exact] = true
+			continue
+		}
 		for _, variant := range []string{candidate, modelEffortSuffix.ReplaceAllString(candidate, "")} {
 			for _, name := range []string{variant, modelSnapshotSuffix.ReplaceAllString(variant, "")} {
 				if model := p.identifiers[modelPriceKey(name)]; model != "" {
 					found[model] = true
 				}
 			}
+		}
+	}
+	seen, uncertain, decorated := p.decoratedModels(original)
+	if seen {
+		if uncertain {
+			return ""
+		}
+		for model := range decorated {
+			found[model] = true
 		}
 	}
 	if len(found) == 1 {
