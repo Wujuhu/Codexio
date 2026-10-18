@@ -1,71 +1,54 @@
 import SwiftUI
 import AppKit
 
-struct PricingView: View {
-    @ObservedObject var state: AppState
-    @State private var search = ""
-    @State private var selected: String?
-    @State private var editing = false
-    private var isClaude: Bool {state.pageClient == .claudeCode}
-    private var prices: [PriceRow] {isClaude ? state.claudePrices : state.prices}
-    private var selectedModel: String? { prices.first {$0.id == selected}?.model }
-    private var filtered: [PriceRow] { PricingDisplayOrder.sorted(prices.filter {(isClaude || state.modelIDs.isEmpty || state.modelIDs.contains($0.model)) && (search.isEmpty || $0.model.localizedCaseInsensitiveContains(search))}) }
+struct PricingHintText: View {
+    let text: String
     var body: some View {
-        VStack(alignment:.leading,spacing:20) {
-            HStack { StatusNote(text:L("美元 / 1M Token", "USD / 1M tokens")); Spacer(); Text(lastUpdateText(isClaude ? state.claudePriceUpdated : state.priceUpdated)).font(.caption).foregroundStyle(.secondary) }
-            if let warning = isClaude ? state.claudePriceWarning : state.priceWarning { StatusNote(text:warning) }
-            AdaptiveRow(spacing:8) {
-                TextField(L("搜索模型", "Search models"),text:$search).textFieldStyle(.roundedBorder)
-                Button(L("编辑基础价", "Edit base price")) { editing = true }.disabled(selectedModel == nil)
-                Button(L("恢复自动基础价", "Restore automatic price")) { if let model = selectedModel { state.overridePrice(model:model,rates:nil) } }.disabled(selectedModel == nil)
-            }
-            CompactTable(columns:[
-                GridColumn(id:"model",title:L("模型", "Model"),width:180,maximum:240,alignment:.center),
-                GridColumn(id:"condition",title:L("条件", "Condition"),width:138,maximum:166,alignment:.center),
-                GridColumn(id:"input",title:L("输入", "Input"),width:104,maximum:122,alignment:.center),
-                GridColumn(id:"cache_read",title:L("缓存读取", "Cached input"),width:104,maximum:122,alignment:.center),
-                GridColumn(id:"cache_write",title:isClaude ? L("缓存写入 5 分钟", "Cache write 5 minutes") : L("缓存写入", "Cache write"),width:104,maximum:122,alignment:.center)
-            ] + (isClaude ? [GridColumn(id:"cache_write_1h",title:L("缓存写入 1 小时", "Cache write 1 hour"),width:112,alignment:.center)] : []) + [GridColumn(id:"output",title:L("输出", "Output"),width:104,maximum:122,alignment:.center)],rows:filtered.map { row in GridRow(id:row.id,text: { column in
-                if column == "model" { return GridText(main:row.model) }
-                if column == "condition" && isClaude {return GridText(main:"Standard"+(row.model == "claude-haiku-5-5" ? ((row.raw.integer("threshold") ?? 0)>0 ? " · >100K" : " · ≤100K") : ""))}
-                if column == "condition" { return GridText(main:(["default":"Standard","priority":"Fast","ultrafast":"Ultra Fast"][row.raw.string("service_tier")] ?? "—")+((row.raw.integer("threshold") ?? 0) > 0 ? " >272K" : "")) }
-                return GridText(main:isClaude ? row.raw.number(column).map {"$"+$0.formatted(.number.locale(Locale(identifier:"en_US")).precision(.fractionLength(2...4)))} ?? "—" : money(row.raw.number(column)))
-            }) },revision:(isClaude ? state.claudePricesRevision : state.pricesRevision)+search+state.modelIDs.sorted().joined(separator:","),rowHeight:30,selection:$selected,preferences:state.preferences,storageKey:isClaude ? "claude-pricing" : "pricing")
-                .overlay(RoundedRectangle(cornerRadius:10).stroke(.secondary.opacity(0.16)))
-        }.padding(.horizontal,PageLayout.inset).padding(.bottom,PageLayout.inset).onChange(of:state.pageClient) {_,_ in selected = nil; search = ""}.sheet(isPresented:$editing) { if let model = selectedModel { PriceEditor(state:state,model:model) } }
+        let content=Text(text).font(.system(size:12)).fixedSize(horizontal:false,vertical:true).padding(14).frame(maxWidth:.infinity,alignment:.leading)
+        if #available(macOS 26.0,*) {content.glassEffect(.regular,in:RoundedRectangle(cornerRadius:12))}
+        else {content.background(.regularMaterial,in:RoundedRectangle(cornerRadius:12))}
     }
 }
 
-struct PriceEditor: View {
+struct PricingView: View {
     @ObservedObject var state: AppState
-    let model: String
-    @Environment(\.dismiss) private var dismiss
-    @State private var values = ["input":"","cache_read":"","cache_write":"","output":""]
-    @State private var error = ""
-    var body: some View {
-        VStack(alignment:.leading,spacing:20) {
-            Text(model).font(.title2)
-            StatusNote(text:L("编辑 Standard 基础价 · 美元 / 1M Token", "Edit Standard base prices · USD / 1M tokens"))
-            Form {
-                field("input",L("输入", "Input")); field("cache_read",L("缓存读取", "Cached input")); field("cache_write",state.pageClient == .claudeCode ? L("缓存写入 5 分钟", "Cache write 5 minutes") : L("缓存写入", "Cache write")); if state.pageClient == .claudeCode {field("cache_write_1h",L("缓存写入 1 小时", "Cache write 1 hour"))}; field("output",L("输出", "Output"))
-            }
-            if !error.isEmpty { Text(error).font(.caption).foregroundStyle(.red) }
-            HStack { Spacer(); Button(L("取消", "Cancel")) { dismiss() }; Button(L("保存", "Save")) { save() }.keyboardShortcut(.defaultAction) }
-        }.padding(26).frame(width:460).onAppear {
-            if let row = (state.pageClient == .claudeCode ? state.claudePrices : state.prices).first(where:{$0.model == model && $0.raw.string("service_tier") == "default" && $0.raw.integer("threshold") == 0}) { let base = row.raw.object("base_rates").isEmpty ? row.raw : row.raw.object("base_rates"); for key in priceKeys { values[key] = base.number(key).map {String($0)} ?? "" } }
+    @State private var search=""
+    @State private var expanded=Set(["gpt","claude","other"])
+    private func rows(_ group: String) -> [PriceRow] {
+        state.prices.filter { row in
+            row.raw.string("group")==group && (search.isEmpty || ([row.model,row.raw.string("display_name")]+(row.raw["aliases"] as? [String] ?? [])).contains {$0.localizedCaseInsensitiveContains(search)})
         }
     }
-    private var priceKeys: [String] {["input","cache_read","cache_write"]+(state.pageClient == .claudeCode ? ["cache_write_1h"] : [])+["output"]}
-    private func field(_ key: String,_ title: String) -> some View { TextField(title,text:Binding(get:{values[key] ?? ""},set:{values[key] = $0})) }
-    private func save() {
-        var result: Object = [:]
-        for key in priceKeys {
-            let text = values[key] ?? ""
-            if text.isEmpty && key.hasPrefix("cache_") { result[key] = NSNull(); continue }
-            guard let amount = Double(text), amount.isFinite, amount >= 0 else { error = L("请输入有限的非负单价", "Enter finite, nonnegative prices"); return }
-            result[key] = amount
+    var body: some View {
+        ScrollView {
+            VStack(alignment:.leading,spacing:18) {
+                StatusNote(text:L("美元 / 1M Token","USD / 1M tokens"))
+                TextField(L("搜索模型","Search models"),text:$search).textFieldStyle(.roundedBorder)
+                ForEach(["gpt","claude","other"],id:\.self) {group in
+                    let values=rows(group)
+                    DisclosureGroup(isExpanded:Binding(get:{expanded.contains(group)},set:{if $0 {expanded.insert(group)} else {expanded.remove(group)}})) {
+                        priceTable(values,group:group).padding(.top,8)
+                    } label: {
+                        HStack(spacing:8) {Text(group=="gpt" ? "GPT":group=="claude" ? "Claude":L("其他","Other")).font(.system(size:14,weight:.medium));Text(String(values.count)).font(.caption).foregroundStyle(.secondary)}
+                    }
+                }
+            }.padding(.horizontal,PageLayout.inset).padding(.bottom,PageLayout.inset)
         }
-        state.overridePrice(model:model,rates:result); dismiss()
+    }
+    private func priceTable(_ values: [PriceRow],group: String) -> some View {
+        let ttl=values.contains {$0.raw.number("cache_write_1h") != nil}
+        let columns=[
+            GridColumn(id:"model",title:L("模型","Model"),width:220,maximum:260,alignment:.center),
+            GridColumn(id:"input",title:L("输入","Input"),width:90,maximum:110,alignment:.center),
+            GridColumn(id:"cache_read",title:L("缓存读取","Cache read"),width:100,maximum:120,alignment:.center),
+            GridColumn(id:"cache_write",title:ttl ? L("缓存写入 5 分钟","Cache write 5 minutes"):L("缓存写入","Cache write"),width:ttl ? 120:100,maximum:140,alignment:.center)
+        ]+(ttl ? [GridColumn(id:"cache_write_1h",title:L("缓存写入 1 小时","Cache write 1 hour"),width:120,maximum:140,alignment:.center)]:[])+[GridColumn(id:"output",title:L("输出","Output"),width:90,maximum:110,alignment:.center)]
+        return CompactTable(columns:columns,rows:values.map {row in GridRow(id:row.id,text:{column in
+            if column=="model" {return GridText(main:row.model,hint:L(row.raw.string("tooltip"),row.raw.string("tooltip_en",row.raw.string("tooltip"))))}
+            return GridText(main:row.raw.number(column).map {"$"+$0.formatted(.number.locale(Locale(identifier:"en_US")).precision(.fractionLength(2...4)))} ?? "—")
+        })},revision:state.pricesRevision+search+group,rowHeight:30,preferences:state.preferences,storageKey:"unified-pricing-"+group,verticalScrolling:false)
+        .frame(height:CGFloat(values.count)*31+44)
+        .overlay(RoundedRectangle(cornerRadius:10).stroke(.secondary.opacity(0.16)))
     }
 }
 
@@ -152,7 +135,6 @@ struct SettingsView: View {
             row(L("自动检查更新", "Check for updates automatically")) { Toggle("",isOn:Binding(get:{state.preferences.analytics.flag("macos_auto_update",true)},set:{state.setPreference("macos_auto_update",$0)})).labelsHidden().toggleStyle(.switch) }
             row(L("上游检测", "Upstream detection")) { Toggle("",isOn:Binding(get:{state.preferences.analytics.flag("upstream_detection_enabled")},set:{desiredUpstream = $0; upstreamConfirmation = true})).labelsHidden().toggleStyle(.switch).disabled(state.paths.mock) }
             if !state.upstreamStatus.isEmpty { StatusNote(text:state.upstreamStatus).padding(.vertical,8) }
-            row(L("自动同步价格", "Sync prices automatically")) { Toggle("",isOn:Binding(get:{state.preferences.analytics.flag("auto_sync_prices",true)},set:{state.setPreference("auto_sync_prices",$0)})).labelsHidden().toggleStyle(.switch) }
             row(L("额度刷新", "Limit refresh")) { Picker("",selection:Binding(get:{state.preferences.general.integer("refresh_interval_seconds") ?? 60},set:{state.setPreference("refresh_interval_seconds",$0,general:true)})) { ForEach([30,60,300],id:\.self) { Text("\($0) s").tag($0) } }.labelsHidden().frame(width:110) }
             row(L("日志刷新", "Log refresh")) { Picker("",selection:Binding(get:{state.preferences.analytics.integer("usage_refresh_interval_seconds") ?? 10},set:{state.setPreference("usage_refresh_interval_seconds",$0)})) { ForEach([5,10,30,60],id:\.self) { Text("\($0) s").tag($0) } }.labelsHidden().frame(width:110) }
             row(L("额度估算间隔", "Estimate interval")) { Picker("",selection:Binding(get:{state.preferences.analytics.integer("week_estimate_interval_minutes") ?? 10},set:{state.setPreference("week_estimate_interval_minutes",$0)})) { ForEach([10,30,60],id:\.self) { Text("\($0) min").tag($0) } }.labelsHidden().frame(width:110) }

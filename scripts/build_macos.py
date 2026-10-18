@@ -20,7 +20,7 @@ from codexio.versions import AppVersion
 BUILD = ROOT / "build"
 STAGING = BUILD / "staging/macos"
 DESTINATION = BUILD / "dev/macos"
-WIDGET_VERSION = 30  # Formal v0.3.10 bundle registration.
+WIDGET_VERSION = 31  # v0.3.11 host/version registration.
 
 
 def run(*args, **kwargs):
@@ -129,6 +129,7 @@ def build_native(bundle, version):
     run("iconutil", "-c", "icns", iconset, "-o", resources / "Codexio.icns")
     shutil.copy2(ROOT / "src/codexio/pricing_seed.json", resources / "pricing_seed.json")
     shutil.copy2(ROOT / "src/codexio/claude_pricing_seed.json", resources / "claude_pricing_seed.json")
+    shutil.copy2(ROOT / "src/codexio/model_pricing_rules.json", resources / "model_pricing_rules.json")
     shutil.copy2(ROOT / "src/codexio/claude_bridge.json", resources / "claude_bridge.json")
     shutil.copytree(ROOT / "macos/Resources/ReportCards", resources / "ReportCards")
     shutil.copytree(ROOT / "macos/Resources/ReportCat", resources / "ReportCat")

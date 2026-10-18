@@ -125,7 +125,7 @@ func NewService(directory, executable, version string, mock bool, callbacks Desk
 	opts.Changed = func() { s.notify("update") }
 	s.updater = NewUpdater(opts)
 	s.reports = NewReportManager(s.store, directory, s.Config)
-	s.upstream = NewUpstreamProxy(directory, version, s.Config, mock, func() { s.notify("upstream") })
+	s.upstream = NewUpstreamProxy(directory, version, s.Config, mock, func(id string) { s.store.markObservedPrice(id); s.notify("upstream") })
 	s.mobile = NewMobileHost(directory, s.store, s.quota, s.Config, mock, func() { s.notify("mobile") })
 	s.mobile.claudeQuota = s.claudeQuota.Snapshot
 	return s, nil
@@ -318,14 +318,9 @@ func (s *Service) subscription(reports bool) Row {
 }
 func (s *Service) GetPrices() Row {
 	st := s.store.Status()
-	return Row{"rows": codexDisplayPrices(s.store.Prices()), "basis": "标准 API 单价 × Codex 倍率", "version": st["price_version"], "status": st["pricing"]}
+	return Row{"rows": s.store.Prices(), "basis": "标准 API 单价 × Codex 倍率", "version": st["price_version"], "status": st["pricing"]}
 }
-func (s *Service) GetClientPrices(client string) Row {
-	if normalizedClient(client) == "claude_code" {
-		return s.store.ClaudePrices()
-	}
-	return s.GetPrices()
-}
+func (s *Service) GetClientPrices(client string) Row { return s.GetPrices() }
 func (s *Service) SaveClientPrice(client, model string, rates Row) (Row, error) {
 	if normalizedClient(client) != "claude_code" {
 		return s.SavePrice(model, rates)
@@ -336,17 +331,7 @@ func (s *Service) SaveClientPrice(client, model string, rates Row) (Row, error) 
 	s.notify("pricing")
 	return s.store.ClaudePrices(), nil
 }
-func (s *Service) SyncClientPrices(client string) (Row, error) {
-	if normalizedClient(client) != "claude_code" {
-		return s.SyncPrices()
-	}
-	s.store.work.Lock()
-	e := s.store.syncClaudePrices(s.ctx, true)
-	s.store.work.Unlock()
-	s.store.Refresh()
-	s.notify("pricing")
-	return s.store.ClaudePrices(), e
-}
+func (s *Service) SyncClientPrices(client string) (Row, error) { return s.SyncPrices() }
 func (s *Service) SavePrice(model string, rates Row) (Row, error) {
 	if e := s.store.SetPrice(model, rates); e != nil {
 		return nil, e

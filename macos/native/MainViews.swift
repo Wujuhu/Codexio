@@ -26,14 +26,11 @@ struct MainView: View {
                     Button { state.toggleSidebar() } label: { Image(systemName:"sidebar.left") }.buttonStyle(.plain).accessibilityLabel(L("切换侧边栏", "Toggle sidebar"))
                     Spacer()
                     if ["overview","logs","trends","subscription","pricing"].contains(state.selectedPage) { ClientSwitcher(state:state) }
-                    FetchRefreshControls(activity:state.fetchActivity,clock:state.pageClient == .claudeCode && ["overview","logs","trends","subscription","pricing"].contains(state.selectedPage) ? (state.selectedPage == "subscription" ? state.claudeQuotaClock : state.claudeClock) : state.clock,openReport:{state.onOpenUsageReport?()}) {state.refresh()}
+                    FetchRefreshControls(activity:state.fetchActivity,clock:state.selectedPage == "pricing" ? state.pricingClock : (state.pageClient == .claudeCode && ["overview","logs","trends","subscription"].contains(state.selectedPage) ? (state.selectedPage == "subscription" ? state.claudeQuotaClock : state.claudeClock) : state.clock),openReport:{state.onOpenUsageReport?()}) {state.refresh()}
                 }.padding(.horizontal,PageLayout.inset).frame(height:48)
                 Divider()
                 HStack(alignment:.firstTextBaseline) {
                     PageHeading(title:Pages.title(state.selectedPage))
-                    if state.selectedPage == "pricing" {
-                        Button(L("立即同步", "Sync now")) { state.syncPrices() }
-                    }
                 }.padding(.horizontal,PageLayout.inset).padding(.top,state.selectedPage == "overview" ? 24 : PageLayout.inset).padding(.bottom,state.selectedPage == "overview" ? 4 : 10)
                 page.frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading)
                 if let error = state.errorMessage {

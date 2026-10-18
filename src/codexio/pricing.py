@@ -20,6 +20,7 @@ from decimal import Decimal
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from .model_pricing import OFFICIAL_PRICES
 
 LITELLM_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 MODELS_DEV_URL = "https://models.dev/api.json"
@@ -275,57 +276,23 @@ class PricingCatalog:
 
     def load(self):
         with self._lock:
-            seed = _read(Path(__file__).with_name("pricing_seed.json"))
-            self._seed = seed.get("rows", [])
-            self._billing_policies = seed.get("billing_policies", {})
-            self._cache = _read(self.cache_dir / "pricing_cache.json")
-            self._overrides = _read(self.cache_dir / "pricing_overrides.json")
+            self._seed = OFFICIAL_PRICES.display_rows
+            self._billing_policies = OFFICIAL_PRICES.policies
+            self._cache = {}
+            self._overrides = {}
             self._rebuild()
-            self.status = {"status": self._cache.get("status", "bundled"),
-                           "updated_at": self._cache.get("updated_at", "2026-09-07T00:00:00+00:00"),
-                           "last_sync_at": self._cache.get("updated_at"),
-                           "error": self._cache.get("error"), "changed": False,
-                           "price_version": self.price_version}
+            self.status = {"status":"bundled", "updated_at":OFFICIAL_PRICES.rules["verified_at"], "error":None, "changed":False, "price_version":self.price_version}
             try:
                 self._archive_version()
             except OSError as exc:
-                self.status["warning"] = tr("无法保存价格版本: ") + str(exc)[:160]
+                self.status["warning"] = str(exc)[:160]
             return self
 
     def _rebuild(self):
-        merged = {}
-        cached_rows = self._cache.get("rows", [])
-        for raw in (self._seed if isinstance(self._seed, list) else []) + (cached_rows if isinstance(cached_rows, list) else []):
-            row = _validate_row(raw)
-            if row and _is_standard_base(row):
-                row["service_tier"] = "default"
-                key = _row_key(row)
-                # A primary feed omitting an optional rate must not erase a verified seed rate.
-                prior = merged.get(key, {})
-                for rate in RATE_KEYS:
-                    if row[rate] is None and prior.get(rate) is not None:
-                        row[rate] = prior[rate]
-                merged[key] = row
-        # The newly published model rate is verified directly against OpenAI.
-        # A persisted third-party feed must not replace it before that feed catches up.
-        official_sol = next((_validate_row(row) for row in self._seed
-                             if isinstance(row, dict) and row.get("model") == "gpt-6.1-sol"), None)
-        if official_sol is not None:
-            merged[_row_key(official_sol)] = official_sol
-        self._base_rows = sorted((dict(row) for row in merged.values()), key=_row_key)
-        for model, override_rows in self._overrides.items():
-            if not isinstance(override_rows, list):
-                continue
-            for raw in override_rows:
-                if not isinstance(raw, dict):
-                    continue
-                row = _validate_row(dict(raw, model=model, locked=True, source="manual"))
-                if row and _is_standard_base(row):
-                    row["service_tier"] = "default"
-                    merged[_row_key(row)] = row
-        self._standard_rows = sorted(merged.values(), key=_row_key)
-        self._rows = sorted((row for base in self._standard_rows for row in _codex_rows(base, self._billing_policies)), key=_row_key)
-        self.price_version = _price_signature(self._rows, self._billing_policies)
+        self._base_rows = copy.deepcopy(OFFICIAL_PRICES.display_rows)
+        self._standard_rows = copy.deepcopy(self._base_rows)
+        self._rows = copy.deepcopy(self._base_rows)
+        self.price_version = OFFICIAL_PRICES.version
 
     def _archive_version(self):
         """A content-addressed version is written once, including manual prices."""
@@ -345,108 +312,14 @@ class PricingCatalog:
             return copy.deepcopy(self._rows)
 
     def set_override(self, model: str, rates: dict | None):
-        model = model.strip()
-        if not model:
-            raise ValueError(tr("模型名称不能为空"))
-        with self._lock:
-            if rates is None:
-                self._overrides.pop(model, None)
-            else:
-                raw = dict(rates, model=model, source="manual", locked=True, updated_at=_utcnow().isoformat())
-                raw["service_tier"] = rates.get("service_tier", rates.get("tier", "default"))
-                row = _validate_row(raw)
-                if not row or any(rates.get(key) is not None and _number(rates[key]) is None for key in RATE_KEYS):
-                    raise ValueError(tr("输入与输出基础价必须填写，已填写单价必须为有限非负数"))
-                if not _is_standard_base(row):
-                    raise ValueError(tr("只编辑 Standard 基础价；Fast 与长上下文单价由 Codex 规则生成"))
-                row["service_tier"] = "default"
-                old = self._overrides.get(model, [])
-                self._overrides[model] = [r for r in old if not isinstance(r, dict) or not _is_standard_base(r)] + [row]
-            _write(self.cache_dir / "pricing_overrides.json", self._overrides)
-            self._rebuild()
-            self._archive_version()
-            self.status.update(price_version=self.price_version, changed=True)
+        raise ValueError(tr("官方价格目录为只读"))
 
     def price(self, record: dict):
         with self._lock:
             return self._price(record)
 
     def _price(self, record):
-        result = {"usd": None, "pricing_status": "unpriced", "price_version": self.price_version,
-                  "reason": "", "rates": {}, "pricing_basis": PRICING_BASIS}
-        if "input_tokens" not in record or "output_tokens" not in record:
-            return dict(result, pricing_status="invalid", reason=tr("缺少输入或输出 Token 分项"))
-        counts = {}
-        for key in ("input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens"):
-            value = _number(record.get(key, 0))
-            if value is None or value != int(value):
-                return dict(result, pricing_status="invalid", reason=tr("Token 分项不是非负整数"))
-            counts[key] = int(value)
-        total = counts["input_tokens"] + counts["output_tokens"]
-        if ((counts["cached_input_tokens"] + counts["cache_write_input_tokens"] > counts["input_tokens"])
-                or counts["reasoning_output_tokens"] > counts["output_tokens"]
-                or ("total_tokens" in record and _number(record["total_tokens"]) != total)
-                or str(record.get("quality", "")).lower().startswith("invalid")):
-            return dict(result, pricing_status="invalid", reason=tr("Token 分项不一致，未计算金额"))
-        provider = str(record.get("provider", "unknown")).strip().lower()
-        if provider in ("", "unknown"):
-            return dict(result, reason=tr("模型供应商未记录"))
-        official = provider in ("openai", "codexio-upstream")
-        model = str(record.get("model", ""))
-        if official:
-            model = model.removeprefix("openai/")
-        model_rows = [r for r in self._rows if r["model"] == model]
-        if not model_rows:
-            return dict(result, reason=tr("该模型尚无可精确匹配的 OpenAI 参考价格") if not official else tr("该模型尚无价格"))
-        raw_tier = str(record.get("service_tier") or "").strip().lower()
-        missing_tier = not raw_tier or raw_tier == "auto"
-        aggregate = str(record.get("quality", "")).split(":", 1)[0] in (
-            "aggregate", "cumulative", "cumulative_observation", "unresolved")
-        estimated = missing_tier or aggregate or not official
-        tier = "default" if missing_tier or raw_tier == "standard" else str(raw_tier)
-        if tier == "fast":
-            tier = "priority"
-        if tier in ("ultra_fast", "ultra-fast", "ultra fast"):
-            tier = "ultrafast"
-        canonical_model = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", model)
-        policy = self._billing_policies.get(canonical_model, {})
-        if canonical_model == "gpt-6.1-sol" and policy:
-            mode, identity_estimated, assumed = _pricing_identity(record, official, policy)
-            base = next((row for row in self._standard_rows if row["model"] == model), None)
-            rates = _sol_rates(base, policy, mode, tier, counts["input_tokens"]) if base else None
-            estimated = estimated or identity_estimated
-            result.update(pricing_mode=mode, pricing_identity_estimated=identity_estimated)
-            if assumed:
-                result["assumed_billing_source"] = mode
-        else:
-            threshold = max((r["threshold"] for r in model_rows if counts["input_tokens"] > r["threshold"]), default=0)
-            rates = next((r for r in model_rows if r["service_tier"] == tier and r["threshold"] == threshold), None)
-        if rates is None:
-            return dict(result, reason=tr("缺少该模型与服务档位的 Codex 换算规则"))
-        # All components are disjoint; their selected rate owns the write policy.
-        parts = {"input": counts["input_tokens"] - counts["cached_input_tokens"] - counts["cache_write_input_tokens"],
-                 "cache_read": counts["cached_input_tokens"], "cache_write": counts["cache_write_input_tokens"],
-                 "output": counts["output_tokens"]}
-        if any(count and rates[key] is None for key, count in parts.items()):
-            return dict(result, reason=tr("缺少已使用 Token 类别的明确价格"), rates=dict(rates))
-        usd = math.fsum(count * (rates[key] or 0.0) / 1_000_000 for key, count in parts.items())
-        multipliers = rates["multipliers"]
-        if rates["cache_write_basis"] == "api":
-            basis = tr("手工 Standard 基础价") if rates.get("locked") else tr("OpenAI API Standard 标准价")
-            reasons = [basis + tr("；缓存创建使用单列价格，缺失时保留未定价")]
-        else:
-            reasons = [PRICING_BASIS_LABEL + tr("；输入/缓存读取 ×%g，输出 ×%g；缓存创建按普通输入价，无写入附加费") %
-                       (multipliers["input"], multipliers["output"])]
-        if result.get("pricing_identity_estimated"):
-            reasons.append(tr("认证或消费来源未明确记录；费用按所示口径估算"))
-        if missing_tier:
-            reasons.append(tr("原始记录未提供明确服务档位，按默认 Standard 标准价估计"))
-        if aggregate:
-            reasons.append(tr("累计观测不能证明单次请求上下文与模型归属，仅供消费参考"))
-        if not official:
-            reasons.append(tr("第三方供应商 %s 按同名 OpenAI 模型价格估算，可能与第三方账单不同") % (provider or "unknown"))
-        return dict(result, usd=usd, pricing_status="estimated" if estimated else "priced", rates=dict(rates),
-                    reason="；".join(reasons))
+        return OFFICIAL_PRICES.price(record, _pricing_identity)
 
     def _fetch(self, url, etag=None):
         headers = {"Accept": "application/json", "User-Agent": "Codexio/2 pricing"}
@@ -464,91 +337,7 @@ class PricingCatalog:
                 return None, etag, True
             raise
 
-    def sync(self, force=False):
+    def sync(self, *, force=False):
         with self._lock:
-            now = _utcnow()
-            try:
-                checked = datetime.fromisoformat(self._cache.get("checked_at", ""))
-                if checked.tzinfo is None:
-                    checked = checked.replace(tzinfo=timezone.utc)
-            except (ValueError, TypeError):
-                checked = None
-            retry_after = 3600 if self._cache.get("status") == "offline" else 86400
-            if not force and checked and 0 <= (now - checked).total_seconds() < retry_after:
-                return dict(self.status, changed=False,
-                            next_check_seconds=max(60, retry_after - (now - checked).total_seconds()))
-            previous = self.price_version
-            previous_rows = [dict(row) for row in self._base_rows]
-            errors = []
-            etags = self._cache.get("etags", {})
-            etags = dict(etags) if isinstance(etags, dict) else {}
-            for url, parser in ((LITELLM_URL, _litellm_rows), (MODELS_DEV_URL, _models_dev_rows)):
-                try:
-                    active_source = self._cache.get("active_source")
-                    data, etag, unchanged = self._fetch(url, etags.get(url) if active_source == url else None)
-                    if unchanged:
-                        if not any(row.get("source") == url for row in self._cache.get("rows", [])):
-                            data, etag, unchanged = self._fetch(url)
-                    if unchanged:
-                        rows = [r for r in self._cache["rows"] if isinstance(r, dict) and _is_standard_base(r)]
-                    else:
-                        rows = parser(data, now.isoformat())
-                        if not rows:
-                            raise ValueError(tr("价格目录中没有有效的 OpenAI 模型价格"))
-                    if etag:
-                        etags[url] = etag
-                    verification_rows = []
-                    verification_status = "not_available"
-                    warning = None
-                    conflicts = set()
-                    if url == LITELLM_URL:
-                        try:
-                            verification, verification_etag, verification_unchanged = self._fetch(MODELS_DEV_URL, etags.get(MODELS_DEV_URL))
-                            if verification_unchanged:
-                                verification_rows = self._cache.get("verification_rows", [])
-                                if not verification_rows:
-                                    verification, verification_etag, verification_unchanged = self._fetch(MODELS_DEV_URL)
-                            if not verification_unchanged:
-                                verification_rows = _models_dev_rows(verification, now.isoformat())
-                            if not verification_rows:
-                                raise ValueError(tr("备源没有可核对的标准价格"))
-                            if verification_etag:
-                                etags[MODELS_DEV_URL] = verification_etag
-                            verification_status = "checked"
-                            conflicts = _conflicting_models(rows, verification_rows)
-                            if conflicts:
-                                # Do not choose a conflicting source silently. Existing
-                                # rows (including known service/context combinations)
-                                # remain; new conflicting models stay unpriced.
-                                rows = [r for r in rows if r["model"] not in conflicts]
-                                rows.extend(r for r in previous_rows if r["model"] in conflicts and not r["locked"])
-                                verification_status = "conflict"
-                                # Cache now contains retained prices, not the rejected
-                                # response. Fetch a full primary body on the next check.
-                                etags.pop(LITELLM_URL, None)
-                        except (OSError, ValueError, TypeError, KeyError) as exc:
-                            warning = tr("备源核对暂不可用: ") + str(exc)[:180]
-                    self._cache = {"rows": rows, "updated_at": now.isoformat(), "checked_at": now.isoformat(),
-                                   "etags": etags, "active_source": url,
-                                   "verification_rows": verification_rows, "verification_status": verification_status,
-                                   "conflicting_models": sorted(conflicts), "warning": warning,
-                                   "status": "conflict" if conflicts else ("synced" if url == LITELLM_URL else "fallback"),
-                                   "error": tr("两源单价冲突，保留已有价格: ") + ", ".join(sorted(conflicts)) if conflicts else None}
-                    self._rebuild()
-                    self.status = {"status": self._cache["status"], "updated_at": now.isoformat(), "error": self._cache["error"],
-                                   "last_sync_at": now.isoformat(),
-                                   "verification_status": verification_status, "warning": warning,
-                                   "conflicting_models": sorted(conflicts),
-                                   "changed": self.price_version != previous, "price_version": self.price_version}
-                    self._archive_version()
-                    _write(self.cache_dir / "pricing_cache.json", self._cache)
-                    return dict(self.status)
-                except (OSError, ValueError, TypeError, KeyError) as exc:
-                    errors.append(type(exc).__name__ + ": " + str(exc)[:200])
-            self._cache.update(checked_at=now.isoformat(), error="; ".join(errors), status="offline")
-            self.status.update(status="offline", error=self._cache["error"], changed=False)
-            try:
-                _write(self.cache_dir / "pricing_cache.json", self._cache)
-            except OSError:
-                pass
+            self.status.update(changed=False, price_version=self.price_version)
             return dict(self.status)

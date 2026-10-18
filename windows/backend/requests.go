@@ -3,6 +3,8 @@ package backend
 import (
 	"context"
 	"database/sql"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -113,6 +115,15 @@ func (s *Store) project(contexts ...context.Context) error {
 	var prior string
 	_ = tx.QueryRow("SELECT data FROM usage_query_state WHERE key='go_projection'").Scan(&prior)
 	state := dataRow(prior)
+	source, observedError := s.observedPricing(reader.ctx, tx, state)
+	if observedError != nil {
+		return observedError
+	}
+	observedDB := source.db
+	if observedDB != nil {
+		defer observedDB.Close()
+	}
+
 	s.mu.RLock()
 	version := s.priceVersion
 	s.mu.RUnlock()
@@ -131,7 +142,7 @@ func (s *Store) project(contexts ...context.Context) error {
 	if validAfter, ok := ParseStamp(state["duration_valid_after"]); ok && now.Before(validAfter) {
 		timeChanged = true
 	}
-	if !groupFull && ValueInt(state["revision"]) == revision && !timeChanged {
+	if !groupFull && ValueInt(state["revision"]) == revision && !timeChanged && !source.changed {
 		if s.Generation() == 0 {
 			s.generation.Store(ValueInt(state["generation"]))
 		}
@@ -167,6 +178,21 @@ func (s *Store) project(contexts ...context.Context) error {
 		}
 		if len(records) == 0 {
 			break
+		}
+		// Existing observations are read in batches even on a catalog upgrade;
+		// they determine the returned model before the per-call expense.
+		if observedDB == nil {
+			path := filepath.Join(s.options.Directory, "upstream.sqlite")
+			if _, statError := os.Stat(path); statError == nil {
+				observedDB, _ = sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro&_pragma=busy_timeout(100)")
+				if observedDB != nil {
+					observedDB.SetMaxOpenConns(1)
+					defer observedDB.Close()
+				}
+			}
+		}
+		if e = observedPriceRows(reader.ctx, observedDB, records); e != nil {
+			return e
 		}
 		for _, r := range records {
 			if timestamp := stamp(r["timestamp"]); timestamp != "" {
@@ -225,7 +251,7 @@ func (s *Store) project(contexts ...context.Context) error {
 	if e = tx.QueryRow(`SELECT MIN(json_extract(data,'$.duration_refresh_at')),MAX(json_extract(data,'$.duration_valid_after')) FROM usage_request_groups`).Scan(&nextDurationRefresh, &durationValidAfter); e != nil {
 		return e
 	}
-	projection := Row{"revision": revision, "prices": version, "generation": s.Generation() + 1, "claude_projection_version": 2, "request_projection_version": requestMetadataVersion, "duration_projection_version": requestDurationProjectionVersion}
+	projection := Row{"pricing_upstream": source.key, "pricing_upstream_revision": source.revision, "revision": revision, "prices": version, "generation": s.Generation() + 1, "claude_projection_version": 2, "request_projection_version": requestMetadataVersion, "duration_projection_version": requestDurationProjectionVersion}
 	if nextDurationRefresh.Valid {
 		projection["duration_refresh_at"] = nextDurationRefresh.Float64
 	}

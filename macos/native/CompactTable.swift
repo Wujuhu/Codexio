@@ -8,7 +8,7 @@ struct GridColumn {
     var maximum: CGFloat? = nil
     var alignment: NSTextAlignment = .left
 }
-struct GridText { var main: String; var secondary = ""; var upstream = ""; var upstreamMismatch = false }
+struct GridText { var main: String; var secondary = ""; var upstream = ""; var upstreamMismatch = false; var hint = "" }
 struct GridRow {
     let id: String
     var text: (String) -> GridText
@@ -36,6 +36,9 @@ enum TableColumnWidths {
 
 private final class GridTextCell: NSView {
     let main = NSTextField(labelWithString:""), secondary = NSTextField(labelWithString:"")
+    private let info = HoverLinkView(title:"",target:nil,action:nil)
+    private var hint = ""
+    private var hintCoordinator: DetailsLink.Coordinator?
     private var showsUpstream = false
     private var requestLines = false
     private var upstreamColor = NSColor.secondaryLabelColor
@@ -45,7 +48,9 @@ private final class GridTextCell: NSView {
         main.isSelectable = true; main.maximumNumberOfLines = 1
         secondary.font = .systemFont(ofSize:10); secondary.textColor = .secondaryLabelColor
         secondary.lineBreakMode = .byTruncatingTail
-        addSubview(main); addSubview(secondary)
+        info.isBordered=false;info.image=NSImage(systemSymbolName:"exclamationmark.circle",accessibilityDescription:L("计价条件","Pricing conditions"));info.imagePosition = .imageOnly
+        info.contentTintColor = .secondaryLabelColor;info.isHidden=true
+        addSubview(main); addSubview(secondary);addSubview(info)
     }
     required init?(coder: NSCoder) { fatalError() }
     func apply(_ value: GridText,alignment: NSTextAlignment,requestLines: Bool) {
@@ -59,11 +64,35 @@ private final class GridTextCell: NSView {
         secondary.toolTip = secondary.stringValue
         main.alignment = alignment; secondary.alignment = alignment
         main.toolTip = value.main
+        if hint != value.hint {
+            hintCoordinator?.close();hintCoordinator=nil;hint=value.hint;info.isHidden=hint.isEmpty
+            info.target=nil;info.action=nil;info.entered=nil;info.exited=nil
+            if !hint.isEmpty {
+                let text=hint,coordinator=DetailsLink.Coordinator(row:UsageRow(raw:[:]),members:[])
+                let width: CGFloat=380
+                let size=(text as NSString).boundingRect(with:NSSize(width:width-28,height:1000),options:[.usesLineFragmentOrigin,.usesFontLeading],attributes:[.font:NSFont.systemFont(ofSize:12)])
+                coordinator.contentSize=NSSize(width:min(width,max(150,ceil(size.width)+28)),height:ceil(size.height)+28)
+                coordinator.preferredEdge = .maxX
+                coordinator.customContent={AnyView(PricingHintText(text:text))}
+                coordinator.anchor=info;hintCoordinator=coordinator
+                info.target=coordinator;info.action = #selector(DetailsLink.Coordinator.clicked)
+                info.entered={ [weak coordinator] in coordinator?.anchorInside=true;coordinator?.show() }
+                info.exited={ [weak coordinator] in coordinator?.anchorInside=false;coordinator?.scheduleClose() }
+            }
+        }
         secondary.isHidden = secondary.stringValue.isEmpty; needsLayout = true; needsDisplay = true
     }
     override func layout() {
         super.layout()
         let width = max(0,bounds.width-16)
+        if !info.isHidden {
+            let measured=(main.stringValue as NSString).size(withAttributes:[.font:main.font!]).width
+            let textWidth=min(ceil(measured)+10,max(0,width-22)),combined=textWidth+22
+            let x=main.alignment == .center ? max(8,(bounds.width-combined)/2):8
+            main.frame=NSRect(x:x,y:max(0,(bounds.height-18)/2),width:textWidth,height:18)
+            info.frame=NSRect(x:main.frame.maxX+4,y:max(0,(bounds.height-16)/2),width:16,height:16)
+            return
+        }
         if showsUpstream {
             let bottom = max(0,(bounds.height-34)/2), textWidth = max(0,width-14)
             main.frame = NSRect(x:8,y:bottom,width:textWidth,height:18)
@@ -80,6 +109,11 @@ private final class GridTextCell: NSView {
             secondary.frame = NSRect(x:8,y:bottom,width:width,height:14)
         }
     }
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow==nil {hintCoordinator?.close()}
+        super.viewWillMove(toWindow:newWindow)
+    }
+    deinit {hintCoordinator?.close()}
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         guard showsUpstream else { return }

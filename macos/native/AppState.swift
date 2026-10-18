@@ -44,6 +44,7 @@ final class AppState: ObservableObject {
     let estimator: WeeklyEstimator
     let client = CodexClient()
     let clock = ScanClock()
+    let pricingClock = ScanClock()
     let fetchActivity = FetchActivity()
     let quotaClock = ScanClock()
     let menuQuotaClock = ScanClock()
@@ -188,16 +189,10 @@ final class AppState: ObservableObject {
         claudeAllowance.start()
         refreshUsage(); refreshQuota()
         configureTimers()
-        let priceFetch = fetchActivity.begin()
         dataQueue.async { [weak self] in
-            guard let self else { return }
-            defer { DispatchQueue.main.async {self.fetchActivity.end(priceFetch)} }
-            guard self.preferences.analytics.flag("auto_sync_prices",true) else { return }
-            do { try self.catalog.sync(); self.publishUsage() }
-            catch { DispatchQueue.main.async { self.errorMessage = L("价格同步失败，保留已有价格", "Price sync failed; saved prices are retained") } }
-            do {try self.claudeCatalog.sync(); try self.claudeLedger.refreshPricing(); self.publishClaude()}
-            catch { DispatchQueue.main.async { self.errorMessage = L("价格同步失败，保留已有价格", "Price sync failed; saved prices are retained") } }
+            try? self?.catalog.sync();try? self?.claudeCatalog.sync()
         }
+
     }
     func configureTimers() {
         scanTimer?.invalidate(); quotaTimer?.invalidate(); priceTimer?.invalidate()
@@ -206,12 +201,7 @@ final class AppState: ObservableObject {
         quotaTimer = Timer.scheduledTimer(withTimeInterval:max(30,preferences.general.number("refresh_interval_seconds") ?? 60),repeats:true) { [weak self] _ in self?.refreshQuota() }
         scanTimer?.tolerance = 1
         quotaTimer?.tolerance = 5
-        priceTimer = Timer.scheduledTimer(withTimeInterval:3600,repeats:true) { [weak self] _ in
-            guard let self, self.preferences.analytics.flag("auto_sync_prices",true) else { return }
-            let operation = self.fetchActivity.begin()
-            self.dataQueue.async { defer {DispatchQueue.main.async {self.fetchActivity.end(operation)}}; try? self.catalog.sync(); self.publishUsage(); try? self.claudeCatalog.sync(); try? self.claudeLedger.refreshPricing(); self.publishClaude() }
-        }
-        priceTimer?.tolerance = 180
+
     }
     func stop() {
         if !paths.mock { mobileSync.stop() }
@@ -419,7 +409,7 @@ final class AppState: ObservableObject {
                 self.clock.updated = result.updated
                 if self.pricesRevision != priceVersion { self.prices = prices; self.pricesRevision = priceVersion }
                 if self.modelIDs != models { self.modelIDs = models }
-                if self.priceUpdated != priceUpdated { self.priceUpdated = priceUpdated }
+                if self.priceUpdated != priceUpdated { self.priceUpdated = priceUpdated;self.pricingClock.updated=priceUpdated }
                 if self.priceWarning != priceWarning { self.priceWarning = priceWarning }
                 if self.displayedEstimates != estimatesKey { self.weeklyEstimates = estimates; self.displayedEstimates = estimatesKey }
                 if finishLoading && self.loading { self.loading = false }
@@ -664,16 +654,11 @@ final class AppState: ObservableObject {
         }
     }
     func syncPrices() {
-        guard !paths.mock, !stopped else { return }
-        let operation = fetchActivity.begin(), selectedClient = pageClient
+        guard !paths.mock,!stopped else {return}
         dataQueue.async { [weak self] in
-            guard let self else { return }
-            defer {DispatchQueue.main.async {self.fetchActivity.end(operation)}}
-            do {
-                if selectedClient == .claudeCode {try self.claudeCatalog.sync(force:true); try self.claudeLedger.refreshPricing(); self.publishClaude()}
-                else {try self.catalog.sync(force:true); self.publishUsage()}
-            }
-            catch { DispatchQueue.main.async { self.errorMessage = error.localizedDescription } }
+            guard let self else {return}
+            do {try self.catalog.sync();try self.claudeCatalog.sync();self.publishUsage();self.publishClaude()}
+            catch {DispatchQueue.main.async {self.errorMessage=error.localizedDescription}}
         }
     }
     func overridePrice(model: String, rates: Object?) {

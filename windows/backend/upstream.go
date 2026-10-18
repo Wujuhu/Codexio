@@ -34,7 +34,7 @@ type UpstreamProxy struct {
 	version         string
 	config          func() Row
 	mock            bool
-	changed         func()
+	changed         func(string)
 	server          *http.Server
 	listener        net.Listener
 	db              *sql.DB
@@ -52,7 +52,7 @@ type UpstreamProxy struct {
 	cancel          context.CancelFunc
 }
 
-func NewUpstreamProxy(dir, version string, config func() Row, mock bool, changed func()) *UpstreamProxy {
+func NewUpstreamProxy(dir, version string, config func() Row, mock bool, changed func(string)) *UpstreamProxy {
 	return &UpstreamProxy{directory: dir, version: version, config: config, mock: mock, changed: changed, status: "disabled", desiredEnabled: ValueBool(config()["upstream_detection_enabled"]), observations: make(chan Row, 64), websockets: map[*upstreamDuplex]bool{}}
 }
 func (p *UpstreamProxy) Public() Row {
@@ -206,7 +206,7 @@ func (p *UpstreamProxy) Toggle(enabled bool) (Row, error) {
 	p.restartRequired = clientRunning
 	p.lastError = ""
 	if p.changed != nil {
-		go p.changed()
+		go p.changed("")
 	}
 	return p.publicLocked(), nil
 }
@@ -371,7 +371,7 @@ func (p *UpstreamProxy) stop(clientRunning bool) error {
 	p.alreadyTargeted = false
 	p.restartRequired = hadRoute && clientRunning
 	if p.changed != nil {
-		go p.changed()
+		go p.changed("")
 	}
 	return nil
 }
@@ -492,7 +492,7 @@ func (p *UpstreamProxy) RestartClient() error {
 	p.routeChanged = false
 	p.mu.Unlock()
 	if p.changed != nil {
-		p.changed()
+		p.changed("")
 	}
 	return nil
 }
@@ -707,7 +707,7 @@ func (p *UpstreamProxy) writeObservations(ctx context.Context) {
 				_ = tx.Rollback()
 			}
 			if e == nil && p.changed != nil {
-				p.changed()
+				p.changed(dataString(r, "id"))
 			}
 		}
 	}

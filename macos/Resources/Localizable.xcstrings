@@ -2769,22 +2769,6 @@
         }
       }
     },
-    "两源单价冲突，保留已有价格": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Price sources disagree; saved prices are retained"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "两源单价冲突，保留已有价格"
-          }
-        }
-      }
-    },
     "两源单价冲突，保留已有价格: ": {
       "localizations": {
         "en": {
@@ -3505,22 +3489,6 @@
         }
       }
     },
-    "价格目录缺少已有型号，保留已有价格": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The price catalog is missing a model; saved prices were retained"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "价格目录缺少已有型号，保留已有价格"
-          }
-        }
-      }
-    },
     "价格目录超过大小限制": {
       "localizations": {
         "en": {
@@ -4109,6 +4077,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "其中缓存读取"
+          }
+        }
+      }
+    },
+    "其他": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Other"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "其他"
           }
         }
       }
@@ -5889,22 +5873,6 @@
         }
       }
     },
-    "备源核对暂不可用": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Reference price verification is unavailable"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "备源核对暂不可用"
-          }
-        }
-      }
-    },
     "备源核对暂不可用: ": {
       "localizations": {
         "en": {
@@ -6269,6 +6237,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "完成 Codexio 原生重构"
+          }
+        }
+      }
+    },
+    "官方价格目录为只读": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The official price catalog is read-only"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "官方价格目录为只读"
           }
         }
       }
@@ -15841,22 +15825,6 @@
         }
       }
     },
-    "自动同步价格": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sync prices automatically"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "自动同步价格"
-          }
-        }
-      }
-    },
     "自动安装准备已超过 30 秒，请下载 Mac ZIP 手动安装。": {
       "localizations": {
         "en": {
@@ -16029,6 +15997,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "薄荷猫咪花园"
+          }
+        }
+      }
+    },
+    "计价条件": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pricing conditions"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "计价条件"
           }
         }
       }

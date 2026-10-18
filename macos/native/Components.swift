@@ -220,6 +220,8 @@ struct DetailsLink: NSViewRepresentable {
         var members: [UsageRow]
         var loadMembers: (() -> [UsageRow])?
         var customContent: (() -> AnyView)?
+        var contentSize = NSSize(width:360,height:500)
+        var preferredEdge: NSRectEdge = .minX
         weak var anchor: HoverLinkView?
         private var popover: NSPopover?
         var anchorInside = false
@@ -241,8 +243,8 @@ struct DetailsLink: NSViewRepresentable {
                 if inside { self.work?.cancel(); self.work = nil } else { self.scheduleClose() }
             }
             popover.contentViewController = NSHostingController(rootView:content)
-            popover.contentSize = NSSize(width:360,height:500)
-            popover.show(relativeTo:anchor.bounds,of:anchor,preferredEdge:.minX)
+            popover.contentSize = contentSize
+            popover.show(relativeTo:anchor.bounds,of:anchor,preferredEdge:preferredEdge)
             if !popover.isShown, self.popover === popover { close() }
         }
         func scheduleClose() {

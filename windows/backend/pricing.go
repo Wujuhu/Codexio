@@ -3,15 +3,12 @@ package backend
 import (
 	_ "embed"
 	"encoding/json"
-	"errors"
 	"math"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
-	"time"
 )
 
 //go:embed assets/pricing_seed.json
@@ -199,128 +196,15 @@ func (s *Store) loadPrices() error {
 	if e := s.loadClaudePrices(); e != nil {
 		return e
 	}
-	seed, _ := DecodeRow(priceSeed)
-	cached, _ := ReadJSON(filepath.Join(s.priceDirectory(), "pricing_cache.json"))
-	overrides, _ := ReadJSON(filepath.Join(s.priceDirectory(), "pricing_overrides.json"))
-	bases := map[string]Row{}
-	for _, r := range append(ValueRows(seed["rows"]), ValueRows(cached["rows"])...) {
-		if !validBase(r) {
-			continue
-		}
-		model := dataString(r, "model")
-		prior := bases[model]
-		for _, k := range rateFields {
-			if r[k] == nil && prior[k] != nil {
-				r[k] = prior[k]
-			}
-		}
-		bases[model] = CloneRow(r)
-	}
-	// These newly verified official rates win over stale third-party caches.
-	for _, r := range ValueRows(seed["rows"]) {
-		if dataString(r, "model") == "gpt-6.1-sol" && validBase(r) {
-			bases[dataString(r, "model")] = CloneRow(r)
-		}
-	}
-	for model, rows := range overrides {
-		for _, r := range ValueRows(rows) {
-			if validBase(r) {
-				r["model"] = model
-				r["locked"] = true
-				bases[model] = CloneRow(r)
-			}
-		}
-	}
-	result := []Row{}
-	models := make([]string, 0, len(bases))
-	for model := range bases {
-		models = append(models, model)
-	}
-	sort.Strings(models)
-	for _, model := range models {
-		base := bases[model]
-		if datedModel.ReplaceAllString(strings.TrimPrefix(model, "openai/"), "") == "gpt-6.1-sol" {
-			for _, tier := range []string{"default", "priority", "ultrafast"} {
-				r := solPriceRates(base, "subscription", tier, 0)
-				if r == nil {
-					continue
-				}
-				r["condition"] = map[string]string{"default": "Standard", "priority": "Codex Fast", "ultrafast": "Codex Ultra Fast"}[tier]
-				result = append(result, r)
-			}
-			continue
-		}
-		threshold, fast := codexPolicy(model)
-		contexts := []int64{0}
-		if threshold > 0 {
-			contexts = append(contexts, threshold)
-		}
-		speeds := []float64{1}
-		if fast > 0 {
-			speeds = append(speeds, fast)
-		}
-		for i, speed := range speeds {
-			for _, boundary := range contexts {
-				r := CloneRow(base)
-				inMul, outMul := speed, speed
-				if boundary > 0 {
-					inMul *= 2
-					outMul *= 1.5
-				}
-				r["base_rates"] = Row{}
-				for _, k := range rateFields {
-					ValueRow(r["base_rates"])[k] = base[k]
-					rate := base[k]
-					mul := inMul
-					if k == "output" {
-						mul = outMul
-					}
-					if k == "cache_write" && (i > 0 || boundary > 0) {
-						rate = base["input"]
-					}
-					if n, ok := ValueFloat(rate); ok {
-						r[k] = n * mul
-					} else {
-						r[k] = nil
-					}
-				}
-				r["service_tier"] = "default"
-				if i > 0 {
-					r["service_tier"] = "priority"
-				}
-				r["threshold"] = boundary
-				r["condition"] = "Standard"
-				if i > 0 {
-					r["condition"] = "Codex Fast"
-				}
-				if boundary > 0 {
-					r["condition"] = dataString(r, "condition") + " · >272K input"
-				}
-				r["pricing_basis"] = "standard_api_x_codex"
-				r["rule_version"] = priceRule
-				result = append(result, r)
-			}
-		}
-	}
-	content := make([]Row, len(result))
-	for i, r := range result {
-		content[i] = Row{}
-		for _, k := range append([]string{"model", "service_tier", "threshold", "base_rates"}, rateFields...) {
-			content[i][k] = r[k]
-		}
-	}
-	version := HashString(priceRule + dataJSON([]any{content, solPolicyContent()}))[:16]
 	s.mu.Lock()
-	s.prices = result
-	s.codexPriceVersion = version
-	s.priceVersion = HashString(version + "|" + s.claudePriceVersion)[:16]
-	s.priceStatus = Row{"status": firstString(cached["status"], "bundled"), "updated_at": cached["updated_at"], "error": cached["error"]}
+	s.prices = frozenPrices.display
+	s.codexPriceVersion = frozenPrices.version
+	s.priceVersion = HashString(frozenPrices.version + "|" + s.claudePriceVersion)
+	s.priceStatus = Row{"status": "bundled", "updated_at": frozenPrices.rules["verified_at"]}
 	s.mu.Unlock()
-	archive := filepath.Join(s.priceDirectory(), "versions", version+".json")
+	archive := filepath.Join(s.priceDirectory(), "versions", frozenPrices.version+".json")
 	if _, e := os.Stat(archive); os.IsNotExist(e) {
-		if e = WriteJSON(archive, Row{"price_version": version, "created_at": UTCStamp(time.Now()), "rule_version": priceRule, "pricing_basis": "standard_api_x_codex", "rows": result, "billing_policies": Row{"gpt-6.1-sol": solBillingPolicy}}); e != nil {
-			return e
-		}
+		return WriteJSON(archive, Row{"price_version": frozenPrices.version, "rows": frozenPrices.catalog, "rules": frozenPrices.rules, "billing_policies": Row{"gpt-6.1-sol": solBillingPolicy}})
 	}
 	return nil
 }
@@ -333,36 +217,7 @@ func (s *Store) Prices() []Row {
 	}
 	return r
 }
-func (s *Store) SetPrice(model string, rates Row) error {
-	s.work.Lock()
-	defer s.work.Unlock()
-	model = strings.TrimSpace(model)
-	if model == "" || len(model) > 160 {
-		return errors.New("invalid model")
-	}
-	path := filepath.Join(s.priceDirectory(), "pricing_overrides.json")
-	overrides, _ := ReadJSON(path)
-	if len(rates) == 0 {
-		delete(overrides, model)
-	} else {
-		r := Row{"model": model, "service_tier": "default", "threshold": 0, "locked": true, "source": "manual"}
-		for _, k := range rateFields {
-			r[k] = rates[k]
-		}
-		if !validBase(r) || ValueInt(rates["threshold"]) != 0 || normalizedTier(rates["service_tier"]) != "default" {
-			return errors.New("edit finite nonnegative Standard base prices only; input and output are required")
-		}
-		overrides[model] = []Row{r}
-	}
-	if e := WriteJSON(path, overrides); e != nil {
-		return e
-	}
-	if e := s.loadPrices(); e != nil {
-		return e
-	}
-	s.Refresh()
-	return nil
-}
+func (s *Store) SetPrice(model string, rates Row) error { return officialPriceReadOnly() }
 func (s *Store) price(r Row) Row {
 	r = CloneRow(r)
 	if normalizedClient(dataString(r, "client_kind")) == "claude_code" {
@@ -387,105 +242,8 @@ func (s *Store) price(r Row) Row {
 		}
 		return s.priceClaude(r)
 	}
-	r["cost_usd"] = nil
-	r["pricing_status"] = "unpriced"
-	r["price_version"] = s.priceVersion
-	r["pricing_basis"] = "standard_api_x_codex"
-	counts := map[string]int64{}
-	for _, k := range tokenFields {
-		v, exists := r[k]
-		if !exists && k != "input_tokens" && k != "output_tokens" && k != "total_tokens" {
-			v = 0
-		}
-		n, ok := knownCount(v)
-		if !ok {
-			r["pricing_status"] = "invalid"
-			r["pricing_reason"] = "缺少有效 Token 分项"
-			return r
-		}
-		counts[k] = n
-	}
-	if counts["input_tokens"]+counts["output_tokens"] != counts["total_tokens"] || counts["cached_input_tokens"]+counts["cache_write_input_tokens"] > counts["input_tokens"] || counts["reasoning_output_tokens"] > counts["output_tokens"] || strings.HasPrefix(dataString(r, "quality"), "invalid") {
-		r["pricing_status"] = "invalid"
-		r["pricing_reason"] = "Token 分项不一致"
-		return r
-	}
-	provider := strings.ToLower(dataString(r, "provider"))
-	if provider == "" || provider == "unknown" {
-		r["pricing_reason"] = "模型供应商未记录"
-		return r
-	}
-	model := dataString(r, "model")
-	official := provider == "openai" || provider == "codexio-upstream"
-	if official {
-		model = strings.TrimPrefix(model, "openai/")
-	}
-	tier := normalizedTier(r["service_tier"])
-	var selected Row
-	fundingEstimated := false
-	if datedModel.ReplaceAllString(model, "") == "gpt-6.1-sol" {
-		mode, estimated, assumed := solFunding(r, official)
-		fundingEstimated = estimated
-		r["pricing_mode"] = mode
-		r["pricing_identity_estimated"] = estimated
-		delete(r, "assumed_billing_source")
-		if assumed {
-			r["assumed_billing_source"] = mode
-		}
-		for _, row := range s.prices {
-			if dataString(row, "model") == model && dataString(row, "service_tier") == "default" && ValueInt(row["threshold"]) == 0 {
-				base := CloneRow(row)
-				for _, key := range rateFields {
-					base[key] = ValueRow(row["base_rates"])[key]
-				}
-				selected = solPriceRates(base, mode, tier, counts["input_tokens"])
-				break
-			}
-		}
-	} else {
-		// API-key records must explicitly retain their authentication mode; Codex modifiers do not apply.
-		api := dataString(r, "auth_mode") == "api_key" || dataString(r, "auth_mode") == "apikey"
-		for _, p := range s.prices {
-			if dataString(p, "model") != model || dataString(p, "service_tier") != tier {
-				continue
-			}
-			threshold := ValueInt(p["threshold"])
-			if api && threshold > 0 {
-				continue
-			}
-			if threshold == 0 || counts["input_tokens"] > threshold {
-				if selected == nil || threshold > ValueInt(selected["threshold"]) {
-					selected = p
-				}
-			}
-		}
-		if api && tier != "default" {
-			selected = nil
-		}
-	}
-	if selected == nil {
-		r["pricing_reason"] = "缺少该模型与服务档位的明确计价规则"
-		return r
-	}
-	parts := map[string]int64{"input": counts["input_tokens"] - counts["cached_input_tokens"] - counts["cache_write_input_tokens"], "cache_read": counts["cached_input_tokens"], "cache_write": counts["cache_write_input_tokens"], "output": counts["output_tokens"]}
-	cost := 0.0
-	for k, n := range parts {
-		rate, ok := ValueFloat(selected[k])
-		if n > 0 && !ok {
-			r["pricing_reason"] = "缺少已使用 Token 类别的明确价格"
-			return r
-		}
-		cost += float64(n) * rate / 1e6
-	}
-	r["cost_usd"] = cost
-	r["pricing_status"] = "priced"
-	if fundingEstimated || !official || dataString(r, "service_tier") == "" || strings.HasPrefix(dataString(r, "quality"), "cumulative") {
-		r["pricing_status"] = "estimated"
-	}
-	r["pricing_reason"] = "标准 API 基础价格及独立 Codex 换算规则"
-	if fundingEstimated {
-		r["pricing_reason"] = "认证或消费来源未完整记录，按参考规则估算"
-	}
-	r["rates"] = selected
-	return r
+	s.mu.RLock()
+	version := s.priceVersion
+	s.mu.RUnlock()
+	return frozenPrices.price(r, "", false, false, version)
 }

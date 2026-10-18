@@ -219,6 +219,30 @@
       "source": "https://developers.openai.com/api/docs/models/gpt-6-astra",
       "updated_at": "2026-09-07T00:00:00+00:00",
       "locked": false
+    },
+    {
+      "model": "gpt-6-sol",
+      "input": 2,
+      "cache_read": 0.2,
+      "cache_write": 2.5,
+      "output": 10,
+      "service_tier": "default",
+      "threshold": 0,
+      "source": "https://developers.openai.com/api/docs/models/gpt-6-sol",
+      "updated_at": "2026-10-18T00:00:00+00:00",
+      "locked": false
+    },
+    {
+      "model": "gpt-6-luna",
+      "input": 0.1,
+      "cache_read": 0.01,
+      "cache_write": 0.125,
+      "output": 0.5,
+      "service_tier": "default",
+      "threshold": 0,
+      "source": "https://developers.openai.com/api/docs/models/gpt-6-luna",
+      "updated_at": "2026-10-18T00:00:00+00:00",
+      "locked": false
     }
   ],
   "billing_policies": {

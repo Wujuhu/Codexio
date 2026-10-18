@@ -17,6 +17,12 @@ import (
 )
 
 type Store struct {
+	pendingObservedPrices   map[string]bool
+	pendingObservedFull     bool
+	pendingObservedCount    int64
+	pricingObservedStamp    string
+	pricingObservedKey      string
+	pricingObservedRevision int64
 	claudeContextIndexReady bool
 	claudeContexts          map[string]Row
 	claudeContextDirty      map[string]bool
@@ -151,6 +157,7 @@ func (s *Store) schema() error {
  CREATE INDEX IF NOT EXISTS usage_records_time ON usage_records(timestamp DESC);
  CREATE INDEX IF NOT EXISTS usage_records_model_time ON usage_records(model,timestamp);
  CREATE TABLE IF NOT EXISTS usage_record_sources(record_id TEXT NOT NULL,source_id TEXT NOT NULL,PRIMARY KEY(record_id,source_id));
+ CREATE INDEX IF NOT EXISTS usage_record_response_lookup ON usage_records(json_extract(data,'$.response_id'));
  CREATE TABLE IF NOT EXISTS usage_observations(id TEXT PRIMARY KEY,timestamp TEXT NOT NULL,data TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS usage_sources(id TEXT PRIMARY KEY,data TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS usage_cursors(key TEXT PRIMARY KEY,data TEXT NOT NULL);
@@ -296,8 +303,7 @@ func (s *Store) Run(ctx context.Context, changed func()) {
 		// failed; its retained cursor will be retried on the next collection.
 		e = errors.Join(e, s.applyClaudeContexts())
 		e = errors.Join(e, s.project())
-		upstreamPath := filepath.Join(s.options.Directory, "upstream.sqlite")
-		upstreamSignature := fileStamp(upstreamPath) + fileStamp(upstreamPath+"-wal")
+		upstreamSignature := s.pricingObservedKey
 		if upstreamSignature != s.upstreamSignature {
 			s.upstreamSignature = upstreamSignature
 			s.generation.Add(1)
