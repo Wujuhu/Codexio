@@ -237,7 +237,11 @@ struct DetailsLink: NSViewRepresentable {
             let popover = NSPopover()
             popover.behavior = .transient; popover.animates = false; popover.delegate = self
             self.popover = popover
-            let content = (customContent?() ?? AnyView(LogDetail(row:row,members:loadMembers?() ?? members))).onHover { [weak self,weak popover] inside in
+            // Match the hosting view to the requested popover size as well.
+            // Otherwise SwiftUI's fitting height can expand a short hint.
+            let content = (customContent?() ?? AnyView(LogDetail(row:row,members:loadMembers?() ?? members)))
+                .frame(width:contentSize.width,height:contentSize.height)
+                .onHover { [weak self,weak popover] inside in
                 guard let self, let popover, self.popover === popover else { return }
                 self.popupInside = inside
                 if inside { self.work?.cancel(); self.work = nil } else { self.scheduleClose() }

@@ -4,9 +4,7 @@ import AppKit
 struct PricingHintText: View {
     let text: String
     var body: some View {
-        let content=Text(text).font(.system(size:12)).fixedSize(horizontal:false,vertical:true).padding(14).frame(maxWidth:.infinity,alignment:.leading)
-        if #available(macOS 26.0,*) {content.glassEffect(.regular,in:RoundedRectangle(cornerRadius:12))}
-        else {content.background(.regularMaterial,in:RoundedRectangle(cornerRadius:12))}
+        Text(text).font(.system(size:12)).fixedSize(horizontal:false,vertical:true).padding(14).frame(maxWidth:.infinity,alignment:.leading)
     }
 }
 
