@@ -9,7 +9,7 @@
  $: catalog=rows(data.rows);
  $: viewGroups=groups.map(group=>({...group,rows:catalog.filter(row=>row.group===group.id&&(!search.trim()||[row.model,row.display_name,...(Array.isArray(row.aliases)?row.aliases:[])].some(value=>String(value??'').toLowerCase().includes(search.trim().toLowerCase()))))}));
  function price(value:any){const n=number(value);return n===null?'—':'$'+n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:4})}
- function hint(row:Row){return document.documentElement.lang==='en'?text(row.tooltip_en,row.tooltip):text(row.tooltip);}
+ function hint(row:Row){if(text(row.tooltip)==='按基础价计费')return '';return document.documentElement.lang==='en'?text(row.tooltip_en,row.tooltip):text(row.tooltip);}
 </script>
 
 <div class="price-meta"><p class="muted">{tr('美元 / 1M Token')}</p></div>
@@ -21,7 +21,7 @@
  {@const labels=['输入','缓存读取',ttl?'缓存写入 5 分钟':'缓存写入',...(ttl?['缓存写入 1 小时']:[]),'输出']}
  <details class="price-group" bind:open={expanded[group.id]}>
   <summary><span>{tr(group.name)}</span><span class="muted price-count">{list.length}</span></summary>
-  <div class="price-table-shell"><table class="price-table"><thead><tr><th>{tr('模型')}</th>{#each labels as label}<th>{tr(label)}</th>{/each}</tr></thead><tbody>{#each list as row (row.model)}<tr><td><span class="price-model"><span>{text(row.model)}</span><DetailPopover hint={hint(row)}/></span></td>{#each fields as key}<td>{price(row[key])}</td>{/each}</tr>{/each}</tbody></table>{#if !list.length}<div class="empty">{tr('暂无数据')}</div>{/if}</div>
+  <div class="price-table-shell"><table class="price-table"><thead><tr><th>{tr('模型')}</th>{#each labels as label}<th>{tr(label)}</th>{/each}</tr></thead><tbody>{#each list as row (row.model)}{@const condition=hint(row)}<tr><td><span class="price-model"><span>{text(row.model)}</span>{#if condition}<DetailPopover hint={condition}/>{/if}</span></td>{#each fields as key}<td>{price(row[key])}</td>{/each}</tr>{/each}</tbody></table>{#if !list.length}<div class="empty">{tr('暂无数据')}</div>{/if}</div>
  </details>
 {/each}
 

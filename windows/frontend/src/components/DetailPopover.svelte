@@ -36,7 +36,7 @@
   onDestroy(()=>clearTimeout(timer));
 </script>
 <svelte:window onpointerdown={outside} onkeydown={key} onresize={reposition}/>
-<button bind:this={trigger} class="quiet detail-trigger" aria-haspopup="dialog" aria-expanded={open} onmouseenter={show} onmouseleave={leave} onfocus={()=>{if(!returningFocus)show()}} onblur={leave} onclick={hint?show:toggle} class:pricing-trigger={!!hint} aria-label={hint?tr('计价条件'):undefined}>{hint?'!':tr('详情')}</button>
+<button bind:this={trigger} class="quiet detail-trigger" aria-haspopup="dialog" aria-expanded={open} onmouseenter={show} onmouseleave={leave} onfocus={()=>{if(!returningFocus)show()}} onblur={leave} onclick={hint?show:toggle} class:pricing-trigger={!!hint} aria-label={hint?tr('计价条件'):undefined}>{#if hint}<Icon name="alert-circle" size={16}/>{:else}{tr('详情')}{/if}</button>
 {#if open}
   <div bind:this={popup} class="detail-popover" class:pricing-hint={!!hint} popover="manual" use:popover={open} use:measure style:left={`${left}px`} style:top={`${top}px`} role={hint?'tooltip':'dialog'} aria-label={tr(hint?'计价条件':'请求详情')} tabindex="-1" onmouseenter={()=>clearTimeout(timer)} onmouseleave={leave} onfocusin={()=>clearTimeout(timer)} onfocusout={event=>{if(!popup.contains(event.relatedTarget as Node)&&event.relatedTarget!==trigger)leave()}}>
     {#if hint}<div class="hint-copy">{hint}</div>{:else}
@@ -47,7 +47,8 @@
 {/if}
 <style>
   .detail-trigger{font-size:12px;padding:1px 3px!important;color:var(--focus)!important}.detail-popover{position:fixed;inset:auto;margin:0;padding:0;color:var(--text);width:360px;height:500px;max-width:calc(100vw - 24px);max-height:calc(100vh - 24px);z-index:35;overflow:hidden;border:1px solid color-mix(in srgb,var(--border) 72%,transparent);border-radius:18px;box-shadow:0 12px 36px #0003;background:color-mix(in srgb,var(--surface) 87%,transparent);backdrop-filter:blur(24px) saturate(140%);display:flex;flex-direction:column;text-align:left;white-space:normal}.detail-popover:not(:popover-open){display:none}.detail-popover::backdrop{pointer-events:none}.popover-close{position:absolute;right:10px;top:11px;padding:4px!important;z-index:2}.detail-popover :global(.inspector){height:100%;max-height:100%;background:transparent;border:0;border-radius:0;box-shadow:none}
- .detail-trigger.pricing-trigger{width:15px;height:15px;min-width:15px;padding:0!important;border:1px solid currentColor;border-radius:50%;display:inline-grid;place-content:center;font-size:10px;color:var(--muted)!important;line-height:1}
+ .detail-trigger.pricing-trigger{width:18px;height:18px;min-width:18px;min-height:18px;max-width:18px;max-height:18px;flex:0 0 18px;padding:0!important;border:0;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:transparent;color:var(--muted)!important;line-height:1}
+ .detail-trigger.pricing-trigger:hover{background:var(--hover);color:var(--text)!important}
  .detail-popover.pricing-hint{width:max-content;height:auto;max-width:390px;padding:12px 14px;border-radius:14px;font-size:12px;line-height:1.6;overflow:auto}
  .hint-copy{white-space:pre-line;font-variant-numeric:tabular-nums}
 </style>

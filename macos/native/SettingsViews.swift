@@ -42,7 +42,10 @@ struct PricingView: View {
             GridColumn(id:"cache_write",title:ttl ? L("缓存写入 5 分钟","Cache write 5 minutes"):L("缓存写入","Cache write"),width:ttl ? 120:100,maximum:140,alignment:.center)
         ]+(ttl ? [GridColumn(id:"cache_write_1h",title:L("缓存写入 1 小时","Cache write 1 hour"),width:120,maximum:140,alignment:.center)]:[])+[GridColumn(id:"output",title:L("输出","Output"),width:90,maximum:110,alignment:.center)]
         return CompactTable(columns:columns,rows:values.map {row in GridRow(id:row.id,text:{column in
-            if column=="model" {return GridText(main:row.model,hint:L(row.raw.string("tooltip"),row.raw.string("tooltip_en",row.raw.string("tooltip"))))}
+            if column=="model" {
+                let hint=row.raw.string("tooltip")
+                return GridText(main:row.model,hint:hint=="按基础价计费" ? "":L(hint,row.raw.string("tooltip_en",hint)))
+            }
             return GridText(main:row.raw.number(column).map {"$"+$0.formatted(.number.locale(Locale(identifier:"en_US")).precision(.fractionLength(2...4)))} ?? "—")
         })},revision:state.pricesRevision+search+group,rowHeight:30,preferences:state.preferences,storageKey:"unified-pricing-"+group,verticalScrolling:false)
         .frame(height:CGFloat(values.count)*31+44)
