@@ -22,7 +22,7 @@ Codexio 是 Codex 与 Claude Code 的用量和请求看板。它读取本机日�
 
 ## 下载与安装
 
-当前 Mac、Windows 与 iOS 源码版本统一为 **0.3.11（本地开发，尚未发布）**。正式安装包、各平台版本与更新说明以 **[最新 Release](https://github.com/Wujuhu/Codexio/releases/latest)** 和其中的 `latest.json` 为准；此前的 `0.3.10-beta` 只用于本地测试。
+当前 Mac、Windows 与 iOS 源码版本统一为 **0.3.11**。正式安装包、各平台版本与更新说明以 **[最新 Release](https://github.com/Wujuhu/Codexio/releases/latest)** 和其中的 `latest.json` 为准；`main` 上的开发提交不代表已经发布，此前的 `0.3.10-beta` 只用于本地测试。
 
 | 平台 | 系统要求 | 安装包 |
 | --- | --- | --- |
