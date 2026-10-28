@@ -359,9 +359,9 @@ final class Database {
         }
         var result: [(URL,URL)] = [], seen = Set<String>()
         for row in rows {
-            let file = URL(fileURLWithPath:row.string("path")).standardizedFileURL, root = URL(fileURLWithPath:row.string("root")).standardizedFileURL
+            let file = RolloutFile.resolve(URL(fileURLWithPath:row.string("path")).standardizedFileURL), root = URL(fileURLWithPath:row.string("root")).standardizedFileURL
             let allowed = ["sessions","archived_sessions"].contains { file.path.hasPrefix(root.appendingPathComponent($0).path+"/") }
-            guard allowed, file.pathExtension == "jsonl", file.resolvingSymlinksInPath() == file,
+            guard allowed, RolloutFile.accepts(file), file.resolvingSymlinksInPath() == file,
                   root.resolvingSymlinksInPath() == root, FileStamp(file).exists, seen.insert(file.path).inserted else { continue }
             result.append((file,root))
             if result.count == 8 { break }

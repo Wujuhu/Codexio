@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "rule_version": "unified-official-2026-10-18-v3-other-5m",
-  "verified_at": "2026-10-18T00:00:00+00:00",
+  "rule_version": "unified-official-2026-10-29-v4-gpt-6.1-terra",
+  "verified_at": "2026-10-29T00:00:00+00:00",
   "models": [
     {
       "model": "gpt-6.1-sol",
@@ -14,6 +14,17 @@
       "fast_multiplier": 2.5,
       "ultrafast_multiplier": 8,
       "tooltip_en": "Fast ×2.5 · Ultra Fast ×8"
+    },
+    {
+      "model": "gpt-6.1-terra",
+      "group": "gpt",
+      "display_name": "GPT-6.1 Terra",
+      "aliases": [
+        "GPT-6.1 Terra"
+      ],
+      "tooltip": "Fast ×2.5",
+      "fast_multiplier": 2.5,
+      "tooltip_en": "Fast ×2.5"
     },
     {
       "model": "gpt-6-astra",
@@ -635,6 +646,7 @@
   "client_models": {
     "gpt": [
       "gpt-6.1-sol",
+      "gpt-6.1-terra",
       "gpt-6-astra",
       "gpt-6-sol",
       "gpt-6-luna",
@@ -848,5 +860,6 @@
         "replacement": "provider"
       }
     ]
-  }
+  },
+  "missing_speed_pricing": "standard_reference_without_backfilling_source"
 }

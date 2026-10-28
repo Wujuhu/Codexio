@@ -243,6 +243,18 @@
       "source": "https://developers.openai.com/api/docs/models/gpt-6-luna",
       "updated_at": "2026-10-18T00:00:00+00:00",
       "locked": false
+    },
+    {
+      "model": "gpt-6.1-terra",
+      "input": 1,
+      "cache_read": 0.05,
+      "cache_write": 1.25,
+      "output": 5,
+      "service_tier": "default",
+      "threshold": 0,
+      "source": "https://developers.openai.com/api/docs/models/gpt-6.1-terra",
+      "updated_at": "2026-10-29T00:00:00+00:00",
+      "locked": false
     }
   ],
   "billing_policies": {
@@ -289,6 +301,48 @@
         "https://x.com/thsottiaux/status/2109430894604026039",
         "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
         "https://learn.chatgpt.com/docs/agent-configuration/speed"
+      ],
+      "unknown_official_estimated": false
+    },
+    "gpt-6.1-terra": {
+      "rule_version": "codex-api-base-2026-10-29-v8-gpt-6.1-terra",
+      "unknown_official_mode": "subscription",
+      "subscription": {
+        "long_context_threshold": 0,
+        "speeds": {
+          "default": 1,
+          "priority": 2.5
+        },
+        "cache_write_basis": "input"
+      },
+      "api_key": {
+        "long_context_threshold": 272000,
+        "speeds": {
+          "default": 1,
+          "priority": 2
+        },
+        "cache_write_basis": "api"
+      },
+      "credits": {
+        "long_context_threshold": 272000,
+        "speeds": {
+          "default": 1,
+          "priority": 2
+        },
+        "cache_write_basis": "input"
+      },
+      "legacy": {
+        "long_context_threshold": 272000,
+        "speeds": {
+          "default": 1,
+          "priority": 2.5
+        },
+        "cache_write_basis": "legacy"
+      },
+      "sources": [
+        "https://developers.openai.com/api/docs/models/gpt-6.1-terra",
+        "https://learn.chatgpt.com/docs/agent-configuration/speed",
+        "https://learn.chatgpt.com/docs/pricing"
       ],
       "unknown_official_estimated": false
     }

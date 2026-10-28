@@ -2,7 +2,6 @@ package backend
 
 import (
 	"bufio"
-	"os"
 	"strings"
 )
 
@@ -28,7 +27,7 @@ func (s *Store) parentSignatures(parent, cutoff string) (map[string]bool, bool) 
 	if cached, ok := s.parentSignatureCache[key]; ok {
 		return cached, true
 	}
-	f, e := os.Open(path)
+	f, e := openRollout(path)
 	if e != nil {
 		return nil, false
 	}

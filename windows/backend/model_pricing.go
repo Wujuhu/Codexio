@@ -196,7 +196,7 @@ func newModelPriceReference() *modelPriceReference {
 		otherContent = append(otherContent, copy)
 	}
 	signature["other_rows"] = otherContent
-	p.version = HashString(dataJSON(Row{"rules": signature, "prices": content, "policies": solPolicyContent()}))
+	p.version = HashString(dataJSON(Row{"rules": signature, "prices": content, "policies": billingPolicyContent()}))
 	return p
 }
 func (p *modelPriceReference) decoratedModels(value string) (bool, bool, map[string]bool) {
@@ -376,10 +376,7 @@ func (p *modelPriceReference) rates(model string, input int64, r Row) (Row, bool
 	tier := normalizedTier(r["service_tier"])
 	if family == "gpt" {
 		mode, identityEstimated, assumed := solFunding(r, true)
-		var policy Row
-		if model == "gpt-6.1-sol" {
-			policy = ValueRow(solBillingPolicy[mode])
-		}
+		policy := ValueRow(ValueRow(modelBillingPolicies[model])[mode])
 		threshold := ValueInt(descriptor["long_context_threshold"])
 		if len(policy) > 0 {
 			threshold = ValueInt(policy["long_context_threshold"])

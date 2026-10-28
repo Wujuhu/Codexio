@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"io"
-	"os"
 	"strings"
 	"time"
 )
@@ -586,7 +585,7 @@ func (s *Store) repairSourceMetadataCursor(ctx context.Context, path, source, fi
 }
 
 func (s *Store) recoverSourceMetadataRange(ctx context.Context, path, source, file, generation string, state Row, start, through int64, budget time.Duration) (Row, error) {
-	f, e := os.Open(path)
+	f, e := openRollout(path, ctx)
 	if e != nil {
 		return nil, e
 	}

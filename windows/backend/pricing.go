@@ -14,12 +14,13 @@ import (
 //go:embed assets/pricing_seed.json
 var priceSeed []byte
 
-const priceRule = "codex-api-base-2026-10-13-v7-gpt-6.1-sol-funding"
+const priceRule = "codex-api-base-2026-10-29-v8-gpt-6.1-terra"
 
-var solBillingPolicy = func() Row {
+var modelBillingPolicies = func() Row {
 	seed, _ := DecodeRow(priceSeed)
-	return ValueRow(ValueRow(seed["billing_policies"])["gpt-6.1-sol"])
+	return ValueRow(seed["billing_policies"])
 }()
+var solBillingPolicy = ValueRow(modelBillingPolicies["gpt-6.1-sol"])
 
 var rateFields = []string{"input", "cache_read", "cache_write", "output"}
 var tokenFields = []string{"input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens", "total_tokens"}
@@ -75,11 +76,16 @@ func solFunding(record Row, official bool) (string, bool, bool) {
 	return "legacy", true, true
 }
 
-func solPolicyContent() Row {
-	content := Row{"rule_version": solBillingPolicy["rule_version"], "unknown_official_mode": solBillingPolicy["unknown_official_mode"], "unknown_official_estimated": solBillingPolicy["unknown_official_estimated"]}
-	for _, mode := range []string{"subscription", "api_key", "credits", "legacy"} {
-		policy := ValueRow(solBillingPolicy[mode])
-		content[mode] = Row{"long_context_threshold": policy["long_context_threshold"], "speeds": policy["speeds"], "cache_write_basis": policy["cache_write_basis"]}
+func billingPolicyContent() Row {
+	content := Row{}
+	for model, raw := range modelBillingPolicies {
+		rules := ValueRow(raw)
+		modelContent := Row{"rule_version": rules["rule_version"], "unknown_official_mode": rules["unknown_official_mode"], "unknown_official_estimated": rules["unknown_official_estimated"]}
+		for _, mode := range []string{"subscription", "api_key", "credits", "legacy"} {
+			policy := ValueRow(rules[mode])
+			modelContent[mode] = Row{"long_context_threshold": policy["long_context_threshold"], "speeds": policy["speeds"], "cache_write_basis": policy["cache_write_basis"]}
+		}
+		content[model] = modelContent
 	}
 	return content
 }
@@ -160,7 +166,9 @@ func knownCount(v any) (int64, bool) {
 func codexPolicy(model string) (int64, float64) {
 	model = datedModel.ReplaceAllString(strings.TrimPrefix(model, "openai/"), "")
 	switch model {
-	case "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5":
+	case "gpt-6.1-sol", "gpt-6.1-terra":
+		return 0, 2.5
+	case "gpt-6-sol", "gpt-6-luna", "gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5":
 		return 272000, 2.5
 	case "gpt-6-astra":
 		return 0, 2.5
@@ -204,7 +212,7 @@ func (s *Store) loadPrices() error {
 	s.mu.Unlock()
 	archive := filepath.Join(s.priceDirectory(), "versions", frozenPrices.version+".json")
 	if _, e := os.Stat(archive); os.IsNotExist(e) {
-		return WriteJSON(archive, Row{"price_version": frozenPrices.version, "rows": frozenPrices.catalog, "rules": frozenPrices.rules, "billing_policies": Row{"gpt-6.1-sol": solBillingPolicy}})
+		return WriteJSON(archive, Row{"price_version": frozenPrices.version, "rows": frozenPrices.catalog, "rules": frozenPrices.rules, "billing_policies": modelBillingPolicies})
 	}
 	return nil
 }

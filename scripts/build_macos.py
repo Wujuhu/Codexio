@@ -88,14 +88,22 @@ def build_native(bundle, version):
     resources = bundle / "Contents/Resources"
     executable.parent.mkdir(parents=True)
     resources.mkdir(parents=True)
+    licenses = resources / "ThirdParty"
+    licenses.mkdir()
+    shutil.copyfile(ROOT / "macos/vendor/zstd/LICENSE", licenses / "Zstandard-LICENSE.txt")
     environment = swift_environment()
     target = platform.machine() + "-apple-macos15.0"
     sources = sorted((ROOT / "macos/native").glob("*.swift")) + sorted((ROOT / "macos/widget").glob("*.swift")) + sorted((ROOT / "apple/shared").glob("*.swift"))
     cache = BUILD / "cache/swift"
     cache.mkdir(parents=True, exist_ok=True)
+    decoder = ROOT / "macos/native/RolloutZstd.c"
+    decoder_key = hashlib.sha256(decoder.read_bytes() + (ROOT / "macos/vendor/zstd/zstddeclib.c").read_bytes() + target.encode("utf-8")).hexdigest()[:20]
+    decoder_object = cache / ("rollout-zstd-" + decoder_key + ".o")
+    if not decoder_object.exists():
+        run("xcrun", "clang", "-O2", "-target", target, "-c", decoder, "-o", decoder_object, env=environment)
     run("xcrun", "swiftc", "-swift-version", "5", "-O", "-whole-module-optimization", "-target", target,
         "-parse-as-library", "-D", "CODEXIO_APP_WIDGET_PREVIEW", "-module-name", "Codexio", "-module-cache-path", cache,
-        *sources, "-o", executable, env=environment)
+        *sources, decoder_object, "-o", executable, env=environment)
     info = {
         "CFBundleIdentifier": "com.wujuhu.codexio", "CFBundleExecutable": "Codexio",
         "CFBundleName": "Codexio", "CFBundleDisplayName": "Codexio", "CFBundlePackageType": "APPL",

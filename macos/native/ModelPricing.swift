@@ -176,7 +176,11 @@ final class ModelPricing {
         let family=group(model),descriptor=definitions[model] ?? [:]
         guard let base=byModel[model]?.filter({($0.integer("threshold") ?? 0)==0 || input>($0.integer("threshold") ?? 0)}).max(by:{($0.integer("threshold") ?? 0)<($1.integer("threshold") ?? 0)}) else {return nil}
         var rates=base,estimated=false
-        let tier=normalizedTier(raw.string("service_tier"))
+        // v0.2.10/Python and Windows price legacy logs with no speed field at
+        // the Standard reference rate. Keep the original field absent so the
+        // request UI still displays its unknown speed rather than inventing it.
+        let recordedTier=raw.string("service_tier").trimmingCharacters(in:.whitespacesAndNewlines).lowercased()
+        let tier=recordedTier.isEmpty || recordedTier=="auto" ? "default":normalizedTier(recordedTier)
         if family=="gpt" {
             let identity=BillingIdentity.resolve(raw),mode=identity.mode=="unknown" ? "subscription" : identity.mode
             let policy=policies.object(model).object(mode)

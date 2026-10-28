@@ -351,6 +351,7 @@ func (j *localJourney) ranges(root, thread string, turns []string) ([]journeyRan
 	seen := map[string]bool{}
 	result := []journeyRange{}
 	for depth := 0; depth < 128; depth++ {
+		path = resolveRolloutPath(path)
 		absolute, _ := filepath.Abs(path)
 		resolved, e := filepath.EvalSymlinks(absolute)
 		rel, re := filepath.Rel(root, absolute)
@@ -366,7 +367,12 @@ func (j *localJourney) ranges(root, thread string, turns []string) ([]journeyRan
 			return nil, errors.New("历史片段关联不完整")
 		}
 		seen[id] = true
-		info, e := os.Stat(path)
+		logical, e := openRollout(path)
+		if e != nil {
+			return nil, e
+		}
+		info, e := logical.Stat()
+		logical.Close()
 		if e != nil {
 			return nil, e
 		}
@@ -398,7 +404,7 @@ func (j *localJourney) ranges(root, thread string, turns []string) ([]journeyRan
 		if saved, ok := j.headers[path]; ok && saved.signature == stamp {
 			base = saved.value
 		} else {
-			file, e := os.Open(path)
+			file, e := openRollout(path)
 			if e != nil {
 				return nil, e
 			}
@@ -657,7 +663,7 @@ func (s *Service) GetJourneyFlow(request, child, cursor string) (Row, error) {
 	for index < len(spans) && len(events) < 120 && readBytes < 8<<20 {
 		span := spans[index]
 		offset = min(span.end, max(span.start, offset))
-		file, e := os.Open(span.path)
+		file, e := openRollout(span.path)
 		if e != nil {
 			return nil, e
 		}

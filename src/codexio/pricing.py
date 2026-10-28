@@ -27,7 +27,7 @@ MODELS_DEV_URL = "https://models.dev/api.json"
 RATE_KEYS = ("input", "cache_read", "cache_write", "output")
 _FIELDS = {"input": "input_cost_per_token", "cache_read": "cache_read_input_token_cost",
            "cache_write": "cache_creation_input_token_cost", "output": "output_cost_per_token"}
-PRICING_RULE_VERSION = "codex-api-base-2026-10-13-v7-gpt-6.1-sol-funding"
+PRICING_RULE_VERSION = "codex-api-base-2026-10-29-v8-gpt-6.1-terra"
 PRICING_BASIS = "standard_api_x_codex"
 PRICING_BASIS_LABEL = tr("标准 API 单价 × Codex 倍率")
 LONG_CONTEXT_THRESHOLD = 272000
@@ -40,7 +40,7 @@ RULE_SOURCES = (
 def codex_policy(model):
     """Known Codex modifiers; unsupported Fast modes are not inferred from API tiers."""
     model = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", model.removeprefix("openai/"))
-    if model == "gpt-6.1-sol":
+    if model in ("gpt-6.1-sol", "gpt-6.1-terra"):
         return 0, 2.5
     if model in ("gpt-6-sol", "gpt-6-luna"):
         return LONG_CONTEXT_THRESHOLD, 2.5
@@ -127,7 +127,7 @@ def _sol_rates(base, policy, mode, tier, input_tokens):
 def _codex_rows(base, policies=None):
     model = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", base["model"].removeprefix("openai/"))
     policy = (policies or {}).get(model, {})
-    if model == "gpt-6.1-sol" and policy:
+    if policy:
         for tier in policy.get("subscription", {}).get("speeds", {}):
             row = _sol_rates(base, policy, "subscription", tier, 0)
             if row:

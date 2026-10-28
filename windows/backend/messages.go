@@ -57,7 +57,7 @@ func (s *Store) sourceMessageBatch(requests []Row, contexts ...context.Context) 
 			return e
 		}
 		cursor := dataRow(raw)
-		path := dataString(cursor, "path")
+		path := resolveRolloutPath(dataString(cursor, "path"))
 		if seenPaths[path] || !s.verifiedMessagePath(path) {
 			continue
 		}
@@ -157,7 +157,7 @@ func (s *Store) sourceMessageBatch(requests []Row, contexts ...context.Context) 
 	return s.project(reader.ctx)
 }
 func (s *Store) verifiedMessagePath(path string) bool {
-	if !filepath.IsAbs(path) || !strings.EqualFold(filepath.Ext(path), ".jsonl") {
+	if !filepath.IsAbs(path) || !isRolloutFile(path) {
 		return false
 	}
 	actual, e := filepath.EvalSymlinks(path)

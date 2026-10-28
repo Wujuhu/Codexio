@@ -3,7 +3,7 @@ import Foundation
 final class UsageIndexer {
     let database: Database
     private var cancelled = false
-    private struct Signature: Equatable { let size: Int; let modified: Double }
+    private struct Signature: Equatable { let stamp: FileStamp }
     private var scannedFiles: [String:Signature] = [:]
     private struct FileList { let files: [URL]; let directories: [URL:FileStamp]; let checked: TimeInterval }
     private var fileLists: [URL:FileList] = [:]
@@ -33,6 +33,7 @@ final class UsageIndexer {
     }
     func scan(_ roots: [URL], progress: (Int,Int)->Void = {_,_ in}) throws {
         cancelled = false
+        var firstError: Error?
         try repairMainOwnership()
         if resumeRepairSessions == nil {
             resumeRepairSessions = Set(try database.query("SELECT DISTINCT json_extract(data,'$.session_id') AS session FROM usage_turns WHERE COALESCE(json_extract(data,'$.prompt_preview'),'')='' AND COALESCE(json_extract(data,'$.is_subagent'),0)=0").map {$0.string("session")})
@@ -43,7 +44,8 @@ final class UsageIndexer {
             let files = sessionFiles(root)
             for (index,file) in files.enumerated() {
                 if cancelled { return }
-                try scanFile(file,root:root); progress(index+1,files.count)
+                do { try scanFile(file,root:root) } catch { if firstError == nil { firstError = error } }
+                progress(index+1,files.count)
             }
         }
         let active = Set(roots)
@@ -51,6 +53,7 @@ final class UsageIndexer {
         let paths = Set(fileLists.values.flatMap {$0.files.map(\.path)})
         scannedFiles = scannedFiles.filter {paths.contains($0.key)}
         try repairRecentMaintenance()
+        if let error = firstError { throw error }
     }
     private func sessionFiles(_ root: URL) -> [URL] {
         let now = ProcessInfo.processInfo.systemUptime
@@ -65,9 +68,13 @@ final class UsageIndexer {
                 let info = try? file.resourceValues(forKeys:[.isSymbolicLinkKey,.isDirectoryKey,.fileSizeKey])
                 if info?.isSymbolicLink == true { iterator.skipDescendants(); continue }
                 if info?.isDirectory == true { directories.insert(file); continue }
-                guard file.pathExtension == "jsonl" else { continue }
+                guard RolloutFile.accepts(file) else { continue }
                 let key = rolloutID(file), size = info?.fileSize ?? 0
-                if selected[key] == nil || selected[key]!.1 < size { selected[key] = (file,size) }
+                if let old = selected[key] {
+                    if RolloutFile.compressed(old.0) != RolloutFile.compressed(file) {
+                        if !RolloutFile.compressed(file) { selected[key] = (file,size) }
+                    } else if old.1 < size { selected[key] = (file,size) }
+                } else { selected[key] = (file,size) }
             }
         }
         let files = selected.values.map(\.0).sorted {$0.path < $1.path}
@@ -113,18 +120,25 @@ final class UsageIndexer {
     private func scanFile(_ file: URL, root: URL) throws {
         activeSource = (file,root); defer { activeSource = nil }
         let info = try FileManager.default.attributesOfItem(atPath:file.path)
-        let size = (info[.size] as? NSNumber)?.intValue ?? 0, modified = (info[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-        let signature = Signature(size:size,modified:modified)
+        let modified = (info[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        let signature = Signature(stamp:FileStamp(file)), sourceSignature = RolloutFile.signature(file)
         if scannedFiles[file.path] == signature { return }
         let rollout = rolloutID(file), key = "native-v1:" + String(identity(root.path).prefix(16)) + ":" + rollout
         var cursor = database.object("usage_cursors",key:key)
+        try database.registerSessionFile(file,root:root,session:cursor.object("state").string("session_id",rollout))
+        if RolloutFile.compressed(file), cursor.string("source_signature") == sourceSignature,
+           cursor.integer("parser") == 1, cursor.integer("resume_metadata_version") == RequestResume.metadataVersion {
+            scannedFiles[file.path] = signature; return
+        }
+        let handle = try RolloutFile.open(file); defer { try? handle.close() }
+        let size = Int(try handle.seekToEnd()); try handle.seek(toOffset:0)
         if cursor.isEmpty {
             let rootHash = String(identity(root.path).prefix(16))
             let sourceIDs = ["local","local:"+String(digest(Data(root.path.lowercased().utf8)).prefix(16))]
             for source in sourceIDs {
                 let old = database.object("usage_cursors",key:"usage:"+source+":"+rootHash+":"+rollout)
                 guard old.integer("version") == 11, old.object("state").string("pending_parent").isEmpty, let oldOffset = old.integer("offset"), oldOffset <= size else { continue }
-                let reader = try FileHandle(forReadingFrom:file); defer { try? reader.close() }
+                let reader = try RolloutFile.open(file); defer { try? reader.close() }
                 let prefix = try reader.read(upToCount:old.integer("prefix_len") ?? 0) ?? Data()
                 try reader.seek(toOffset:UInt64(max(0,oldOffset-1024)))
                 let tail = try reader.read(upToCount:min(1024,oldOffset)) ?? Data()
@@ -150,8 +164,13 @@ final class UsageIndexer {
                 try database.registerRequestSource(row.string("id"),file:file,root:root)
             }
         }
-        if offset == size && cursor.number("modified") == modified && cursor.integer("resume_metadata_version") == RequestResume.metadataVersion { scannedFiles[file.path] = signature; return }
-        let handle = try FileHandle(forReadingFrom:file); defer { try? handle.close() }
+        if offset == size && cursor.number("modified") == modified && cursor.integer("resume_metadata_version") == RequestResume.metadataVersion {
+            if cursor.string("source_signature") != sourceSignature {
+                cursor["source_signature"] = sourceSignature; cursor["logical_size"] = size
+                try database.put("usage_cursors",key:key,value:cursor)
+            }
+            scannedFiles[file.path] = signature; return
+        }
         var valid = offset <= size && cursor.integer("parser") == 1
         if valid && offset > 0 {
             let length = min(offset,4096)
@@ -185,18 +204,18 @@ final class UsageIndexer {
                 }
                 if pending.count > 16_000_000 { offset += pending.count; pending.removeAll(); oversized = true }
             }
-            if !oversized { try checkpoint(handle:handle,key:key,state:state,offset:offset,modified:modified) }
+            if !oversized { try checkpoint(handle:handle,key:key,state:state,offset:offset,modified:modified,sourceSignature:sourceSignature,size:size) }
         }
-        if !oversized { try checkpoint(handle:handle,key:key,state:state,offset:offset,modified:modified) }
+        if !oversized { try checkpoint(handle:handle,key:key,state:state,offset:offset,modified:modified,sourceSignature:sourceSignature,size:size) }
         try database.registerSessionFile(file,root:root,session:state.string("session_id"))
         if !cancelled { scannedFiles[file.path] = signature }
     }
-    private func checkpoint(handle: FileHandle,key: String,state: Object,offset: Int,modified: Double) throws {
+    private func checkpoint(handle: FileHandle,key: String,state: Object,offset: Int,modified: Double,sourceSignature: String,size: Int) throws {
         let current = try handle.offset(), length = min(offset,4096)
         try handle.seek(toOffset:UInt64(offset-length))
         let hash = digest(try handle.read(upToCount:length) ?? Data())
         try handle.seek(toOffset:current)
-        try database.put("usage_cursors",key:key,value:["parser":1,"resume_metadata_version":RequestResume.metadataVersion,"offset":offset,"modified":modified,"tail_hash":hash,"state":state])
+        try database.put("usage_cursors",key:key,value:["parser":1,"resume_metadata_version":RequestResume.metadataVersion,"offset":offset,"logical_size":size,"source_signature":sourceSignature,"modified":modified,"tail_hash":hash,"state":state])
     }
     private func shouldPersist(_ id: String) -> Bool { detailTargets?.contains(id) ?? true }
     private func persistTurn(_ row: Object) throws {
@@ -237,7 +256,7 @@ final class UsageIndexer {
         defer { detailTargets = nil; self.metadataOnly = false; recoveryLegacyMessage = nil }
         let rollout = rolloutID(file)
         var state: Object = ["rollout_id":rollout,"session_id":rollout,"model":"unknown","provider":"unknown","turn_id":"","prompt_preview":"","turns":Object()]
-        let reader = try FileHandle(forReadingFrom:file); defer { try? reader.close() }
+        let reader = try RolloutFile.open(file); defer { try? reader.close() }
         // Recovery is limited to this indexed related session. Metering, agent
         // links and cursors are never replayed; an incomplete source stays partial.
         let limit = metadataOnly ? 33_554_432 : 67_108_864
@@ -324,7 +343,7 @@ final class UsageIndexer {
     private func repairResumeMetadata(_ file: URL,through limit: Int,state: inout Object) throws {
         // Only old sessions with missing previews are read once. Do not replay
         // metering events or reindex the ledger to repair a continuation label.
-        let reader = try FileHandle(forReadingFrom:file); defer { try? reader.close() }
+        let reader = try RolloutFile.open(file); defer { try? reader.close() }
         var context: Object = [:], patches: [String:Object] = [:], pending = Data(), read = 0, oversized = false
         while read < limit && !cancelled {
             let chunk = try autoreleasepool { try reader.read(upToCount:min(1_048_576,limit-read)) } ?? Data()

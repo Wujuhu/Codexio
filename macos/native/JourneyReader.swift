@@ -16,7 +16,7 @@ final class JourneyReader {
         return expression.matches(in:name as String,range:NSRange(location:0,length:name.length)).last.map {name.substring(with:$0.range)} ?? ""
     }
     private func allowed(_ file: URL,root: URL) -> Bool {
-        ["sessions","archived_sessions"].contains {file.standardizedFileURL.path.hasPrefix(root.appendingPathComponent($0).standardizedFileURL.path+"/")} && file.pathExtension=="jsonl" && file.resolvingSymlinksInPath()==file.standardizedFileURL
+        ["sessions","archived_sessions"].contains {file.standardizedFileURL.path.hasPrefix(root.appendingPathComponent($0).standardizedFileURL.path+"/")} && RolloutFile.accepts(file) && file.resolvingSymlinksInPath()==file.standardizedFileURL
     }
     func ranges(root: URL,thread: String,turns: Set<String>) throws -> [Range] {
         guard !turns.isEmpty,let stateFile=JourneyCatalog.database(root,prefix:"state_"),let historyFile=JourneyCatalog.database(root,prefix:"thread_history_") else {throw AppFailure(L("本地过程记录暂不可用", "Local process history is unavailable"))}
@@ -24,8 +24,9 @@ final class JourneyReader {
         return try sources.read(historyFile) { history in
             var file=URL(fileURLWithPath:head).standardizedFileURL,cut=UInt64.max,ordinal=Int.max,seen=Set<String>(),result:[Range]=[]
             for _ in 0..<128 {
+                file=RolloutFile.resolve(file)
                 let id=segment(file);guard allowed(file,root:root),seen.insert(id).inserted else {throw AppFailure(L("历史片段关联不完整", "Incomplete history segment chain"))}
-                let end=min(cut,FileStamp(file).size)
+                let end=min(cut,try RolloutFile.size(file))
                 let slots=Array(repeating:"?",count:turns.count).joined(separator:",")
                 let sql="SELECT turn_id,first_user_item_id,rollout_byte_offset,rollout_end_byte_offset,started_at FROM thread_turns WHERE thread_id=? AND turn_id IN (\(slots)) AND rollout_ordinal<? ORDER BY rollout_ordinal"
                 var segmentRanges:[Range]=[]
@@ -43,7 +44,7 @@ final class JourneyReader {
                 }
                 if base.isEmpty {break}
                 let parent=base.string("thread_id");cut=UInt64(max(0,base.integer("end_byte_offset") ?? 0));ordinal=base.integer("end_ordinal_exclusive") ?? 0
-                let candidates=try database.query("SELECT path FROM usage_session_files WHERE root=? AND path LIKE ? ORDER BY path LIMIT 256",[root.path,"%"+parent+"%.jsonl"])
+                let candidates=try database.query("SELECT path FROM usage_session_files WHERE root=? AND (path LIKE ? OR path LIKE ?) ORDER BY path LIMIT 256",[root.path,"%"+parent+"%.jsonl","%"+parent+"%.jsonl.zst"])
                 guard let previous=candidates.map({URL(fileURLWithPath:$0.string("path"))}).first(where:{segment($0)==parent}) else {throw AppFailure(L("历史片段关联不完整", "Incomplete history segment chain"))}
                 file=previous.standardizedFileURL
         }
@@ -99,7 +100,7 @@ final class JourneyLines {
     let handle: FileHandle;let end: UInt64
     private var offset:UInt64;private var buffer=Data();private var discarded=0
     private var prefix=Data(),tail=Data()
-    init(_ url:URL,offset:UInt64,end:UInt64)throws {handle=try FileHandle(forReadingFrom:url);self.offset=offset;self.end=end;try handle.seek(toOffset:offset)}
+    init(_ url:URL,offset:UInt64,end:UInt64)throws {handle=try RolloutFile.open(url);self.offset=offset;self.end=end;try handle.seek(toOffset:offset)}
     deinit {try? handle.close()}
     func next() -> (data:Data,end:UInt64,bytes:Int)? {
         while true {

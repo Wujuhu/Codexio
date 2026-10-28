@@ -114,7 +114,7 @@ func (s *Store) discover(path string, force bool) ([]string, error) {
 		for _, entry := range items {
 			if entry.IsDir() {
 				entries = append(entries, entry.Name()+string(filepath.Separator))
-			} else if strings.HasSuffix(entry.Name(), ".jsonl") {
+			} else if isRolloutFile(entry.Name()) {
 				entries = append(entries, entry.Name())
 			}
 		}
@@ -192,6 +192,26 @@ func (s *Store) collect(ctx context.Context, force bool) error {
 			}
 			all = append(all, f...)
 		}
+		// A compressor may briefly leave both representations. One logical
+		// source owns the cursor; prefer its live, uncompressed representation.
+		selected := map[string]string{}
+		for _, path := range all {
+			id := rolloutID(path)
+			old := selected[id]
+			if old == "" || compressedRollout(old) && !compressedRollout(path) {
+				selected[id] = path
+			} else if compressedRollout(old) == compressedRollout(path) {
+				oldInfo, oldErr := os.Stat(old)
+				newInfo, newErr := os.Stat(path)
+				if newErr == nil && (oldErr != nil || newInfo.ModTime().After(oldInfo.ModTime()) || newInfo.ModTime().Equal(oldInfo.ModTime()) && newInfo.Size() > oldInfo.Size()) {
+					selected[id] = path
+				}
+			}
+		}
+		all = all[:0]
+		for _, path := range selected {
+			all = append(all, path)
+		}
 		sort.Strings(all)
 		s.files[source] = all
 		// Scan older sessions first so explicit inherited parent boundaries can resolve.
@@ -233,20 +253,20 @@ func (s *Store) collect(ctx context.Context, force bool) error {
 		}
 		rows.Close()
 		for _, key := range missing {
-			tx, e := s.db.Begin()
-			if e != nil {
+			// Absence is not evidence that confirmed usage was undone. In
+			// particular compression/archiving can cross a discovery boundary.
+			// Retain the ledger and cursor; only a successfully parsed replacement
+			// may reconcile its contributions. Body reads check source availability.
+			var raw string
+			if e = s.db.QueryRow("SELECT data FROM usage_cursors WHERE key=?", key).Scan(&raw); e != nil {
 				return e
 			}
-			if e = pruneOrigin(tx, source, key, ""); e == nil {
-				_, e = tx.Exec("DELETE FROM usage_cursors WHERE key=?", key)
-			}
-			if e == nil {
-				e = tx.Commit()
-			} else {
-				tx.Rollback()
-			}
-			if e != nil {
-				return e
+			cursor := dataRow(raw)
+			if !ValueBool(cursor["source_missing"]) {
+				cursor["source_missing"] = true
+				if _, e = s.db.Exec("UPDATE usage_cursors SET data=? WHERE key=?", dataJSON(cursor), key); e != nil {
+					return e
+				}
 			}
 		}
 		if _, e = s.db.Exec("INSERT INTO usage_sources VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data WHERE data<>excluded.data", source, dataJSON(Row{"id": source, "name": "本机", "path": root, "status": "ready"})); e != nil {
@@ -375,7 +395,8 @@ func prefixHash(f *os.File, offset int64) string {
 	return HashString(string(b[:n]))
 }
 func (s *Store) scanFile(ctx context.Context, path, key, source string, force bool) error {
-	stat, e := os.Stat(path)
+	path = resolveRolloutPath(path)
+	sourceStat, e := os.Stat(path)
 	if e != nil {
 		return e
 	}
@@ -383,29 +404,41 @@ func (s *Store) scanFile(ctx context.Context, path, key, source string, force bo
 	_ = s.db.QueryRow("SELECT data FROM usage_cursors WHERE key=?", key).Scan(&raw)
 	cursor := dataRow(raw)
 	offset := ValueInt(cursor["offset"])
-	f, e := os.Open(path)
+	identity := rolloutSourceIdentity(path)
+	compressed := compressedRollout(path)
+	parentAvailable := false
+	if pending := dataString(ValueRow(cursor["go_state"]), "pending_parent"); pending != "" {
+		_, parentAvailable = s.parentSignatures(pending, dataString(ValueRow(cursor["go_state"]), "fork_timestamp"))
+	}
+	sourceSize := ValueInt(cursor["source_size"])
+	if cursor["source_size"] == nil && !compressed {
+		sourceSize = ValueInt(cursor["size"])
+	}
+	if !force && ValueInt(cursor["parser_version"]) == 1 && ValueInt(cursor["metadata_version"]) == requestMetadataVersion && !ValueBool(cursor["source_missing"]) && dataString(cursor, "path") == path && dataString(cursor, "identity") == identity && sourceSize == sourceStat.Size() && ValueInt(cursor["mtime"]) == sourceStat.ModTime().UnixNano() && ValueBool(cursor["compressed"]) == compressed && !parentAvailable {
+		return nil
+	}
+	f, e := openRollout(path, ctx)
 	if e != nil {
 		return e
 	}
 	defer f.Close()
-	identity := ledgerFileIdentity(f)
+	stat, e := f.Stat()
+	if e != nil {
+		return e
+	}
+	// A plain/compressed handover preserves the logical bytes and cursor. A
+	// replacement within the same encoding still follows normal reconciliation.
+	sameIdentity := dataString(cursor, "identity") == identity || ValueBool(cursor["compressed"]) != compressed
 	// Validate the original cursor before repairing metadata from its log. File
 	// replacement/truncation belongs to the existing meter reconciliation path.
-	if !force && ValueInt(cursor["parser_version"]) == 1 && ValueInt(cursor["metadata_version"]) != requestMetadataVersion && s.metadataRepairRemaining > 0 && (len(s.metadataRepairPriority) == 0 || s.metadataRepairPriority[key]) && dataString(cursor, "identity") == identity && offset > 0 && offset <= stat.Size() && dataString(cursor, "checkpoint") == checkpointHash(f, offset) && dataString(cursor, "prefix") == prefixHash(f, offset) {
+	if !force && ValueInt(cursor["parser_version"]) == 1 && ValueInt(cursor["metadata_version"]) != requestMetadataVersion && s.metadataRepairRemaining > 0 && (len(s.metadataRepairPriority) == 0 || s.metadataRepairPriority[key]) && sameIdentity && offset > 0 && offset <= stat.Size() && dataString(cursor, "checkpoint") == checkpointHash(f, offset) && dataString(cursor, "prefix") == prefixHash(f, offset) {
 		s.metadataRepairRemaining--
 		delete(s.metadataRepairPriority, key)
 		if err := s.repairSourceMetadataCursor(ctx, path, source, key, cursor); err != nil {
 			return err
 		}
 	}
-	parentAvailable := false
-	if pending := dataString(ValueRow(cursor["go_state"]), "pending_parent"); pending != "" {
-		_, parentAvailable = s.parentSignatures(pending, dataString(ValueRow(cursor["go_state"]), "fork_timestamp"))
-	}
-	if !force && ValueInt(cursor["parser_version"]) == 1 && dataString(cursor, "identity") == identity && ValueInt(cursor["size"]) == stat.Size() && ValueInt(cursor["mtime"]) == stat.ModTime().UnixNano() && !parentAvailable {
-		return nil
-	}
-	valid := !force && ValueInt(cursor["parser_version"]) == 1 && dataString(cursor, "identity") == identity && offset <= stat.Size() && offset >= 0 && dataString(cursor, "checkpoint") == checkpointHash(f, offset) && dataString(cursor, "prefix") == prefixHash(f, offset) && !(offset == stat.Size() && ValueInt(cursor["mtime"]) != stat.ModTime().UnixNano())
+	valid := !force && ValueInt(cursor["parser_version"]) == 1 && sameIdentity && offset <= stat.Size() && offset >= 0 && dataString(cursor, "checkpoint") == checkpointHash(f, offset) && dataString(cursor, "prefix") == prefixHash(f, offset) && !(offset == stat.Size() && ValueInt(cursor["mtime"]) != sourceStat.ModTime().UnixNano())
 	if parentAvailable {
 		valid = false
 	}
@@ -481,7 +514,7 @@ func (s *Store) scanFile(ctx context.Context, path, key, source string, force bo
 	if !valid {
 		metadataRepair, metadataPartial = nil, false
 	}
-	cursor = Row{"path": path, "parser_version": 1, "metadata_version": metadataVersion, "metadata_partial": metadataPartial, "metadata_repair": metadataRepair, "identity": identity, "prefix": prefixHash(f, offset), "offset": offset, "size": stat.Size(), "mtime": stat.ModTime().UnixNano(), "checkpoint": checkpointHash(f, offset), "generation": generation, "go_state": state, "reconcile_pending": reconcile}
+	cursor = Row{"path": path, "compressed": compressed, "source_size": sourceStat.Size(), "parser_version": 1, "metadata_version": metadataVersion, "metadata_partial": metadataPartial, "metadata_repair": metadataRepair, "identity": identity, "prefix": prefixHash(f, offset), "offset": offset, "size": stat.Size(), "mtime": sourceStat.ModTime().UnixNano(), "checkpoint": checkpointHash(f, offset), "generation": generation, "go_state": state, "reconcile_pending": reconcile}
 	if _, e = tx.Exec("INSERT INTO usage_cursors VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data", key, dataJSON(cursor)); e != nil {
 		return e
 	}
