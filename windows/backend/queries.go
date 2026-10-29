@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -213,6 +214,63 @@ func (s *Store) stream(q Query, fn func(Row), contexts ...context.Context) error
 	}
 	return rows.Err()
 }
+
+type usageMetric struct {
+	timestamp, model string
+	values           Row
+	speed, effort    any
+	totalKnown       bool
+}
+
+// Reuse the per-call metrics maintained by the projection (as in v0.2.10).
+// Aggregation never needs to deserialize prompt previews, ancestry or bodies.
+func (s *Store) streamMetrics(q Query, activity bool, fn func(usageMetric), contexts ...context.Context) error {
+	reader := s.readDB(contexts)
+	where, args := queryFilter(q, false)
+	metadata := "'[]'"
+	if activity {
+		metadata = `json_extract(data,'$.service_tier','$.reasoning_effort','$.total_tokens')`
+	}
+	// An older Python projection can still be visible during deferred startup.
+	// Read its original row until the background projection upgrades its metrics.
+	legacy := `CASE WHEN json_type(metrics,'$.records') IS NULL THEN data ELSE '' END`
+	rows, err := reader.Query("SELECT timestamp,model,metrics,"+metadata+","+legacy+" FROM usage_priced_calls WHERE "+where+" ORDER BY timestamp,id", args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item usageMetric
+		var raw, extra, original string
+		if err = rows.Scan(&item.timestamp, &item.model, &raw, &extra, &original); err != nil {
+			return err
+		}
+		if item.values, err = DecodeRow([]byte(raw)); err != nil {
+			return err
+		}
+		if original != "" {
+			record, decodeErr := DecodeRow([]byte(original))
+			if decodeErr != nil {
+				return decodeErr
+			}
+			item.values = CloneRow(metricRow(record))
+		}
+		if activity {
+			var fields []any
+			decoder := json.NewDecoder(strings.NewReader(extra))
+			decoder.UseNumber()
+			if err = decoder.Decode(&fields); err != nil {
+				return err
+			}
+			if len(fields) == 3 {
+				item.speed, item.effort = fields[0], fields[1]
+				_, item.totalKnown = knownCount(fields[2])
+			}
+		}
+		fn(item)
+	}
+	return rows.Err()
+}
 func (s *Store) requestCount(q Query, contexts ...context.Context) (int, error) {
 	reader := s.readDB(contexts)
 	where, args := queryFilter(q, true)
@@ -232,7 +290,7 @@ func (s *Store) Summary(q Query, contexts ...context.Context) (result Row, err e
 		}
 	}()
 	sum := newMetricSum()
-	if e := s.stream(q, sum.add, reader.ctx); e != nil {
+	if e := s.streamMetrics(q, false, func(item usageMetric) { sum.merge(item.values, normalizedClient(q.ClientKind) == "claude_code") }, reader.ctx); e != nil {
 		return nil, e
 	}
 	n, e := s.requestCount(q, reader.ctx)
@@ -372,8 +430,8 @@ func (s *Store) Chart(q Query, contexts ...context.Context) (resultRows []Row, e
 	buckets := map[string]*metricSum{}
 	requests := map[string]int{}
 	firstBucket := time.Time{}
-	if e := s.stream(q, func(r Row) {
-		if t, ok := ParseStamp(r["timestamp"]); ok {
+	if e := s.streamMetrics(q, false, func(item usageMetric) {
+		if t, ok := ParseStamp(item.timestamp); ok {
 			if firstBucket.IsZero() || t.Before(firstBucket) {
 				firstBucket = t
 			}
@@ -381,7 +439,7 @@ func (s *Store) Chart(q Query, contexts ...context.Context) (resultRows []Row, e
 			if buckets[k] == nil {
 				buckets[k] = newMetricSum()
 			}
-			buckets[k].add(r)
+			buckets[k].merge(item.values, normalizedClient(q.ClientKind) == "claude_code")
 		}
 	}, reader.ctx); e != nil {
 		return nil, e
@@ -458,13 +516,37 @@ func (s *Store) Models(q Query, contexts ...context.Context) (resultRows []Row, 
 		}
 	}()
 	groups := map[string]*metricSum{}
-	if e := s.stream(q, func(r Row) {
-		model := firstString(r["model"], "unknown")
+	if e := s.streamMetrics(q, false, func(item usageMetric) {
+		model := firstString(item.model, "unknown")
 		if groups[model] == nil {
 			groups[model] = newMetricSum()
 		}
-		groups[model].add(r)
+		groups[model].merge(item.values, normalizedClient(q.ClientKind) == "claude_code")
 	}, reader.ctx); e != nil {
+		return nil, e
+	}
+	// Count request/model membership once, rather than rereading every request
+	// group for every model. DISTINCT preserves the former EXISTS semantics.
+	mq := q
+	mq.Model = ""
+	where, args := queryFilter(mq, true)
+	rows, e := reader.Query(`WITH filtered AS (SELECT id,data FROM usage_request_groups WHERE record_kind='user_request' AND is_subagent=0 AND `+where+`) SELECT m.value,count(DISTINCT f.id) FROM filtered f,json_each(f.data,'$.models') m WHERE m.type='text' GROUP BY m.value`, args...)
+	if e != nil {
+		return nil, e
+	}
+	counts := map[string]int{}
+	for rows.Next() {
+		var model string
+		var n int
+		if e = rows.Scan(&model, &n); e != nil {
+			rows.Close()
+			return nil, e
+		}
+		counts[model] = n
+	}
+	e = rows.Err()
+	rows.Close()
+	if e != nil {
 		return nil, e
 	}
 	result := []Row{}
@@ -472,13 +554,7 @@ func (s *Store) Models(q Query, contexts ...context.Context) (resultRows []Row, 
 		r := totals.summaryRow()
 		r["model"] = model
 		r["call_count"] = r["requests"]
-		mq := q
-		mq.Model = model
-		n, e := s.requestCount(mq, reader.ctx)
-		if e != nil {
-			return nil, e
-		}
-		r["user_requests"] = n
+		r["user_requests"] = counts[model]
 		result = append(result, r)
 	}
 	sort.Slice(result, func(i, j int) bool { return ValueInt(result[i]["tokens"]) > ValueInt(result[j]["tokens"]) })

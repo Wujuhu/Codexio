@@ -1,7 +1,7 @@
 import { Call, Events } from '@wailsio/runtime';
 export type Row = Record<string, any>;
 export type ClientKind = 'codex' | 'claude_code';
-export type Query = { client_kind?: ClientKind; mode: string; period: string; start: string; end: string; model: string; tier: string; status: string; search: string; page: number; page_size: number; granularity: string };
+export type Query = { client_kind?: ClientKind; view?: 'activity'|'trend'|'chats'; mode: string; period: string; start: string; end: string; model: string; tier: string; status: string; search: string; page: number; page_size: number; granularity: string };
 export const defaultQuery = (): Query => ({client_kind:'codex',mode:'user_request',period:'today',start:'',end:'',model:'',tier:'',status:'',search:'',page:1,page_size:50,granularity:''});
 const prefix = 'codexio/windows/backend.Service.';
 const reads = new Map<string, {promise:Promise<any>;cancel:()=>void;revision?:string}>();

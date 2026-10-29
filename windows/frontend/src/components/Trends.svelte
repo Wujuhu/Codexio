@@ -13,10 +13,10 @@
  export let query:Query;
  export let onchange:(q:Query)=>void;
  export let settings:Row={};export let onsave:((r:Row)=>Promise<void>)|undefined;export let onerror:((e:any)=>void)|undefined;
- let tab='activity';
+ $: tab=query.view??'activity';
 
 
- function changeTab(next:string){tab=next;}
+ function changeTab(next:string){if(next!==tab)onchange({...query,view:next as Query['view'],page:1});}
  function selectRange(row:Row){
    const raw=String(row.date??row.timestamp??'');let start=String(row.from??raw).slice(0,10),end=String(row.through??raw).slice(0,10);
    const key=(d:Date)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -24,15 +24,15 @@
    if(week){const day=new Date(Number(week[1]),0,4);day.setDate(day.getDate()-(day.getDay()+6)%7+(Number(week[2])-1)*7);start=key(day);day.setDate(day.getDate()+6);end=key(day);}
    else if(month){start=raw+'-01';end=key(new Date(Number(month[1]),Number(month[2]),0));}
    if(!/^\d{4}-\d{2}-\d{2}$/.test(start))return;
-   tab='trend';onchange({...query,period:'custom',start,end,page:1});
+   onchange({...query,view:'trend',period:'custom',start,end,page:1});
  }
- function pageChat(direction:number){onchange({...query,page:Number(data.chat_page??1)+direction,page_size:25});}
 </script>
 
 <div class="usage-tabs" role="tablist" aria-label={tr('用量')}>
  {#each [['activity','活动'],['trend','详情'],['chats','聊天排行']] as [key,label]}<button id={`usage-tab-${key}`} role="tab" aria-controls={`usage-panel-${key}`} aria-selected={tab===key} class:selected={tab===key} onclick={()=>changeTab(key)}>{tr(label)}</button>{/each}
 </div>
-{#if tab==='activity'}
+{#if data.view!==tab}<div class="empty">{tr('正在加载')}</div>
+{:else if tab==='activity'}
  <div class="usage-section" role="tabpanel" id="usage-panel-activity" aria-labelledby="usage-tab-activity">
   <Insights stats={data.insights?.stats??{}} clientKind={query.client_kind??'codex'} section="metrics"/>
   <ActivityCalendar data={data.heatmap??data.activity?.rows??[]} clientKind={query.client_kind??'codex'} onselect={selectRange}/>
@@ -49,7 +49,7 @@
  </div>
 {:else}
  <div class="usage-section" role="tabpanel" id="usage-panel-chats" aria-labelledby="usage-tab-chats">
-  <ChatRanking {data} clientKind={query.client_kind??'codex'} {settings} {onsave} {onerror} onpage={pageChat}/>
+  <ChatRanking {data} clientKind={query.client_kind??'codex'} {settings} {onsave} {onerror}/>
  </div>
 {/if}
 <style>

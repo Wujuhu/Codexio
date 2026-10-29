@@ -1,14 +1,14 @@
 <script lang="ts">
  import{onDestroy}from'svelte';import{api,rows,text,number,compact,cost,utcReportStamp,type Row,type ClientKind}from'../lib/api';
  import{tr}from'../lib/i18n';import{modelName,effort,speed}from'./logFormat';
- export let data:Row={};export let clientKind:ClientKind='codex';export let settings:Row={};export let onsave:((r:Row)=>Promise<void>)|undefined;export let onerror:((e:any)=>void)|undefined;export let onpage:((direction:number)=>void)|undefined;
+ export let data:Row={};export let clientKind:ClientKind='codex';export let settings:Row={};export let onsave:((r:Row)=>Promise<void>)|undefined;export let onerror:((e:any)=>void)|undefined;
  let sort='cost_usd',page=0,visible=5;let expanded=new Set<string>();let ranking:Row={},sequence=0,details:Record<string,Row>={};
  $: void load(data.generation,sort,page,clientKind);
  $: candidates=rows(ranking.threads);
  $: pages=Math.max(1,Number(ranking.pages??1));
  $: page=Math.min(page,pages-1);
  $: shown=candidates.slice(0,visible);
- $: void settings; $: void onsave; $: void onpage;
+ $: void settings; $: void onsave;
  onDestroy(()=>sequence++);
  async function load(_source:any,metric:string,current:number,client:ClientKind){const ticket=++sequence;details={};expanded=new Set();try{const result=await api('GetClientChatRanking',client,metric,current+1);if(ticket===sequence)ranking=result}catch(e){if(ticket===sequence)onerror?.(e)}}
  function changeSort(next:string){sort=next;page=0;visible=5;expanded=new Set();}

@@ -141,7 +141,7 @@
      data=result;
      if(result.state)adoptState(result.state,clientPages.has(active)?current.client_kind??'codex':'codex');
      cache[pageKey(active,current.client_kind??'codex')]=result;
-     if(clientPages.has(active)&&!floating){const source=current.client_kind??'codex';if(filtersDirty.has(source))void api('GetClientFilters',source).then(value=>{if(mounted&&ticket===sequence&&source===clientKind){clientFilters={...clientFilters,[source]:{...value,models:(value.models??[]).map((model:any)=>typeof model==='string'?{model}:model)}};filtersDirty.delete(source);}}).catch(e=>{if(mounted&&ticket===sequence&&source===clientKind)fail(e)});}
+     if(active==='logs'&&!floating){const source=current.client_kind??'codex';if(filtersDirty.has(source))void api('GetClientFilters',source).then(value=>{if(mounted&&ticket===sequence&&source===clientKind){clientFilters={...clientFilters,[source]:{...value,models:(value.models??[]).map((model:any)=>typeof model==='string'?{model}:model)}};filtersDirty.delete(source);}}).catch(e=>{if(mounted&&ticket===sequence&&source===clientKind)fail(e)});}
      error='';
      ready=true;
      await tick();

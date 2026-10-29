@@ -142,7 +142,6 @@ struct UsageSnapshot {
     var updated: Date?
     var callsByID: [String:UsageRow] = [:]
     var models: [String] = []
-    var localChatRows: [Object] = []
     var hasRunningTask = false
     func members(of row: UsageRow) -> [UsageRow] { (row.raw["member_ids"] as? [String] ?? []).compactMap {callsByID[$0]} }
     var widgetRequest: UsageRow?
@@ -417,12 +416,6 @@ enum Analytics {
         }
         result.callsByID = Dictionary(result.calls.map {($0.id,$0)},uniquingKeysWith:{$1})
         result.models = Set((result.calls+result.requests).map {$0.raw.string("model")}.filter {!$0.isEmpty}).sorted()
-        var localTotals: [String:Int] = [:]
-        for row in local { localTotals[row.raw.string("session_id"),default:0] += row.tokens ?? 0 }
-        result.localChatRows = result.chatCandidates.map { candidate in
-            let ids = [candidate.string("thread_id")] + (candidate["descendant_thread_ids"] as? [String] ?? [])
-            return ["thread_id":candidate.string("thread_id"),"local_tokens":ids.reduce(0) {$0+(localTotals[$1] ?? 0)}] as Object
-        }.sorted {($0.integer("local_tokens") ?? 0) > ($1.integer("local_tokens") ?? 0)}
         result.updated = now
         return result
     }

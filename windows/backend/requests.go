@@ -917,6 +917,33 @@ func (m *metricSum) add(r Row) {
 		m.incompleteRecords++
 	}
 }
+
+// Merge the existing single-call projection with the same missing-value,
+// quality and compensated-cost rules used by add; no pricing is recomputed.
+func (m *metricSum) merge(r Row, strict bool) {
+	m.strict = m.strict || strict
+	m.records += int(ValueInt(r["records"]))
+	m.unpriced += int(ValueInt(r["unpriced_calls"]))
+	m.unpricedTokens += ValueInt(r["unpriced_tokens"])
+	m.incompleteRecords += int(ValueInt(r["incomplete_records"]))
+	for key, count := range ValueRow(r["valid_counts"]) {
+		m.valid[key] += int(ValueInt(count))
+		m.totals[key] += ValueInt(r[key])
+	}
+	for key, count := range ValueRow(r["skipped"]) {
+		m.skipped[key] += int(ValueInt(count))
+	}
+	if cost, ok := ValueFloat(r["usd"]); ok {
+		y := cost - m.compensation
+		t := m.cost + y
+		m.compensation = (t - m.cost) - y
+		m.cost = t
+	}
+	m.cacheInput += ValueInt(r["cache_input_tokens"])
+	m.cacheRead += ValueInt(r["cache_read_tokens"])
+	m.cacheValid += int(ValueInt(r["cache_valid_records"]))
+	m.cacheSkipped += int(ValueInt(r["cache_skipped_records"]))
+}
 func (m *metricSum) row() Row {
 	return m.result(m.strict)
 }

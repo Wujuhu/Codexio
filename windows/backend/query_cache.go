@@ -9,6 +9,7 @@ func (s *Store) cachedQuery(kind string, q Query) (string, Row, bool) {
 	q.Page = 0
 	q.PageSize = 0
 	q.Mode = ""
+	q.View = ""
 	now := time.Now()
 	zone, offset := now.Zone()
 	key := fmt.Sprint(kind, "|", s.Generation(), "|", now.Format("2006-01-02"), "|", zone, "|", offset, "|", dataJSON(q))

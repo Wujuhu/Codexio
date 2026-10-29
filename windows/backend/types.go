@@ -7,6 +7,7 @@ type Row map[string]any
 
 type Query struct {
 	ClientKind  string `json:"client_kind,omitempty"`
+	View        string `json:"view,omitempty"`
 	Mode        string `json:"mode"`
 	Period      string `json:"period"`
 	Start       string `json:"start"`

@@ -1,6 +1,6 @@
 # Codexio 计价规则
 
-价格核对日期：2026-10-29。当前源码版本为 0.3.11；本地开发版新增 GPT‑6.1 Terra，正式安装包以对应 Release 说明为准。其余型号继续沿用已确认内容。
+价格核对日期：2026-10-29。当前源码版本为 0.3.12；本地开发版支持 GPT‑6.1 Terra 及用户指定的 Ultra Fast 计价，正式安装包以对应 Release 说明为准。其余型号继续沿用已确认内容。
 
 费用是本地 Token 账本的美元参考估值，不是 ChatGPT 订阅实际扣款或官方额度百分比。普通输入、缓存读取、缓存写入、输出使用已核对的 API Standard 基础价，再按请求的认证与消费来源应用规则。上游额度百分比、重置时间仍直接读取，不由费用推算替代。
 
@@ -22,7 +22,7 @@ API 模式始终保留缓存写入的 API 单列基础价，按速度和长上�
 
 ## GPT-6.1 Terra
 
-API Standard 基础价（美元／百万 Token）为输入 1.00、缓存读取 0.05、缓存写入 1.25、输出 5.00，来自 [官方模型页](https://developers.openai.com/api/docs/models/gpt-6.1-terra)。[Codex 速度说明](https://learn.chatgpt.com/docs/agent-configuration/speed)确认支持 Fast，订阅使用倍率 2.5，购买 credits／Enterprise pay-as-you-go 为 2；不支持或推定 Ultra Fast。
+API Standard 基础价（美元／百万 Token）为输入 1.00、缓存读取 0.05、缓存写入 1.25、输出 5.00，来自 [官方模型页](https://developers.openai.com/api/docs/models/gpt-6.1-terra)。[Codex 速度说明](https://learn.chatgpt.com/docs/agent-configuration/speed)确认支持 Fast，订阅使用倍率 2.5，购买 credits／Enterprise pay-as-you-go 为 2。官方当前速度说明尚未列出 Terra 的 Ultra Fast；按用户本次 v0.3.12 要求，将此前确认的 Sol 分模式口径扩展到 Ultra Fast：订阅 ×8，credits／API Key ×6。这是 Codexio 的参考计价规则，不表示提供方已向所有账号开放该速度。
 
 用户于 2026-10-29 明确确认沿用 GPT-6.1 Sol 的分模式口径：订阅不加长上下文倍率、缓存写入按普通输入价；credits 的缓存写入按普通输入价；API Key 保留独立 API 缓存写入价。credits／API Key 超过 272,000 输入 Token 时，对整次调用的输入和缓存乘 2、输出乘 1.5，再叠加所选速度。来源缺失按订阅计价且不因该缺失标记估算；明确 API Key／credits 原始证据优先。订阅长上下文和缓存写入口径是用户确认的统计规则，不声称由 API 资料推导出真实订阅扣费。
 

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "rule_version": "unified-official-2026-10-29-v4-gpt-6.1-terra",
+  "rule_version": "unified-official-2026-10-29-v5-terra-ultrafast",
   "verified_at": "2026-10-29T00:00:00+00:00",
   "models": [
     {
@@ -22,9 +22,10 @@
       "aliases": [
         "GPT-6.1 Terra"
       ],
-      "tooltip": "Fast ×2.5",
+      "tooltip": "Fast ×2.5 · Ultra Fast ×8",
       "fast_multiplier": 2.5,
-      "tooltip_en": "Fast ×2.5"
+      "tooltip_en": "Fast ×2.5 · Ultra Fast ×8",
+      "ultrafast_multiplier": 8
     },
     {
       "model": "gpt-6-astra",

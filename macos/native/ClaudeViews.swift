@@ -149,8 +149,10 @@ struct ClaudeUsageView: View {
                 }.padding(PageLayout.inset)
             }
         }.onAppear(perform:load).onChange(of:state.claudeRevision) {_,_ in load()}
+            .onChange(of:state.usageSection) {_,_ in load()}
     }
     private func load() {
+        guard state.usageSection == "activity" else {return}
         let queue = state.dataQueue, ledger = state.claudeLedger
         activity.load(key:"claude_code|activity|\(state.claudeRevision)",revision:state.claudeRevision) {queue.sync {(try? ledger.activity()) ?? ActivityStats()}}
     }

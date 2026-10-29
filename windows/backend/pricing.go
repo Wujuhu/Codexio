@@ -14,7 +14,7 @@ import (
 //go:embed assets/pricing_seed.json
 var priceSeed []byte
 
-const priceRule = "codex-api-base-2026-10-29-v8-gpt-6.1-terra"
+const priceRule = "codex-api-base-2026-10-29-v9-terra-ultrafast"
 
 var modelBillingPolicies = func() Row {
 	seed, _ := DecodeRow(priceSeed)

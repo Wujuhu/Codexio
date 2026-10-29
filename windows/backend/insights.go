@@ -169,16 +169,16 @@ func (s *Store) localInsights(q Query, contexts ...context.Context) (result Row,
 	incompleteDaily := map[string]bool{}
 	total := newMetricSum()
 	speeds, efforts := map[string]int{}, map[string]int{}
-	err = s.stream(q, func(r Row) {
+	err = s.streamMetrics(q, true, func(item usageMetric) {
 		beforeTokens, beforeValid := total.totals["tokens"], total.valid["tokens"]
-		total.add(r)
-		t, ok := ParseStamp(r["timestamp"])
+		total.merge(item.values, normalizedClient(q.ClientKind) == "claude_code")
+		t, ok := ParseStamp(item.timestamp)
 		if !ok {
 			return
 		}
 		date := t.In(time.Local).Format("2006-01-02")
 		if normalizedClient(q.ClientKind) == "claude_code" {
-			if _, known := knownCount(r["total_tokens"]); !known {
+			if !item.totalKnown {
 				incompleteDaily[date] = true
 			}
 		}
@@ -189,15 +189,14 @@ func (s *Store) localInsights(q Query, contexts ...context.Context) (result Row,
 			if daily[date] == nil {
 				daily[date] = newMetricSum()
 			}
-			daily[date].add(r)
+			daily[date].merge(item.values, normalizedClient(q.ClientKind) == "claude_code")
 		}
-		quality := strings.Split(dataString(r, "quality"), ":")[0]
-		confirmed := quality == "" || quality == "response" || quality == "legacy_last" || quality == "cumulative_delta" && strings.HasPrefix(dataString(r, "id"), "response:")
+		confirmed := ValueInt(item.values["requests"]) > 0
 		if confirmed {
 			active[date] = true
-			tier := requestSpeed(r["service_tier"])
+			tier := requestSpeed(item.speed)
 			speeds[tier]++
-			effort := dataString(r, "reasoning_effort")
+			effort := ValueString(item.effort)
 			if effort == "" {
 				effort = "unknown"
 			}

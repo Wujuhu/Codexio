@@ -27,7 +27,7 @@ MODELS_DEV_URL = "https://models.dev/api.json"
 RATE_KEYS = ("input", "cache_read", "cache_write", "output")
 _FIELDS = {"input": "input_cost_per_token", "cache_read": "cache_read_input_token_cost",
            "cache_write": "cache_creation_input_token_cost", "output": "output_cost_per_token"}
-PRICING_RULE_VERSION = "codex-api-base-2026-10-29-v8-gpt-6.1-terra"
+PRICING_RULE_VERSION = "codex-api-base-2026-10-29-v9-terra-ultrafast"
 PRICING_BASIS = "standard_api_x_codex"
 PRICING_BASIS_LABEL = tr("标准 API 单价 × Codex 倍率")
 LONG_CONTEXT_THRESHOLD = 272000

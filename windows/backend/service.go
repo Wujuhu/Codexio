@@ -270,6 +270,23 @@ func (s *Service) GetRequestImage(ctx context.Context, requestID, imageID string
 func (s *Service) GetTrends(ctx context.Context, q Query) (Row, error) {
 	ctx, cancel := s.readContext(ctx)
 	defer cancel()
+	result := Row{"state": s.store.ClientStatus(q.ClientKind), "generation": s.store.Generation(), "view": q.View}
+	// Each tab owns its queries. The ranking component already pages its own
+	// results; opening activity must not compute ranking or hidden detail charts.
+	if q.View == "chats" {
+		return result, nil
+	}
+	if q.View != "trend" {
+		insights, err := s.store.localInsights(Query{ClientKind: q.ClientKind, Period: "all", Source: "local"}, ctx)
+		if err = queryError(ctx, err); err != nil {
+			return nil, err
+		}
+		result["view"] = "activity"
+		result["insights"] = insights
+		result["heatmap"] = insights["activity"]
+		result["activity"] = Row{"rows": insights["activity"]}
+		return result, nil
+	}
 	summary, e := s.store.Summary(q, ctx)
 	if e != nil {
 		return nil, queryError(ctx, e)
@@ -282,15 +299,11 @@ func (s *Service) GetTrends(ctx context.Context, q Query) (Row, error) {
 	if e != nil {
 		return nil, queryError(ctx, e)
 	}
-	chatQuery := Query{ClientKind: q.ClientKind, Period: "all", Source: "local", Page: q.Page, PageSize: 25}
-	insights, e := s.store.Insights(chatQuery, ctx)
-	if e != nil {
-		return nil, queryError(ctx, e)
-	}
 	if err := queryError(ctx, nil); err != nil {
 		return nil, err
 	}
-	return Row{"state": s.store.ClientStatus(q.ClientKind), "summary": summary, "chart": chart, "models": models, "insights": insights, "heatmap": insights["heatmap"], "activity": Row{"rows": insights["activity"]}, "chats": insights["chats"], "chat_page": insights["chat_page"], "chat_pages": insights["chat_pages"], "chat_total": insights["chat_total"], "generation": s.store.Generation()}, nil
+	result["summary"], result["chart"], result["models"] = summary, chart, models
+	return result, nil
 }
 func (s *Service) GetSubscription() Row { return s.subscription(true) }
 func (s *Service) GetClientSubscription(client string) Row {
