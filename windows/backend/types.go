@@ -32,6 +32,9 @@ type PageResult struct {
 }
 
 type DataOptions struct {
+	// Desktop startup can show the last committed projection while its refresh
+	// runs in the existing background collector. Headless callers stay eager.
+	DeferProjection   bool
 	Maintenance       func(healthy bool)
 	Directory         string
 	Roots             []string

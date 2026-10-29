@@ -17,6 +17,7 @@ import (
 // background work; a webview receives pages and projections, never a live DB.
 type Service struct {
 	mu               sync.RWMutex
+	lifecycleMu      sync.Mutex
 	config           Row
 	directory        string
 	version          string
@@ -63,7 +64,7 @@ func NewService(directory, executable, version string, mock bool, callbacks Desk
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Service{config: c, directory: directory, version: version, mock: mock, callbacks: callbacks, ctx: ctx, cancel: cancel}
-	s.store, err = OpenStore(DataOptions{Directory: directory, Roots: ValueStrings(c["codex_roots"]), Mock: mock, Config: CloneRow(c), Maintenance: func(healthy bool) {
+	s.store, err = OpenStore(DataOptions{Directory: directory, Roots: ValueStrings(c["codex_roots"]), Mock: mock, DeferProjection: !mock, Config: CloneRow(c), Maintenance: func(healthy bool) {
 		if !s.mock {
 			if healthy {
 				s.estimate.Process()
@@ -161,6 +162,11 @@ func (s *Service) notify(scope string) {
 	}
 }
 func (s *Service) Start() {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.ctx.Err() != nil {
+		return
+	}
 	s.startOnce.Do(func() {
 		go s.store.Run(s.ctx, func() {
 			s.notify("usage")
@@ -174,6 +180,11 @@ func (s *Service) Start() {
 		s.mobile.Start(s.ctx)
 		if !s.mock {
 			go func() {
+				s.lifecycleMu.Lock()
+				defer s.lifecycleMu.Unlock()
+				if s.ctx.Err() != nil {
+					return
+				}
 				if _, e := s.upstream.Toggle(ValueBool(s.Config()["upstream_detection_enabled"])); e != nil {
 					s.notice(e.Error())
 				}
@@ -353,12 +364,20 @@ func (s *Service) GetClientReports(client, period string) (Row, error) {
 	return s.reports.GetForClient(period, client)
 }
 
-func (s *Service) GetSettings() Row {
+// First paint needs saved preferences, not discovery, sync or report state.
+func (s *Service) GetStartupSettings() Row {
 	r := PublicConfig(s.Config())
 	r["data_path"] = s.directory
 	r["version"] = s.version
 	r["mock"] = s.mock
 	r["state"] = s.store.Status()
+	s.mu.RLock()
+	r["incomplete_usage_notice_dismissed"] = s.incompleteUsageNoticeDismissed
+	s.mu.RUnlock()
+	return r
+}
+func (s *Service) GetSettings() Row {
+	r := s.GetStartupSettings()
 	r["mobile"] = s.mobile.Public()
 	r["upstream"] = s.upstream.Public()
 	r["update"] = s.updater.Snapshot()
@@ -610,6 +629,9 @@ func (s *Service) PrepareQuit() error {
 	return nil
 }
 func (s *Service) Close() error {
+	s.cancel()
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
 	var result error
 	s.closeOnce.Do(func() {
 		s.cancel()

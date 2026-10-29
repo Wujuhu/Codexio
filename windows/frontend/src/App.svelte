@@ -196,7 +196,12 @@
    const media=matchMedia('(prefers-color-scheme: dark)');
    const systemTheme=()=>{if(settings.theme==='system')settings={...settings};};
    media.addEventListener('change',systemTheme);
-   void refreshSettings(true).then(()=>{if(mounted)return reload();});
+    void (async()=>{
+      try{const initial=await api('GetStartupSettings');if(mounted)adoptSettings(initial);}catch(e){if(mounted)fail(e);}
+      if(!mounted)return;
+      await reload();
+      if(mounted)void refreshSettings(true);
+    })();
    return()=>{
      mounted=false;
      sequence++;

@@ -27,6 +27,7 @@ type Store struct {
 	claudeContexts          map[string]Row
 	claudeContextDirty      map[string]bool
 	db                      *sql.DB
+	readers                 *sql.DB
 	path                    string
 	options                 DataOptions
 	mu                      sync.RWMutex
@@ -145,7 +146,26 @@ func OpenStore(o DataOptions) (*Store, error) {
 			return nil, e
 		}
 	}
-	if e = s.project(); e != nil {
+	if o.DeferProjection && !o.Mock {
+		var prior string
+		if db.QueryRow("SELECT data FROM usage_query_state WHERE key='go_projection'").Scan(&prior) == nil {
+			s.generation.Store(ValueInt(dataRow(prior)["generation"]))
+		}
+	} else if e = s.project(); e != nil {
+		db.Close()
+		return nil, e
+	}
+	// WAL lets these bounded read-only connections see the last committed
+	// materialized views while collection/projection owns the single writer.
+	s.readers, e = sql.Open("sqlite", "file:"+filepath.ToSlash(s.path)+"?mode=ro&_pragma=busy_timeout(1000)")
+	if e != nil {
+		db.Close()
+		return nil, e
+	}
+	s.readers.SetMaxOpenConns(2)
+	s.readers.SetMaxIdleConns(2)
+	if e = s.readers.Ping(); e != nil {
+		s.readers.Close()
 		db.Close()
 		return nil, e
 	}
@@ -270,7 +290,16 @@ func (s *Store) refreshActivity(active bool) {
 }
 func (s *Store) Close() error {
 	var e error
-	s.closeOnce.Do(func() { close(s.closed); s.media.close(); s.work.Lock(); defer s.work.Unlock(); e = s.db.Close() })
+	s.closeOnce.Do(func() {
+		close(s.closed)
+		s.media.close()
+		s.work.Lock()
+		defer s.work.Unlock()
+		if s.readers != nil {
+			e = s.readers.Close()
+		}
+		e = errors.Join(e, s.db.Close())
+	})
 	return e
 }
 func (s *Store) Run(ctx context.Context, changed func()) {
@@ -280,6 +309,7 @@ func (s *Store) Run(ctx context.Context, changed func()) {
 	tick := time.NewTimer(time.Millisecond)
 	defer tick.Stop()
 	force := false
+	initial := true
 	for {
 		select {
 		case <-ctx.Done():
@@ -293,8 +323,15 @@ func (s *Store) Run(ctx context.Context, changed func()) {
 		s.work.Lock()
 		before := s.Generation()
 		var e error
+		if initial {
+			e = s.project(ctx)
+			initial = false
+			if e == nil && before != s.Generation() && changed != nil {
+				changed()
+			}
+		}
 		if !s.options.Mock {
-			e = s.collect(ctx, force)
+			e = errors.Join(e, s.collect(ctx, force))
 			e = errors.Join(e, s.collectClaude(ctx, force))
 			if e == nil {
 				_ = s.syncPrices(ctx, false)
@@ -304,7 +341,7 @@ func (s *Store) Run(ctx context.Context, changed func()) {
 		// Successful file transactions must be visible even when another file
 		// failed; its retained cursor will be retried on the next collection.
 		e = errors.Join(e, s.applyClaudeContexts())
-		e = errors.Join(e, s.project())
+		e = errors.Join(e, s.project(ctx))
 		upstreamSignature := s.pricingObservedKey
 		if upstreamSignature != s.upstreamSignature {
 			s.upstreamSignature = upstreamSignature

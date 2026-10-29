@@ -38,15 +38,20 @@ func queryContext(contexts []context.Context) context.Context {
 	return context.Background()
 }
 
-// Reuse the same SQLite pool, caches and Store identity. The context follows
-// nested reads and recovery transactions, including waiting for a connection.
+// UI reads use bounded read-only WAL connections; mutations still share the
+// original single writer and its work gate. Cancellation reaches both pools.
 type queryReader struct {
 	*sql.DB
-	ctx context.Context
+	writer *sql.DB
+	ctx    context.Context
 }
 
 func (s *Store) readDB(contexts []context.Context) queryReader {
-	return queryReader{s.db, queryContext(contexts)}
+	db := s.readers
+	if db == nil {
+		db = s.db
+	}
+	return queryReader{DB: db, writer: s.db, ctx: queryContext(contexts)}
 }
 func (r queryReader) Query(statement string, args ...any) (*sql.Rows, error) {
 	return r.DB.QueryContext(r.ctx, statement, args...)
@@ -55,9 +60,9 @@ func (r queryReader) QueryRow(statement string, args ...any) *sql.Row {
 	return r.DB.QueryRowContext(r.ctx, statement, args...)
 }
 func (r queryReader) Exec(statement string, args ...any) (sql.Result, error) {
-	return r.DB.ExecContext(r.ctx, statement, args...)
+	return r.writer.ExecContext(r.ctx, statement, args...)
 }
-func (r queryReader) Begin() (*sql.Tx, error) { return r.DB.BeginTx(r.ctx, nil) }
+func (r queryReader) Begin() (*sql.Tx, error) { return r.writer.BeginTx(r.ctx, nil) }
 
 func (s *Service) readContext(parent context.Context) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithTimeout(parent, 30*time.Second)

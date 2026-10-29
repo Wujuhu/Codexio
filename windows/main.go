@@ -149,7 +149,9 @@ func desktopRun(args desktopArguments) error {
 	}
 	h.setupTray()
 	h.app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
-		h.service.Start()
+		// Plugin/sync setup and historical preparation must not hold the native
+		// event loop before the first WebView paint.
+		go h.service.Start()
 		h.applySettings()
 		if h.smoke != nil {
 			h.smoke.startDeadline()
