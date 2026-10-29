@@ -119,6 +119,9 @@ final class UsageIndexer {
         try database.updateSessionContexts(contexts)
         if complete { titleInputs[root] = signatures }
     }
+    private func needsOwnershipRepair(_ cursor: Object) -> Bool {
+        (cursor.integer("ownership_version") ?? 0)<2 && (cursor.object("state").integer("history_start") ?? 0)>0
+    }
     private func scanFile(_ file: URL, root: URL) throws {
         activeSource = (file,root); defer { activeSource = nil }
         let info = try FileManager.default.attributesOfItem(atPath:file.path)
@@ -129,7 +132,7 @@ final class UsageIndexer {
         let rollout = rolloutID(file), key = "native-v1:" + String(identity(root.path).prefix(16)) + ":" + rollout
         var cursor = database.object("usage_cursors",key:key)
         try database.registerSessionFile(file,root:root,session:cursor.object("state").string("session_id",rollout))
-        if RolloutFile.compressed(file), cursor.string("source_signature") == sourceSignature,
+        if RolloutFile.compressed(file), !needsOwnershipRepair(cursor), cursor.string("source_signature") == sourceSignature,
            cursor.integer("parser") == 1, cursor.integer("resume_metadata_version") == RequestResume.metadataVersion, cursor.integer("message_archive_version")==MessageArchive.version, cursor.flag("scan_complete") {
             scannedFiles[file.path] = signature; return
         }
@@ -167,7 +170,7 @@ final class UsageIndexer {
                 try database.registerRequestSource(row.string("id"),file:file,root:root)
             }
         }
-        var valid = offset <= size && cursor.integer("parser") == 1
+        var valid = !needsOwnershipRepair(cursor) && offset <= size && cursor.integer("parser") == 1
         let replaced = !cursor.string("source_identity").isEmpty && cursor.string("source_identity") != sourceIdentity && cursor.flag("compressed")==compressed
         if replaced || (offset==size && cursor.number("modified") != modified) {valid=false}
         if valid && offset>0 {
@@ -231,7 +234,7 @@ final class UsageIndexer {
         try handle.seek(toOffset:UInt64(offset-length))
         let hash = digest(try handle.read(upToCount:length) ?? Data())
         try handle.seek(toOffset:current)
-        try database.put("usage_cursors",key:key,value:["parser":1,"source_identity":sourceIdentity,"compressed":compressed,"scan_complete":complete,"message_archive_version":MessageArchive.version,"resume_metadata_version":RequestResume.metadataVersion,"offset":offset,"logical_size":size,"source_signature":sourceSignature,"modified":modified,"tail_hash":hash,"state":state])
+        try database.put("usage_cursors",key:key,value:["parser":1,"ownership_version":2,"source_identity":sourceIdentity,"compressed":compressed,"scan_complete":complete,"message_archive_version":MessageArchive.version,"resume_metadata_version":RequestResume.metadataVersion,"offset":offset,"logical_size":size,"source_signature":sourceSignature,"modified":modified,"tail_hash":hash,"state":state])
     }
     private func shouldPersist(_ id: String) -> Bool { archiveAllMessages || (detailTargets?.contains(id) ?? true) }
     private func persistTurn(_ row: Object) throws {
@@ -550,8 +553,16 @@ final class UsageIndexer {
             return
         }
         let inherited: Bool
-        if let boundary = state.integer("history_start"), let ordinal = entry.integer("ordinal") { inherited = ordinal < boundary }
-        else { inherited = !state.string("parent_id").isEmpty && !stamp.isEmpty && stamp < state.string("fork_timestamp") }
+        // A child may restart ordinals at zero. Its explicit own events after
+        // the fork must not be discarded by the inherited-history boundary.
+        let explicitOwner = payload.string("thread_id"), fork = state.string("fork_timestamp")
+        let afterFork = !stamp.isEmpty && !fork.isEmpty && stamp >= fork
+        let localOwner = explicitOwner.isEmpty || explicitOwner == state.string("session_id")
+        let ownTurn = kind == "turn_context" || (kind == "event_msg" && ["task_started","turn_started"].contains(subtype))
+        if afterFork, localOwner, ownTurn {state["own_history_started"] = true}
+        if afterFork, localOwner, !explicitOwner.isEmpty || state.flag("own_history_started") { inherited = false }
+        else if let boundary = state.integer("history_start"), let ordinal = entry.integer("ordinal") { inherited = ordinal < boundary }
+        else { inherited = !state.string("parent_id").isEmpty && !stamp.isEmpty && stamp < fork }
         if !inherited, detailTargets == nil { try agentEvent(entry,state:&state,stamp:stamp) }
         if kind == "turn_context" || (kind == "event_msg" && ["thread_settings_applied","task_started","turn_started"].contains(subtype)) {
             let owner = payload.string("thread_id")

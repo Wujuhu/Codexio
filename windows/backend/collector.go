@@ -415,10 +415,12 @@ func (s *Store) scanFile(ctx context.Context, path, key, source string, force bo
 		_, parentAvailable = s.parentSignatures(pending, dataString(ValueRow(cursor["go_state"]), "fork_timestamp"))
 	}
 	sourceSize := ValueInt(cursor["source_size"])
+	// Replay only old subagent cursors whose ordinal boundary could hide own calls.
+	ownershipRepair := ValueInt(cursor["ownership_version"]) < 2 && ValueInt(ValueRow(cursor["go_state"])["history_start"]) > 0
 	if cursor["source_size"] == nil && !compressed {
 		sourceSize = ValueInt(cursor["size"])
 	}
-	if !force && ValueInt(cursor["parser_version"]) == 1 && ValueInt(cursor["metadata_version"]) == requestMetadataVersion && ValueInt(cursor["message_archive_version"]) == messageArchiveVersion && !ValueBool(cursor["source_missing"]) && dataString(cursor, "path") == path && dataString(cursor, "identity") == identity && sourceSize == sourceStat.Size() && ValueInt(cursor["mtime"]) == sourceStat.ModTime().UnixNano() && ValueBool(cursor["compressed"]) == compressed && !parentAvailable {
+	if !force && !ownershipRepair && ValueInt(cursor["parser_version"]) == 1 && ValueInt(cursor["metadata_version"]) == requestMetadataVersion && ValueInt(cursor["message_archive_version"]) == messageArchiveVersion && !ValueBool(cursor["source_missing"]) && dataString(cursor, "path") == path && dataString(cursor, "identity") == identity && sourceSize == sourceStat.Size() && ValueInt(cursor["mtime"]) == sourceStat.ModTime().UnixNano() && ValueBool(cursor["compressed"]) == compressed && !parentAvailable {
 		return nil
 	}
 	f, e := openRollout(path, ctx)
@@ -442,7 +444,7 @@ func (s *Store) scanFile(ctx context.Context, path, key, source string, force bo
 			return err
 		}
 	}
-	valid := !force && ValueInt(cursor["parser_version"]) == 1 && sameIdentity && offset <= stat.Size() && offset >= 0 && dataString(cursor, "checkpoint") == checkpointHash(f, offset) && dataString(cursor, "prefix") == prefixHash(f, offset) && !(offset == stat.Size() && ValueInt(cursor["mtime"]) != sourceStat.ModTime().UnixNano())
+	valid := !force && !ownershipRepair && ValueInt(cursor["parser_version"]) == 1 && sameIdentity && offset <= stat.Size() && offset >= 0 && dataString(cursor, "checkpoint") == checkpointHash(f, offset) && dataString(cursor, "prefix") == prefixHash(f, offset) && !(offset == stat.Size() && ValueInt(cursor["mtime"]) != sourceStat.ModTime().UnixNano())
 	if parentAvailable {
 		valid = false
 	}
@@ -527,7 +529,7 @@ func (s *Store) scanFile(ctx context.Context, path, key, source string, force bo
 	if !valid {
 		metadataRepair, metadataPartial = nil, false
 	}
-	cursor = Row{"path": path, "message_archive_version": messageArchiveVersion, "compressed": compressed, "source_size": sourceStat.Size(), "parser_version": 1, "metadata_version": metadataVersion, "metadata_partial": metadataPartial, "metadata_repair": metadataRepair, "identity": identity, "prefix": prefixHash(f, offset), "offset": offset, "size": stat.Size(), "mtime": sourceStat.ModTime().UnixNano(), "checkpoint": checkpointHash(f, offset), "generation": generation, "go_state": state, "reconcile_pending": reconcile}
+	cursor = Row{"path": path, "ownership_version": 2, "message_archive_version": messageArchiveVersion, "compressed": compressed, "source_size": sourceStat.Size(), "parser_version": 1, "metadata_version": metadataVersion, "metadata_partial": metadataPartial, "metadata_repair": metadataRepair, "identity": identity, "prefix": prefixHash(f, offset), "offset": offset, "size": stat.Size(), "mtime": sourceStat.ModTime().UnixNano(), "checkpoint": checkpointHash(f, offset), "generation": generation, "go_state": state, "reconcile_pending": reconcile}
 	if _, e = tx.Exec("INSERT INTO usage_cursors VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data", key, dataJSON(cursor)); e != nil {
 		return e
 	}
@@ -740,6 +742,22 @@ func getTurn(state Row, id, timestamp string) Row {
 	return r
 }
 func inheritedEntry(entry, state Row) bool {
+	// Explicit ownership after the fork is stronger than an older ordinal
+	// boundary: some child rollouts restart their own ordinal at zero.
+	owner := dataString(ValueRow(entry["payload"]), "thread_id")
+	timestamp, fork := stamp(entry["timestamp"]), dataString(state, "fork_timestamp")
+	if timestamp != "" && fork != "" && timestamp >= fork {
+		p := ValueRow(entry["payload"])
+		ownTurn := dataString(entry, "type") == "turn_context" || dataString(entry, "type") == "event_msg" && (dataString(p, "type") == "task_started" || dataString(p, "type") == "turn_started")
+		if owner == "" || owner == dataString(state, "session_id") {
+			if ownTurn {
+				state["own_history_started"] = true
+			}
+			if owner != "" || ValueBool(state["own_history_started"]) {
+				return false
+			}
+		}
+	}
 	if boundary, ok := knownCount(state["history_start"]); ok {
 		if ordinal, ok := knownCount(entry["ordinal"]); ok {
 			return ordinal < boundary
