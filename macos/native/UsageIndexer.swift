@@ -12,6 +12,7 @@ final class UsageIndexer {
     private var mainOwnershipRepaired = false
     private var detailTargets: Set<String>?
     private var metadataOnly = false
+    private var archiveAllMessages = false
     private var recoveryLegacyMessage: (String,Object)?
     private var activeSource: (URL,URL)?
     private let rolloutPattern = try! NSRegularExpression(pattern:#"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"#)
@@ -26,7 +27,7 @@ final class UsageIndexer {
     }
 
     private func rolloutID(_ url: URL) -> String {
-        let name = url.lastPathComponent
+        let name = RolloutFile.compressed(url) ? url.deletingPathExtension().lastPathComponent:url.lastPathComponent
         let matches = rolloutPattern.matches(in:name,range:NSRange(name.startIndex...,in:name))
         if let range = matches.last.flatMap({Range($0.range,in:name)}) { return String(name[range]).lowercased() }
         return String(identity(name).prefix(32))
@@ -34,6 +35,7 @@ final class UsageIndexer {
     func scan(_ roots: [URL], progress: (Int,Int)->Void = {_,_ in}) throws {
         cancelled = false
         var firstError: Error?
+        try database.migrateMessageArchives()
         try repairMainOwnership()
         if resumeRepairSessions == nil {
             resumeRepairSessions = Set(try database.query("SELECT DISTINCT json_extract(data,'$.session_id') AS session FROM usage_turns WHERE COALESCE(json_extract(data,'$.prompt_preview'),'')='' AND COALESCE(json_extract(data,'$.is_subagent'),0)=0").map {$0.string("session")})
@@ -122,12 +124,13 @@ final class UsageIndexer {
         let info = try FileManager.default.attributesOfItem(atPath:file.path)
         let modified = (info[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
         let signature = Signature(stamp:FileStamp(file)), sourceSignature = RolloutFile.signature(file)
+        let sourceIdentity="\(signature.stamp.device):\(signature.stamp.inode)",compressed=RolloutFile.compressed(file)
         if scannedFiles[file.path] == signature { return }
         let rollout = rolloutID(file), key = "native-v1:" + String(identity(root.path).prefix(16)) + ":" + rollout
         var cursor = database.object("usage_cursors",key:key)
         try database.registerSessionFile(file,root:root,session:cursor.object("state").string("session_id",rollout))
         if RolloutFile.compressed(file), cursor.string("source_signature") == sourceSignature,
-           cursor.integer("parser") == 1, cursor.integer("resume_metadata_version") == RequestResume.metadataVersion {
+           cursor.integer("parser") == 1, cursor.integer("resume_metadata_version") == RequestResume.metadataVersion, cursor.integer("message_archive_version")==MessageArchive.version, cursor.flag("scan_complete") {
             scannedFiles[file.path] = signature; return
         }
         let handle = try RolloutFile.open(file); defer { try? handle.close() }
@@ -164,20 +167,27 @@ final class UsageIndexer {
                 try database.registerRequestSource(row.string("id"),file:file,root:root)
             }
         }
+        var valid = offset <= size && cursor.integer("parser") == 1
+        let replaced = !cursor.string("source_identity").isEmpty && cursor.string("source_identity") != sourceIdentity && cursor.flag("compressed")==compressed
+        if replaced || (offset==size && cursor.number("modified") != modified) {valid=false}
+        if valid && offset>0 {
+            let length=min(offset,4096)
+            try handle.seek(toOffset:UInt64(offset-length))
+            valid=digest(try handle.read(upToCount:length) ?? Data())==cursor.string("tail_hash")
+        }
+        if !valid {offset=0}
+        if valid, offset>0, cursor.integer("message_archive_version") != MessageArchive.version {
+            try recoverMessageDetails(ids:nil,file:file,root:root)
+            cursor["message_archive_version"]=MessageArchive.version
+            try database.put("usage_cursors",key:key,value:cursor)
+        }
         if offset == size && cursor.number("modified") == modified && cursor.integer("resume_metadata_version") == RequestResume.metadataVersion {
-            if cursor.string("source_signature") != sourceSignature {
-                cursor["source_signature"] = sourceSignature; cursor["logical_size"] = size
+            if cursor.string("source_signature") != sourceSignature || !cursor.flag("scan_complete") {
+                cursor["source_signature"] = sourceSignature; cursor["logical_size"] = size; cursor["scan_complete"]=true;cursor["source_identity"]=sourceIdentity;cursor["compressed"]=compressed
                 try database.put("usage_cursors",key:key,value:cursor)
             }
             scannedFiles[file.path] = signature; return
         }
-        var valid = offset <= size && cursor.integer("parser") == 1
-        if valid && offset > 0 {
-            let length = min(offset,4096)
-            try handle.seek(toOffset:UInt64(offset-length))
-            valid = digest(try handle.read(upToCount:length) ?? Data()) == cursor.string("tail_hash")
-        }
-        if !valid { offset = 0 }
         var state: Object = offset > 0 ? cursor.object("state") : ["rollout_id":rollout,"session_id":rollout,"model":"unknown","provider":"unknown","turn_id":"","prompt_preview":"","turns":Object(),"last_by_source":Object(),"last_totals":Object()]
         if offset > 0, cursor.integer("resume_metadata_version") != RequestResume.metadataVersion,
            resumeRepairSessions?.contains(state.string("session_id")) == true {
@@ -202,22 +212,28 @@ final class UsageIndexer {
                     }
                     oversized = false; pending.removeSubrange(0...newline); offset += length
                 }
-                if pending.count > 16_000_000 { offset += pending.count; pending.removeAll(); oversized = true }
+
             }
-            if !oversized { try checkpoint(handle:handle,key:key,state:state,offset:offset,modified:modified,sourceSignature:sourceSignature,size:size) }
+            if !oversized { try checkpoint(handle:handle,key:key,state:state,offset:offset,modified:modified,sourceSignature:sourceSignature,sourceIdentity:sourceIdentity,compressed:compressed,size:size) }
         }
-        if !oversized { try checkpoint(handle:handle,key:key,state:state,offset:offset,modified:modified,sourceSignature:sourceSignature,size:size) }
+        if !cancelled && !pending.isEmpty {
+            let record=jsonObject(pending)
+            if record.isEmpty && !String(decoding:pending,as:UTF8.self).trimmingCharacters(in:.whitespacesAndNewlines).isEmpty {throw AppFailure("Incomplete rollout record")}
+            if !record.isEmpty {try database.transaction {try process(record,state:&state)}}
+            offset+=pending.count;pending.removeAll()
+        }
+        if !oversized { try checkpoint(handle:handle,key:key,state:state,offset:offset,modified:modified,sourceSignature:sourceSignature,sourceIdentity:sourceIdentity,compressed:compressed,size:size,complete:!cancelled) }
         try database.registerSessionFile(file,root:root,session:state.string("session_id"))
         if !cancelled { scannedFiles[file.path] = signature }
     }
-    private func checkpoint(handle: FileHandle,key: String,state: Object,offset: Int,modified: Double,sourceSignature: String,size: Int) throws {
+    private func checkpoint(handle: RolloutReader,key: String,state: Object,offset: Int,modified: Double,sourceSignature: String,sourceIdentity: String,compressed: Bool,size: Int,complete: Bool=false) throws {
         let current = try handle.offset(), length = min(offset,4096)
         try handle.seek(toOffset:UInt64(offset-length))
         let hash = digest(try handle.read(upToCount:length) ?? Data())
         try handle.seek(toOffset:current)
-        try database.put("usage_cursors",key:key,value:["parser":1,"resume_metadata_version":RequestResume.metadataVersion,"offset":offset,"logical_size":size,"source_signature":sourceSignature,"modified":modified,"tail_hash":hash,"state":state])
+        try database.put("usage_cursors",key:key,value:["parser":1,"source_identity":sourceIdentity,"compressed":compressed,"scan_complete":complete,"message_archive_version":MessageArchive.version,"resume_metadata_version":RequestResume.metadataVersion,"offset":offset,"logical_size":size,"source_signature":sourceSignature,"modified":modified,"tail_hash":hash,"state":state])
     }
-    private func shouldPersist(_ id: String) -> Bool { detailTargets?.contains(id) ?? true }
+    private func shouldPersist(_ id: String) -> Bool { archiveAllMessages || (detailTargets?.contains(id) ?? true) }
     private func persistTurn(_ row: Object) throws {
         guard shouldPersist(row.string("id")) else { return }
         if detailTargets == nil { try database.writeTurn(row) }
@@ -249,17 +265,18 @@ final class UsageIndexer {
         }
         return detail
     }
-    func recoverMessageDetails(ids: Set<String>,file: URL,root: URL,metadataOnly: Bool = false) throws {
-        guard !ids.isEmpty else { return }
-        activeSource = (file,root); defer { activeSource = nil }
-        detailTargets = ids; self.metadataOnly = metadataOnly
-        defer { detailTargets = nil; self.metadataOnly = false; recoveryLegacyMessage = nil }
+    func recoverMessageDetails(ids: Set<String>?,file: URL,root: URL,metadataOnly: Bool = false) throws {
+        guard ids?.isEmpty != true else { return }
+        let previousSource=activeSource
+        activeSource = (file,root); defer { activeSource = previousSource }
+        detailTargets = ids ?? []; self.metadataOnly = metadataOnly;archiveAllMessages = ids == nil
+        defer { detailTargets = nil; self.metadataOnly = false; recoveryLegacyMessage = nil;archiveAllMessages=false }
         let rollout = rolloutID(file)
         var state: Object = ["rollout_id":rollout,"session_id":rollout,"model":"unknown","provider":"unknown","turn_id":"","prompt_preview":"","turns":Object()]
         let reader = try RolloutFile.open(file); defer { try? reader.close() }
         // Recovery is limited to this indexed related session. Metering, agent
         // links and cursors are never replayed; an incomplete source stays partial.
-        let limit = metadataOnly ? 33_554_432 : 67_108_864
+        let limit = Int(try reader.seekToEnd());try reader.seek(toOffset:0)
         var pending = Data(), read = 0, oversized = false, complete = Set<String>()
         while read < limit && !cancelled {
             let chunk = try autoreleasepool { try reader.read(upToCount:min(1_048_576,limit-read)) } ?? Data()
@@ -271,14 +288,18 @@ final class UsageIndexer {
                             let entry = jsonObject(pending.subdata(in:0..<newline))
                             if !entry.isEmpty { try process(entry,state:&state) }
                             let row = state.object("turns").object(state.string("turn_id"))
-                            if ids.contains(row.string("id")), !row.string("ended_at").isEmpty { complete.insert(row.string("id")) }
+                            if ids?.contains(row.string("id")) == true, !row.string("ended_at").isEmpty { complete.insert(row.string("id")) }
                         }
                     }
                     oversized = false; pending.removeSubrange(0...newline)
                 }
-                if pending.count > 16_000_000 { pending.removeAll(); oversized = true }
+
             }
-            if complete == ids { break }
+            if let ids, complete == ids { break }
+        }
+        if !cancelled,read>=limit,!pending.isEmpty {
+            let entry=jsonObject(pending)
+            if !entry.isEmpty {try database.transaction {try process(entry,state:&state)}}
         }
     }
     private func repairRecentMaintenance() throws {
@@ -359,7 +380,7 @@ final class UsageIndexer {
                 }
                 oversized = false; pending.removeSubrange(0...newline)
             }
-            if pending.count > 16_000_000 { pending.removeAll(); oversized = true }
+
         }
         guard !cancelled, read == limit else { throw AppFailure("Request preview repair interrupted") }
         try database.transaction { for patch in patches.values { try applyResume(patch,state:&state) } }

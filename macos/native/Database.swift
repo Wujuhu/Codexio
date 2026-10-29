@@ -49,6 +49,8 @@ final class Database {
             CREATE TABLE IF NOT EXISTS usage_request_ids(id TEXT PRIMARY KEY,mobile_id TEXT NOT NULL UNIQUE);
             CREATE TABLE IF NOT EXISTS usage_request_messages(id TEXT PRIMARY KEY,data TEXT NOT NULL,digest TEXT NOT NULL,revision INTEGER NOT NULL,size INTEGER NOT NULL,accessed REAL NOT NULL);
             CREATE INDEX IF NOT EXISTS usage_request_messages_accessed ON usage_request_messages(accessed);
+            CREATE TABLE IF NOT EXISTS usage_request_archives(id TEXT PRIMARY KEY,codec TEXT NOT NULL,payload BLOB NOT NULL,checksum TEXT NOT NULL,digest TEXT NOT NULL,revision INTEGER NOT NULL,size INTEGER NOT NULL);
+            CREATE VIEW IF NOT EXISTS usage_request_message_metadata AS SELECT id,digest,revision FROM usage_request_archives UNION ALL SELECT id,digest,revision FROM usage_request_messages m WHERE NOT EXISTS(SELECT 1 FROM usage_request_archives a WHERE a.id=m.id);
             CREATE INDEX IF NOT EXISTS usage_turns_session ON usage_turns(json_extract(data,'$.session_id'));
             CREATE INDEX IF NOT EXISTS usage_turns_continuation ON usage_turns(json_extract(data,'$.session_id'),json_extract(data,'$.continuation_of'));
             CREATE INDEX IF NOT EXISTS usage_turns_root ON usage_turns(json_extract(data,'$.session_id'),json_extract(data,'$.root_turn_id'));
@@ -86,6 +88,7 @@ final class Database {
         for (index, value) in args.enumerated() {
             let i = Int32(index + 1)
             if value is NSNull { sqlite3_bind_null(result,i) }
+            else if let data = value as? Data { _ = data.withUnsafeBytes { sqlite3_bind_blob64(result,i,$0.baseAddress,UInt64(data.count),transient) } }
             else if let s = value as? String { sqlite3_bind_text(result,i,s,-1,transient) }
             else if let n = value as? Int { sqlite3_bind_int64(result,i,Int64(n)) }
             else if let n = value as? Double { sqlite3_bind_double(result,i,n) }
@@ -113,6 +116,7 @@ final class Database {
                 case SQLITE_INTEGER: row[name] = Int(sqlite3_column_int64(stmt,column))
                 case SQLITE_FLOAT: row[name] = sqlite3_column_double(stmt,column)
                 case SQLITE_TEXT: row[name] = String(cString: sqlite3_column_text(stmt,column))
+                case SQLITE_BLOB: row[name] = Data(bytes:sqlite3_column_blob(stmt,column),count:Int(sqlite3_column_bytes(stmt,column)))
                 default: row[name] = NSNull()
                 }
             }
@@ -184,7 +188,7 @@ final class Database {
             for (key,field) in old where value[key] == nil { value[key] = field }
             for key in ["prompt_preview","output_preview","ended_at"] where value.string(key).isEmpty { value[key] = old[key] }
         }
-        if let message = try query("SELECT digest,revision FROM usage_request_messages WHERE id=?",[row.string("id")]).first {
+        if let message = try query("SELECT digest,revision FROM usage_request_message_metadata WHERE id=?",[row.string("id")]).first {
             value["message_digest"] = message["digest"]; value["message_revision"] = message["revision"]
         }
         RequestResume.preserveMainOwnership(&value)
@@ -240,8 +244,12 @@ final class Database {
     // payload or UsageSnapshot. The digest excludes access/recovery timestamps.
     func writeRequestMessage(_ id: String,patch: Object) throws {
         lock.lock(); defer { lock.unlock() }
+        if sqlite3_get_autocommit(handle) != 0 {try transaction {try saveRequestMessage(id,patch:patch)}}
+        else {try saveRequestMessage(id,patch:patch)}
+    }
+    private func saveRequestMessage(_ id: String,patch: Object) throws {
         guard !id.isEmpty else { return }
-        let old = try query("SELECT data,digest,revision FROM usage_request_messages WHERE id=?",[id]).first ?? [:]
+        let old = try requestMessageRow(id) ?? [:]
         var value = jsonObject(Data(old.string("data").utf8)), patch = patch
         let sameUser = !patch.string("user_message_key").isEmpty && patch.string("user_message_key") == value.string("user_message_key")
         var sameFinal = !patch.string("final_message_key").isEmpty && patch.string("final_message_key") == value.string("final_message_key")
@@ -267,19 +275,21 @@ final class Database {
             patch[key] = RequestMedia.preservingCreationDates(patch.objects(key),from:previous)
         }
         if sameUser, patch.string("user").isEmpty, !value.string("user").isEmpty { patch["user"] = value["user"]; patch["user_complete"] = value["user_complete"] }
+        for field in ["user","final"] where value.flag(field+"_complete") && patch[field+"_complete"] as? Bool == false {
+            let key=field+"_message_key"
+            if patch.string(key).isEmpty || patch.string(key)==value.string(key) {
+                patch[field]=value[field];patch[field+"_complete"]=true
+            }
+        }
         for (key,field) in patch { value[key] = field }
         value["id"] = id
-        for key in ["user","final"] {
-            let bounded = RequestMessageText.bounded(value.string(key))
-            value[key] = bounded.text
-            if !bounded.complete { value[key+"_complete"] = false }
-        }
         for key in ["attachments","final_attachments","generated_attachments"] {
             let attachments = RequestMedia.deduplicated(value.objects(key))
             value[key] = Array(attachments.prefix(RequestMedia.limit))
             if attachments.count > RequestMedia.limit { value[key == "attachments" ? "user_complete" : key == "generated_attachments" ? "generated_complete" : "final_complete"] = false }
         }
         let terminal = ["completed","aborted"].contains(value.string("status"))
+        value=try archiveMessageMedia(value)
         let any = !value.string("user").isEmpty || !value.string("final").isEmpty || ["attachments","final_attachments","generated_attachments"].contains {!value.objects($0).isEmpty}
         value["availability"] = !any ? "unavailable" : value.flag("user_complete") && (!terminal || value.flag("final_complete")) ? "available" : "partial"
         var material = value
@@ -287,24 +297,27 @@ final class Database {
         let hash = identity(material), changed = hash != old.string("digest")
         let revision = (old.integer("revision") ?? 0)+(changed ? 1 : 0)
         let encoded = jsonString(value)
-        try run("INSERT INTO usage_request_messages VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data,digest=excluded.digest,revision=excluded.revision,size=excluded.size,accessed=excluded.accessed WHERE data<>excluded.data",[id,encoded,hash,revision,encoded.utf8.count,Date().timeIntervalSince1970])
+        try archiveRequestMessage(id,encoded:encoded,digest:hash,revision:revision)
+        if encoded.utf8.count<=67_108_864 {
+            try run("INSERT INTO usage_request_messages VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data,digest=excluded.digest,revision=excluded.revision,size=excluded.size,accessed=excluded.accessed WHERE data<>excluded.data",[id,encoded,hash,revision,encoded.utf8.count,Date().timeIntervalSince1970])
+        } else {try run("DELETE FROM usage_request_messages WHERE id=?",[id])}
         if changed {
             try run("UPDATE usage_turns SET data=json_set(data,'$.message_digest',?,'$.message_revision',?) WHERE id=?",[hash,revision,id])
         }
         // A detail may be recovered again from its registered source after LRU
         // eviction. The ledger and the source log are never deleted.
-        let retained = try query("SELECT id,size FROM usage_request_messages ORDER BY accessed DESC,id")
+        let retained = try query("SELECT m.id,m.size,EXISTS(SELECT 1 FROM usage_request_archives a WHERE a.id=m.id AND a.digest=m.digest AND a.revision=m.revision) AS archived FROM usage_request_messages m ORDER BY accessed DESC,id")
         var bytes = 0
         for (index,row) in retained.enumerated() {
             bytes += row.integer("size") ?? 0
-            if index >= 512 || bytes > 67_108_864 {
+            if (index >= 512 || bytes > 67_108_864), row.integer("archived")==1 {
                 try run("DELETE FROM usage_request_messages WHERE id=?",[row.string("id")])
                 if sqlite3_changes(handle) > 0 { messageEvictionGeneration &+= 1 }
             }
         }
     }
     func promoteRequestMessage(from oldID: String,to id: String) throws {
-        guard let row = try query("SELECT data FROM usage_request_messages WHERE id=?",[oldID]).first else { return }
+        guard let row = try requestMessageRow(oldID) else { return }
         try writeRequestMessage(id,patch:jsonObject(Data(row.string("data").utf8)))
         try run("DELETE FROM usage_request_messages WHERE id=?",[oldID])
     }
@@ -441,7 +454,7 @@ final class Database {
         var missing: [String:MessageRecoveryNeed] = [:]
         for (id,member) in members {
             try autoreleasepool {
-                let stored = try query("SELECT data FROM usage_request_messages WHERE id=?",[id]).first ?? [:]
+                let stored = try requestMessageRow(id) ?? [:]
                 let detail = jsonObject(Data(stored.string("data").utf8))
                 let files = try sourceFiles(member)
                 let signature = files.map { value -> [Any] in
@@ -468,7 +481,7 @@ final class Database {
                 try autoreleasepool {
                     try UsageIndexer(self).recoverMessageDetails(ids:ids,file:file,root:root)
                     for id in ids {
-                        let detail = jsonObject(Data((try query("SELECT data FROM usage_request_messages WHERE id=?",[id]).first ?? [:]).string("data").utf8))
+                        let detail = jsonObject(Data((try requestMessageRow(id) ?? [:]).string("data").utf8))
                         if let need = missing[id], !need.incomplete(detail,store:requestMedia) { pending.remove(id) }
                     }
                 }
@@ -476,7 +489,7 @@ final class Database {
         }
         for (id,need) in missing {
             try autoreleasepool {
-                let detail = jsonObject(Data((try query("SELECT data FROM usage_request_messages WHERE id=?",[id]).first ?? [:]).string("data").utf8))
+                let detail = jsonObject(Data((try requestMessageRow(id) ?? [:]).string("data").utf8))
                 if (messageEvictionGeneration != messageGeneration || requestMedia.evictionGeneration != mediaGeneration), need.incomplete(detail,store:requestMedia) {
                     // A later member may evict an earlier recovered body/image.
                     // Allow the consumer to recover it immediately; do not turn
@@ -495,7 +508,7 @@ final class Database {
         try prepareRequestMessageDetails([requestID])
         guard let root = try messageRoot(requestID) else { return nil }
         let members = try detailMembers(root), promptSource = try messagePromptSource(root)
-        if let promptSource, let stored = try query("SELECT data FROM usage_request_messages WHERE id=?",[promptSource.string("id")]).first {
+        if let promptSource, let stored = try requestMessageRow(promptSource.string("id")) {
             let input = jsonObject(Data(stored.string("data").utf8))
             if input.flag("user_complete") || !input.string("user").isEmpty || !input.objects("attachments").isEmpty {
                 try writeRequestMessage(root.string("id"),patch:["user":input.string("user"),"user_complete":input.flag("user_complete"),"attachments":input.objects("attachments"),"user_media_schema":input.integer("user_media_schema") ?? 0,"user_message_key":input.string("user_message_key")])
@@ -505,18 +518,18 @@ final class Database {
         var details: [Object] = []
         for member in members {
             let id = member.string("id")
-            var detail = jsonObject(Data((try query("SELECT data FROM usage_request_messages WHERE id=?",[id]).first ?? [:]).string("data").utf8))
+            var detail = jsonObject(Data((try requestMessageRow(id) ?? [:]).string("data").utf8))
             let metadata: Object = ["started_at":parsedDate(member["started_at"])?.timeIntervalSince1970 as Any? ?? NSNull(),"completed_at":parsedDate(member["ended_at"])?.timeIntervalSince1970 as Any? ?? NSNull(),"status":member.string("status","unknown")]
             for (key,value) in metadata { detail[key] = value }
             try writeRequestMessage(id,patch:detail)
-            let stored = try query("SELECT data,digest,revision FROM usage_request_messages WHERE id=?",[id]).first ?? [:]
+            let stored = try requestMessageRow(id) ?? [:]
             detail = jsonObject(Data(stored.string("data").utf8)); detail["digest"] = stored["digest"]; detail["revision"] = stored["revision"]
             try run("UPDATE usage_request_messages SET accessed=? WHERE id=?",[Date().timeIntervalSince1970,id])
             details.append(detail)
         }
         guard let first = details.first, let last = details.last else { return nil }
         let users = details.map {$0.string("user")}.filter {!$0.isEmpty}
-        let user = RequestMessageText.bounded(users.joined(separator:"\n\n")), final = last.string("final")
+        let user = (text:users.joined(separator:"\n\n"),complete:true), final = last.string("final")
         let terminal = ["completed","aborted"].contains(last.string("status"))
         let usesGenerated = final.isEmpty && last.objects("final_attachments").isEmpty && terminal
         let finalAttachments = usesGenerated ? last.objects("generated_attachments") : last.objects("final_attachments")
@@ -542,7 +555,7 @@ enum RequestMessageText {
     }
     static func extract(_ content: Any?,user: Bool,cwd: String = "",store: RequestMediaStore? = nil) -> Object {
         let parts = RequestMedia.content(content)
-        let input = bounded(parts.filter {["text","input_text","output_text"].contains($0.string("type"))}.map {$0.string("text")}.joined(separator:"\n"),limit:16_000_000)
+        let input = (text:parts.filter {["text","input_text","output_text"].contains($0.string("type"))}.map {$0.string("text")}.joined(separator:"\n"),complete:true)
         var text = input.text, extra: [Object] = [], complete = input.complete
         if user {
             if text.contains("<send_user_message_question_reply>") { return [:] }
@@ -563,7 +576,7 @@ enum RequestMessageText {
         let media = RequestMedia.extract(text:&text,parts:parts,extra:extra,placement:user ? "user" : "final",cwd:cwd,store:store)
         let redacted = RequestMedia.preview(text)
         if redacted != text { complete = false; text = redacted }
-        let value = bounded(text.trimmingCharacters(in:.whitespacesAndNewlines))
+        let value = (text:text.trimmingCharacters(in:.whitespacesAndNewlines),complete:true)
         return ["text":value.text,"complete":value.complete && complete && media.complete,"attachments":media.attachments,"media_schema":RequestMedia.schema]
     }
 }

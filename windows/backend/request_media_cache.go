@@ -297,7 +297,7 @@ func (c *requestMediaCache) missingSources(detail Row) bool {
 	for _, key := range []string{"attachments", "final_attachments", "generated_attachments"} {
 		for _, item := range ValueRows(detail[key]) {
 			path := dataString(item, "path")
-			if strings.EqualFold(filepath.Dir(path), c.directory) && requestOwnedMediaName.MatchString(filepath.Base(path)) {
+			if (strings.EqualFold(filepath.Dir(path), c.directory) || strings.EqualFold(filepath.Dir(path), filepath.Join(filepath.Dir(c.directory), "request-history-media"))) && requestOwnedMediaName.MatchString(filepath.Base(path)) {
 				if info, err := os.Lstat(path); err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 					return true
 				}

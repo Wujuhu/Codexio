@@ -7,19 +7,53 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
-	"time"
+	"sync"
 
 	"github.com/klauspost/compress/zstd"
 )
 
-// Reuse the seekable collector/recovery/journey readers. Decompression is only
-// an I/O adapter: source keys and all offsets still identify the original JSONL.
-const rolloutCacheLimit int64 = 1 << 30
-
+// A decoded file is leased only while an actual reader uses it. Completed
+// request bodies live in usage_request_archives, outside this disposable cache.
 var rolloutCacheMu queryWorkLock
+var rolloutFiles = map[string]*rolloutLease{}
+var rolloutCacheCleaned bool
 
+type rolloutLease struct {
+	path    string
+	readers int
+}
+type rolloutFile struct {
+	*os.File
+	release func()
+	once    sync.Once
+}
+
+func (f *rolloutFile) Close() (err error) {
+	f.once.Do(func() {
+		err = f.File.Close()
+		if f.release != nil {
+			f.release()
+		}
+	})
+	return
+}
+func leaseRollout(key string, entry *rolloutLease) (*rolloutFile, error) {
+	f, err := os.Open(entry.path)
+	if err != nil {
+		return nil, err
+	}
+	entry.readers++
+	return &rolloutFile{File: f, release: func() {
+		rolloutCacheMu.Lock()
+		defer rolloutCacheMu.Unlock()
+		entry.readers--
+		if entry.readers == 0 {
+			os.Remove(entry.path)
+			delete(rolloutFiles, key)
+		}
+	}}, nil
+}
 func compressedRollout(path string) bool { return strings.HasSuffix(path, ".jsonl.zst") }
 func isRolloutFile(path string) bool {
 	return strings.HasSuffix(path, ".jsonl") || compressedRollout(path)
@@ -67,10 +101,14 @@ func (r rolloutContextReader) Read(p []byte) (int, error) {
 	}
 	return r.Reader.Read(p)
 }
-func openRollout(path string, contexts ...context.Context) (*os.File, error) {
+func openRollout(path string, contexts ...context.Context) (*rolloutFile, error) {
 	path = resolveRolloutPath(path)
 	if !compressedRollout(path) {
-		return os.Open(path)
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, err
+		}
+		return &rolloutFile{File: f}, nil
 	}
 	ctx := context.Background()
 	if len(contexts) > 0 && contexts[0] != nil {
@@ -100,30 +138,38 @@ func openRollout(path string, contexts ...context.Context) (*os.File, error) {
 	if err = os.MkdirAll(folder, 0700); err != nil {
 		return nil, err
 	}
-	key := HashString(fmt.Sprintf("%s:%s:%d:%d", path, identity, stamp.Size(), stamp.ModTime().UnixNano()))
-	destination := filepath.Join(folder, key+".jsonl")
-	if file, e := os.Open(destination); e == nil {
-		if info, e := file.Stat(); e == nil && time.Since(info.ModTime()) > time.Minute {
-			_ = os.Chtimes(destination, time.Now(), time.Now())
+	if !rolloutCacheCleaned {
+		items, _ := os.ReadDir(folder)
+		for _, item := range items {
+			if !item.IsDir() && (strings.HasSuffix(item.Name(), ".jsonl") || strings.HasSuffix(item.Name(), ".tmp")) {
+				_ = os.Remove(filepath.Join(folder, item.Name()))
+			}
 		}
-		return file, nil
+		rolloutCacheCleaned = true
+	}
+	key := HashString(fmt.Sprintf("%s:%s:%d:%d", path, identity, stamp.Size(), stamp.ModTime().UnixNano()))
+	if entry := rolloutFiles[key]; entry != nil {
+		return leaseRollout(key, entry)
 	}
 	temporary, err := os.CreateTemp(folder, "rollout-*.tmp")
 	if err != nil {
 		return nil, err
 	}
-	defer func() { temporary.Close(); os.Remove(temporary.Name()) }()
+	retained := false
+	defer func() {
+		temporary.Close()
+		if !retained {
+			os.Remove(temporary.Name())
+		}
+	}()
 	decoder, err := zstd.NewReader(rolloutContextReader{ctx, source}, zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxMemory(128<<20))
 	if err != nil {
 		return nil, err
 	}
 	defer decoder.Close()
-	written, err := io.Copy(temporary, io.LimitReader(rolloutContextReader{ctx, decoder}, rolloutCacheLimit+1))
+	_, err = io.Copy(temporary, rolloutContextReader{ctx, decoder})
 	if err != nil {
 		return nil, err
-	}
-	if written > rolloutCacheLimit {
-		return nil, errors.New("decompressed rollout exceeds cache limit")
 	}
 	after, err := os.Stat(path)
 	if err != nil || !os.SameFile(stamp, after) || stamp.Size() != after.Size() || !stamp.ModTime().Equal(after.ModTime()) {
@@ -132,45 +178,12 @@ func openRollout(path string, contexts ...context.Context) (*os.File, error) {
 	if err = temporary.Close(); err != nil {
 		return nil, err
 	}
-	if err = os.Rename(temporary.Name(), destination); err != nil {
-		if _, e := os.Stat(destination); e != nil {
-			return nil, err
-		}
+	entry := &rolloutLease{path: temporary.Name()}
+	reader, err := leaseRollout(key, entry)
+	if err != nil {
+		return nil, err
 	}
-	trimRolloutCache(folder, destination)
-	return os.Open(destination)
-}
-func trimRolloutCache(folder, keeping string) {
-	type entry struct {
-		path string
-		info os.FileInfo
-	}
-	items, _ := os.ReadDir(folder)
-	files := []entry{}
-	var bytes int64
-	for _, item := range items {
-		info, err := item.Info()
-		if err != nil || !info.Mode().IsRegular() {
-			continue
-		}
-		path := filepath.Join(folder, item.Name())
-		if strings.HasSuffix(item.Name(), ".tmp") && time.Since(info.ModTime()) > time.Hour {
-			_ = os.Remove(path)
-		}
-		if !strings.HasSuffix(item.Name(), ".jsonl") {
-			continue
-		}
-		bytes += info.Size()
-		files = append(files, entry{path, info})
-	}
-	sort.Slice(files, func(i, j int) bool { return files[i].info.ModTime().Before(files[j].info.ModTime()) })
-	count := len(files)
-	for _, file := range files {
-		if file.path != keeping && (bytes > rolloutCacheLimit || count > 64) {
-			if os.Remove(file.path) == nil {
-				bytes -= file.info.Size()
-				count--
-			}
-		}
-	}
+	rolloutFiles[key] = entry
+	retained = true
+	return reader, nil
 }

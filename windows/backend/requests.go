@@ -283,8 +283,10 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 	metadata := map[string]Row{}
 	for _, incoming := range turns {
 		if strings.Contains(strings.ToLower(dataString(incoming, "prompt_preview")), "<external_codex_apps_") {
-			var raw string
-			_ = tx.QueryRow("SELECT data FROM usage_request_messages WHERE id=?", dataString(incoming, "id")).Scan(&raw)
+			raw, _, _, err := readMessage(tx, dataString(incoming, "id"))
+			if err != nil {
+				return err
+			}
 			repairInputOwnership(incoming, dataRow(raw))
 		}
 		if incoming["verified"] == false {

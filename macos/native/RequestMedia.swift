@@ -48,7 +48,8 @@ final class RequestMediaStore {
     func missingIDs(_ detail: Object) -> [String] {
         ["attachments","final_attachments","generated_attachments"].flatMap { detail.objects($0) }.compactMap { image in
             let path = image.string("path")
-            return path.hasPrefix(directory.path+"/") && !FileManager.default.fileExists(atPath:path) ? image.string("id") : nil
+            let archived=directory.deletingLastPathComponent().appendingPathComponent("request-history-media").path+"/"
+            return (path.hasPrefix(directory.path+"/") || path.hasPrefix(archived)) && !FileManager.default.fileExists(atPath:path) ? image.string("id") : nil
         }.sorted()
     }
     private static func ownsName(_ name: String) -> Bool {
@@ -124,7 +125,7 @@ enum RequestMedia {
     static func content(_ raw: Any?,metadata: Object = [:]) -> [Object] {
         var parts: [Object]
         if let text = raw as? String { parts = [["type":"text","text":text]] }
-        else if let values = raw as? [Any] { parts = values.prefix(256).compactMap { ($0 as? Object) ?? ($0 as? String).map {["type":"text","text":$0]} } }
+        else if let values = raw as? [Any] { parts = values.compactMap { ($0 as? Object) ?? ($0 as? String).map {["type":"text","text":$0]} } }
         else if let value = raw as? Object { parts = [value] }
         else { parts = [] }
         for key in ["images","local_images"] {
@@ -133,7 +134,7 @@ enum RequestMedia {
                 else if var image = image as? Object { if image.string("type").isEmpty { image["type"] = "image" }; parts.append(image) }
             }
         }
-        return Array(parts.prefix(256))
+        return parts
     }
     static func isImagePart(_ part: Object) -> Bool { imageTypes.contains(part.string("type").lowercased()) }
     static func preview(_ text: String) -> String {

@@ -26,7 +26,12 @@ final class JourneyReader {
             for _ in 0..<128 {
                 file=RolloutFile.resolve(file)
                 let id=segment(file);guard allowed(file,root:root),seen.insert(id).inserted else {throw AppFailure(L("历史片段关联不完整", "Incomplete history segment chain"))}
-                let end=min(cut,try RolloutFile.size(file))
+                let cursor=database.object("usage_cursors",key:"native-v1:"+String(identity(root.path).prefix(16))+":"+id)
+                let recorded=cursor.string("source_signature")==RolloutFile.signature(file) && cursor.integer("logical_size") != nil
+                let lease:RolloutReader? = recorded ? nil:try RolloutFile.open(file)
+                defer {try? lease?.close()}
+                let logicalSize=recorded ? UInt64(cursor.integer("logical_size")!):try lease!.seekToEnd()
+                let end=min(cut,logicalSize)
                 let slots=Array(repeating:"?",count:turns.count).joined(separator:",")
                 let sql="SELECT turn_id,first_user_item_id,rollout_byte_offset,rollout_end_byte_offset,started_at FROM thread_turns WHERE thread_id=? AND turn_id IN (\(slots)) AND rollout_ordinal<? ORDER BY rollout_ordinal"
                 var segmentRanges:[Range]=[]
@@ -36,12 +41,15 @@ final class JourneyReader {
                 }
                 result.insert(contentsOf:segmentRanges,at:0)
                 let stamp=FileStamp(file),base:Object
-                if let saved=headers[file],saved.0==stamp {base=saved.1}
+                if recorded {base=cursor.object("state").object("history_base")}
+                else if let saved=headers[file],saved.0==stamp {base=saved.1}
                 else {
                     let reader=try JourneyLines(file,offset:0,end:min(end,2_097_152))
                     base=reader.next().map {jsonObject($0.data).object("payload").object("history_base")} ?? [:]
+                    try reader.handle.close()
                     if headers.count>=128{headers.removeAll(keepingCapacity:true)};headers[file]=(stamp,base)
                 }
+                try? lease?.close()
                 if base.isEmpty {break}
                 let parent=base.string("thread_id");cut=UInt64(max(0,base.integer("end_byte_offset") ?? 0));ordinal=base.integer("end_ordinal_exclusive") ?? 0
                 let candidates=try database.query("SELECT path FROM usage_session_files WHERE root=? AND (path LIKE ? OR path LIKE ?) ORDER BY path LIMIT 256",[root.path,"%"+parent+"%.jsonl","%"+parent+"%.jsonl.zst"])
@@ -55,6 +63,11 @@ final class JourneyReader {
         let spans=try ranges(root:root,thread:thread,turns:turns),inputs=spans.map {FileStamp($0.file)}
         let key=thread+"|"+turns.sorted().joined(separator:",")+"|"+spans.map {"\($0.segment):\($0.start):\($0.end)"}.joined(separator:",")+"|"+cursor
         if let old=cache[key],old.0==inputs {return metered(old.1,meters:meters,resumes:resumes)}
+        let archiveID="journey:"+identity(key),signature=identity(spans.map {RolloutFile.signature($0.file)})
+        if let row=try database.requestMessageRow(archiveID) {
+            let saved=jsonObject(Data(row.string("data").utf8))
+            if saved.string("source_signature")==signature {return metered(saved.object("page"),meters:meters,resumes:resumes)}
+        }
         let position=jsonObject(Data(cursor.utf8));var index=max(0,position.integer("range") ?? 0),offset=UInt64(max(0,position.integer("offset") ?? 0)),events:[Object]=[],seen=Set<String>(),readBytes=0
         var active=position.string("turn"),parent=position.string("parent"),next=""
         while index<spans.count && events.count<120 && readBytes<8_388_608 {
@@ -79,6 +92,8 @@ final class JourneyReader {
         }
         if index<spans.count {next=jsonString(["range":index,"offset":offset,"turn":active,"parent":parent])}
         let result:Object=["events":events,"next":next]
+        let saved=jsonString(["source_signature":signature,"page":result] as Object)
+        try database.archiveRequestMessage(archiveID,encoded:saved,digest:digest(Data(saved.utf8)),revision:1)
         if cache.count>=3 {cache.removeAll(keepingCapacity:true)}
         if ((try? jsonData(result).count) ?? Int.max) <= 2_097_152 {cache[key]=(inputs,result)}
         return metered(result,meters:meters,resumes:resumes)
@@ -97,7 +112,7 @@ final class JourneyReader {
 }
 
 final class JourneyLines {
-    let handle: FileHandle;let end: UInt64
+    let handle: RolloutReader;let end: UInt64
     private var offset:UInt64;private var buffer=Data();private var discarded=0
     private var prefix=Data(),tail=Data()
     init(_ url:URL,offset:UInt64,end:UInt64)throws {handle=try RolloutFile.open(url);self.offset=offset;self.end=end;try handle.seek(toOffset:offset)}

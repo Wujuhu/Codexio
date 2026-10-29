@@ -56,11 +56,12 @@ const requestMetadataVersion = 6
 
 // Image/tool payloads in real rollouts exceed 8 MiB. Keep a memory bound while
 // accepting the same complete JSONL records as the v0.2.10 readline collector.
-const rolloutLineLimit = 64 << 20
+const rolloutLineLimit = 0 // Limit work by chunks/context, not total record bytes.
 
 var externalAppInputPattern = regexp.MustCompile(`(?is)<external_codex_apps_([a-z0-9_]+)(?:\s[^>]*)?>.*?</external_codex_apps_([a-z0-9_]+)\s*>`)
 
 func rolloutID(path string) string {
+	path = strings.TrimSuffix(path, ".zst")
 	ids := rolloutUUID.FindAllString(filepath.Base(path), -1)
 	if len(ids) > 0 {
 		return strings.ToLower(ids[len(ids)-1])
@@ -144,6 +145,9 @@ func fileStamp(p string) string {
 }
 func (s *Store) collect(ctx context.Context, force bool) error {
 	var scanErrors []error
+	if err := s.migrateMessageArchives(); err != nil {
+		return err
+	}
 	s.metadataRepairRemaining = 4
 	s.metadataRepairPriority = map[string]bool{}
 	// Repair recent sources first without changing parent-first meter scans.
@@ -273,9 +277,9 @@ func (s *Store) collect(ctx context.Context, force bool) error {
 			return e
 		}
 	}
-	// Full-message storage is bounded independently of the immutable usage ledger.
-	_, e = s.db.Exec(`DELETE FROM usage_request_messages WHERE id IN (SELECT id FROM (SELECT id,row_number() OVER(ORDER BY accessed DESC,id) n,sum(size) OVER(ORDER BY accessed DESC,id) bytes FROM usage_request_messages) WHERE n>512 OR bytes>67108864)`)
-	return errors.Join(append(scanErrors, e)...)
+	// Only the reconstructible plaintext hot cache is bounded.
+	return errors.Join(scanErrors...)
+
 }
 func (s *Store) readTitles(root string, force bool) error {
 	paths, _ := filepath.Glob(filepath.Join(root, "state*.sqlite"))
@@ -377,7 +381,7 @@ func (s *Store) readTitles(root string, force bool) error {
 	}
 	return nil
 }
-func checkpointHash(f *os.File, offset int64) string {
+func checkpointHash(f io.ReaderAt, offset int64) string {
 	start := offset - 4096
 	if start < 0 {
 		start = 0
@@ -386,7 +390,7 @@ func checkpointHash(f *os.File, offset int64) string {
 	n, _ := f.ReadAt(b, start)
 	return HashString(string(b[:n]))
 }
-func prefixHash(f *os.File, offset int64) string {
+func prefixHash(f io.ReaderAt, offset int64) string {
 	if offset > 1024 {
 		offset = 1024
 	}
@@ -414,7 +418,7 @@ func (s *Store) scanFile(ctx context.Context, path, key, source string, force bo
 	if cursor["source_size"] == nil && !compressed {
 		sourceSize = ValueInt(cursor["size"])
 	}
-	if !force && ValueInt(cursor["parser_version"]) == 1 && ValueInt(cursor["metadata_version"]) == requestMetadataVersion && !ValueBool(cursor["source_missing"]) && dataString(cursor, "path") == path && dataString(cursor, "identity") == identity && sourceSize == sourceStat.Size() && ValueInt(cursor["mtime"]) == sourceStat.ModTime().UnixNano() && ValueBool(cursor["compressed"]) == compressed && !parentAvailable {
+	if !force && ValueInt(cursor["parser_version"]) == 1 && ValueInt(cursor["metadata_version"]) == requestMetadataVersion && ValueInt(cursor["message_archive_version"]) == messageArchiveVersion && !ValueBool(cursor["source_missing"]) && dataString(cursor, "path") == path && dataString(cursor, "identity") == identity && sourceSize == sourceStat.Size() && ValueInt(cursor["mtime"]) == sourceStat.ModTime().UnixNano() && ValueBool(cursor["compressed"]) == compressed && !parentAvailable {
 		return nil
 	}
 	f, e := openRollout(path, ctx)
@@ -452,6 +456,11 @@ func (s *Store) scanFile(ctx context.Context, path, key, source string, force bo
 		generation = HashString(fmt.Sprintf("%s:%d", key, time.Now().UnixNano()))[:20]
 		state = Row{"session_id": rolloutID(path), "rollout_id": rolloutID(path), "model": "unknown", "provider": "unknown", "turns": Row{}, "calls": Row{}, "question_calls": Row{}, "last_by_source": Row{}, "last_totals": Row{}}
 	}
+	if valid && offset > 0 && ValueInt(cursor["message_archive_version"]) != messageArchiveVersion {
+		if _, e = s.recoverSourceMetadata(ctx, path, source, key, generation, nil, false, offset); e != nil {
+			return e
+		}
+	}
 	if _, e = f.Seek(offset, io.SeekStart); e != nil {
 		return e
 	}
@@ -468,15 +477,19 @@ func (s *Store) scanFile(ctx context.Context, path, key, source string, force bo
 			return e
 		}
 		line, readErr := readBoundedLine(reader, rolloutLineLimit)
-		if readErr == io.EOF {
+		if readErr == io.EOF && len(line) == 0 {
 			break
 		}
-		if readErr != nil {
+		if readErr != nil && readErr != io.EOF {
 			return readErr
 		}
 		start := offset
 		offset += int64(len(line))
 		entry, parseErr := DecodeRow(line)
+		if readErr == io.EOF && parseErr != nil {
+			offset = start
+			break
+		}
 		if parseErr == nil {
 			entry["_byte_offset"] = start
 			if e = s.processEntry(tx, entry, state, source, key, generation); e != nil {
@@ -514,7 +527,7 @@ func (s *Store) scanFile(ctx context.Context, path, key, source string, force bo
 	if !valid {
 		metadataRepair, metadataPartial = nil, false
 	}
-	cursor = Row{"path": path, "compressed": compressed, "source_size": sourceStat.Size(), "parser_version": 1, "metadata_version": metadataVersion, "metadata_partial": metadataPartial, "metadata_repair": metadataRepair, "identity": identity, "prefix": prefixHash(f, offset), "offset": offset, "size": stat.Size(), "mtime": sourceStat.ModTime().UnixNano(), "checkpoint": checkpointHash(f, offset), "generation": generation, "go_state": state, "reconcile_pending": reconcile}
+	cursor = Row{"path": path, "message_archive_version": messageArchiveVersion, "compressed": compressed, "source_size": sourceStat.Size(), "parser_version": 1, "metadata_version": metadataVersion, "metadata_partial": metadataPartial, "metadata_repair": metadataRepair, "identity": identity, "prefix": prefixHash(f, offset), "offset": offset, "size": stat.Size(), "mtime": sourceStat.ModTime().UnixNano(), "checkpoint": checkpointHash(f, offset), "generation": generation, "go_state": state, "reconcile_pending": reconcile}
 	if _, e = tx.Exec("INSERT INTO usage_cursors VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data", key, dataJSON(cursor)); e != nil {
 		return e
 	}
@@ -524,7 +537,7 @@ func readBoundedLine(r *bufio.Reader, max int) ([]byte, error) {
 	b := []byte{}
 	for {
 		p, e := r.ReadSlice('\n')
-		if len(b)+len(p) > max {
+		if max > 0 && len(b)+len(p) > max {
 			return nil, fmt.Errorf("rollout line exceeds %d bytes", max)
 		}
 		b = append(b, p...)
@@ -961,7 +974,13 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 			}
 			remapResumeTurn(state, dataString(old, "turn_id"), explicit)
 			if !ValueBool(state["_metadata_only"]) {
-				_, _ = tx.Exec("INSERT OR IGNORE INTO usage_request_messages SELECT ?,data,digest,revision,size,accessed FROM usage_request_messages WHERE id=?", replacement["id"], old["id"])
+				if body, _, _, err := readMessage(tx, dataString(old, "id")); err != nil {
+					return err
+				} else if body != "" {
+					if err = saveMessage(tx, dataString(replacement, "id"), dataRow(body)); err != nil {
+						return err
+					}
+				}
 			}
 			if pending := ValueRow(state["_pending_message"]); dataString(pending, "id") == dataString(old, "id") && ValueBool(ValueRow(state["_recovery_targets"])[dataString(replacement, "id")]) {
 				if e := saveMessage(tx, dataString(replacement, "id"), ValueRow(pending["patch"])); e != nil {

@@ -295,11 +295,11 @@ func requestMediaContent(raw any, metadata Row) []Row {
 	}
 	switch values := raw.(type) {
 	case []any:
-		for _, value := range values[:min(256, len(values))] {
+		for _, value := range values {
 			appendPart(value)
 		}
 	case []Row:
-		parts = append(parts, values[:min(256, len(values))]...)
+		parts = append(parts, values...)
 	default:
 		appendPart(raw)
 	}
@@ -329,7 +329,7 @@ func requestMediaContent(raw any, metadata Row) []Row {
 			}
 		}
 	}
-	return parts[:min(256, len(parts))]
+	return parts
 }
 
 func requestUserFiles(text string) []Row {
@@ -443,7 +443,7 @@ func requestMediaText(parts []Row) (string, bool) {
 			texts = append(texts, dataString(part, "text"))
 		}
 	}
-	return requestBoundedText(strings.Join(texts, "\n"), 16_000_000)
+	return strings.Join(texts, "\n"), true
 }
 
 // Ingestion, entry classification and interrupted-turn tracking share this
@@ -479,7 +479,7 @@ func requestUserInput(content any) (string, []Row, bool) {
 	for _, match := range requestImageMatches(text) {
 		appendMarker(match.name, "image/unknown")
 	}
-	text, fits := requestBoundedText(strings.TrimSpace(text), 1<<20)
+	text, fits := strings.TrimSpace(text), true
 	return text, attachments, complete && fits
 }
 
@@ -621,7 +621,7 @@ func (s *Store) extractRequestMessage(content any, user bool, cwd string, create
 	if redacted := requestMediaPreview(text); redacted != text {
 		text, complete = redacted, false
 	}
-	text, fits := requestBoundedText(strings.TrimSpace(text), 1<<20)
+	text, fits := strings.TrimSpace(text), true
 	return text, attachments, complete && fits
 }
 

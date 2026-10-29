@@ -10,7 +10,8 @@ python3 combine.py -r ../../lib -x legacy/zstd_legacy.h -o zstddeclib.c zstddecl
 ```
 
 `macos/native/RolloutZstd.c` uses its streaming API with a bounded window and
-decoded size. `RolloutFile.swift` atomically caches verified decompressed bytes;
+memory window. `RolloutFile.swift` leases verified temporary decompressed bytes
+only until the last reader closes, without a total decoded-file size cutoff;
 the existing indexer, request metadata recovery and journey paging keep their
 original source paths, record identities, checkpoints and byte offsets.
 Windows uses the pure Go Zstandard implementation in klauspost/compress v1.20.3.

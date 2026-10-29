@@ -274,8 +274,10 @@ func (s *Store) repairRetainedInputs(tx *sql.Tx, session string) error {
 	}
 	for _, item := range items {
 		messageID := dataString(item.row, "id")
-		var raw string
-		_ = tx.QueryRow("SELECT data FROM usage_request_messages WHERE id=?", messageID).Scan(&raw)
+		raw, _, _, err := readMessage(tx, messageID)
+		if err != nil {
+			return err
+		}
 		detail := dataRow(raw)
 		if !repairInputOwnership(item.row, detail) {
 			continue
@@ -287,7 +289,7 @@ func (s *Store) repairRetainedInputs(tx *sql.Tx, session string) error {
 			}
 			var digest string
 			var revision int64
-			if tx.QueryRow("SELECT digest,revision FROM usage_request_messages WHERE id=?", messageID).Scan(&digest, &revision) == nil {
+			if tx.QueryRow("SELECT digest,revision FROM usage_request_message_metadata WHERE id=?", messageID).Scan(&digest, &revision) == nil {
 				item.row["message_digest"], item.row["message_revision"] = digest, revision
 			}
 		}
@@ -427,8 +429,7 @@ func repairCachedInputOwnership(query func(string, ...any) *sql.Row, row Row) {
 	if !strings.Contains(strings.ToLower(dataString(row, "prompt_preview")), "<external_codex_apps_") {
 		return
 	}
-	var raw string
-	e := query("SELECT data FROM usage_request_messages WHERE id=?", dataString(row, "id")).Scan(&raw)
+	raw, _, _, e := readMessage(messageQueryFunc(query), dataString(row, "id"))
 	if e == nil || e == sql.ErrNoRows {
 		repairInputOwnership(row, dataRow(raw))
 	}
@@ -590,6 +591,13 @@ func (s *Store) recoverSourceMetadataRange(ctx context.Context, path, source, fi
 		return nil, e
 	}
 	defer f.Close()
+	if through <= 0 {
+		info, err := f.Stat()
+		if err != nil {
+			return nil, err
+		}
+		through = info.Size()
+	}
 	if _, e = f.Seek(start, io.SeekStart); e != nil {
 		return nil, e
 	}
@@ -618,7 +626,7 @@ func (s *Store) recoverSourceMetadataRange(ctx context.Context, path, source, fi
 			break
 		}
 		line, err := readBoundedLine(reader, rolloutLineLimit)
-		if err == io.EOF {
+		if err == io.EOF && (len(line) == 0 || budget > 0) {
 			// Retry an ordinary split line from its exact start next collection.
 			// A single oversized payload must not stall every later turn: discard
 			// it in bounded chunks and forget continuity across the unknown input.
@@ -631,7 +639,7 @@ func (s *Store) recoverSourceMetadataRange(ctx context.Context, path, source, fi
 			}
 			break
 		}
-		if err != nil {
+		if err != nil && err != io.EOF {
 			return nil, err
 		}
 		lineStart := offset

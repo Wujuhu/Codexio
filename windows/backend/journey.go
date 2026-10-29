@@ -367,16 +367,21 @@ func (j *localJourney) ranges(root, thread string, turns []string) ([]journeyRan
 			return nil, errors.New("历史片段关联不完整")
 		}
 		seen[id] = true
-		logical, e := openRollout(path)
-		if e != nil {
-			return nil, e
+		size, recordedBase, recorded := j.store.recordedRollout(root, path)
+		var logical *rolloutFile
+		if !recorded {
+			logical, e = openRollout(path)
+			if e != nil {
+				return nil, e
+			}
+			defer logical.Close()
+			info, err := logical.Stat()
+			if err != nil {
+				return nil, err
+			}
+			size = info.Size()
 		}
-		info, e := logical.Stat()
-		logical.Close()
-		if e != nil {
-			return nil, e
-		}
-		end := min(cut, info.Size())
+		end := min(cut, size)
 		slots := strings.TrimSuffix(strings.Repeat("?,", len(turns)), ",")
 		args := []any{id}
 		for _, t := range turns {
@@ -401,11 +406,13 @@ func (j *localJourney) ranges(root, thread string, turns []string) ([]journeyRan
 		result = append(segmentRanges, result...)
 		stamp := journeyStamp(path)
 		base := Row{}
-		if saved, ok := j.headers[path]; ok && saved.signature == stamp {
+		if recorded {
+			base = recordedBase
+		} else if saved, ok := j.headers[path]; ok && saved.signature == stamp {
 			base = saved.value
 		} else {
-			file, e := openRollout(path)
-			if e != nil {
+			file := logical
+			if _, e = file.Seek(0, io.SeekStart); e != nil {
 				return nil, e
 			}
 			line, _, e := journeyReadLine(bufio.NewReader(io.LimitReader(file, 2<<20)))
@@ -418,6 +425,9 @@ func (j *localJourney) ranges(root, thread string, turns []string) ([]journeyRan
 				j.headers = map[string]journeyCacheEntry{}
 			}
 			j.headers[path] = journeyCacheEntry{stamp, base}
+		}
+		if logical != nil {
+			logical.Close()
 		}
 		if len(base) == 0 {
 			break
@@ -649,6 +659,12 @@ func (s *Service) GetJourneyFlow(request, child, cursor string) (Row, error) {
 		result["events"] = events
 		return result
 	}
+	if cached == nil {
+		cached, e = s.store.archivedJourneyPage(key, signature)
+		if e != nil {
+			return nil, e
+		}
+	}
 	if cached != nil {
 		return pricePage(cached), nil
 	}
@@ -724,6 +740,9 @@ func (s *Service) GetJourneyFlow(request, child, cursor string) (Row, error) {
 		next = dataJSON(Row{"range": index, "offset": offset, "turn": active, "parent": parent})
 	}
 	result := Row{"events": events, "next": next}
+	if e = s.store.archiveJourneyPage(key, signature, result); e != nil {
+		return nil, e
+	}
 	j.put(key, signature, result)
 	return pricePage(result), nil
 }

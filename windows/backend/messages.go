@@ -17,8 +17,10 @@ func (s *Store) sourceMessage(request Row, contexts ...context.Context) Row {
 		return nil
 	}
 	id := turnKey(dataString(request, "session_id"), firstString(request["request_turn_id"], request["turn_id"]))
-	var raw string
-	_ = reader.QueryRow("SELECT data FROM usage_request_messages WHERE id=?", id).Scan(&raw)
+	raw, _, _, err := readMessage(reader, id)
+	if err != nil {
+		return Row{"availability": "error", "error": err.Error()}
+	}
 	value := dataRow(raw)
 	final := ValueRows(value["final_attachments"])
 	if dataString(value, "final") == "" && len(final) == 0 && (dataString(value, "status") == "completed" || dataString(value, "status") == "aborted") {
@@ -96,8 +98,10 @@ func (s *Store) sourceMessageBatch(requests []Row, contexts ...context.Context) 
 			continue
 		}
 		id := turnKey(session, turn)
-		var raw string
-		_ = reader.QueryRow("SELECT data FROM usage_request_messages WHERE id=?", id).Scan(&raw)
+		raw, _, _, err := readMessage(reader, id)
+		if err != nil {
+			return err
+		}
 		stored := dataRow(raw)
 		terminal := dataString(request, "status") == "completed" || dataString(request, "status") == "aborted" || dataString(request, "request_status") == "completed" || dataString(request, "request_status") == "aborted"
 		root := firstString(request["root_id"], id)
@@ -124,8 +128,8 @@ func (s *Store) sourceMessageBatch(requests []Row, contexts ...context.Context) 
 		return nil
 	}
 	for _, file := range files {
-		if _, err := s.recoverSourceMetadata(reader.ctx, file.path, file.source, file.key, file.generation, targets, false, 64<<20); err != nil {
-			continue
+		if _, err := s.recoverSourceMetadata(reader.ctx, file.path, file.source, file.key, file.generation, targets, false, 0); err != nil {
+			return err
 		}
 	}
 	tx, e := reader.Begin()
@@ -134,8 +138,10 @@ func (s *Store) sourceMessageBatch(requests []Row, contexts ...context.Context) 
 	}
 	defer tx.Rollback()
 	for id := range targets {
-		var raw string
-		_ = tx.QueryRow("SELECT data FROM usage_request_messages WHERE id=?", id).Scan(&raw)
+		raw, _, _, err := readMessage(tx, id)
+		if err != nil {
+			return err
+		}
 		parts := signatures[id]
 		missing := s.media.missingSources(dataRow(raw))
 		parts[5], parts[6] = missing, uint64(0)
@@ -270,9 +276,12 @@ func (s *Store) requestMessageDetail(request Row, recover bool, contexts ...cont
 		return s.requestMessageDetail(request, false, db.ctx)
 	}
 	detail := Row{"user": "", "final": "", "user_complete": false, "final_complete": false, "attachments": []Row{}, "availability": "unavailable"}
+	var messageError error
 	read := func(member Row) Row {
-		var raw string
-		_ = db.QueryRow("SELECT data FROM usage_request_messages WHERE id=?", dataString(member, "id")).Scan(&raw)
+		raw, _, _, err := readMessage(db, dataString(member, "id"))
+		if err != nil {
+			messageError = err
+		}
 		return dataRow(raw)
 	}
 	inputs, attachments := []string{}, []Row{}
@@ -308,7 +317,7 @@ func (s *Store) requestMessageDetail(request Row, recover bool, contexts ...cont
 			detail["final"], detail["final_complete"] = value["final"], len(members) < 64 && ValueBool(value["final_complete"]) && ValueInt(value["final_media_schema"]) == requestMediaSchema && (!generated || len(finalAttachments) == 0 || ValueBool(value["generated_complete"]))
 		}
 	}
-	user, fits := requestBoundedText(strings.Join(inputs, "\n\n"), 1<<20)
+	user, fits := strings.Join(inputs, "\n\n"), true
 	attachments = deduplicatedRequestMedia(attachments)
 	detail["user"], detail["user_complete"] = user, userComplete && fits && len(attachments) <= requestMediaLimit
 	if len(attachments) > requestMediaLimit {
@@ -322,6 +331,9 @@ func (s *Store) requestMessageDetail(request Row, recover bool, contexts ...cont
 		if len(members) < 64 && ValueBool(detail["user_complete"]) && (!terminal || ValueBool(detail["final_complete"])) {
 			detail["availability"] = "available"
 		}
+	}
+	if messageError != nil {
+		return nil, messageError
 	}
 	return detail, nil
 }

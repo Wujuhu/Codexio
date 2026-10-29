@@ -101,9 +101,14 @@ def build_native(bundle, version):
     decoder_object = cache / ("rollout-zstd-" + decoder_key + ".o")
     if not decoder_object.exists():
         run("xcrun", "clang", "-O2", "-target", target, "-c", decoder, "-o", decoder_object, env=environment)
+    message_codec = ROOT / "macos/native/MessageCompression.c"
+    message_key = hashlib.sha256(message_codec.read_bytes() + target.encode("utf-8")).hexdigest()[:20]
+    message_object = cache / ("message-codec-" + message_key + ".o")
+    if not message_object.exists():
+        run("xcrun", "clang", "-O2", "-target", target, "-c", message_codec, "-o", message_object, env=environment)
     run("xcrun", "swiftc", "-swift-version", "5", "-O", "-whole-module-optimization", "-target", target,
         "-parse-as-library", "-D", "CODEXIO_APP_WIDGET_PREVIEW", "-module-name", "Codexio", "-module-cache-path", cache,
-        *sources, decoder_object, "-o", executable, env=environment)
+        *sources, decoder_object, message_object, "-lz", "-o", executable, env=environment)
     info = {
         "CFBundleIdentifier": "com.wujuhu.codexio", "CFBundleExecutable": "Codexio",
         "CFBundleName": "Codexio", "CFBundleDisplayName": "Codexio", "CFBundlePackageType": "APPL",

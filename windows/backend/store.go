@@ -171,6 +171,8 @@ func (s *Store) schema() error {
  INSERT OR IGNORE INTO usage_revisions VALUES('ledger',0),('observations',0);
  CREATE TABLE IF NOT EXISTS usage_request_messages(id TEXT PRIMARY KEY,data TEXT NOT NULL,digest TEXT NOT NULL,revision INTEGER NOT NULL,size INTEGER NOT NULL,accessed REAL NOT NULL);
  CREATE INDEX IF NOT EXISTS usage_request_messages_accessed ON usage_request_messages(accessed);
+ CREATE TABLE IF NOT EXISTS usage_request_archives(id TEXT PRIMARY KEY,codec TEXT NOT NULL,payload BLOB NOT NULL,checksum TEXT NOT NULL,digest TEXT NOT NULL,revision INTEGER NOT NULL,size INTEGER NOT NULL);
+ CREATE VIEW IF NOT EXISTS usage_request_message_metadata AS SELECT id,digest,revision FROM usage_request_archives UNION ALL SELECT id,digest,revision FROM usage_request_messages m WHERE NOT EXISTS(SELECT 1 FROM usage_request_archives a WHERE a.id=m.id);
  CREATE TABLE IF NOT EXISTS usage_priced_calls(id TEXT PRIMARY KEY,timestamp TEXT NOT NULL,model TEXT NOT NULL,tier TEXT NOT NULL,source_id TEXT NOT NULL,session_id TEXT NOT NULL,turn_id TEXT NOT NULL,metrics TEXT NOT NULL,data TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS priced_calls_time ON usage_priced_calls(timestamp DESC,id DESC);
  CREATE INDEX IF NOT EXISTS priced_calls_model_time ON usage_priced_calls(model,timestamp);
@@ -438,7 +440,7 @@ func saveMetadata(tx *sql.Tx, table, kind string, r Row, source, file, generatio
 	if table == "usage_turns" {
 		var digest string
 		var revision int64
-		if tx.QueryRow("SELECT digest,revision FROM usage_request_messages WHERE id=?", dataString(r, "id")).Scan(&digest, &revision) == nil {
+		if tx.QueryRow("SELECT digest,revision FROM usage_request_message_metadata WHERE id=?", dataString(r, "id")).Scan(&digest, &revision) == nil {
 			r["message_digest"], r["message_revision"] = digest, revision
 		}
 	}
@@ -468,26 +470,25 @@ func saveMessage(tx *sql.Tx, id string, patch Row) error {
 	if id == "" || len(id) > 512 {
 		return nil
 	}
-	var raw, digest string
-	var revision int64
-	_ = tx.QueryRow("SELECT data,digest,revision FROM usage_request_messages WHERE id=?", id).Scan(&raw, &digest, &revision)
+	raw, digest, revision, err := readMessage(tx, id)
+	if err != nil {
+		return err
+	}
 	v := dataRow(raw)
 	patch = mergeRequestMediaPatch(v, patch)
+	for _, field := range []string{"user", "final"} {
+		if complete, ok := patch[field+"_complete"].(bool); ok && !complete && ValueBool(v[field+"_complete"]) {
+			key := field + "_message_key"
+			if dataString(patch, key) == "" || dataString(patch, key) == dataString(v, key) {
+				patch[field] = v[field]
+				patch[field+"_complete"] = true
+			}
+		}
+	}
 	for k, x := range patch {
 		v[k] = x
 	}
 	v["id"] = id
-	for _, field := range []string{"user", "final"} {
-		text := dataString(v, field)
-		if len(text) > 1048576 {
-			end := 1048576
-			for end > 0 && text[end]&0xc0 == 0x80 {
-				end--
-			}
-			v[field] = text[:end]
-			v[field+"_complete"] = false
-		}
-	}
 	attachmentCount := 0
 	for _, field := range []string{"attachments", "final_attachments", "generated_attachments"} {
 		attachments := deduplicatedRequestMedia(ValueRows(v[field]))
@@ -499,6 +500,9 @@ func saveMessage(tx *sql.Tx, id string, patch Row) error {
 		}
 	}
 	terminal := dataString(v, "status") == "completed" || dataString(v, "status") == "aborted"
+	if err = archiveMessageMedia(tx, v); err != nil {
+		return err
+	}
 	available := dataString(v, "user") != "" || dataString(v, "final") != "" || attachmentCount > 0
 	v["availability"] = "unavailable"
 	if available {
@@ -509,7 +513,7 @@ func saveMessage(tx *sql.Tx, id string, patch Row) error {
 	}
 	payload := dataJSON(v)
 	if payload == raw {
-		return nil
+		return archiveMessage(tx, id, payload, digest, revision)
 	}
 	material := CloneRow(v)
 	delete(material, "recovery_signature")
@@ -518,12 +522,20 @@ func saveMessage(tx *sql.Tx, id string, patch Row) error {
 	if changed {
 		revision++
 	}
-	_, e := tx.Exec(`INSERT INTO usage_request_messages VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data,digest=excluded.digest,revision=excluded.revision,size=excluded.size,accessed=excluded.accessed`, id, payload, hash, revision, len(payload), float64(time.Now().Unix()))
+	if err = archiveMessage(tx, id, payload, hash, revision); err != nil {
+		return err
+	}
+	var e error
+	if len(payload) <= 64<<20 {
+		_, e = tx.Exec(`INSERT INTO usage_request_messages VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data,digest=excluded.digest,revision=excluded.revision,size=excluded.size,accessed=excluded.accessed`, id, payload, hash, revision, len(payload), float64(time.Now().Unix()))
+	} else {
+		_, e = tx.Exec("DELETE FROM usage_request_messages WHERE id=?", id)
+	}
 	if e == nil && changed {
 		_, e = tx.Exec("UPDATE usage_turns SET data=json_set(data,'$.message_digest',?,'$.message_revision',?) WHERE json_extract(data,'$.id')=? AND (coalesce(json_extract(data,'$.message_digest'),'')<>? OR coalesce(json_extract(data,'$.message_revision'),0)<>?)", hash, revision, id, hash, revision)
 	}
 	if e == nil {
-		_, e = tx.Exec(`DELETE FROM usage_request_messages WHERE id IN (SELECT id FROM (SELECT id,row_number() OVER(ORDER BY accessed DESC,id) n,sum(size) OVER(ORDER BY accessed DESC,id) bytes FROM usage_request_messages) WHERE n>512 OR bytes>67108864)`)
+		e = trimMessageCache(tx)
 	}
 	return e
 }
