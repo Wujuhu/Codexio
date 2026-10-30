@@ -632,6 +632,9 @@ func (s *Store) claudeEntry(tx *sql.Tx, e, state Row, root, path, identity, gene
 	r["usage_complete"] = ki && kr && kw && ko
 	r["call_timing"] = claudeTimingObservation(e)
 	r["call_timing_checked"] = true
+	for key, value := range mergeRecordedCallTiming(attachedCallTiming(e, response, "claude_code"), attachedCallTiming(message, response, "claude_code")) {
+		r[key] = value
+	}
 	r["usage_terminal"] = dataString(message, "stop_reason") != ""
 	r["final_missing_fields"] = []string{}
 	if ValueBool(r["usage_terminal"]) {

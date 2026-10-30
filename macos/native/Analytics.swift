@@ -55,7 +55,7 @@ struct UsageRow: Identifiable {
     }
     var outputTokensPerSecond: Double? {
         guard raw.string("status") == "completed", !raw.flag("duration_running"),
-              let seconds = duration, seconds > 0, let outputTokens else { return nil }
+              let seconds = duration, seconds > 0, let outputTokens, outputTokens >= 0 else { return nil }
         let value = Double(outputTokens)/seconds
         return value.isFinite ? value : nil
     }
@@ -67,10 +67,15 @@ struct UsageRow: Identifiable {
 func recordedCallTiming(_ input: Object) -> Object {
     var row=input
     guard !row.string("response_id").isEmpty || ["response:","modern:","legacy:"].contains(where:row.string("id").hasPrefix) else {return row}
+    // Only explicit metadata on this call; item timestamps, message content,
+    // thinkingDurationMs and the containing turn are not timing sources.
+    for source in recordedTimingSources(row) where row.number("duration_ms").map({$0 >= 0}) != true {
+        if let value=source.number("duration_ms"),value>=0 {row["duration_ms"]=value}
+    }
     var milliseconds=row.number("duration_ms").flatMap {$0 >= 0 ? $0:nil}
     if milliseconds == nil {row.removeValue(forKey:"duration_ms")}
     let end=parsedDate(row["call_ended_at"])
-    if milliseconds == nil,let start=parsedDate(row["call_started_at"]),let end,end>=start {milliseconds=end.timeIntervalSince(start)*1000;row["duration_ms"]=milliseconds}
+    if milliseconds == nil,let start=parsedDate(row["call_started_at"]),let end,end>=start {milliseconds=end.timeIntervalSince(start)*1000;row["duration_ms"]=milliseconds;row["duration_source"]="call_bounds"}
     // Responses timestamps are Unix seconds belonging to this metered call.
     // They establish average response TPS, never first-token latency.
     if milliseconds == nil,row.string("client_kind") != "claude_code",
@@ -82,16 +87,29 @@ func recordedCallTiming(_ input: Object) -> Object {
         row["call_started_at"]=iso(Date(timeIntervalSince1970:start))
         row["call_ended_at"]=iso(Date(timeIntervalSince1970:end))
     }
+    if milliseconds != nil,row.string("duration_source").isEmpty {row["duration_source"]="recorded_call"}
     if let ttft=recordedTTFTMilliseconds(row) {row["ttft_ms"]=ttft}
+    else {row.removeValue(forKey:"ttft_ms")}
+    if row.flag("call_duration_conflict") {row.removeValue(forKey:"duration_ms");milliseconds=nil}
+    if row.flag("call_ttft_conflict") {row.removeValue(forKey:"ttft_ms")}
     let quality=String(row.string("quality").split(separator:":").first ?? "")
     let metered=["response","legacy_last"].contains(quality) || quality=="cumulative_delta" && row.string("id").hasPrefix("response:")
-    if metered,row.string("status").isEmpty,!row.flag("duration_running"),milliseconds != nil || end != nil {row["status"]="completed"}
+    let terminal=row.string("client_kind") != "claude_code" || row.flag("usage_terminal") || row.flag("terminal_usage")
+    if metered,terminal,row.string("status").isEmpty,!row.flag("duration_running"),milliseconds != nil || end != nil {row["status"]="completed"}
     return row
+}
+
+private func recordedTimingSources(_ row: Object) -> [Object] {
+    [row]+["timing","metrics"].compactMap {key in
+        let source=row.object(key),response=source.string("response_id")
+        return response.isEmpty || response == row.string("response_id") ? source:nil
+    }
 }
 
 // Preserve explicit source timing only; a completed message is not a first token.
 func recordedTTFTMilliseconds(_ raw: Object) -> Double? {
-    for source in [raw,raw.object("timing"),raw.object("metrics")] {
+    guard !raw.flag("call_ttft_conflict") else {return nil}
+    for source in recordedTimingSources(raw) {
         for key in ["ttft_ms","time_to_first_token_ms"] {
             if let value = source.number(key), value >= 0 { return value }
         }
@@ -100,6 +118,39 @@ func recordedTTFTMilliseconds(_ raw: Object) -> Double? {
         }
     }
     return nil
+}
+
+private let recordedCallFields=["duration_ms","duration_source","call_started_at","call_ended_at","created_at","completed_at","ttft_ms","call_duration_conflict","call_ttft_conflict"]
+
+// The transcript reader establishes response identity before calling this.
+// A nested API response must match explicitly; never join calls by proximity.
+func attachedCallTiming(_ source: Object,response: String,client: String = "codex") -> Object {
+    guard !response.isEmpty,source.string("response_id").isEmpty || source.string("response_id") == response else {return [:]}
+    var row: Object=[:]
+    for key in recordedCallFields+["started_at","status","timing","metrics"] where source[key] != nil && !(source[key] is NSNull) {row[key]=source[key]}
+    row["response_id"]=response;row["client_kind"]=client;row["quality"]="response"
+    for (target,alias) in [("call_started_at","started_at"),("call_ended_at","completed_at")] where row[target] == nil {
+        if let date=parsedDate(source[alias]),date.timeIntervalSince1970>=0,date.timeIntervalSince1970<253402300800 {row[target]=iso(date)}
+    }
+    row=recordedCallTiming(row)
+    var result: Object=[:]
+    for key in recordedCallFields where row[key] != nil && !(row[key] is NSNull) {result[key]=row[key]}
+    let nested=source.object("response")
+    if nested.string("id") == response {result=mergeRecordedCallTiming(result,attachedCallTiming(nested,response:response,client:client))}
+    return result
+}
+
+// Timing and token fragments are independent facts. Missing fragments do not
+// erase timing; conflicting explicit measurements remain unavailable.
+func mergeRecordedCallTiming(_ old: Object,_ next: Object) -> Object {
+    var result: Object=[:]
+    for key in recordedCallFields {result[key]=(next[key] is NSNull ? nil:next[key]) ?? (old[key] is NSNull ? nil:old[key])}
+    for (key,conflict) in [("duration_ms","call_duration_conflict"),("ttft_ms","call_ttft_conflict")] {
+        if old.flag(conflict) || next.flag(conflict) || (old.number(key).flatMap {a in next.number(key).map {a != $0}} ?? false) {
+            result[conflict]=true;result.removeValue(forKey:key)
+        }
+    }
+    return result
 }
 func outputRateText(_ rate: Double?,unit: String = "TPS") -> String {
     guard let rate, rate.isFinite, rate >= 0 else { return "—" }

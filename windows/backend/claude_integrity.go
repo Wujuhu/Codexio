@@ -97,6 +97,9 @@ func mergeClaudeUsage(old, incoming Row) Row {
 	r["call_timing"] = mergeClaudeTiming(ValueRow(old["call_timing"]), ValueRow(incoming["call_timing"]))
 	r["call_timing_checked"] = ValueBool(old["call_timing_checked"]) && ValueBool(incoming["call_timing_checked"]) && !ValueBool(old["call_timing_incomplete"])
 	r["call_timing_incomplete"] = ValueBool(old["call_timing_incomplete"]) || ValueBool(incoming["call_timing_incomplete"])
+	for key, value := range mergeRecordedCallTiming(old, incoming) {
+		r[key] = value
+	}
 	r["usage_terminal"] = oldTerminal || newTerminal
 	r["usage_conflict"] = conflict
 	for _, field := range []string{"timestamp", "session_id", "claude_session_scope", "claude_agent_id"} {

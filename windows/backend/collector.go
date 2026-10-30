@@ -1712,29 +1712,22 @@ func (s *Store) accounting(entry, state Row, tx *sql.Tx) (Row, error) {
 		r["model_context_window"] = nil
 		r["limit_id"] = nil
 	}
-	for _, k := range []string{"duration_ms", "call_started_at", "call_ended_at"} {
-		if p[k] != nil {
-			r[k] = p[k]
-		}
-	}
 	if modern {
-		for target, source := range map[string]string{"call_started_at": "started_at", "call_ended_at": "completed_at"} {
-			if r[target] == nil {
-				if t, ok := ParseStamp(p[source]); ok {
-					r[target] = ledgerStamp(t)
-				}
-			}
+		status := dataString(p, "status")
+		if nested := ValueRow(p["response"]); status == "" && dataString(nested, "id") == response {
+			status = dataString(nested, "status")
 		}
-		if status := dataString(p, "status"); status == "completed" || status == "aborted" || status == "running" || status == "failed" || status == "incomplete" {
+		if mapped := map[string]string{"in_progress": "running", "queued": "running", "cancelled": "aborted"}[status]; mapped != "" {
+			status = mapped
+		}
+		if status == "completed" || status == "aborted" || status == "running" || status == "failed" || status == "incomplete" {
 			r["status"] = status
 		}
-		if p["created_at"] != nil {
-			r["created_at"], r["completed_at"] = p["created_at"], p["completed_at"]
-			projectRecordedCallTiming(r)
-		}
 	}
-	if ttft, ok := recordedTTFTMilliseconds(p); ok {
-		r["ttft_ms"] = ttft
+	if modern || dataString(p, "response_id") == response && response != "" {
+		for key, value := range attachedCallTiming(p, response, "codex") {
+			r[key] = value
+		}
 	}
 	state["pending_output"] = ""
 	if modern {

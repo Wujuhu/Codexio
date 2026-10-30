@@ -51,3 +51,22 @@ Claude Code 有另一条独立的官方来源：claude_code.api_request 日志�
 最通用的备用方法是在实际调用方发送请求前与完整接收终态后，用同一单调时钟记录时长，再结合该调用最终的输出 Token。这个端到端平均 TPS 包含网络／等待等时间，不能与纯解码速度混称。不使用相邻日志间隔、整轮工具执行时间、平均分摊时长或字符／chunk 数来补造逐调用 TPS。
 
 Claude 官方事件／span 的消费接入在本轮仅完成能力核对，尚未实现独立接收器，也没有自动开启任何遥测。现有 Windows Argon 原始 assistant 日志只有 requestRef 等关联元数据，不能未经核对将它当成官方事件的 request_id；优先验证响应 ID／请求 ID 的准确映射，不按时间邻近拼接。
+
+## 本地逐调用计时完善（0.3.12，2026-10-30）
+
+本轮按用户指定只完善现成 API 字段与本地已保存的调用元数据。暂不接入任何遥测，不增加请求转发、客户端注入或新的采集服务，版本保持 0.3.12。
+
+只读检查 Mac、默认 Windows 构建主机及额外 Windows 执行端：每个 Codex 来源取最近 8 份明文 rollout 的末尾至多 8 MiB，Claude Code 取最近至多 8 份项目日志，并检查各端 Codex 日志 SQLite 最近 12,000 条。此次样本合计 1,007 条 Codex 逐调用计量记录、253 条 Claude assistant 记录；这是近期字段抽查，不代表穷举所有历史，也不是应用读取历史时的总量限制。脱敏结果在 `build/checks/local-call-timing-0312`。
+
+- Codex 逐调用计量样本有 `response_id` 和用量，没有可用的逐调用起止／耗时／TTFT。`task_complete` 的 `duration_ms`、`time_to_first_token_ms` 属于整轮任务；`item_completed` 的 `started_at_ms`、`completed_at_ms` 属于 Reasoning、AgentMessage、工具等输出项，其 item ID 不能直接对应计量记录的 response ID。Mac 的 `thread_history_1.sqlite` 同样区分 turn 与 item，没有因此获得新的逐调用计时依据。
+- Claude assistant 样本的 `thinkingDurationMs` 只描述思考相关片段，不作为整次调用耗时；`system/turn_duration.durationMs` 继续仅用于请求级展示。`requestRef` 不用于按邻近时间连接其他事件。样本没有明确的逐调用耗时或首 Token 测量值。
+- Codex 日志 SQLite 的候选耗时主要属于工具或 HTTP 请求记录，样本未发现同时具备精确模型响应身份与所需计时口径的记录；不因此新增日志数据库扫描器。
+
+实现复用现有 `Analytics.swift`／`request_duration.go` 的被动计时解析，以及 `UsageIndexer.swift`／`collector.go`、`ClaudeLedger.swift`／`claude_collector.go` 已验证的调用身份与分片合并机制：
+
+- 逐调用计量元数据支持直接的 `duration_ms`、调用起止、明确 TTFT 毫秒／秒字段，以及已支持的 `timing`／`metrics` 容器；容器明确声明其他 `response_id` 时排除。
+- 内嵌 Responses 对象只有 `response.id` 与当前调用完全一致时才读取；完成且时间有效时用 `created_at`／`completed_at` 求生命周期耗时。API `in_progress`／`queued`／`cancelled` 正确映射为进行中／中止，不按完成调用计算 TPS。
+- Claude assistant 的 envelope 和具有相同 message ID 的 Messages 对象都能保留明确的调用计时元数据。计时与 Token 分片独立合并，后续缺失字段不抹掉既有值；同一调用的明确测量相互冲突时对应指标保持缺失。Claude 未终止的分片不会仅因出现耗时就被判为完成。
+- 平均 TPS 仍仅使用已完成调用的有效输出 Token 和正数实际耗时，TTFT 仍只接受明确首 Token 字段。零耗时不作除数，布尔值、非有限数及不匹配身份不能提供计时依据；缺失保持 `—`。
+
+不提高来源解析版本，不重新扫描全部历史或重新生成用量数据。已有账本中的现成时间字段由原有有界页面查询解释；新读取的来源记录保存可靠字段。压缩历史与长期账本的保留规则继续沿用原实现。

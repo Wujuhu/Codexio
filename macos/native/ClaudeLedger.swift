@@ -338,6 +338,8 @@ final class ClaudeLedger {
                 raw["usage_evidence_terminal"] = terminal && raw.integer("total_tokens") != nil
                 raw["usage_read_state"] = raw.integer("total_tokens") == nil ? "partial" : terminal ? "terminal" : "provisional"
                 raw["status"] = terminal ? "completed" : ""
+                let timing=mergeRecordedCallTiming(attachedCallTiming(row,response:message.string("id"),client:"claude_code"),attachedCallTiming(message,response:message.string("id"),client:"claude_code"))
+                for (key,value) in timing {raw[key]=value}
                 raw["usage_evidence_timestamp"] = row["timestamp"] ?? NSNull()
                 // Reply identity plus UUID chain protects gateways reusing IDs;
                 // copied histories retain their UUID/request ancestry.
@@ -505,6 +507,7 @@ final class ClaudeLedger {
         result["call_timing"] = ClaudeTiming.merge(old.object("call_timing"),incoming.object("call_timing"))
         result["call_timing_checked"] = old.flag("call_timing_checked") && incoming.flag("call_timing_checked") && !old.flag("call_timing_incomplete")
         result["call_timing_incomplete"] = old.flag("call_timing_incomplete") || incoming.flag("call_timing_incomplete")
+        for (key,value) in mergeRecordedCallTiming(old,incoming) {result[key]=value}
         for key in ["model","reasoning_effort","upstream_model","service_tier","auth_mode","billing_source"] where result.string(key).isEmpty {result[key] = old[key] ?? incoming[key]}
         let conflict = old.flag("usage_conflict") || incoming.flag("usage_conflict") || terminalConflict
         result["usage_conflict"] = conflict

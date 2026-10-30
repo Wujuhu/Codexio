@@ -798,15 +798,11 @@ final class UsageIndexer {
             record["response_id"] = response.isEmpty ? NSNull() : response as Any
             let preview = takeOutput(&state,response:response,turn:turn)
             if record.flag("context_owner_verified") { record["output_preview"] = preview }
-            if let duration = payload.number("duration_ms"), duration >= 0 { record["duration_ms"] = duration }
-            if let ttft = recordedTTFTMilliseconds(payload) { record["ttft_ms"] = ttft }
-            for (key,source) in [("call_started_at","started_at"),("call_ended_at","completed_at")] { record[key] = parsedDate(payload[key] ?? payload[source]).map(iso) }
-            if ["completed","aborted","running","failed","incomplete"].contains(payload.string("status")) {record["status"]=payload["status"]}
-            if record["duration_ms"] == nil, let start = parsedDate(record["call_started_at"]), let end = parsedDate(record["call_ended_at"]), end >= start { record["duration_ms"] = end.timeIntervalSince(start)*1000 }
-            if payload["created_at"] != nil {
-                record["created_at"]=payload["created_at"];record["completed_at"]=payload["completed_at"]
-                record=recordedCallTiming(record)
-            }
+            let nestedResponse=payload.object("response")
+            let sourceStatus=payload.string("status",nestedResponse.string("id") == response ? nestedResponse.string("status"):"")
+            let callStatus=["in_progress":"running","queued":"running","cancelled":"aborted"][sourceStatus] ?? sourceStatus
+            if ["completed","aborted","running","failed","incomplete"].contains(callStatus) {record["status"]=callStatus}
+            for (key,value) in attachedCallTiming(payload,response:response) {record[key]=value}
             try database.writeRecord(record); remember(record,state:&state)
             return
         }

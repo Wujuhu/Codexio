@@ -17,6 +17,15 @@ func projectRecordedCallTiming(row Row) {
 	if dataString(row, "response_id") == "" && !strings.HasPrefix(id, "response:") && !strings.HasPrefix(id, "modern:") && !strings.HasPrefix(id, "legacy:") {
 		return
 	}
+	// Only explicit call metadata is eligible. Never search message content,
+	// thinkingDurationMs, item timestamps or a containing turn's duration.
+	for _, source := range recordedTimingSources(row) {
+		if current, known := ValueFloat(row["duration_ms"]); !known || current < 0 {
+			if value, ok := ValueFloat(source["duration_ms"]); ok && value >= 0 {
+				row["duration_ms"] = value
+			}
+		}
+	}
 	ms, known := ValueFloat(row["duration_ms"])
 	known = known && ms >= 0 && !math.IsInf(ms, 0) && !math.IsNaN(ms)
 	if !known {
@@ -27,6 +36,7 @@ func projectRecordedCallTiming(row Row) {
 		if start, ok := ParseStamp(row["call_started_at"]); ok && ended && !end.Before(start) {
 			ms = end.Sub(start).Seconds() * 1000
 			row["duration_ms"] = ms
+			row["duration_source"] = "call_bounds"
 			known = true
 		}
 	}
@@ -46,19 +56,47 @@ func projectRecordedCallTiming(row Row) {
 			row["call_started_at"], row["call_ended_at"] = UTCStamp(first), UTCStamp(last)
 		}
 	}
+	if known && dataString(row, "duration_source") == "" {
+		row["duration_source"] = "recorded_call"
+	}
 	if ttft, ok := recordedTTFTMilliseconds(row); ok {
 		row["ttft_ms"] = ttft
+	} else {
+		delete(row, "ttft_ms")
+	}
+	if ValueBool(row["call_duration_conflict"]) {
+		delete(row, "duration_ms")
+		known = false
+	}
+	if ValueBool(row["call_ttft_conflict"]) {
+		delete(row, "ttft_ms")
 	}
 	quality := strings.Split(dataString(row, "quality"), ":")[0]
 	metered := quality == "response" || quality == "legacy_last" || quality == "cumulative_delta" && strings.HasPrefix(id, "response:")
-	if metered && dataString(row, "status") == "" && !ValueBool(row["duration_running"]) && (known || ended) {
+	terminal := dataString(row, "client_kind") != "claude_code" || ValueBool(row["usage_terminal"]) || ValueBool(row["terminal_usage"])
+	if metered && terminal && dataString(row, "status") == "" && !ValueBool(row["duration_running"]) && (known || ended) {
 		row["status"] = "completed"
 	}
 }
 
+func recordedTimingSources(row Row) []Row {
+	result := []Row{row}
+	for _, key := range []string{"timing", "metrics"} {
+		source := ValueRow(row[key])
+		if response := dataString(source, "response_id"); response != "" && response != dataString(row, "response_id") {
+			continue
+		}
+		result = append(result, source)
+	}
+	return result
+}
+
 // A completed output item does not establish first-token latency.
 func recordedTTFTMilliseconds(row Row) (float64, bool) {
-	for _, source := range []Row{row, ValueRow(row["timing"]), ValueRow(row["metrics"])} {
+	if ValueBool(row["call_ttft_conflict"]) {
+		return 0, false
+	}
+	for _, source := range recordedTimingSources(row) {
 		for _, key := range []string{"ttft_ms", "time_to_first_token_ms", "ttft_seconds", "time_to_first_token_seconds"} {
 			if _, boolean := source[key].(bool); boolean {
 				continue
@@ -73,6 +111,64 @@ func recordedTTFTMilliseconds(row Row) (float64, bool) {
 		}
 	}
 	return 0, false
+}
+
+var recordedCallFields = []string{"duration_ms", "duration_source", "call_started_at", "call_ended_at", "created_at", "completed_at", "ttft_ms", "call_duration_conflict", "call_ttft_conflict"}
+
+// The caller has already established this response's transcript identity. A
+// nested API object must independently match it; IDs are never joined by time.
+func attachedCallTiming(source Row, response, client string) Row {
+	if response == "" || dataString(source, "response_id") != "" && dataString(source, "response_id") != response {
+		return Row{}
+	}
+	r := Row{}
+	for _, key := range append(append([]string{}, recordedCallFields...), "started_at", "status", "timing", "metrics") {
+		if source[key] != nil {
+			r[key] = source[key]
+		}
+	}
+	r["response_id"], r["client_kind"], r["quality"] = response, client, "response"
+	for target, alias := range map[string]string{"call_started_at": "started_at", "call_ended_at": "completed_at"} {
+		if r[target] == nil {
+			if stamp, ok := ParseStamp(source[alias]); ok && stamp.Unix() >= 0 && stamp.Unix() < 253402300800 {
+				r[target] = UTCStamp(stamp)
+			}
+		}
+	}
+	projectRecordedCallTiming(r)
+	result := Row{}
+	for _, key := range recordedCallFields {
+		if r[key] != nil {
+			result[key] = r[key]
+		}
+	}
+	if nested := ValueRow(source["response"]); dataString(nested, "id") == response {
+		result = mergeRecordedCallTiming(result, attachedCallTiming(nested, response, client))
+	}
+	return result
+}
+
+// Usage fragments may arrive separately from timing. Retain compatible facts
+// independently; conflicting durations/first-token measurements stay missing.
+func mergeRecordedCallTiming(old, next Row) Row {
+	result := Row{}
+	for _, key := range recordedCallFields {
+		if old[key] != nil {
+			result[key] = old[key]
+		}
+		if next[key] != nil {
+			result[key] = next[key]
+		}
+	}
+	for _, pair := range [][2]string{{"duration_ms", "call_duration_conflict"}, {"ttft_ms", "call_ttft_conflict"}} {
+		a, aOK := ValueFloat(old[pair[0]])
+		b, bOK := ValueFloat(next[pair[0]])
+		if ValueBool(old[pair[1]]) || ValueBool(next[pair[1]]) || aOK && bOK && a != b {
+			result[pair[1]] = true
+			delete(result, pair[0])
+		}
+	}
+	return result
 }
 
 type requestExecutionInterval struct {
