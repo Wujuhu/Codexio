@@ -2,6 +2,7 @@
 
 - 日常功能开发、验证和 Mac 打包全部留在 `build`，不因一次开发构建写入或覆盖 `release`。用户说“推送并且发布”即为本次推送与正式发布的明确授权，无需第二次确认。未指定版本时，读取仓库现有 Mac／Windows／iOS 版本文件，按语义版本选择最新源码版本发布，不自行递增版本号；指定版本时使用用户指定版本。由发布协调脚本完成正式发布，成功后核验远程附件并归档到 `release/<发布版本号>/`。
 - **开发及源码修改统一在本机进行，Mac 与 iOS 在本机构建；Windows 构建通过 SSH 连接 Windows 主机，不默认使用云端构建。** Windows 名称为 `WJH`，优先使用局域网 IP `192.168.1.16`，无法连接时默认尝试备用地址 `100.82.100.123`；SSH 密钥路径为 `/Users/wjh/.ssh/windows_ed25519`。备用地址沿用已核验的同一 Windows 主机身份。
+- 额外 Windows 执行端为 `25415@100.87.215.6`，密钥路径 `/Users/wjh/.ssh/myw_to_exp`。2026-10-30 已通过 SSH 密钥认证连接，远端计算机名 `WJH`、账户 `wjh\25415`、用户目录 `C:\Users\25415`，系统为 Windows 11 专业版（10.0.26100.0）；SSH 会话位于 Session 0。首次记录的 ED25519 主机指纹为 `SHA256:ksT3zNZzjjR6pG8hK95RWCtE8AeDLh8j6yV+QEw58hA`，已保存到本机 `known_hosts`；后续使用 `StrictHostKeyChecking=yes`，不借用默认构建主机的 HostKeyAlias。该端作为额外连接记录，默认 Windows 构建主机仍沿用上一条配置。按用户要求，此连接信息只写项目记忆，不补充到 `.ssh` 下的 AGENTS／agent 文档。
 - Windows 主机上的项目目录为 `C:\CodeWJH\Projects\Codexio`。每次通过局域网 SSH 完成 Windows 构建后，必须在该电脑的 `C:\CodeWJH\Projects\Codexio\build\dev\windows` 保留经验证的 `Codexio.exe` 和配套清单；需要回传本机时使用复制，保留 Windows 上的产物。
 - SSH 处于 Windows Session 0 时，通过临时、按需的计划任务在已登录用户的交互会话中执行现有构建入口及三项隔离模拟冒烟；结束后删除该临时任务，保留构建日志和校验结果。
 - 开发构建与交付默认静默完成。三项隔离冒烟仍执行，模拟窗口在屏幕外运行，不抢焦点，不显示 Dock、任务栏或托盘图标；正常用户启动的窗口行为照常。交付通过现有原子替换／暂存流程完成，不自动启动已安装应用。
