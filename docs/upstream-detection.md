@@ -1,6 +1,4 @@
-# 上游与计时检测（0.3.12 开发版）
-
-响应模型观测同时保存后续调用的流式耗时，以及响应明确提供的首 Token 计时，供日志与详情显示 TPS／TTFT。记录按真实响应 ID 关联，持久保存在正式观测账本 upstream.sqlite，与源 rollout 和临时正文缓存独立。缺少真实计时的历史记录不补算；关闭检测只恢复路由，不删除已保存记录。计时口径和兼容字段见[额度与模型调用说明](quota-refresh.md#模型调用计时)。
+# 上游检测（0.3.9 开发版）
 
 默认关闭。Mac 使用主 App 内的原生转发，Windows 使用主程序内的 Go ReverseProxy。采集随主程序退出而停止；关闭窗口可继续后台运行。开发包仅进入 `build`，Windows 在指定本机构建主机完成，正式发布仍需用户明确指令。
 
@@ -30,9 +28,9 @@ Mac 使用无 Cookie、凭据存储和响应缓存的 ephemeral URLSession。HTT
 
 Mac 的原生升级机制参考：[becomeStream](https://developer.apple.com/documentation/foundation/urlsession/responsedisposition/becomestream)、[didBecome streamTask](https://developer.apple.com/documentation/foundation/urlsessiondatadelegate/urlsession(_:datatask:didbecome:)-7nqzu)、[URLSessionStreamTask](https://developer.apple.com/documentation/foundation/urlsessionstreamtask)。已经用本机合成服务器核对 101 后立即到达的数据及先读后写的双向通信；不能据此代替真实账户的服务端验证。
 
-## 只读型号与计时观察
+## 只读型号观察
 
-从上游实际返回的响应事件或 Responses JSON 中提取 response ID、model 和明确计时，并观察流式响应区间，再按 response ID 关联本地计量调用。只接受明确的响应创建、完成、不完整或失败事件；缺少 ID 或 model 时不猜测。创建事件不能覆盖终态观察，相同观察不反复增加数据库 revision。费用、筛选及请求配置仍以本地请求记录为准。
+只从上游实际返回的响应事件或 Responses JSON 中提取 response ID 与 model，再按 response ID 关联本地计量调用。只接受明确的响应创建、完成、不完整或失败事件；缺少 ID 或 model 时不猜测。创建事件不能覆盖终态观察，相同观察不反复增加数据库 revision。费用、筛选及请求配置仍以本地请求记录为准。
 
 HTTP 的 SSE/JSON 单事件及 WebSocket 单消息观察上限为 2 MiB；Windows 帧片段缓存额外限制在 4 MiB 内，Mac 流式解析只保留有限帧头和单消息；异常、过大或无法解释的事件只丢弃观察，不改变转发字节。SSE 支持多行 data。Mac 后台观察队列最多 64 项／8 MiB，Windows 队列最多 64 项且仅保存已经提取的有限字段；数据库忙或队列满不阻塞网络转发。历史关联保存在独立 `upstream.sqlite`，不保存正文、认证头或凭据。事件正文只在有界内存中暂留，解析后释放。
 

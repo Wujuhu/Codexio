@@ -145,5 +145,5 @@ func observedPriceRows(ctx context.Context, db *sql.DB, records []Row) error {
 			}
 		}
 	}
-	return enrichResponseTimings(ctx, db, records)
+	return nil
 }

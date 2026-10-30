@@ -79,8 +79,8 @@ func recordedCallTiming(_ input: Object) -> Object {
 
 // Preserve explicit source timing only; a completed message is not a first token.
 func recordedTTFTMilliseconds(_ raw: Object) -> Double? {
-    for source in [raw,raw.object("timing"),raw.object("metrics"),raw.object("timing_metrics")] {
-        for key in ["ttft_ms","time_to_first_token_ms","engine_service_ttft_total_ms","engine_iapi_ttft_total_ms"] {
+    for source in [raw,raw.object("timing"),raw.object("metrics")] {
+        for key in ["ttft_ms","time_to_first_token_ms"] {
             if let value = source.number(key), value >= 0 { return value }
         }
         for key in ["ttft_seconds","time_to_first_token_seconds"] {

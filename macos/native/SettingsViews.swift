@@ -94,7 +94,7 @@ struct SettingsView: View {
             Button(L("取消", "Cancel"),role:.cancel) {}
             Button(desiredUpstream ? L("开启", "Enable") : L("关闭", "Disable")) { state.onUpstreamChange?(desiredUpstream) }
         } message: {
-            Text(L("Codex 将通过本机转发请求，记录响应模型、调用耗时及响应明确提供的首 Token 计时，用于显示 TPS 和 TTFT。更改路由后需要重新打开 Codex，历史缺失的计时不会补算。", "Codex requests will pass through a local relay that records response models, call durations and explicit first-token timing for TPS and TTFT. Reopen Codex after the route changes. Missing historical timing is not inferred."))
+            Text(L("Codex 将通过本机转发请求，仅记录响应中的模型名称。更改路由后需要重新打开 Codex 才能让现有会话使用新配置。", "Codex requests will pass through a local relay that records only response model names. Reopen Codex after the route changes to apply the configuration to existing sessions."))
         }
     }
     private var appearance: some View {
@@ -134,7 +134,7 @@ struct SettingsView: View {
             }
             if !state.updateStatus.isEmpty { StatusNote(text:state.updateStatus).padding(.vertical,8) }
             row(L("自动检查更新", "Check for updates automatically")) { Toggle("",isOn:Binding(get:{state.preferences.analytics.flag("macos_auto_update",true)},set:{state.setPreference("macos_auto_update",$0)})).labelsHidden().toggleStyle(.switch) }
-            row(L("上游与计时检测", "Upstream and timing detection")) { Toggle("",isOn:Binding(get:{state.preferences.analytics.flag("upstream_detection_enabled")},set:{desiredUpstream = $0; upstreamConfirmation = true})).labelsHidden().toggleStyle(.switch).disabled(state.paths.mock) }
+            row(L("上游检测", "Upstream detection")) { Toggle("",isOn:Binding(get:{state.preferences.analytics.flag("upstream_detection_enabled")},set:{desiredUpstream = $0; upstreamConfirmation = true})).labelsHidden().toggleStyle(.switch).disabled(state.paths.mock) }
             if !state.upstreamStatus.isEmpty { StatusNote(text:state.upstreamStatus).padding(.vertical,8) }
             row(L("额度刷新", "Limit refresh")) { Picker("",selection:Binding(get:{state.preferences.general.integer("refresh_interval_seconds") ?? 60},set:{state.setPreference("refresh_interval_seconds",$0,general:true)})) { ForEach([30,60,300],id:\.self) { Text("\($0) s").tag($0) } }.labelsHidden().frame(width:110) }
             row(L("日志刷新", "Log refresh")) { Picker("",selection:Binding(get:{state.preferences.analytics.integer("usage_refresh_interval_seconds") ?? 10},set:{state.setPreference("usage_refresh_interval_seconds",$0)})) { ForEach([5,10,30,60],id:\.self) { Text("\($0) s").tag($0) } }.labelsHidden().frame(width:110) }

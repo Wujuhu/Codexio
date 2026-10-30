@@ -977,7 +977,5 @@
   "计价条件": "Pricing conditions",
   "其他": "Other",
   "官方价格目录为只读": "The official price catalog is read-only",
-  "部分记录数据不完整，已跳过相应指标的计算。": "Some records are incomplete and have been excluded from the affected metrics.",
-  "上游与计时检测": "Upstream and timing detection",
-  "Codex 将通过本机转发请求，记录响应模型、调用耗时及响应明确提供的首 Token 计时，用于显示 TPS 和 TTFT。更改路由后需要重新打开 Codex，历史缺失的计时不会补算。": "Codex requests will pass through a local relay that records response models, call durations and explicit first-token timing for TPS and TTFT. Reopen Codex after the route changes. Missing historical timing is not inferred."
+  "部分记录数据不完整，已跳过相应指标的计算。": "Some records are incomplete and have been excluded from the affected metrics."
 }
