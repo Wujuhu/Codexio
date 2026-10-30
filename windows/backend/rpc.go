@@ -62,7 +62,9 @@ type systemRPC struct {
 }
 
 func systemNewRPC(ctx context.Context, path, version, root string, notify func(string, Row)) (*systemRPC, error) {
-	c, e := systemCLICommand(nil, path, "app-server", "--listen", "stdio://")
+	// Account/configuration queries never execute tools. These process-local
+	// overrides avoid fetching plugin/app catalogs without editing user config.
+	c, e := systemCLICommand(nil, path, "app-server", "--listen", "stdio://", "-c", "features.plugins=false", "-c", "features.remote_plugin=false", "-c", "features.plugin_discovery_prefetch=false", "-c", "features.apps=false")
 	if e != nil {
 		return nil, e
 	}

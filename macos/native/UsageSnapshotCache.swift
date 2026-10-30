@@ -19,6 +19,7 @@ final class UsageSnapshotCache {
     private var hour: Date?
     private var upstreamStamps: [FileStamp]?
     private var upstreamModels: [String:String] = [:]
+    private var upstreamTimings: [String:String] = [:]
     private var upstreamGeneration = 0
     private var upstreamPresent = false
     private struct PricedRecord {
@@ -27,6 +28,7 @@ final class UsageSnapshotCache {
         let cwd: String
         let local: Bool
         let upstreamPresent: Bool
+        let timing: String
         let row: UsageRow
     }
     private var pricedRecords: [String:PricedRecord] = [:]
@@ -67,6 +69,7 @@ final class UsageSnapshotCache {
             let value: UsageRow
             if let old = pricedRecords[id], old.payload == payload, old.title == title, old.cwd == cwd, old.local == local,
                old.upstreamPresent == upstreamPresent,
+               old.timing == (upstreamTimings[old.row.raw.string("response_id")] ?? ""),
                old.row.raw.string("price_version") == catalog.version,
                (!upstreamPresent || old.row.raw.string("upstream_model") == (upstreamModels[old.row.raw.string("response_id")] ?? "")) {
                 value = old.row
@@ -76,12 +79,15 @@ final class UsageSnapshotCache {
                 if !cwd.isEmpty { raw["session_cwd"] = cwd }
                 raw["local_origin"] = local || raw.string("source_id").hasPrefix("local")
                 if upstreamPresent { raw["upstream_model"] = upstreamModels[raw.string("response_id")] }
+                if let timing = upstreamTimings[raw.string("response_id")] {
+                    raw = mergeResponseTiming(raw,jsonObject(Data(timing.utf8)))
+                }
                 value = UsageRow(raw:catalog.price(raw))
             }
             calls.append(value)
             let size = payload.utf8.count
             if retained.count < 8192 && retainedBytes+size <= 8_388_608 {
-                retained[id] = PricedRecord(payload:payload,title:title,cwd:cwd,local:local,upstreamPresent:upstreamPresent,row:value); retainedBytes += size
+                retained[id] = PricedRecord(payload:payload,title:title,cwd:cwd,local:local,upstreamPresent:upstreamPresent,timing:upstreamTimings[value.raw.string("response_id")] ?? "",row:value); retainedBytes += size
             }
         }
         pricedRecords = retained
@@ -92,11 +98,18 @@ final class UsageSnapshotCache {
         let stamps = [FileStamp(file),FileStamp(URL(fileURLWithPath:file.path+"-wal"))]
         guard upstreamStamps != stamps else { return }
         var models: [String:String] = [:]
+        var timings: [String:String] = [:]
         if stamps[0].exists {
             guard let db = try? Database(file,readOnly:true), let rows = try? db.query("SELECT response_id,model FROM observations") else { return }
             models = Dictionary(rows.map {($0.string("response_id"),$0.string("model"))},uniquingKeysWith:{$1})
+            if (try? db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='call_timings'").isEmpty) == false {
+                guard let rows = try? db.query("SELECT response_id,data FROM call_timings") else { return }
+                timings = Dictionary(rows.map {($0.string("response_id"),$0.string("data"))},uniquingKeysWith:{$1})
+            }
         }
-        if models != upstreamModels || upstreamPresent != stamps[0].exists { upstreamModels = models; upstreamGeneration += 1 }
+        if models != upstreamModels || timings != upstreamTimings || upstreamPresent != stamps[0].exists {
+            upstreamModels = models; upstreamTimings = timings; upstreamGeneration += 1
+        }
         upstreamPresent = stamps[0].exists
         upstreamStamps = stamps
     }

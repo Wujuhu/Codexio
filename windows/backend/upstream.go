@@ -29,27 +29,28 @@ import (
 )
 
 type UpstreamProxy struct {
-	mu              sync.Mutex
-	directory       string
-	version         string
-	config          func() Row
-	mock            bool
-	changed         func(string)
-	server          *http.Server
-	listener        net.Listener
-	db              *sql.DB
-	transport       *http.Transport
-	journal         Row
-	status          string
-	lastError       string
-	restartRequired bool
-	desiredEnabled  bool
-	routeChanged    bool
-	clientRunning   bool
-	alreadyTargeted bool
-	websockets      map[*upstreamDuplex]bool
-	observations    chan Row
-	cancel          context.CancelFunc
+	mu                sync.Mutex
+	directory         string
+	version           string
+	config            func() Row
+	mock              bool
+	changed           func(string)
+	server            *http.Server
+	listener          net.Listener
+	db                *sql.DB
+	transport         *http.Transport
+	journal           Row
+	status            string
+	lastError         string
+	restartRequired   bool
+	desiredEnabled    bool
+	routeChanged      bool
+	clientRunning     bool
+	alreadyTargeted   bool
+	websockets        map[*upstreamDuplex]bool
+	observations      chan Row
+	cancel            context.CancelFunc
+	observationWriter sync.WaitGroup
 }
 
 func NewUpstreamProxy(dir, version string, config func() Row, mock bool, changed func(string)) *UpstreamProxy {
@@ -159,7 +160,7 @@ func (p *UpstreamProxy) Toggle(enabled bool) (Row, error) {
 		return nil, e
 	}
 	db.SetMaxOpenConns(1)
-	if _, e = db.Exec(`PRAGMA journal_mode=WAL;PRAGMA busy_timeout=5000;CREATE TABLE IF NOT EXISTS observations(response_id TEXT PRIMARY KEY,model TEXT NOT NULL,event TEXT NOT NULL,rank INTEGER NOT NULL,observed_at REAL NOT NULL);CREATE TABLE IF NOT EXISTS revision(id INTEGER PRIMARY KEY,value INTEGER NOT NULL);INSERT OR IGNORE INTO revision VALUES(1,0)`); e != nil {
+	if _, e = db.Exec(`PRAGMA journal_mode=WAL;PRAGMA busy_timeout=5000;CREATE TABLE IF NOT EXISTS observations(response_id TEXT PRIMARY KEY,model TEXT NOT NULL,event TEXT NOT NULL,rank INTEGER NOT NULL,observed_at REAL NOT NULL);CREATE TABLE IF NOT EXISTS call_timings(response_id TEXT PRIMARY KEY,data TEXT NOT NULL);CREATE TABLE IF NOT EXISTS revision(id INTEGER PRIMARY KEY,value INTEGER NOT NULL);INSERT OR IGNORE INTO revision VALUES(1,0)`); e != nil {
 		db.Close()
 		ln.Close()
 		return nil, e
@@ -172,7 +173,8 @@ func (p *UpstreamProxy) Toggle(enabled bool) (Row, error) {
 	p.db = db
 	p.journal = j
 	p.cancel = cancel
-	go p.writeObservations(ctx)
+	p.observationWriter.Add(1)
+	go func() { defer p.observationWriter.Done(); p.writeObservations(ctx, db) }()
 	go func() { _ = server.Serve(ln) }()
 	// The relay is accepting requests before Codex adopts its address, like Mac.
 	if e = WriteJSON(p.journalPath(), j); e != nil {
@@ -271,7 +273,10 @@ func (p *UpstreamProxy) relayHandler(target *url.URL, token, localPath string) h
 	proxy.ModifyResponse = func(r *http.Response) error {
 		if r.StatusCode == 101 {
 			if rw, ok := r.Body.(io.ReadWriteCloser); ok {
-				connection := &upstreamDuplex{ReadWriteCloser: rw, observer: &upstreamFrameObserver{emit: p.observe}}
+				clock := &upstreamCallTiming{}
+				observer := &upstreamFrameObserver{}
+				observer.emit = func(data []byte) { p.observe(data, clock, observer.receivedAt) }
+				connection := &upstreamDuplex{ReadWriteCloser: rw, observer: observer}
 				connection.closed = func() { p.mu.Lock(); delete(p.websockets, connection); p.mu.Unlock() }
 				p.mu.Lock()
 				active := p.server != nil
@@ -289,7 +294,10 @@ func (p *UpstreamProxy) relayHandler(target *url.URL, token, localPath string) h
 		}
 		if r.StatusCode >= 200 && r.StatusCode < 300 && strings.Contains(r.Request.URL.Path, "/responses") && (r.Header.Get("Content-Encoding") == "" || r.Header.Get("Content-Encoding") == "identity") {
 			sse := strings.Contains(r.Header.Get("Content-Type"), "text/event-stream")
-			r.Body = &upstreamBody{ReadCloser: r.Body, observer: &upstreamLineObserver{emit: p.observe, sse: sse, determined: sse}}
+			clock := &upstreamCallTiming{}
+			observer := &upstreamLineObserver{sse: sse, determined: sse}
+			observer.emit = func(data []byte) { p.observe(data, clock, observer.receivedAt) }
+			r.Body = &upstreamBody{ReadCloser: r.Body, observer: observer}
 		}
 		return nil
 	}
@@ -389,6 +397,7 @@ func (p *UpstreamProxy) closeRelayLocked() {
 	p.websockets = map[*upstreamDuplex]bool{}
 	if p.cancel != nil {
 		p.cancel()
+		p.observationWriter.Wait()
 		p.cancel = nil
 	}
 	if p.db != nil {
@@ -625,7 +634,7 @@ func upstreamPatch(text string, table []string, key string, line *string) (strin
 	return patched, "", false, nil
 }
 
-func (p *UpstreamProxy) observe(data []byte) {
+func (p *UpstreamProxy) observe(data []byte, clock *upstreamCallTiming, at time.Time) {
 	if len(data) > 2<<20 {
 		return
 	}
@@ -670,50 +679,78 @@ func (p *UpstreamProxy) observe(data []byte) {
 		rank = 1
 	}
 	select {
-	case p.observations <- Row{"id": id, "model": model, "event": event, "rank": rank}:
+	case p.observations <- Row{"id": id, "model": model, "event": event, "rank": rank, "timing": clock.observe(r, response, event, at)}:
 	default:
 	}
 }
-func (p *UpstreamProxy) writeObservations(ctx context.Context) {
+func (p *UpstreamProxy) writeObservations(ctx context.Context, db *sql.DB) {
+	stopping := false
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		case r := <-p.observations:
-			p.mu.Lock()
-			db := p.db
-			p.mu.Unlock()
-			if db == nil {
-				continue
+		var r Row
+		if stopping {
+			select {
+			case r = <-p.observations:
+			default:
+				return
 			}
-			var oldModel string
-			var oldRank int
-			e := db.QueryRowContext(ctx, `SELECT model,rank FROM observations WHERE response_id=?`, r["id"]).Scan(&oldModel, &oldRank)
-			rank := int(ValueInt(r["rank"]))
-			if e == nil && (oldRank > rank || oldRank == rank && oldModel == r["model"]) {
+		} else {
+			select {
+			case <-ctx.Done():
+				stopping = true
 				continue
+			case r = <-p.observations:
 			}
+		}
+		func() {
+			// A cancelled server context must not discard already accepted
+			// evidence; these are bounded, local SQLite writes only.
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
 			tx, e := db.BeginTx(ctx, nil)
 			if e != nil {
-				continue
+				return
 			}
-			_, e = tx.ExecContext(ctx, `INSERT INTO observations VALUES(?,?,?,?,?) ON CONFLICT(response_id) DO UPDATE SET model=excluded.model,event=excluded.event,rank=excluded.rank,observed_at=excluded.observed_at`, r["id"], r["model"], r["event"], rank, float64(time.Now().UnixNano())/1e9)
-			if e == nil {
-				_, e = tx.ExecContext(ctx, `UPDATE revision SET value=value+1 WHERE id=1`)
+			changed := false
+			var oldModel string
+			var oldRank int
+			e = tx.QueryRowContext(ctx, "SELECT model,rank FROM observations WHERE response_id=?", r["id"]).Scan(&oldModel, &oldRank)
+			rank := int(ValueInt(r["rank"]))
+			if e == sql.ErrNoRows || e == nil && rank >= oldRank && (oldModel != r["model"] || oldRank != rank) {
+				_, e = tx.ExecContext(ctx, "INSERT INTO observations VALUES(?,?,?,?,?) ON CONFLICT(response_id) DO UPDATE SET model=excluded.model,event=excluded.event,rank=excluded.rank,observed_at=excluded.observed_at", r["id"], r["model"], r["event"], rank, float64(time.Now().UnixNano())/1e9)
+				changed = e == nil
+			}
+			if e == nil && len(ValueRow(r["timing"])) > 0 {
+				var raw string
+				readError := tx.QueryRowContext(ctx, "SELECT data FROM call_timings WHERE response_id=?", r["id"]).Scan(&raw)
+				old := Row{}
+				if readError == nil {
+					old, e = DecodeRow([]byte(raw))
+				} else if readError != sql.ErrNoRows {
+					e = readError
+				}
+				merged := mergeResponseTiming(old, ValueRow(r["timing"]))
+				if e == nil && rowJSON(merged) != rowJSON(old) {
+					_, e = tx.ExecContext(ctx, "INSERT INTO call_timings VALUES(?,?) ON CONFLICT(response_id) DO UPDATE SET data=excluded.data", r["id"], rowJSON(merged))
+					changed = changed || e == nil
+				}
+			}
+			if e == nil && changed {
+				_, e = tx.ExecContext(ctx, "UPDATE revision SET value=value+1 WHERE id=1")
 			}
 			if e == nil {
 				e = tx.Commit()
 			} else {
 				_ = tx.Rollback()
 			}
-			if e == nil && p.changed != nil {
+			if e == nil && changed && p.changed != nil {
 				p.changed(dataString(r, "id"))
 			}
-		}
+		}()
 	}
 }
 
 type upstreamLineObserver struct {
+	receivedAt   time.Time
 	emit         func([]byte)
 	sse          bool
 	determined   bool
@@ -753,6 +790,9 @@ func (o *upstreamLineObserver) line() {
 	}
 }
 func (o *upstreamLineObserver) feed(b []byte, eof bool) {
+	if len(b) > 0 {
+		o.receivedAt = time.Now()
+	}
 	if o.disabled {
 		return
 	}
@@ -852,6 +892,7 @@ func (d *upstreamDuplex) Read(p []byte) (int, error) {
 }
 
 type upstreamFrameObserver struct {
+	receivedAt time.Time
 	emit       func([]byte)
 	buffer     []byte
 	message    []byte
@@ -860,6 +901,9 @@ type upstreamFrameObserver struct {
 }
 
 func (o *upstreamFrameObserver) feed(b []byte) {
+	if len(b) > 0 {
+		o.receivedAt = time.Now()
+	}
 	if o.disabled {
 		return
 	}

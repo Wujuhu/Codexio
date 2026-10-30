@@ -39,8 +39,8 @@ func projectRecordedCallTiming(row Row) {
 
 // A completed output item does not establish first-token latency.
 func recordedTTFTMilliseconds(row Row) (float64, bool) {
-	for _, source := range []Row{row, ValueRow(row["timing"]), ValueRow(row["metrics"])} {
-		for _, key := range []string{"ttft_ms", "time_to_first_token_ms", "ttft_seconds", "time_to_first_token_seconds"} {
+	for _, source := range []Row{row, ValueRow(row["timing"]), ValueRow(row["metrics"]), ValueRow(row["timing_metrics"])} {
+		for _, key := range []string{"ttft_ms", "time_to_first_token_ms", "ttft_seconds", "time_to_first_token_seconds", "engine_service_ttft_total_ms", "engine_iapi_ttft_total_ms"} {
 			if _, boolean := source[key].(bool); boolean {
 				continue
 			}

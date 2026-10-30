@@ -1329,6 +1329,22 @@
         }
       }
     },
+    "Codex 将通过本机转发请求，记录响应模型、调用耗时及响应明确提供的首 Token 计时，用于显示 TPS 和 TTFT。更改路由后需要重新打开 Codex，历史缺失的计时不会补算。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex requests will pass through a local relay that records response models, call durations and explicit first-token timing for TPS and TTFT. Reopen Codex after the route changes. Missing historical timing is not inferred."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex 将通过本机转发请求，记录响应模型、调用耗时及响应明确提供的首 Token 计时，用于显示 TPS 和 TTFT。更改路由后需要重新打开 Codex，历史缺失的计时不会补算。"
+          }
+        }
+      }
+    },
     "Codex 尚未连接": {
       "localizations": {
         "en": {
@@ -2429,6 +2445,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "上次路由尚未恢复，请先完成恢复"
+          }
+        }
+      }
+    },
+    "上游与计时检测": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Upstream and timing detection"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上游与计时检测"
           }
         }
       }

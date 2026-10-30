@@ -17,7 +17,7 @@ private final class ResponseObservationWriter: @unchecked Sendable {
     init(_ url: URL) throws {
         try queue.sync {
             let database = try Database(url)
-            try database.script("CREATE TABLE IF NOT EXISTS observations(response_id TEXT PRIMARY KEY,model TEXT NOT NULL,event TEXT NOT NULL,rank INTEGER NOT NULL,observed_at REAL NOT NULL); CREATE TABLE IF NOT EXISTS revision(id INTEGER PRIMARY KEY,value INTEGER NOT NULL); INSERT OR IGNORE INTO revision VALUES(1,0);")
+            try database.script("CREATE TABLE IF NOT EXISTS observations(response_id TEXT PRIMARY KEY,model TEXT NOT NULL,event TEXT NOT NULL,rank INTEGER NOT NULL,observed_at REAL NOT NULL); CREATE TABLE IF NOT EXISTS call_timings(response_id TEXT PRIMARY KEY,data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS revision(id INTEGER PRIMARY KEY,value INTEGER NOT NULL); INSERT OR IGNORE INTO revision VALUES(1,0);")
             self.database = database
         }
     }
@@ -32,28 +32,38 @@ private final class ResponseObservationWriter: @unchecked Sendable {
     private func drain() {
         while true {
             lock.lock()
-            guard !stopped, !pending.isEmpty else { running = false; lock.unlock(); return }
+            guard !pending.isEmpty else { running = false; lock.unlock(); return }
             let work = pending.removeFirst(); lock.unlock()
             work.body()
             lock.lock(); pendingBytes -= work.bytes; retainedItems -= 1; lock.unlock()
         }
     }
-    func record(id: String, model: String, event: String, rank: Int) {
-        lock.lock(); let active = !stopped; lock.unlock()
-        guard active, let database else { return }
+    func record(id: String, model: String, event: String, rank: Int,timing: Object) {
+        guard let database else { return }
         try? database.transaction {
             let previous = try database.query("SELECT model,rank FROM observations WHERE response_id=?",[id]).first
-            if let previous {
-                let oldRank = previous.integer("rank") ?? 0
-                guard rank >= oldRank, previous.string("model") != model || rank != oldRank else { return }
+            var changed = false
+            let oldRank = previous?.integer("rank") ?? 0
+            if rank >= oldRank, previous?.string("model") != model || rank != oldRank {
+                try database.run("INSERT INTO observations VALUES(?,?,?,?,?) ON CONFLICT(response_id) DO UPDATE SET model=excluded.model,event=excluded.event,rank=excluded.rank,observed_at=excluded.observed_at",[id,model,event,rank,Date().timeIntervalSince1970])
+                changed = true
             }
-            try database.run("INSERT INTO observations VALUES(?,?,?,?,?) ON CONFLICT(response_id) DO UPDATE SET model=excluded.model,event=excluded.event,rank=excluded.rank,observed_at=excluded.observed_at",[id,model,event,rank,Date().timeIntervalSince1970])
-            try database.run("UPDATE revision SET value=value+1 WHERE id=1")
+            if !timing.isEmpty {
+                let old = try database.query("SELECT data FROM call_timings WHERE response_id=?",[id]).first?.string("data") ?? "{}"
+                let merged = mergeResponseTiming(jsonObject(Data(old.utf8)),timing)
+                if jsonString(merged) != jsonString(jsonObject(Data(old.utf8))) {
+                    try database.run("INSERT INTO call_timings VALUES(?,?) ON CONFLICT(response_id) DO UPDATE SET data=excluded.data",[id,jsonString(merged)])
+                    changed = true
+                }
+            }
+            if changed { try database.run("UPDATE revision SET value=value+1 WHERE id=1") }
         }
     }
     func stop() {
-        lock.lock(); stopped = true; retainedItems -= pending.count; pendingBytes -= pending.reduce(0) { $0+$1.bytes }; pending.removeAll(); lock.unlock()
-        queue.async { [self] in database = nil }
+        lock.lock(); stopped = true; lock.unlock()
+        // The relay stops submitting before this barrier. Flush accepted model
+        // and timing evidence before quit instead of discarding queued writes.
+        queue.sync { database = nil }
     }
 }
 
@@ -71,6 +81,8 @@ private final class ResponseModelObserver {
     private var droppingLine = false
     private var droppingEvent = false
     private var websocket: WebSocketModelObserver?
+    private let timing = ResponseCallTiming()
+    private var receipt: (TimeInterval,Date) = (0,.distantPast)
     init(writer: ResponseObservationWriter) { self.writer = writer }
     func configure(type: String, encoded: Bool, websocket: Bool = false) {
         submit { [self] in
@@ -82,8 +94,10 @@ private final class ResponseModelObserver {
     }
     func feed(_ data: Data) {
         guard !data.isEmpty else { return }
+        let receipt = (ProcessInfo.processInfo.systemUptime,Date())
         submit(bytes:data.count) {
             guard self.enabled else { return }
+            self.receipt = receipt
             if let websocket = self.websocket { websocket.feed(data) } else { self.parse(data) }
         }
     }
@@ -163,7 +177,8 @@ private final class ResponseModelObserver {
         guard ["response.created","response.completed","response.incomplete","response.failed"].contains(kind) else { return }
         let id = response.string("id"), model = response.string("model")
         guard !id.isEmpty, id.utf8.count <= 256, !model.isEmpty, model.utf8.count <= 256 else { return }
-        writer.record(id:id,model:model,event:kind,rank:kind == "response.created" ? 1 : 2)
+        let fields = timing.observe(value,response:response,kind:kind,at:receipt.0,date:receipt.1)
+        writer.record(id:id,model:model,event:kind,rank:kind == "response.created" ? 1 : 2,timing:fields)
     }
 }
 

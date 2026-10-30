@@ -46,7 +46,7 @@ func systemCLICommand(ctx context.Context, path string, args ...string) (*exec.C
 		return nil, errors.New("Codex 启动脚本路径包含不支持的字符")
 	}
 	for _, a := range args {
-		if !systemContains([]string{"app-server", "--listen", "stdio://", "--version", "--help"}, a) {
+		if !systemContains([]string{"app-server", "--listen", "stdio://", "--version", "--help", "-c", "features.plugins=false", "features.remote_plugin=false", "features.plugin_discovery_prefetch=false", "features.apps=false"}, a) {
 			return nil, errors.New("Codex 启动参数无效")
 		}
 	}

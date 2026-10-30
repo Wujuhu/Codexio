@@ -24,6 +24,9 @@ func (s *Store) enrichUpstream(rows []Row, grouped bool, contexts ...context.Con
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
+	if !grouped {
+		_ = enrichResponseTimings(reader.ctx, db, rows)
+	}
 	for _, row := range rows {
 		if normalizedClient(dataString(row, "client_kind")) != "codex" {
 			continue

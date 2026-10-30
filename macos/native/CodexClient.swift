@@ -107,7 +107,9 @@ final class CodexClient {
         guard let executable = Self.discover(hint) else { throw AppFailure(L("未找到 Codex，请安装 ChatGPT 或 Codex 并登录", "Codex was not found. Install ChatGPT or Codex and sign in.")) }
         let generation=UUID()
         let child = Process(), out = Pipe(), err = Pipe(), stdin = Pipe()
-        child.executableURL = executable; child.arguments = ["app-server","--listen","stdio://"]
+        // This backend reads account/configuration only. Avoid initializing the
+        // user's plugin catalogs and app integrations in our helper process.
+        child.executableURL = executable; child.arguments = ["app-server","--listen","stdio://","-c","features.plugins=false","-c","features.remote_plugin=false","-c","features.plugin_discovery_prefetch=false","-c","features.apps=false"]
         child.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
         var environment = ProcessInfo.processInfo.environment; environment["RUST_LOG"] = "error"
         for key in ["PYTHONHOME","PYTHONPATH","QT_PLUGIN_PATH","QT_QPA_PLATFORM"] { environment.removeValue(forKey:key) }
