@@ -37,3 +37,17 @@ Gemini 的 usageMetadata 还将候选输出 candidatesTokenCount 与思考 thoug
 另外按 claude_locators 现有文件／字节偏移定位最近 8 条原始 assistant JSONL 记录，校验 UUID 和 message.id 后只提取字段结构，未遍历历史正文。保存的 Messages 对象包含 content、id、model、role、stop_details、stop_reason、stop_sequence、type、usage；usage 元数据及其数组中均未发现明确耗时或首 Token 计时。账本的 duration_ms 为 null，不能将“键存在”统计为“有计时值”。
 
 这些是 Claude Code 日志保存的 SDK Messages 对象，原始 HTTP 头未落在该对象中。不能排除服务器响应头或被中间转换／SDK 丢弃的扩展字段；也不能把流式连接后续完成时间补写为首 Token 时间。脱敏结构证据见 build/checks/gemini-argon-0312/argon-original-message-fields.json。
+
+## OpenAI 平均 TPS 与通用备用方法
+
+同一条已完成的 Responses 记录具备有效 created_at、completed_at 和 output_tokens 时，平均 TPS = output_tokens / (completed_at - created_at)。时间单位是秒；零或负时间差、缺失结束时间或未完成状态不计算 TPS。这里可以计算整次响应的平均 TPS，不能把“落盘时未保留字段”误写成“有这两个字段也不能算 TPS”。它不产生 TTFT。
+
+Mac／Windows 的既有被动计时解析已兼容上述现成字段，规范保存调用起止时间和 duration_source=response_lifecycle，复用原耗时栏／平均 TPS。已有明确 duration_ms 或调用起止字段继续优先；不为补计时重新扫描历史，也不新增转发或改写上游配置。
+
+Claude Code 有另一条独立的官方来源：claude_code.api_request 日志事件包含 duration_ms、output_tokens 和 request_id，可用 output_tokens * 1000 / duration_ms 计算请求平均 TPS。需要实际调用进程启用并导出相应遥测，不能认为这些事件已经写入默认会话 JSONL。[官方请求事件](https://code.claude.com/docs/en/monitoring-usage#api-request-event)
+
+对于自己接入 Claude SDK 的调用方，官方 anthropic.messages.create span 可携带响应 ID 和输出 Token，并记录请求起止；流式 span 到流读取完毕或关闭才结束。应排除未完成或取消的流，去重 SDK／服务端双份 span，并明确是否含重试。gen_ai.response.time_to_first_chunk 是首内容块时延，不自动改称 TTFT。[SDK 追踪](https://platform.claude.com/docs/en/manage-claude/opentelemetry/sdk#tracing-a-stream)、[span 字段](https://platform.claude.com/docs/en/api/opentelemetry/spans)
+
+最通用的备用方法是在实际调用方发送请求前与完整接收终态后，用同一单调时钟记录时长，再结合该调用最终的输出 Token。这个端到端平均 TPS 包含网络／等待等时间，不能与纯解码速度混称。不使用相邻日志间隔、整轮工具执行时间、平均分摊时长或字符／chunk 数来补造逐调用 TPS。
+
+Claude 官方事件／span 的消费接入在本轮仅完成能力核对，尚未实现独立接收器，也没有自动开启任何遥测。现有 Windows Argon 原始 assistant 日志只有 requestRef 等关联元数据，不能未经核对将它当成官方事件的 request_id；优先验证响应 ID／请求 ID 的准确映射，不按时间邻近拼接。

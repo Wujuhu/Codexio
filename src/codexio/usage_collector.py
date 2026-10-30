@@ -73,8 +73,27 @@ def _call_timing(payload):
     # Only explicit model-call timing belongs on an accounting record. Tool
     # item timings and turn durations cannot stand in for an API call duration.
     duration = _duration_ms(payload.get("duration_ms"))
-    start = _timestamp(payload.get("started_at"))
-    end = _timestamp(payload.get("completed_at") or payload.get("ended_at"))
+    start_value = payload.get("call_started_at")
+    if start_value is None:
+        start_value = payload.get("started_at")
+    start = _timestamp(start_value)
+    api_derived = False
+    api_start = _duration_ms(payload.get("created_at"))
+    api_end = _duration_ms(payload.get("completed_at"))
+    api_interval = (payload.get("status") in (None, "", "completed") and
+                    api_start is not None and api_end is not None and
+                    api_start <= api_end < 253402300800)
+    if not start and api_interval:
+        start = _timestamp(api_start)
+        if duration is None:
+            duration = (api_end - api_start) * 1000
+            api_derived = True
+    end_value = payload.get("call_ended_at")
+    if end_value is None:
+        end_value = payload.get("completed_at")
+    if end_value is None:
+        end_value = payload.get("ended_at")
+    end = _timestamp(api_end if api_derived else end_value)
     if duration is None and start and end:
         span = (datetime.fromisoformat(end.replace("Z", "+00:00")) -
                 datetime.fromisoformat(start.replace("Z", "+00:00"))).total_seconds() * 1000
@@ -84,6 +103,12 @@ def _call_timing(payload):
         result["call_started_at"] = start
     if end:
         result["call_ended_at"] = end
+    if api_interval:
+        result.update(created_at=api_start, completed_at=api_end)
+        if api_derived:
+            result["duration_source"] = "response_lifecycle"
+    if payload.get("status") in ("completed", "aborted", "running", "failed", "incomplete"):
+        result["status"] = payload["status"]
     return result
 
 

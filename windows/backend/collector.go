@@ -1725,8 +1725,12 @@ func (s *Store) accounting(entry, state Row, tx *sql.Tx) (Row, error) {
 				}
 			}
 		}
-		if status := dataString(p, "status"); status == "completed" || status == "aborted" || status == "running" {
+		if status := dataString(p, "status"); status == "completed" || status == "aborted" || status == "running" || status == "failed" || status == "incomplete" {
 			r["status"] = status
+		}
+		if p["created_at"] != nil {
+			r["created_at"], r["completed_at"] = p["created_at"], p["completed_at"]
+			projectRecordedCallTiming(r)
 		}
 	}
 	if ttft, ok := recordedTTFTMilliseconds(p); ok {

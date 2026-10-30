@@ -68,8 +68,20 @@ func recordedCallTiming(_ input: Object) -> Object {
     var row=input
     guard !row.string("response_id").isEmpty || ["response:","modern:","legacy:"].contains(where:row.string("id").hasPrefix) else {return row}
     var milliseconds=row.number("duration_ms").flatMap {$0 >= 0 ? $0:nil}
+    if milliseconds == nil {row.removeValue(forKey:"duration_ms")}
     let end=parsedDate(row["call_ended_at"])
     if milliseconds == nil,let start=parsedDate(row["call_started_at"]),let end,end>=start {milliseconds=end.timeIntervalSince(start)*1000;row["duration_ms"]=milliseconds}
+    // Responses timestamps are Unix seconds belonging to this metered call.
+    // They establish average response TPS, never first-token latency.
+    if milliseconds == nil,row.string("client_kind") != "claude_code",
+       ["","completed"].contains(row.string("status")),
+       let start=row.number("created_at"),let end=row.number("completed_at"),
+       start>=0,end>=start,end<253402300800 {
+        milliseconds=(end-start)*1000
+        row["duration_ms"]=milliseconds;row["duration_source"]="response_lifecycle"
+        row["call_started_at"]=iso(Date(timeIntervalSince1970:start))
+        row["call_ended_at"]=iso(Date(timeIntervalSince1970:end))
+    }
     if let ttft=recordedTTFTMilliseconds(row) {row["ttft_ms"]=ttft}
     let quality=String(row.string("quality").split(separator:":").first ?? "")
     let metered=["response","legacy_last"].contains(quality) || quality=="cumulative_delta" && row.string("id").hasPrefix("response:")

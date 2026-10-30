@@ -19,12 +19,31 @@ func projectRecordedCallTiming(row Row) {
 	}
 	ms, known := ValueFloat(row["duration_ms"])
 	known = known && ms >= 0 && !math.IsInf(ms, 0) && !math.IsNaN(ms)
+	if !known {
+		delete(row, "duration_ms")
+	}
 	end, ended := ParseStamp(row["call_ended_at"])
 	if !known {
 		if start, ok := ParseStamp(row["call_started_at"]); ok && ended && !end.Before(start) {
 			ms = end.Sub(start).Seconds() * 1000
 			row["duration_ms"] = ms
 			known = true
+		}
+	}
+	// Responses uses Unix seconds. A response lifecycle can provide average
+	// output TPS without establishing TTFT or requiring stream interception.
+	if !known && dataString(row, "client_kind") != "claude_code" && (dataString(row, "status") == "" || dataString(row, "status") == "completed") {
+		start, startOK := ValueFloat(row["created_at"])
+		end, endOK := ValueFloat(row["completed_at"])
+		_, startBool := row["created_at"].(bool)
+		_, endBool := row["completed_at"].(bool)
+		if startOK && endOK && !startBool && !endBool && !math.IsNaN(start) && !math.IsNaN(end) && !math.IsInf(start, 0) && !math.IsInf(end, 0) && start >= 0 && end >= start && end < 253402300800 {
+			ms = (end - start) * 1000
+			known = true
+			row["duration_ms"], row["duration_source"] = ms, "response_lifecycle"
+			first, _ := ParseStamp(start)
+			last, _ := ParseStamp(end)
+			row["call_started_at"], row["call_ended_at"] = UTCStamp(first), UTCStamp(last)
 		}
 	}
 	if ttft, ok := recordedTTFTMilliseconds(row); ok {
