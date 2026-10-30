@@ -52,6 +52,7 @@ type Store struct {
 	closeOnce               sync.Once
 	directories             map[string]directorySnapshot
 	titleSignatures         map[string]string
+	catalogFiles            map[string][]string
 	lastDiscovery           time.Time
 	files                   map[string][]string
 	parentSignatureCache    map[string]map[string]bool
@@ -474,6 +475,9 @@ func saveOrigin(tx *sql.Tx, source, file, kind, id, generation string) error {
 	return e
 }
 func saveMetadata(tx *sql.Tx, table, kind string, r Row, source, file, generation string) error {
+	// Stored history may be richer than a replay's current parsing state. Never
+	// feed merged terminal metadata back into that state while rereading a turn.
+	r = CloneRow(r)
 	if table == "usage_turns" {
 		var digest string
 		var revision int64
@@ -489,6 +493,31 @@ func saveMetadata(tx *sql.Tx, table, kind string, r Row, source, file, generatio
 	_ = tx.QueryRow("SELECT data FROM "+table+" WHERE id=?", id).Scan(&old)
 	if old != "" {
 		a, b := dataRow(old), CloneRow(r)
+		if table == "usage_turns" {
+			for k, v := range a {
+				if _, exists := r[k]; !exists {
+					r[k] = v
+				}
+			}
+			for _, k := range []string{"prompt_preview", "output_preview", "ended_at", "model", "provider", "reasoning_effort"} {
+				if dataString(r, k) == "" || dataString(r, k) == "unknown" {
+					r[k] = a[k]
+				}
+			}
+			if ValueBool(a["has_main_message"]) && !ValueBool(b["has_main_message"]) {
+				r["has_main_message"], r["prompt_preview"] = true, a["prompt_preview"]
+				r["record_kind"] = a["record_kind"]
+			}
+			for _, key := range []string{"has_main_message", "has_user_message", "has_final_message", "has_usage"} {
+				if ValueBool(a[key]) {
+					r[key] = true
+				}
+			}
+			if (dataString(a, "status") == "completed" || dataString(a, "status") == "aborted") && dataString(b, "ended_at") == "" {
+				r["status"] = a["status"]
+			}
+			b, payload = CloneRow(r), dataJSON(r)
+		}
 		for _, k := range []string{"observed_at", "_generation"} {
 			delete(a, k)
 			delete(b, k)
@@ -512,16 +541,26 @@ func saveMessage(tx *sql.Tx, id string, patch Row) error {
 		return err
 	}
 	v := dataRow(raw)
-	patch = mergeRequestMediaPatch(v, patch)
+	// Keep a complete archived body and its associated identity/media together
+	// when a compacted source supplies an incomplete replacement with a new key.
 	for _, field := range []string{"user", "final"} {
 		if complete, ok := patch[field+"_complete"].(bool); ok && !complete && ValueBool(v[field+"_complete"]) {
-			key := field + "_message_key"
-			if dataString(patch, key) == "" || dataString(patch, key) == dataString(v, key) {
-				patch[field] = v[field]
-				patch[field+"_complete"] = true
+			media := "final_attachments"
+			if field == "user" {
+				media = "attachments"
+			}
+			for _, key := range []string{field, field + "_complete", field + "_message_key", field + "_media_schema", media} {
+				delete(patch, key)
+			}
+			if field == "final" {
+				delete(patch, "final_source")
 			}
 		}
 	}
+	if (dataString(v, "status") == "completed" || dataString(v, "status") == "aborted") && dataString(patch, "status") != "completed" && dataString(patch, "status") != "aborted" {
+		delete(patch, "status")
+	}
+	patch = mergeRequestMediaPatch(v, patch)
 	for k, x := range patch {
 		v[k] = x
 	}

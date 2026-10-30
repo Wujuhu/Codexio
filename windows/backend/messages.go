@@ -183,11 +183,8 @@ func (s *Store) verifiedMessagePath(path string) bool {
 		if err != nil || !strings.EqualFold(filepath.Clean(resolved), filepath.Clean(root)) {
 			continue
 		}
-		for _, folder := range []string{"sessions", "archived_sessions"} {
-			rel, err := filepath.Rel(filepath.Join(root, folder), actual)
-			if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel) {
-				return true
-			}
+		if localRolloutPath(root, actual) {
+			return true
 		}
 	}
 	return false

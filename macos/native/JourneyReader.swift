@@ -16,7 +16,7 @@ final class JourneyReader {
         return expression.matches(in:name as String,range:NSRange(location:0,length:name.length)).last.map {name.substring(with:$0.range)} ?? ""
     }
     private func allowed(_ file: URL,root: URL) -> Bool {
-        ["sessions","archived_sessions"].contains {file.standardizedFileURL.path.hasPrefix(root.appendingPathComponent($0).standardizedFileURL.path+"/")} && RolloutFile.accepts(file) && file.resolvingSymlinksInPath()==file.standardizedFileURL
+        file.standardizedFileURL.path.hasPrefix(root.standardizedFileURL.path+"/") && RolloutFile.accepts(file) && file.resolvingSymlinksInPath()==file.standardizedFileURL
     }
     func ranges(root: URL,thread: String,turns: Set<String>) throws -> [Range] {
         guard !turns.isEmpty,let stateFile=JourneyCatalog.database(root,prefix:"state_"),let historyFile=JourneyCatalog.database(root,prefix:"thread_history_") else {throw AppFailure(L("本地过程记录暂不可用", "Local process history is unavailable"))}

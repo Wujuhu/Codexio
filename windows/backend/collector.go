@@ -181,20 +181,37 @@ func (s *Store) collect(ctx context.Context, force bool) error {
 		}
 		root = filepath.Clean(root)
 		if info, e := os.Stat(root); e != nil || !info.IsDir() {
-			return fmt.Errorf("Codex 数据目录不可用: %s", root)
+			if len(scanErrors) < 4 {
+				scanErrors = append(scanErrors, fmt.Errorf("Codex 数据目录不可用: %s", root))
+			}
+			continue
 		}
 		source := "local"
 		if index > 0 {
 			source = "local:" + HashString(strings.ToLower(root))[:16]
 		}
 		active[source] = true
+		if e := s.readTitles(root, rediscover); e != nil {
+			if len(scanErrors) < 4 {
+				scanErrors = append(scanErrors, fmt.Errorf("read local catalog: %w", e))
+			}
+		}
 		all := []string{}
 		for _, sub := range []string{"sessions", "archived_sessions"} {
 			f, e := s.discover(filepath.Join(root, sub), rediscover)
 			if e != nil {
-				return e
+				if len(scanErrors) < 4 {
+					scanErrors = append(scanErrors, fmt.Errorf("discover %s: %w", sub, e))
+				}
+				continue
 			}
 			all = append(all, f...)
+		}
+		for _, candidate := range s.catalogFiles[root] {
+			path := resolveRolloutPath(candidate)
+			if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
+				all = append(all, path)
+			}
 		}
 		// A compressor may briefly leave both representations. One logical
 		// source owns the cursor; prefer its live, uncompressed representation.
@@ -219,9 +236,6 @@ func (s *Store) collect(ctx context.Context, force bool) error {
 		sort.Strings(all)
 		s.files[source] = all
 		// Scan older sessions first so explicit inherited parent boundaries can resolve.
-		if e := s.readTitles(root, rediscover); e != nil {
-			return e
-		}
 		seen := map[string]bool{}
 		for _, path := range all {
 			if e := ctx.Err(); e != nil {
@@ -298,6 +312,7 @@ func (s *Store) readTitles(root string, force bool) error {
 		return nil
 	}
 	titles := map[string]string{}
+	rollouts := map[string]bool{}
 	ranks := map[string]int{}
 	put := func(id, title string, rank int) {
 		if id != "" && userText(title) != "" && rank >= ranks[id] {
@@ -357,6 +372,29 @@ func (s *Store) readTitles(root string, force bool) error {
 				e = rows.Err()
 				rows.Close()
 			}
+			// Reuse the state/WAL change check for rollout discovery. Directory
+			// metadata alone cannot reveal a native catalog pointing at old history.
+			if e == nil {
+				locations, err := db.Query("SELECT rollout_path FROM threads WHERE rollout_path IS NOT NULL")
+				if err == nil {
+					for locations.Next() {
+						var path string
+						if err = locations.Scan(&path); err != nil {
+							break
+						}
+						if localRolloutPath(root, path) {
+							rollouts[filepath.Clean(path)] = true
+						}
+					}
+					if err == nil {
+						err = locations.Err()
+					}
+					locations.Close()
+					e = err
+				} else if !strings.Contains(err.Error(), "no such column") {
+					e = err
+				}
+			}
 			db.Close()
 			if e != nil {
 				return e
@@ -379,7 +417,23 @@ func (s *Store) readTitles(root string, force bool) error {
 	for path, signature := range signatures {
 		s.titleSignatures[path] = signature
 	}
+	if s.catalogFiles == nil {
+		s.catalogFiles = map[string][]string{}
+	}
+	files := make([]string, 0, len(rollouts))
+	for path := range rollouts {
+		files = append(files, path)
+	}
+	sort.Strings(files)
+	s.catalogFiles[root] = files
 	return nil
+}
+func localRolloutPath(root, path string) bool {
+	if !filepath.IsAbs(path) || !isRolloutFile(path) {
+		return false
+	}
+	rel, err := filepath.Rel(root, filepath.Clean(path))
+	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 func checkpointHash(f io.ReaderAt, offset int64) string {
 	start := offset - 4096
@@ -435,6 +489,10 @@ func (s *Store) scanFile(ctx context.Context, path, key, source string, force bo
 	// A plain/compressed handover preserves the logical bytes and cursor. A
 	// replacement within the same encoding still follows normal reconciliation.
 	sameIdentity := dataString(cursor, "identity") == identity || ValueBool(cursor["compressed"]) != compressed
+	// A lossless encoding change or a native history rewrite does not revoke
+	// previously observed usage. Preserve absent receipts across later rescans;
+	// records that are still present continue through normal ID reconciliation.
+	rewritten := len(cursor) > 0 && (!sameIdentity || offset < 0 || offset > stat.Size() || dataString(cursor, "checkpoint") != checkpointHash(f, offset) || dataString(cursor, "prefix") != prefixHash(f, offset) || offset == stat.Size() && ValueInt(cursor["mtime"]) != sourceStat.ModTime().UnixNano())
 	// Validate the original cursor before repairing metadata from its log. File
 	// replacement/truncation belongs to the existing meter reconciliation path.
 	if !force && ValueInt(cursor["parser_version"]) == 1 && ValueInt(cursor["metadata_version"]) != requestMetadataVersion && s.metadataRepairRemaining > 0 && (len(s.metadataRepairPriority) == 0 || s.metadataRepairPriority[key]) && sameIdentity && offset > 0 && offset <= stat.Size() && dataString(cursor, "checkpoint") == checkpointHash(f, offset) && dataString(cursor, "prefix") == prefixHash(f, offset) {
@@ -512,10 +570,11 @@ func (s *Store) scanFile(ctx context.Context, path, key, source string, force bo
 			defer tx.Rollback()
 		}
 	}
-	// Only after the complete replacement was parsed may stale contributions disappear.
+	// Reconcile parser corrections only after a complete read. Physical source
+	// rewrites retain confirmed history even when the new transcript omits it.
 	reconcile := !valid || ValueBool(cursor["reconcile_pending"])
 	if reconcile && offset == stat.Size() && !malformed && dataString(state, "pending_parent") == "" {
-		if e = pruneOrigin(tx, source, key, generation); e != nil {
+		if e = pruneOrigin(tx, source, key, generation, rewritten); e != nil {
 			return e
 		}
 		reconcile = false
@@ -549,8 +608,12 @@ func readBoundedLine(r *bufio.Reader, max int) ([]byte, error) {
 		return b, e
 	}
 }
-func pruneOrigin(tx *sql.Tx, source, file, generation string) error {
-	rows, e := tx.Query("SELECT kind,item_id FROM usage_origins WHERE source_id=? AND file_key=? AND generation<>?", source, file, generation)
+func pruneOrigin(tx *sql.Tx, source, file, generation string, retainMissing bool) error {
+	if retainMissing {
+		_, err := tx.Exec("UPDATE usage_origins SET generation='retained' WHERE source_id=? AND file_key=? AND generation<>? AND generation<>'retained'", source, file, generation)
+		return err
+	}
+	rows, e := tx.Query("SELECT kind,item_id FROM usage_origins WHERE source_id=? AND file_key=? AND generation<>? AND generation<>'retained'", source, file, generation)
 	if e != nil {
 		return e
 	}
@@ -564,7 +627,7 @@ func pruneOrigin(tx *sql.Tx, source, file, generation string) error {
 		items = append(items, [2]string{kind, id})
 	}
 	rows.Close()
-	if _, e = tx.Exec("DELETE FROM usage_origins WHERE source_id=? AND file_key=? AND generation<>?", source, file, generation); e != nil {
+	if _, e = tx.Exec("DELETE FROM usage_origins WHERE source_id=? AND file_key=? AND generation<>? AND generation<>'retained'", source, file, generation); e != nil {
 		return e
 	}
 	for _, item := range items {

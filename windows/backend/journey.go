@@ -354,8 +354,7 @@ func (j *localJourney) ranges(root, thread string, turns []string) ([]journeyRan
 		path = resolveRolloutPath(path)
 		absolute, _ := filepath.Abs(path)
 		resolved, e := filepath.EvalSymlinks(absolute)
-		rel, re := filepath.Rel(root, absolute)
-		if e != nil || re != nil || !strings.EqualFold(resolved, absolute) || strings.HasPrefix(rel, "..") || (!strings.HasPrefix(filepath.ToSlash(rel), "sessions/") && !strings.HasPrefix(filepath.ToSlash(rel), "archived_sessions/")) {
+		if e != nil || !strings.EqualFold(resolved, absolute) || !localRolloutPath(root, absolute) {
 			return nil, errors.New("历史片段路径不可用")
 		}
 		ids := journeyUUID.FindAllString(filepath.Base(path), -1)

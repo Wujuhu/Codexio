@@ -8,6 +8,7 @@ final class UsageIndexer {
     private struct FileList { let files: [URL]; let directories: [URL:FileStamp]; let checked: TimeInterval }
     private var fileLists: [URL:FileList] = [:]
     private var titleInputs: [URL:[URL:FileStamp]] = [:]
+    private var catalogFiles: [URL:[URL]] = [:]
     private var resumeRepairSessions: Set<String>?
     private var mainOwnershipRepaired = false
     private var detailTargets: Set<String>?
@@ -51,7 +52,7 @@ final class UsageIndexer {
             }
         }
         let active = Set(roots)
-        fileLists = fileLists.filter {active.contains($0.key)}; titleInputs = titleInputs.filter {active.contains($0.key)}
+        fileLists = fileLists.filter {active.contains($0.key)}; titleInputs = titleInputs.filter {active.contains($0.key)}; catalogFiles = catalogFiles.filter {active.contains($0.key)}
         let paths = Set(fileLists.values.flatMap {$0.files.map(\.path)})
         scannedFiles = scannedFiles.filter {paths.contains($0.key)}
         try repairRecentMaintenance()
@@ -62,6 +63,17 @@ final class UsageIndexer {
         if let cached = fileLists[root], now-cached.checked < 60,
            cached.directories.allSatisfy({FileStamp($0.key) == $0.value}) { return cached.files }
         var directories = Set([root]), selected: [String:(URL,Int)] = [:]
+        func include(_ file: URL,_ size: Int) {
+            let key = rolloutID(file)
+            if let old = selected[key] {
+                if RolloutFile.compressed(old.0) != RolloutFile.compressed(file) {
+                    if !RolloutFile.compressed(file) { selected[key] = (file,size) }
+                } else {
+                    let previous = FileStamp(old.0), current = FileStamp(file)
+                    if (current.modified ?? .distantPast) > (previous.modified ?? .distantPast) || current.modified == previous.modified && old.1 < size { selected[key] = (file,size) }
+                }
+            } else { selected[key] = (file,size) }
+        }
         for folder in ["sessions","archived_sessions"] {
             let directory = root.appendingPathComponent(folder); directories.insert(directory)
             guard let iterator = FileManager.default.enumerator(at:directory,includingPropertiesForKeys:[.isSymbolicLinkKey,.isDirectoryKey,.fileSizeKey],options:[.skipsHiddenFiles]) else { continue }
@@ -71,13 +83,14 @@ final class UsageIndexer {
                 if info?.isSymbolicLink == true { iterator.skipDescendants(); continue }
                 if info?.isDirectory == true { directories.insert(file); continue }
                 guard RolloutFile.accepts(file) else { continue }
-                let key = rolloutID(file), size = info?.fileSize ?? 0
-                if let old = selected[key] {
-                    if RolloutFile.compressed(old.0) != RolloutFile.compressed(file) {
-                        if !RolloutFile.compressed(file) { selected[key] = (file,size) }
-                    } else if old.1 < size { selected[key] = (file,size) }
-                } else { selected[key] = (file,size) }
+                include(file,info?.fileSize ?? 0)
             }
+        }
+        // Native state can retain a rollout location outside the active/archive
+        // directory trees. It is a local file hint, never a usage record itself.
+        for candidate in catalogFiles[root] ?? [] {
+            let file = RolloutFile.resolve(candidate), stamp = FileStamp(file)
+            if stamp.exists { include(file,Int(stamp.size)) }
         }
         let files = selected.values.map(\.0).sorted {$0.path < $1.path}
         fileLists[root] = FileList(files:files,directories:Dictionary(uniqueKeysWithValues:directories.map {($0,FileStamp($0))}),checked:now)
@@ -89,7 +102,7 @@ final class UsageIndexer {
         let inputs = [index]+states.flatMap {[$0,$0.deletingLastPathComponent().appendingPathComponent($0.lastPathComponent+"-wal")]}
         let signatures = Dictionary(uniqueKeysWithValues:inputs.map {($0,FileStamp($0))})
         if titleInputs[root] == signatures { return }
-        var values: [String:String] = [:], contexts: [String:String] = [:], complete = true
+        var values: [String:String] = [:], contexts: [String:String] = [:], complete = true, rollouts = Set<URL>()
         func displayTitle(_ value: String) -> String {
             let text = value.trimmingCharacters(in:.whitespacesAndNewlines)
             guard !text.hasPrefix("# Files mentioned by the user:"), !text.hasPrefix("# AGENTS.md") else { return "" }
@@ -106,17 +119,26 @@ final class UsageIndexer {
             if let db = try? Database(file,readOnly:true), let columns = try? db.query("PRAGMA table_info(threads)") {
                 let hasName = columns.contains {$0.string("name") == "name"}
                 let hasCWD = columns.contains {$0.string("name") == "cwd"}
-                guard let rows = try? db.query("SELECT id,title"+(hasName ? ",name" : "")+(hasCWD ? ",cwd" : "")+" FROM threads") else { complete = false; continue }
+                let hasRollout = columns.contains {$0.string("name") == "rollout_path"}
+                guard let rows = try? db.query("SELECT id,title"+(hasName ? ",name" : "")+(hasCWD ? ",cwd" : "")+(hasRollout ? ",rollout_path" : "")+" FROM threads") else { complete = false; continue }
                 for row in rows where !row.string("id").isEmpty {
                     let id = row.string("id"), name = displayTitle(row.string("name")), title = displayTitle(row.string("title"))
                     if !name.isEmpty { values[id] = name }
                     else if values[id] == nil && !title.isEmpty { values[id] = title }
                     if row.string("cwd").hasPrefix("/") { contexts[id] = row.string("cwd") }
+                    let path = row.string("rollout_path")
+                    if path.hasPrefix("/") {
+                        let candidate = URL(fileURLWithPath:path).standardizedFileURL
+                        if RolloutFile.accepts(candidate), candidate.path.hasPrefix(root.standardizedFileURL.path+"/") { rollouts.insert(candidate) }
+                    }
                 }
             } else { complete = false }
         }
         try database.updateTitles(values)
         try database.updateSessionContexts(contexts)
+        if !complete { rollouts.formUnion(catalogFiles[root] ?? []) }
+        let candidates = rollouts.sorted {$0.path < $1.path}
+        if catalogFiles[root] != candidates { catalogFiles[root] = candidates; fileLists.removeValue(forKey:root) }
         if complete { titleInputs[root] = signatures }
     }
     private func needsOwnershipRepair(_ cursor: Object) -> Bool {

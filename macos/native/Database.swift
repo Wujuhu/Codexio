@@ -170,6 +170,7 @@ final class Database {
             }
             for (key,value) in old where record[key] == nil || record[key] is NSNull { record[key] = value }
             for key in ["prompt_preview","output_preview","session_title"] where record.string(key).isEmpty { record[key] = old[key] }
+            for key in ["model","provider","reasoning_effort"] where ["","unknown"].contains(record.string(key)) { record[key] = old[key] }
         }
         try run("INSERT INTO usage_records VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET timestamp=excluded.timestamp,model=excluded.model,session_id=excluded.session_id,data=excluded.data WHERE data<>excluded.data",[record.string("id"),record.string("timestamp"),record.string("model","unknown"),record.string("session_id"),jsonString(record)])
         try run("INSERT OR IGNORE INTO usage_record_sources VALUES(?,?)",[record.string("id"),source])
@@ -184,9 +185,13 @@ final class Database {
             if old.flag("has_main_message"), !value.flag("has_main_message") {
                 // A pre-upgrade cursor may still carry the overwritten preview.
                 value["prompt_preview"] = old["prompt_preview"]
+                value["record_kind"] = old["record_kind"]
             }
+            for key in ["has_main_message","has_user_message","has_final_message","has_usage"] where old.flag(key) { value[key] = true }
             for (key,field) in old where value[key] == nil { value[key] = field }
             for key in ["prompt_preview","output_preview","ended_at"] where value.string(key).isEmpty { value[key] = old[key] }
+            for key in ["model","provider","reasoning_effort"] where ["","unknown"].contains(value.string(key)) { value[key] = old[key] }
+            if ["completed","aborted"].contains(old.string("status")), row.string("ended_at").isEmpty { value["status"] = old["status"] }
         }
         if let message = try query("SELECT digest,revision FROM usage_request_message_metadata WHERE id=?",[row.string("id")]).first {
             value["message_digest"] = message["digest"]; value["message_revision"] = message["revision"]
@@ -251,6 +256,14 @@ final class Database {
         guard !id.isEmpty else { return }
         let old = try requestMessageRow(id) ?? [:]
         var value = jsonObject(Data(old.string("data").utf8)), patch = patch
+        // A rewritten/compacted source may expose a different, incomplete
+        // representation of the same request. Keep the full archived message
+        // and its matching media/identity together until a complete one arrives.
+        for field in ["user","final"] where value.flag(field+"_complete") && patch[field+"_complete"] as? Bool == false {
+            for key in [field,field+"_complete",field+"_message_key",field+"_media_schema",field == "user" ? "attachments":"final_attachments"] { patch.removeValue(forKey:key) }
+            if field == "final" { patch.removeValue(forKey:"final_source") }
+        }
+        if ["completed","aborted"].contains(value.string("status")), !["completed","aborted"].contains(patch.string("status")) { patch.removeValue(forKey:"status") }
         let sameUser = !patch.string("user_message_key").isEmpty && patch.string("user_message_key") == value.string("user_message_key")
         var sameFinal = !patch.string("final_message_key").isEmpty && patch.string("final_message_key") == value.string("final_message_key")
         if patch.removeValue(forKey:"final_fallback") as? Bool == true,
@@ -275,12 +288,6 @@ final class Database {
             patch[key] = RequestMedia.preservingCreationDates(patch.objects(key),from:previous)
         }
         if sameUser, patch.string("user").isEmpty, !value.string("user").isEmpty { patch["user"] = value["user"]; patch["user_complete"] = value["user_complete"] }
-        for field in ["user","final"] where value.flag(field+"_complete") && patch[field+"_complete"] as? Bool == false {
-            let key=field+"_message_key"
-            if patch.string(key).isEmpty || patch.string(key)==value.string(key) {
-                patch[field]=value[field];patch[field+"_complete"]=true
-            }
-        }
         for (key,field) in patch { value[key] = field }
         value["id"] = id
         for key in ["attachments","final_attachments","generated_attachments"] {
@@ -373,7 +380,7 @@ final class Database {
         var result: [(URL,URL)] = [], seen = Set<String>()
         for row in rows {
             let file = RolloutFile.resolve(URL(fileURLWithPath:row.string("path")).standardizedFileURL), root = URL(fileURLWithPath:row.string("root")).standardizedFileURL
-            let allowed = ["sessions","archived_sessions"].contains { file.path.hasPrefix(root.appendingPathComponent($0).path+"/") }
+            let allowed = file.path.hasPrefix(root.path+"/")
             guard allowed, RolloutFile.accepts(file), file.resolvingSymlinksInPath() == file,
                   root.resolvingSymlinksInPath() == root, FileStamp(file).exists, seen.insert(file.path).inserted else { continue }
             result.append((file,root))
