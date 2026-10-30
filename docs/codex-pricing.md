@@ -68,9 +68,11 @@ Flash、FlashX、Pro、Lite、Air、视觉／图像专用型号等语义标记�
 
 返回模型按原有 response ID／逐次调用关联后优先匹配，不把一次 `magpie → Gemini` 观测永久绑定到所有 magpie。Codex 无明确可识别返回时可用已知请求模型作参考；Claude 继续保留返回模型缺失或无法识别时费用缺失的保护。Claude 配置 label 的别名沿用来源隔离、生效时间和有界历史，只影响确认后的记录。原模型、来源、Token 和原始日志不改写；规范型号仅写入选用的 price_rates。
 
-其他组首批为 Gemini 3.8 Flash、DeepSeek Flash／Pro、GLM 5.3／5.3 Flash／5.3 FlashX、Kimi K3。GLM 仅 5.3 起、Kimi 仅 K3 起；Flash 与 FlashX 独立计价。新型号仍需核对具体官方 Standard 单价，不用品牌通用价或模糊匹配。
+其他组支持 Gemini 4 Argon、Gemini 3.8 Flash、DeepSeek Flash／Pro、GLM 5.3／5.3 Flash／5.3 FlashX、Kimi K3。GLM 仅 5.3 起、Kimi 仅 K3 起；Flash 与 FlashX 独立计价。新型号仍需核对具体官方 Standard 单价，不用品牌通用价或模糊匹配。
 
 DeepSeek 主表使用峰值价：Flash 输入／缓存读取／输出分别为 $0.30／$0.006／$1.20，Pro 为 $1.32／$0.044／$3.96，每百万 Token。按调用发生时的北京时间判断：非法定节假日的周一至周五 09:00–12:00、14:00–18:00 为峰值，其他时间 ×0.5；调休周末仍按周末处理。内置国务院已发布的 2026 年假期日历，日历是价格规则依赖；未覆盖年份的潜在节假日峰值时段保留参考估算属性。
+
+Gemini 4 Argon（gemini-4-argon）使用官方 Standard 参考价：2026-11-30（含）之前每百万 Token 输入 $2、缓存读取 $0.10、输出 $10，2026-12-01 起分别为 $4／$0.20／$20。日期切换沿用项目已有 Gemini 规则的 UTC 边界，即 2026-12-01T00:00:00Z。只支持隐式缓存，缓存写入价格保留缺失，不虚构显式缓存写入费用。带 Low／Medium／High、供应商与日期修饰的 Argon 型号复用已有结构化识别；Carbon、Flash 冲突或未核对代际不借用 Argon 单价。保持原始模型标识、客户端来源和 Token 不变，第三方返回模型仍按实际返回型号匹配。此处沿用“其他”组 Standard API 参考估值，不把 Gemini Priority／Flex／Batch 价格当成 Codex Fast 倍率。[官方型号](https://ai.google.dev/gemini-api/docs/models/gemini-4-argon)、[官方定价](https://ai.google.dev/gemini-api/docs/pricing#gemini-4-argon)。
 
 Gemini 3.8 Flash 当前输入／缓存读取／输出为 $0.75／$0.075／$3.75，每百万 Token；官方列出的 2027-01-01 起价格在相同调用时间边界乘 2。按用户最新确认口径，“其他”组模型统一使用 5 分钟缓存写入参考价；Kimi K3 固定为 $3／百万 Token，日志即使包含 1 小时分项也按写入总量使用 5 分钟价。该口径按模型分组生效，在 Codex／Claude Code 接入时一致；原始分项不改写。其他表格只展示 5 分钟写入列，Kimi 不再展示 1 小时倍率或感叹号；官方 1 小时价仍留在原始价格资源供归档核对，不参与该组计价。Claude 官方模型继续按已记录的 5 分钟／1 小时分项分别计算，缺分项沿用有估算标识的默认档；不重复计算缓存 Token。缓存存储不是缓存写入，本次不展示或计入按存储时长收取的独立费用。Claude 美国区域、Batch、Gemini 专用服务档位均不纳入本次规则。
 

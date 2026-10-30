@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "rule_version": "unified-official-2026-10-29-v5-terra-ultrafast",
-  "verified_at": "2026-10-29T00:00:00+00:00",
+  "rule_version": "unified-official-2026-10-30-v6-gemini-4-argon",
+  "verified_at": "2026-10-30T00:00:00+00:00",
   "models": [
     {
       "model": "gpt-6.1-sol",
@@ -454,6 +454,16 @@
       "tooltip_en": "Base prices apply"
     },
     {
+      "model": "gemini-4-argon",
+      "group": "other",
+      "display_name": "Gemini 4 Argon",
+      "aliases": [
+        "Gemini 4 Argon"
+      ],
+      "tooltip": "2026.12.1 起：×2",
+      "tooltip_en": "From 2026.12.1: ×2"
+    },
+    {
       "model": "gemini-3.8-flash",
       "group": "other",
       "display_name": "Gemini 3.8 Flash",
@@ -536,6 +546,20 @@
     }
   ],
   "other_rows": [
+    {
+      "model": "gemini-4-argon",
+      "input": 2,
+      "cache_read": 0.1,
+      "cache_write": null,
+      "output": 10,
+      "source": "https://ai.google.dev/gemini-api/docs/pricing#gemini-4-argon",
+      "price_changes": [
+        {
+          "since": "2026-12-01T00:00:00Z",
+          "multiplier": 2
+        }
+      ]
+    },
     {
       "model": "gemini-3.8-flash",
       "input": 0.75,
@@ -678,7 +702,7 @@
   },
   "other_cache_write_ttl": "5m",
   "model_matching": {
-    "revision": 1,
+    "revision": 2,
     "ignored_tokens": [
       "minimal",
       "low",
@@ -725,9 +749,15 @@
           "tts",
           "embedding",
           "embeddings",
-          "rerank"
+          "rerank",
+          "argon",
+          "carbon"
         ],
         "models": [
+          {
+            "model": "gemini-4-argon",
+            "prefix": "^(?:v )?4 argon(?: |$)"
+          },
           {
             "model": "gemini-3.8-flash",
             "prefix": "^(?:v )?(?:3\\.8|3 8) (?:flash|falsh)(?: |$)"
