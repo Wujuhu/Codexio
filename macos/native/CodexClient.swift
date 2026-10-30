@@ -15,9 +15,15 @@ final class CodexClient {
     private var pending: [Int:ReplyBox] = [:]
     private var nextID = 0
     private var shuttingDown = false
+    private var transportFailed = false
+    private var connectionID = UUID()
+    private var nextStartAt: TimeInterval = 0
+    private var startupFailures = 0
+    private var lastHint: String?
     private var retired: [Process] = []
     private let lock = NSRecursiveLock()
     private let writer = NSLock()
+    private let starter = NSLock()
     var onNotification: ((String,Object)->Void)?
 
     private static let probeLock = NSLock()
@@ -84,12 +90,22 @@ final class CodexClient {
         var seen = Set<String>()
         return candidates.map { $0.standardizedFileURL.resolvingSymlinksInPath() }.first { seen.insert($0.path).inserted && usable($0) }
     }
-    var running: Bool { lock.lock(); defer { lock.unlock() }; return process?.isRunning == true }
+    static func retryDelay(failures: Int,interval: TimeInterval) -> TimeInterval {min(900,max(60,interval)*Double(1 << min(4,max(0,failures-1))))}
+    var running: Bool { lock.lock(); defer { lock.unlock() }; return process?.isRunning == true && !transportFailed }
     func start(hint: String?) throws {
+        starter.lock();defer {starter.unlock()}
         lock.lock(); let closed = shuttingDown; lock.unlock()
         guard !closed else { throw AppFailure(L("连接已关闭", "Connection closed")) }
-        if running { return }
+        lock.lock()
+        let changed=hint != lastHint
+        if changed { lastHint=hint;nextStartAt = 0;startupFailures=0 }
+        if !changed,process?.isRunning == true,!transportFailed {lock.unlock();return}
+        guard ProcessInfo.processInfo.systemUptime >= nextStartAt else {lock.unlock();throw AppFailure(L("Codex 连接暂不可用，请稍后重试", "Codex is temporarily unavailable. Retry later."))}
+        startupFailures+=1;nextStartAt=ProcessInfo.processInfo.systemUptime+Self.retryDelay(failures:startupFailures,interval:60)
+        lock.unlock()
+        close()
         guard let executable = Self.discover(hint) else { throw AppFailure(L("未找到 Codex，请安装 ChatGPT 或 Codex 并登录", "Codex was not found. Install ChatGPT or Codex and sign in.")) }
+        let generation=UUID()
         let child = Process(), out = Pipe(), err = Pipe(), stdin = Pipe()
         child.executableURL = executable; child.arguments = ["app-server","--listen","stdio://"]
         child.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
@@ -98,17 +114,18 @@ final class CodexClient {
         child.environment = environment; child.standardInput = stdin; child.standardOutput = out; child.standardError = err
         out.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
-            if data.isEmpty { handle.readabilityHandler = nil; self?.failPending(AppFailure(L("Codex 连接已关闭", "Codex connection closed"))); return }
-            self?.receive(data)
+            if data.isEmpty { handle.readabilityHandler = nil; self?.failConnection(generation); return }
+            self?.receive(data,generation:generation)
         }
         err.fileHandleForReading.readabilityHandler = { handle in if handle.availableData.isEmpty { handle.readabilityHandler = nil } }
         do {
             lock.lock()
             guard !shuttingDown else { lock.unlock(); throw AppFailure(L("连接已关闭", "Connection closed")) }
-            process = child; input = stdin.fileHandleForWriting; buffer = Data()
+            process = child; input = stdin.fileHandleForWriting; buffer = Data();connectionID=generation;transportFailed=false
             do { try child.run(); lock.unlock() } catch { lock.unlock(); throw error }
             _ = try request("initialize",["clientInfo":["name":"codexio","title":"Codexio","version":BuildInfo.version],"capabilities":["optOutNotificationMethods":["item/agentMessage/delta","item/reasoning/delta","item/commandExecution/outputDelta"]]])
             try send(["method":"initialized","params":[:]])
+            lock.lock();startupFailures=0;lock.unlock()
         } catch { close(); throw error }
     }
     func request(_ method: String, _ params: Object? = nil, timeout: TimeInterval = 20) throws -> Object {
@@ -124,11 +141,14 @@ final class CodexClient {
     private func send(_ payload: Object) throws {
         let data = try jsonData(payload) + Data([10])
         writer.lock(); defer { writer.unlock() }
-        guard let input, process?.isRunning == true else { throw AppFailure(L("Codex 尚未连接", "Codex is not connected")) }
-        try input.write(contentsOf:data)
+        lock.lock();let input=self.input,generation=connectionID,alive=process?.isRunning == true && !transportFailed;lock.unlock()
+        guard let input, alive else { throw AppFailure(L("Codex 尚未连接", "Codex is not connected")) }
+        do {try input.write(contentsOf:data)} catch {
+            failConnection(generation);throw error
+        }
     }
-    private func receive(_ data: Data) {
-        lock.lock(); buffer.append(data)
+    private func receive(_ data: Data,generation: UUID) {
+        lock.lock();guard connectionID==generation else {lock.unlock();return};buffer.append(data)
         var lines: [Data] = []
         while let newline = buffer.firstIndex(of:10) { lines.append(buffer.subdata(in:0..<newline)); buffer.removeSubrange(0...newline) }
         if buffer.count > 32_000_000 { buffer.removeAll() }
@@ -151,8 +171,14 @@ final class CodexClient {
         lock.lock(); let boxes = Array(pending.values); pending.removeAll(); lock.unlock()
         for box in boxes { box.result = .failure(error); box.semaphore.signal() }
     }
+    private func failConnection(_ generation: UUID) {
+        lock.lock();guard connectionID==generation else {lock.unlock();return}
+        transportFailed=true
+        let boxes=Array(pending.values);pending.removeAll();lock.unlock()
+        for box in boxes {box.result = .failure(AppFailure(L("Codex 连接已关闭", "Codex connection closed")));box.semaphore.signal()}
+    }
     func close() {
-        lock.lock(); let old = process; process = nil; let stdin = input; input = nil; lock.unlock()
+        lock.lock(); let old = process; process = nil; let stdin = input; input = nil; connectionID=UUID();transportFailed=true; lock.unlock()
         try? stdin?.close()
         if let old, old.isRunning {
             old.terminate(); lock.lock(); retired.removeAll {!$0.isRunning}; retired.append(old); lock.unlock()

@@ -53,7 +53,7 @@
       </section>
       {#if data.availability!=='unavailable'&&rows(data.attachments).length}<section><h3>{tr('附件')}</h3>{#each rows(data.attachments) as attachment}<div class="attachment"><Icon name="file" size={14}/><span>{text(attachment.name)}</span></div>{/each}</section>{/if}
       {#if members.length}<details class="calls" bind:open={callsOpen}><summary>{tr('模型调用')} ({numeric(data.total_members)})</summary>
-        {#each members as member}<div class="call"><div class="call-head"><Model record={member} align="left"/></div><small class="muted">{kind(member.record_kind)} · {speed(member.service_tier)}</small><p>{compact(member.total_tokens)} Token · {priced(member)}</p>{#if member.output_preview}<p class="muted call-preview">{text(member.output_preview)}</p>{/if}</div>{/each}
+        {#each members as member}<div class="call"><div class="call-head"><Model record={member} align="left"/></div><small class="muted">{kind(member.record_kind)} · {speed(member.service_tier)}</small><p>{compact(member.total_tokens)} Token · {priced(member)}</p><p class="muted"><Duration record={member}/> · {tpsLabel(member,'tokens/s')} · TTFT {ttftLabel(member)}</p>{#if member.output_preview}<p class="muted call-preview">{text(member.output_preview)}</p>{/if}</div>{/each}
         {#if Number(data.pages)>1}<div class="row call-pages"><button disabled={page<=1||busy} onclick={()=>load(currentId,page-1)}>{tr('上一页')}</button><span>{page} / {data.pages}</span><button disabled={page>=data.pages||busy} onclick={()=>load(currentId,page+1)}>{tr('下一页')}</button></div>{/if}
       </details>{/if}
     {/if}

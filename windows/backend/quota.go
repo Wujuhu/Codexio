@@ -22,30 +22,31 @@ type systemResetCommand struct {
 	reply       chan systemRPCResult
 }
 type QuotaService struct {
-	opts           SystemOptions
-	mu             sync.RWMutex
-	state          Row
-	raw            Row
-	ctx            context.Context
-	cancel         context.CancelFunc
-	done           chan struct{}
-	wake           chan struct{}
-	refreshMu      sync.Mutex
-	reset          chan systemResetCommand
-	client         *systemRPC
-	clientMu       sync.Mutex
-	startOnce      sync.Once
-	closeOnce      sync.Once
-	notifications  Row
-	accountChanged bool
-	failures       int
-	identity       systemIdentity
-	root, path     string
-	reports        *systemAnalytics
+	opts             SystemOptions
+	mu               sync.RWMutex
+	state            Row
+	raw              Row
+	ctx              context.Context
+	cancel           context.CancelFunc
+	done             chan struct{}
+	wake             chan bool
+	refreshMu        sync.Mutex
+	reset            chan systemResetCommand
+	client           *systemRPC
+	clientMu         sync.Mutex
+	startOnce        sync.Once
+	closeOnce        sync.Once
+	notifications    Row
+	accountChanged   bool
+	failures         int
+	nextBackendStart time.Time
+	identity         systemIdentity
+	root, path       string
+	reports          *systemAnalytics
 }
 
 func NewQuota(o SystemOptions) *QuotaService {
-	return &QuotaService{opts: o, state: Row{"status": "reading", "applicable": false, "account": Row{}, "primary": nil, "secondary": nil, "credits": nil, "error": "", "updated_at": nil}, wake: make(chan struct{}, 1), reset: make(chan systemResetCommand, 1), done: make(chan struct{}), reports: systemNewAnalytics(o)}
+	return &QuotaService{opts: o, state: Row{"status": "reading", "applicable": false, "account": Row{}, "primary": nil, "secondary": nil, "credits": nil, "error": "", "updated_at": nil}, wake: make(chan bool, 1), reset: make(chan systemResetCommand, 1), done: make(chan struct{}), reports: systemNewAnalytics(o)}
 }
 func (q *QuotaService) Start(ctx context.Context) {
 	q.startOnce.Do(func() { q.mu.Lock(); q.ctx, q.cancel = context.WithCancel(ctx); q.mu.Unlock(); go q.run() })
@@ -88,13 +89,26 @@ func systemQuotaProjection(r Row, interval int) Row {
 	return r
 }
 func (q *QuotaService) Refresh() {
+	q.wakeRefresh(true)
+}
+func (q *QuotaService) wakeRefresh(manual bool) {
 	q.refreshMu.Lock()
 	defer q.refreshMu.Unlock()
 	select {
-	case q.wake <- struct{}{}:
+	case q.wake <- manual:
 	default:
+		if manual {
+			select {
+			case <-q.wake:
+			default:
+			}
+			select {
+			case q.wake <- true:
+			default:
+			}
+		}
 	}
-	if q.opts.RefreshChanged != nil {
+	if manual && q.opts.RefreshChanged != nil {
 		q.opts.RefreshChanged(true)
 	}
 }
@@ -176,33 +190,58 @@ func (q *QuotaService) run() {
 		}
 		q.clientMu.Unlock()
 	}()
+	var retryAt time.Time
+	manual := false
 	for {
 		if q.ctx.Err() != nil {
 			return
 		}
-		q.refreshActivity(true)
-		err := q.cycle()
-		if err != nil {
-			q.failures++
-			q.mu.RLock()
-			r := CloneRow(q.state)
-			q.mu.RUnlock()
-			r["status"] = "error"
-			r["error"] = err.Error()
-			q.publish(r)
-			q.clientMu.Lock()
-			if q.client != nil {
-				q.client.close()
-				q.client = nil
-			}
-			q.clientMu.Unlock()
-		} else {
-			q.failures = 0
+		changed := q.path != ValueString(q.config()["codex_path"])
+		q.mu.RLock()
+		accountChanged := q.accountChanged
+		q.mu.RUnlock()
+		if accountChanged {
+			_, identity, err := systemCredentials(q.root)
+			changed = changed || err == nil && identity != q.identity
 		}
+		if q.failures == 0 || !time.Now().Before(retryAt) || manual || changed {
+			q.refreshActivity(true)
+			err := q.cycle()
+			if err != nil {
+				q.failures++
+				q.mu.RLock()
+				r := CloneRow(q.state)
+				q.mu.RUnlock()
+				r["status"] = "error"
+				r["error"] = err.Error()
+				q.publish(r)
+				q.clientMu.Lock()
+				// A remote error/timeout does not mean the stdio connection died.
+				if q.client != nil && !q.client.running() {
+					q.client.close()
+					q.client = nil
+				}
+				q.clientMu.Unlock()
+			} else {
+				q.failures = 0
+			}
+			if q.failures > 0 {
+				retryAt = time.Now().Add(systemQuotaRetryDelay(q.failures, q.interval()))
+			}
+		} else {
+			q.mu.Lock()
+			current := CloneRow(q.state)
+			// A delayed notification must not later receive a new fetch time.
+			// The next permitted attempt asks for a fresh quota response.
+			q.notifications = nil
+			q.mu.Unlock()
+			q.publish(current) // Expire windows/credits without issuing another RPC.
+		}
+		manual = false
 		q.refreshActivity(false)
 		delay := time.Duration(max(1, q.interval())) * time.Second
 		if q.failures > 0 {
-			delay = time.Duration(min(300, 1<<min(q.failures, 8))) * time.Second
+			delay = max(time.Millisecond, time.Until(retryAt))
 		}
 		// Wake at a business deadline instead of leaving expired windows/credits
 		// visible until the normal polling interval has elapsed.
@@ -226,7 +265,7 @@ func (q *QuotaService) run() {
 		case <-q.ctx.Done():
 			t.Stop()
 			return
-		case <-q.wake:
+		case manual = <-q.wake:
 			t.Stop()
 		case command := <-q.reset:
 			t.Stop()
@@ -235,6 +274,9 @@ func (q *QuotaService) run() {
 		case <-t.C:
 		}
 	}
+}
+func systemQuotaRetryDelay(failures, interval int) time.Duration {
+	return time.Duration(min(900, max(60, interval)*(1<<min(4, max(0, failures-1))))) * time.Second
 }
 func (q *QuotaService) cycle() error {
 	if q.opts.Mock {
@@ -255,6 +297,8 @@ func (q *QuotaService) cycle() error {
 		q.clientMu.Unlock()
 		q.root = root
 		q.path = path
+		q.nextBackendStart = time.Time{}
+		q.failures = 0
 		q.identity = systemIdentity{}
 		q.raw = nil
 		q.reports.invalidate()
@@ -262,6 +306,8 @@ func (q *QuotaService) cycle() error {
 	}
 	_, currentIdentity, _ := systemCredentials(root)
 	if q.identity != currentIdentity {
+		q.failures = 0
+		q.nextBackendStart = time.Time{}
 		q.identity = currentIdentity
 		q.raw = nil
 		q.reports.invalidate()
@@ -271,19 +317,21 @@ func (q *QuotaService) cycle() error {
 	client := q.client
 	q.clientMu.Unlock()
 	if client == nil || !client.running() {
-		excluded := map[string]bool{}
-		var e error
-		for i := 0; i < 4; i++ {
-			exe, err := systemDiscoverCLI(q.ctx, path, excluded)
-			if err != nil {
-				return err
-			}
-			client, e = systemNewRPC(q.ctx, exe, q.opts.Version, root, q.notification)
-			if e == nil {
-				break
-			}
-			excluded[strings.ToLower(exe)] = true
+		if time.Now().Before(q.nextBackendStart) {
+			return errors.New("Codex 连接暂不可用，请稍后重试")
 		}
+		q.nextBackendStart = time.Now().Add(systemQuotaRetryDelay(q.failures+1, q.interval()))
+		q.clientMu.Lock()
+		if q.client != nil {
+			q.client.close()
+			q.client = nil
+		}
+		q.clientMu.Unlock()
+		exe, e := systemDiscoverCLI(q.ctx, path, nil)
+		if e != nil {
+			return e
+		}
+		client, e = systemNewRPC(q.ctx, exe, q.opts.Version, root, q.notification)
 		if e != nil {
 			return e
 		}
@@ -411,7 +459,7 @@ func (q *QuotaService) notification(method string, params Row) {
 		return
 	}
 	q.mu.Unlock()
-	q.Refresh()
+	q.wakeRefresh(false)
 }
 func systemAccountKey(payload Row, before, after systemIdentity) string {
 	if before != after || after.Account == "" {

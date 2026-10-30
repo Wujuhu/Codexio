@@ -154,6 +154,7 @@ func (r *systemRPC) write(v Row) error {
 	defer r.writeMu.Unlock()
 	_, e = r.input.Write(append(b, '\n'))
 	if e != nil {
+		r.fail()
 		return errors.New("无法写入 Codex app-server")
 	}
 	return nil

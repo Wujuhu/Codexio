@@ -326,6 +326,7 @@ struct LogDetail: View {
                                 if member.raw.string("session_id") != row.raw.string("session_id") { Text(L("子代理", "Subagent")).foregroundStyle(.secondary) }
                                 Text(logEffortName(member.raw.string("reasoning_effort"))+" · "+detailSpeedName(member.raw.string("service_tier")))
                                 Text((member.tokens.map {compact(Double($0))+" Token"} ?? "—")+" · "+money(member.cost))
+                                Text(durationText(member.duration)+" · "+outputRateText(member.outputTokensPerSecond,unit:"tokens/s")+" · TTFT "+(member.firstTokenSeconds.map {String(format:"%.2f",$0)+L(" 秒"," s")} ?? "—")).foregroundStyle(.secondary)
                                 if !member.raw.string("output_preview").isEmpty { Text(member.raw.string("output_preview")).foregroundStyle(.secondary) }
                                 Divider()
                             }.padding(.vertical,6)

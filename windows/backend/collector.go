@@ -1717,6 +1717,18 @@ func (s *Store) accounting(entry, state Row, tx *sql.Tx) (Row, error) {
 			r[k] = p[k]
 		}
 	}
+	if modern {
+		for target, source := range map[string]string{"call_started_at": "started_at", "call_ended_at": "completed_at"} {
+			if r[target] == nil {
+				if t, ok := ParseStamp(p[source]); ok {
+					r[target] = ledgerStamp(t)
+				}
+			}
+		}
+		if status := dataString(p, "status"); status == "completed" || status == "aborted" || status == "running" {
+			r["status"] = status
+		}
+	}
 	if ttft, ok := recordedTTFTMilliseconds(p); ok {
 		r["ttft_ms"] = ttft
 	}

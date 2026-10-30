@@ -3,11 +3,39 @@ package backend
 import (
 	"math"
 	"sort"
+	"strings"
 	"time"
 )
 
 const requestDurationProjectionVersion = 2
 const requestRunningFreshness = 15 * time.Minute
+
+// Read only timing attached to the call; never borrow a containing turn's
+// duration or infer TTFT from the time of a complete assistant message.
+func projectRecordedCallTiming(row Row) {
+	id := dataString(row, "id")
+	if dataString(row, "response_id") == "" && !strings.HasPrefix(id, "response:") && !strings.HasPrefix(id, "modern:") && !strings.HasPrefix(id, "legacy:") {
+		return
+	}
+	ms, known := ValueFloat(row["duration_ms"])
+	known = known && ms >= 0 && !math.IsInf(ms, 0) && !math.IsNaN(ms)
+	end, ended := ParseStamp(row["call_ended_at"])
+	if !known {
+		if start, ok := ParseStamp(row["call_started_at"]); ok && ended && !end.Before(start) {
+			ms = end.Sub(start).Seconds() * 1000
+			row["duration_ms"] = ms
+			known = true
+		}
+	}
+	if ttft, ok := recordedTTFTMilliseconds(row); ok {
+		row["ttft_ms"] = ttft
+	}
+	quality := strings.Split(dataString(row, "quality"), ":")[0]
+	metered := quality == "response" || quality == "legacy_last" || quality == "cumulative_delta" && strings.HasPrefix(id, "response:")
+	if metered && dataString(row, "status") == "" && !ValueBool(row["duration_running"]) && (known || ended) {
+		row["status"] = "completed"
+	}
+}
 
 // A completed output item does not establish first-token latency.
 func recordedTTFTMilliseconds(row Row) (float64, bool) {

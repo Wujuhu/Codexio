@@ -1457,6 +1457,22 @@
         }
       }
     },
+    "Codex 连接暂不可用，请稍后重试": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex is temporarily unavailable. Retry later."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex 连接暂不可用，请稍后重试"
+          }
+        }
+      }
+    },
     "Codex 配置不是有效 TOML": {
       "localizations": {
         "en": {

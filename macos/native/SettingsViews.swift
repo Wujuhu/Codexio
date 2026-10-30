@@ -107,7 +107,7 @@ struct SettingsView: View {
         VStack(alignment:.leading,spacing:16) {
             Text(L("Codex 组件路径", "Codex executable")).font(.system(size:13,weight:.medium))
             HStack { TextField(L("自动发现 Codex / ChatGPT.app", "Detect Codex / ChatGPT.app automatically"),text:$codexPath).textFieldStyle(.roundedBorder).onSubmit { state.setPreference("codex_path",codexPath,general:true); state.refreshQuota() }; Button(L("选择", "Choose")) { choose(directory:false) } }
-            Button(L("应用路径", "Apply path")) { state.setPreference("codex_path",codexPath,general:true); state.client.close(); state.refreshQuota() }.controlSize(.small)
+            Button(L("应用路径", "Apply path")) { state.setPreference("codex_path",codexPath,general:true); state.client.close(); state.refreshQuota(force:true) }.controlSize(.small)
             Divider().padding(.vertical,6)
             Text(L("本机日志目录", "Local log directory")).font(.system(size:13,weight:.medium))
             HStack { TextField("~/.codex",text:$logRoot).textFieldStyle(.roundedBorder); Button(L("选择", "Choose")) { choose(directory:true) } }

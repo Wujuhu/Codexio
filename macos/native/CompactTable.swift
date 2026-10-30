@@ -8,7 +8,7 @@ struct GridColumn {
     var maximum: CGFloat? = nil
     var alignment: NSTextAlignment = .left
 }
-struct GridText { var main: String; var secondary = ""; var upstream = ""; var upstreamMismatch = false; var hint = "" }
+struct GridText { var main: String; var secondary = ""; var upstream = ""; var upstreamMismatch = false; var hint = ""; var secondaryHint = "" }
 struct GridRow {
     let id: String
     var text: (String) -> GridText
@@ -61,7 +61,7 @@ private final class GridTextCell: NSView {
         upstreamColor = value.upstreamMismatch ? .systemGreen : .secondaryLabelColor
         main.stringValue = value.main; secondary.stringValue = showsUpstream ? value.upstream : value.secondary
         secondary.textColor = showsUpstream ? upstreamColor : .secondaryLabelColor
-        secondary.toolTip = secondary.stringValue
+        secondary.toolTip = value.secondaryHint.isEmpty ? secondary.stringValue:value.secondaryHint
         main.alignment = alignment; secondary.alignment = alignment
         main.toolTip = value.main
         if hint != value.hint {
@@ -395,7 +395,7 @@ enum LogFields {
             case "duration":
                 guard let seconds = row.duration, seconds >= 0, seconds < Double(Int.max) else { return GridText(main:"—",secondary:"—") }
                 let value = Int(seconds)
-                return GridText(main:String(format:"%02d:%02d:%02d",value/3600,value%3600/60,value%60),secondary:outputRateText(row.outputTokensPerSecond))
+                return GridText(main:String(format:"%02d:%02d:%02d",value/3600,value%3600/60,value%60),secondary:outputRateText(row.outputTokensPerSecond),secondaryHint:"TPS: "+outputRateText(row.outputTokensPerSecond,unit:"tokens/s")+"\nTTFT: "+(row.firstTokenSeconds.map {String(format:"%.2f",$0)+L(" 秒"," s")} ?? "—"))
             case "effort": return GridText(main:logEffortName(raw.string("reasoning_effort")))
             case "speed": return GridText(main:detailSpeedName(raw.string("service_tier")))
             case "context": return GridText(main:contextWindowText(raw.number("model_context_window")))

@@ -159,6 +159,7 @@ func (s *Store) Page(q Query, contexts ...context.Context) (PageResult, error) {
 		delete(r, "composition")
 		if !groups {
 			r["record_kind"] = "model_call"
+			projectRecordedCallTiming(r)
 		}
 		result.Rows = append(result.Rows, r)
 	}
@@ -644,6 +645,9 @@ func (s *Store) Detail(id string, page int, contexts ...context.Context) (Row, e
 		return nil, e
 	}
 	request := dataRow(raw)
+	if call {
+		projectRecordedCallTiming(request)
+	}
 	if normalizedClient(dataString(request, "client_kind")) == "claude_code" {
 		return s.claudeDetail(request, call, page, reader.ctx)
 	}
@@ -690,7 +694,9 @@ func (s *Store) Detail(id string, page int, contexts ...context.Context) (Row, e
 				rows.Close()
 				return nil, e
 			}
-			members = append(members, dataRow(raw))
+			member := dataRow(raw)
+			projectRecordedCallTiming(member)
+			members = append(members, member)
 		}
 		e = rows.Err()
 		rows.Close()

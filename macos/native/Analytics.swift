@@ -13,7 +13,7 @@ struct UsageRow: Identifiable {
     let cachedTokens: Int?
     let outputTokens: Int?
     init(raw: Object) {
-        var raw = raw
+        var raw = recordedCallTiming(raw)
         for key in ["prompt_preview","session_title"] {
             let text = raw.string(key)
             if text.contains("Files mentioned by the user:") || text.contains("## My request") || text.contains("<image") {
@@ -60,6 +60,21 @@ struct UsageRow: Identifiable {
         return value.isFinite ? value : nil
     }
     var firstTokenSeconds: Double? { recordedTTFTMilliseconds(raw).map {$0/1000} }
+}
+
+// Interpret only timing attached to this metered call. A turn's duration and
+// the timestamp of a complete assistant message are not call timing or TTFT.
+func recordedCallTiming(_ input: Object) -> Object {
+    var row=input
+    guard !row.string("response_id").isEmpty || ["response:","modern:","legacy:"].contains(where:row.string("id").hasPrefix) else {return row}
+    var milliseconds=row.number("duration_ms").flatMap {$0 >= 0 ? $0:nil}
+    let end=parsedDate(row["call_ended_at"])
+    if milliseconds == nil,let start=parsedDate(row["call_started_at"]),let end,end>=start {milliseconds=end.timeIntervalSince(start)*1000;row["duration_ms"]=milliseconds}
+    if let ttft=recordedTTFTMilliseconds(row) {row["ttft_ms"]=ttft}
+    let quality=String(row.string("quality").split(separator:":").first ?? "")
+    let metered=["response","legacy_last"].contains(quality) || quality=="cumulative_delta" && row.string("id").hasPrefix("response:")
+    if metered,row.string("status").isEmpty,!row.flag("duration_running"),milliseconds != nil || end != nil {row["status"]="completed"}
+    return row
 }
 
 // Preserve explicit source timing only; a completed message is not a first token.

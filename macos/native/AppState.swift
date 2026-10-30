@@ -129,6 +129,8 @@ final class AppState: ObservableObject {
     private var priceTimer: Timer?
     private var scanning = false
     private var refreshing = false
+    private var quotaFailures = 0
+    private var quotaRetryAt: TimeInterval = 0
     private var stopped = false
     private var quitGeneration = UUID()
     var mainWindowVisible = false
@@ -176,8 +178,18 @@ final class AppState: ObservableObject {
         }
         client.onNotification = { [weak self] method, _ in
             guard ["account/rateLimits/updated","account/updated"].contains(method) else { return }
+            if method == "account/updated" {
+                self?.accountQueue.async { [weak self] in
+                    guard let self else {return}
+                    let owner=(try? BackendCredentials.load(root:self.accountRoot).account.key) ?? ""
+                    DispatchQueue.main.async {
+                        self.invalidateReports()
+                        self.refreshQuota(force:owner != self.quota.account.string("identityKey"))
+                    }
+                }
+                return
+            }
             DispatchQueue.main.async {
-                if method == "account/updated" { self?.invalidateReports() }
                 self?.refreshQuota()
             }
         }
@@ -257,7 +269,7 @@ final class AppState: ObservableObject {
         if paths.snapshot != canonical, ProcessInfo.processInfo.environment["CODEXIO_DATA_DIR"] == nil { try atomicJSON(snapshot,to:canonical) }
         WidgetCenter.shared.reloadAllTimelines()
     }
-    func refresh() { if selectedPage == "pricing" {syncPrices();return}; refreshUsage(); if pageClient == .codex || !["overview","logs","trends","subscription"].contains(selectedPage) { refreshQuota() }; if selectedPage == "subscription" && pageClient == .codex { refreshReports(force:true) } }
+    func refresh() { if selectedPage == "pricing" {syncPrices();return}; refreshUsage(); if pageClient == .codex || !["overview","logs","trends","subscription"].contains(selectedPage) { refreshQuota(force:true) }; if selectedPage == "subscription" && pageClient == .codex { refreshReports(force:true) } }
     private func usageReportSourceKey(for client: DesktopClient) -> String {
         client == .codex ? preferences.roots.map(\.path).sorted().joined(separator:"\n")+"\n"+accountRoot.path : "claude_code\n"+claudeLedger.root.path
     }
@@ -422,8 +434,9 @@ final class AppState: ObservableObject {
             }
         } catch { DispatchQueue.main.async { [weak self] in self?.errorMessage = error.localizedDescription; self?.loading = false } }
     }
-    func refreshQuota() {
+    func refreshQuota(force: Bool = false) {
         guard !refreshing, !stopped, !paths.mock else { return }
+        guard force || ProcessInfo.processInfo.systemUptime >= quotaRetryAt else {return}
         refreshing = true
         let operation = fetchActivity.begin()
         let hint = preferences.general.string("codex_path"), accountRoot = self.accountRoot
@@ -465,6 +478,7 @@ final class AppState: ObservableObject {
                 }
                 DispatchQueue.main.async {
                     guard !self.stopped else { return }
+                    self.quotaFailures=0;self.quotaRetryAt = 0
                     if self.quota.account.string("identityKey") != next.account.string("identityKey") || self.quota.account.string("planType") != next.account.string("planType") { self.invalidateReports(); self.pendingResets.removeAll() }
                     self.applyQuota(next,savedMenuQuota:savedMenuQuota)
                     let pendingIDs = Set(pending.map {$0.string("creditId")})
@@ -480,6 +494,8 @@ final class AppState: ObservableObject {
                 let applicable = identityBefore == currentIdentity ? accountSupportsQuota : nil
                 DispatchQueue.main.async {
                     guard !self.stopped else { return }
+                    self.quotaFailures+=1
+                    self.quotaRetryAt=ProcessInfo.processInfo.systemUptime+CodexClient.retryDelay(failures:self.quotaFailures,interval:self.preferences.general.number("refresh_interval_seconds") ?? 60)
                     var next = self.quota
                     if next.account.string("identityKey") != owner {
                         next = QuotaState(); next.account["identityKey"] = owner
@@ -605,6 +621,7 @@ final class AppState: ObservableObject {
         let previous = general ? preferences.general[key] : preferences.analytics[key]
         if let previous, jsonString(previous) == jsonString(value) { return }
         if general { preferences.general[key] = value } else { preferences.analytics[key] = value }
+        if key == "codex_path" || key == "refresh_interval_seconds" {quotaFailures=0;quotaRetryAt = 0}
         do { try preferences.save() } catch { errorMessage = error.localizedDescription }
         if key == "theme" { theme = preferences.analytics.string("theme","system") }
         if key == "menu_bar_visible" { menuVisible = preferences.analytics.flag("menu_bar_visible",true) }
