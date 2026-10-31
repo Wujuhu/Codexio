@@ -140,9 +140,11 @@ final class ClaudeLedger {
         try recoverCallTiming()
         try reprice()
         try materializeAffected()
+        try refreshRunningRequests()
     }
     func refreshPricing() throws {try reprice(); try materializeAffected()}
     private func materializeAffected() throws {
+        try prepareSurface()
         if !affected.isEmpty || !affectedSessions.isEmpty {
             try database.transaction {
                 for id in affected { try materializeRequest(id) }
@@ -407,6 +409,7 @@ final class ClaudeLedger {
         try database.script("""
         CREATE TABLE IF NOT EXISTS claude_live_requests(id TEXT PRIMARY KEY,observed_at REAL NOT NULL,status TEXT NOT NULL);
         CREATE INDEX IF NOT EXISTS claude_live_time ON claude_live_requests(status,observed_at DESC);
+        CREATE INDEX IF NOT EXISTS claude_running_request ON claude_requests(id) WHERE status='running';
         CREATE INDEX IF NOT EXISTS claude_completed_time ON claude_requests(COALESCE((julianday(json_extract(data,'$.ended_at'))-2440587.5)*86400,timestamp) DESC,id) WHERE status='completed';
         """)
         surfacePrepared = true
@@ -426,7 +429,23 @@ final class ClaudeLedger {
         if let prior, let previous = prior.number("observed_at"), previous > at || previous == at && (prior.string("status") == status || prior.string("status") != "running") {return}
         try database.run("INSERT INTO claude_live_requests VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET observed_at=excluded.observed_at,status=excluded.status",[id,at,status])
         try database.run("DELETE FROM claude_live_requests WHERE rowid NOT IN(SELECT rowid FROM claude_live_requests ORDER BY observed_at DESC LIMIT 256)")
+        if let stored=try database.query("SELECT data FROM claude_requests WHERE id=?",[id]).first {
+            let raw=jsonObject(Data(stored.string("data").utf8))
+            try updateRequest(id,fields:ClaudeTiming.activityFields(raw,status:status,observed:at,now:Date().timeIntervalSince1970))
+        }
         surfaceRevision += 1
+    }
+
+    // Reconcile only the bounded live set on the existing scan queue. The
+    // visible cells advance the clock; no second-by-second database writes.
+    private func refreshRunningRequests() throws {
+        try prepareSurface()
+        let now=Date().timeIntervalSince1970
+        let rows=try database.query("SELECT r.id,r.data,l.status,l.observed_at FROM (SELECT id FROM claude_live_requests WHERE id LIKE ? AND status='running' AND observed_at>? AND observed_at<=? UNION SELECT id FROM claude_requests WHERE id LIKE ? AND status='running') q JOIN claude_requests r ON r.id=q.id LEFT JOIN claude_live_requests l ON l.id=r.id LIMIT 512",[scope+"%",now-900,now,scope+"%"])
+        for row in rows {
+            let raw=jsonObject(Data(row.string("data").utf8))
+            try updateRequest(row.string("id"),fields:ClaudeTiming.activityFields(raw,status:row.string("status"),observed:row.number("observed_at") ?? .infinity,now:now))
+        }
     }
 
     // Reuse the existing SQL aggregation and day buckets, retaining only one
@@ -448,7 +467,9 @@ final class ClaudeLedger {
             raw["model"] = (models.isEmpty ? [raw.string("model")] : models).filter {!$0.isEmpty}.map {pricing.compactModelName($0)}.joined(separator:" + ")
             raw["cache_hit_rate"] = raw.number("input_tokens").flatMap {input in input > 0 ? raw.number("cached_input_tokens").map {$0/input} : nil} as Any? ?? NSNull()
             raw["duration_running"] = running != nil
-            if running != nil {raw["status"] = "running"; raw["duration_started_at"] = raw["timestamp"]; raw["duration_ms"] = NSNull()}
+            if running != nil {
+                for (key,value) in ClaudeTiming.activityFields(raw,status:"running",observed:row.number("observed_at") ?? .infinity,now:stamp) {raw[key]=value}
+            }
             else if row.integer("observed_completion") == 1 {
                 raw["status"] = "completed"
                 // A stop event confirms completion, but never invents missing
@@ -669,6 +690,10 @@ final class ClaudeLedger {
             let pending = try database.query("SELECT EXISTS(SELECT 1 FROM claude_calls WHERE request_id=? AND COALESCE(json_extract(data,'$.is_subagent'),0)=0 AND (COALESCE(json_extract(data,'$.call_timing_checked'),0)=0 OR COALESCE(json_extract(data,'$.call_timing_incomplete'),0)=1)) AS pending",[id]).first?.integer("pending") == 1
             if pending, !main.isEmpty {main[0]["call_timing_incomplete"] = true}
             for (key,value) in ClaudeTiming.requestFields(request,main:main) {fields[key] = value}
+            if let activity=try database.query("SELECT status,observed_at FROM claude_live_requests WHERE id=?",[id]).first {
+                var projected=request;for (key,value) in fields {projected[key]=value}
+                for (key,value) in ClaudeTiming.activityFields(projected,status:activity.string("status"),observed:activity.number("observed_at") ?? .infinity,now:Date().timeIntervalSince1970) {fields[key]=value}
+            }
         }
         try updateRequest(id,fields:fields)
     }

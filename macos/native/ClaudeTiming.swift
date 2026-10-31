@@ -2,6 +2,29 @@ import Foundation
 
 // Source event timing is independent of which usage fragment supplies the tokens.
 enum ClaudeTiming {
+    // A request timer uses the source human-message start and an observation
+    // owned by this exact request, independently of the returned model.
+    static func activityFields(_ request: Object,status: String,observed: Double,now: Double) -> Object {
+        var fields: Object=["duration_running":false,"duration_started_at":NSNull(),"duration_base_ms":NSNull()]
+        guard observed.isFinite,observed<=now else {
+            if request.flag("duration_running") {fields["status"]=""}
+            return fields
+        }
+        if let end=parsedDate(request["ended_at"]),end.timeIntervalSince1970>=observed {return fields}
+        if status == "running" {
+            guard observed>now-900 else {
+                if request.string("status") == "running" {fields["status"]=""}
+                return fields
+            }
+            fields["status"]="running";fields["ended_at"]=NSNull();fields["duration_ms"]=NSNull();fields["duration_source"]=NSNull()
+            if let start=parsedDate(request["timestamp"]),start.timeIntervalSince1970>0,start.timeIntervalSince1970<=observed {
+                fields["duration_running"]=true;fields["duration_started_at"]=iso(start);fields["duration_base_ms"]=0
+            }
+        } else if ["completed","failed","aborted"].contains(status) {
+            fields["status"]=status;fields["ended_at"]=iso(Date(timeIntervalSince1970:observed));fields["duration_ms"]=NSNull();fields["duration_source"]=NSNull()
+        }
+        return fields
+    }
     static func observation(_ row: Object) -> Object {
         guard let date = parsedDate(row["timestamp"]) else {return [:]}
         let stamp = iso(date), stop = row.object("message").string("stop_reason")

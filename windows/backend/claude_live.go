@@ -85,12 +85,25 @@ func (s *Store) prepareClaudeActivity(ctx context.Context, ns string) error {
 			return err
 		}
 	}
+	// Upgrade only fresh live groups. Timing display never requires replaying
+	// transcripts, repricing calls or rebuilding historical request groups.
+	changed, err := tx.Exec(`INSERT INTO usage_query_changes(kind,item_id) SELECT 'claude_request',l.id FROM claude_live_requests l JOIN usage_request_groups g ON g.id=l.id WHERE l.id LIKE ? AND l.status='running' AND l.observed_at>? AND l.observed_at<=? AND coalesce(json_extract(g.data,'$.duration_running'),0)=0`, ns+"%", ledgerStamp(now.Add(-15*time.Minute)), ledgerStamp(now))
+	if err != nil {
+		return err
+	}
+	if count, _ := changed.RowsAffected(); count > 0 {
+		if _, err = tx.Exec("UPDATE usage_revisions SET revision=revision+1 WHERE kind='ledger'"); err != nil {
+			return err
+		}
+	}
 	if err = tx.Commit(); err == nil {
 		s.claudeLivePrepared = true
 	}
 	return err
 }
 func applyClaudeActivity(tx *sql.Tx, group Row, now time.Time) error {
+	group["duration_running"] = false
+	group["duration_started_at"], group["duration_base_ms"] = nil, nil
 	group["duration_refresh_at"] = nil
 	group["duration_valid_after"] = nil
 	var stamp, status string
@@ -124,11 +137,18 @@ func applyClaudeActivity(tx *sql.Tx, group Row, now time.Time) error {
 	}
 	group["status"] = status
 	group["request_status"] = status
-	group["duration_running"] = false
 	group["duration_ms"] = nil
 	group["duration_source"] = nil
 	if status == "running" {
 		group["ended_at"] = nil
+		// The existing UUID/prompt ancestry owns the request. Its source start is
+		// stable across progress events, reloads and delayed token records.
+		start, known := ParseStamp(firstString(group["started_at"], group["timestamp"]))
+		if known && start.Unix() > 0 && !start.After(observed) {
+			group["duration_running"] = true
+			group["duration_started_at"] = UTCStamp(start)
+			group["duration_base_ms"] = 0
+		}
 	}
 	return nil
 }
