@@ -26,3 +26,15 @@ Mac Codex 的 `UsageView` 只创建当前标签；活动使用 `UsageSnapshotCac
 检查发现并移除两处冗余：`Analytics.build` 仍生成无消费者的旧 `localChatRows` 排序数组，随后快照缓存又立即清空它；实际排行早已使用 SQLite 物化索引。删除旧数组的累加和排序，保留真实排行索引与执行行程索引。另外，`ClaudeUsageView` 原先在任意用量标签挂载或 Claude revision 变化时查询完整活动统计；改为仅活动标签可见时计算，切回活动时通过既有 revision 缓存加载最新值。
 
 Mac 结论来自代码路径审计和此次重新打包的三项隔离冒烟；未把 Windows 的耗时结果推广为 Mac 的性能提升比例。
+
+## 0.3.13：Claude 请求汇总缺少索引（2026-11-03）
+
+实际运行的 Windows 0.3.13 在启动数分钟后，10.01 秒只读进程采样中主进程占用 98.33% 的单核 CPU；主机有 12 个逻辑处理器，折合整机 8.19%。工作集约 93.5 MiB。同期 WebView 子进程的 CPU 增量接近零。本次采样没有启动、停止或重启用户应用。
+
+SQLite 只读备份包含 15,784 条调用（Codex 13,299、Claude 2,485）、2,651 条请求分组及 587 条 Claude 主请求。`rebuildClaudeGroups` 对每条主请求执行成员读取和 `INSERT…SELECT`，但 `usage_priced_calls` 仅有 Codex 的 session／turn 索引，Claude 的 JSON 请求 ID 没有对应索引。CPU profile 和超时堆栈定位到 `claude_queries.go` 的成员写入，反复扫描计量表并解析 JSON。
+
+修复复用 Mac `ClaudeLedger.swift` 的 `claude_calls_request` 及 Windows 现有 `go_priced_calls_owner` 的机制，增加部分索引 `go_priced_claude_owner`：只索引 Claude 调用，按请求 ID、timestamp、id 排列。同时覆盖成员读取的排序和成员写入的筛选，保留原 SQL、分组身份、Token 和价格计算。查询计划由 `SCAN usage_priced_calls USING INDEX priced_calls_time` 变为 `SEARCH ... USING INDEX go_priced_claude_owner (<expr>=?)`。索引由 SQLite 随数据更新维护，不新增采集、定时任务或历史日志重扫；Mac 已有对应请求索引，本次只修改 Windows。
+
+在同一主机、同一静态备份的两个隔离目录，使用相同诊断配置运行 `OpenStore` 和完整价格／请求分组投影，不采集原始日志、不创建窗口。原实现（`01d59c6`）达到 25 秒的诊断上限仍未完成；补索引后完整返回为 12.559 秒，其中包含首次建索引。原实现的耗时只确认大于 25 秒，不据此计算精确加速倍数。两个进程均重新启动，进程缓存为空，操作系统文件缓存未清空；用户原应用仍在运行。这是后台重建测量，不代表窗口加载时间、修复版长期进程 CPU 或整机能耗。
+
+一次性诊断脚本、CPU profile、堆栈、查询计划与结果保留在 `build/staging/windows-performance-0313`，进程采样位于 `build/checks/windows-performance-0313`；它们不加入维护性测试套件，也不扩大原有三项隔离冒烟。

@@ -200,6 +200,9 @@ func (s *Store) schema() error {
  CREATE INDEX IF NOT EXISTS priced_calls_time ON usage_priced_calls(timestamp DESC,id DESC);
  CREATE INDEX IF NOT EXISTS priced_calls_model_time ON usage_priced_calls(model,timestamp);
  CREATE INDEX IF NOT EXISTS go_priced_calls_owner ON usage_priced_calls(session_id,turn_id,timestamp);
+ -- Like claude_calls_request on Mac, bound both the ordered member read and
+ -- INSERT...SELECT in rebuildClaudeGroups to this request's Claude calls.
+ CREATE INDEX IF NOT EXISTS go_priced_claude_owner ON usage_priced_calls(json_extract(data,'$.claude_request_id'),timestamp,id) WHERE json_extract(data,'$.client_kind')='claude_code';
  CREATE TABLE IF NOT EXISTS usage_query_sources(record_id TEXT NOT NULL,source_id TEXT NOT NULL,PRIMARY KEY(record_id,source_id));
  CREATE TABLE IF NOT EXISTS usage_request_groups(id TEXT PRIMARY KEY,timestamp TEXT NOT NULL,record_kind TEXT NOT NULL,is_subagent INTEGER NOT NULL,subagent_count INTEGER NOT NULL,data TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS journey_request_session ON usage_request_groups(json_extract(data,'$.session_id'),timestamp DESC);

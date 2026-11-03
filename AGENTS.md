@@ -184,3 +184,5 @@
 - 费用同样优先以这份 display name 匹配现有统一价格目录，复用已有 Standard 基础价、速度、长上下文及缓存规则；名称存在但无法唯一匹配时费用为 `—`，不得回退到另一个请求或返回型号的价格。没有显示名称证据的旧记录保留原计价口径。
 - 用户选择：仅有可靠历史依据时补名称并重算，不能用当前 modelPicker 配置追溯回填旧请求。Claude 复用 `ClaudePricing.swift`／`claude_pricing.go` 的配置变化检测与时间边界、既有 Mods／statusLine 的 UUID／prompt 关联；Codex 复用请求开始／turn_context 保存机制，读取来源自身的 `models_cache.json`。快照独立保存 `model_display_name`／对应 ID／证据来源，不把定价目录名称冒充当时客户端选择。
 - 名称配置内容不变时不新建历史、不反复解析文件、不触发历史重扫。新名称随明确所属的请求／调用保存，后续配置改名不覆盖已有快照；晚到的请求名称只更新同一主请求下、明确匹配且尚无名称的调用。
+
+- Windows Claude 请求分组从 `usage_priced_calls` 按 `claude_request_id` 读取成员及写入关联时，必须使用 `go_priced_claude_owner` 部分索引（Claude 请求 ID、timestamp、id），复用 Mac `claude_calls_request` 的按请求索引机制；不得因每个请求重新扫描整张计量表。2026-11-03 在 15,784 条计量记录、587 条 Claude 请求的隔离备份中确认此热点，修复保持 v0.3.13，不新增采集或定时任务。
