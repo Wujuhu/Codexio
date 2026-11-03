@@ -381,8 +381,7 @@ enum LogFields {
                 return GridText(main:raw.string("prompt_preview").isEmpty ? row.title : raw.string("prompt_preview"),secondary:metadata)
             case "time": return GridText(main:logDateText(row.date,timeOnly:timeOnly,showYear:showYear))
             case "model":
-                let upstream = raw.string("upstream_model"), requested = raw.string("model")
-                return GridText(main:requestValueText(modelName(requested)),upstream:modelName(upstream),upstreamMismatch:raw.flag("upstream_mismatched",!upstream.isEmpty && !requested.isEmpty && upstream != requested))
+                return GridText(main:requestValueText(raw.string("model_display_name").isEmpty ? modelName(raw.string("model")):raw.string("model_display_name")))
             case "input": return GridText(main:compact(raw.number("input_tokens")))
             case "output": return GridText(main:compact(raw.number("output_tokens")))
             case "total": return GridText(main:compact(row.tokens.map(Double.init)))

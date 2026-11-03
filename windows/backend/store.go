@@ -17,6 +17,8 @@ import (
 )
 
 type Store struct {
+	modelNames              map[string]*requestModelNames
+	modelNameRoots          map[string]string
 	pendingObservedPrices   map[string]bool
 	pendingObservedFull     bool
 	pendingObservedCount    int64
@@ -429,7 +431,7 @@ func (s *Store) saveRecord(tx *sql.Tx, r Row, source, file, generation string) e
 		copied := !(ValueBool(r["context_owner_verified"]) && !ValueBool(old["context_owner_verified"])) && (other > 0 || dataString(old, "source_id") != source || ValueBool(old["context_owner_verified"]) && !ValueBool(r["context_owner_verified"]))
 		if dataString(r, "response_id") != "" {
 			if copied {
-				for _, k := range []string{"timestamp", "model", "service_tier", "model_context_window", "provider", "turn_id", "request_turn_id", "session_id", "prompt_preview", "output_preview", "duration_ms", "call_started_at", "call_ended_at", "record_kind", "source", "auth_mode", "billing_source", "usage_source"} {
+				for _, k := range []string{"timestamp", "model", "model_display_name", "model_display_id", "model_display_source", "service_tier", "model_context_window", "provider", "turn_id", "request_turn_id", "session_id", "prompt_preview", "output_preview", "duration_ms", "call_started_at", "call_ended_at", "record_kind", "source", "auth_mode", "billing_source", "usage_source"} {
 					if (k == "auth_mode" || k == "billing_source" || k == "usage_source") && !ValueBool(old["context_owner_verified"]) {
 						continue
 					}
@@ -447,7 +449,7 @@ func (s *Store) saveRecord(tx *sql.Tx, r Row, source, file, generation string) e
 				r["quality"] = old["quality"]
 			}
 		}
-		for _, k := range []string{"session_title", "prompt_preview", "output_preview", "model", "service_tier", "provider", "model_context_window", "limit_id", "duration_ms", "auth_mode", "billing_source", "usage_source"} {
+		for _, k := range []string{"session_title", "prompt_preview", "output_preview", "model", "model_display_name", "model_display_id", "model_display_source", "service_tier", "provider", "model_context_window", "limit_id", "duration_ms", "auth_mode", "billing_source", "usage_source"} {
 			if (k == "auth_mode" || k == "billing_source" || k == "usage_source") && !ValueBool(old["context_owner_verified"]) {
 				continue
 			}

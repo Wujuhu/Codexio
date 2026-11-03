@@ -139,6 +139,9 @@ func (s *Store) rebuildClaudeGroups(tx *sql.Tx, dirty map[string]bool, full bool
 					if dataString(group, "model") == "" {
 						group["model"] = r["requested_model"]
 					}
+					if dataString(group, "model_display_name") == "" {
+						copyRequestModelName(group, r)
+					}
 					if dataString(group, "reasoning_effort") == "" {
 						group["reasoning_effort"] = r["reasoning_effort"]
 					}

@@ -164,13 +164,14 @@ func newModelPriceReference() *modelPriceReference {
 		}
 	}
 	signature := CloneRow(rules)
+	signature["request_display_pricing"] = "v1"
 	delete(signature, "verified_at")
 	delete(signature, "client_models")
 	delete(signature, "client_model_sources")
 	definitions := []Row{}
 	for _, r := range ValueRows(rules["models"]) {
 		copy := CloneRow(r)
-		for _, k := range []string{"tooltip", "tooltip_en", "display_name"} {
+		for _, k := range []string{"tooltip", "tooltip_en"} {
 			delete(copy, k)
 		}
 		definitions = append(definitions, copy)
@@ -516,7 +517,9 @@ func (p *modelPriceReference) price(input Row, model string, aliasEstimated bool
 	for _, key := range []string{"price_rates", "pricing_mode", "pricing_identity_estimated", "assumed_billing_source", "pricing_reason"} {
 		delete(r, key)
 	}
-	if model == "" {
+	if name := dataString(input, "model_display_name"); name != "" {
+		model, aliasEstimated = p.model(name), false
+	} else if model == "" {
 		model, aliasEstimated = p.resolve(input, returnedOnly)
 	}
 	if model == "" || ValueBool(input["usage_conflict"]) || strings.HasPrefix(dataString(input, "quality"), "invalid") {

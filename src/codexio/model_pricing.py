@@ -81,12 +81,13 @@ class OfficialModelPrices:
         self.holidays = set(rules["calendar"]["holidays"])
         self.years = set(rules["calendar"]["years"])
         content = copy.deepcopy(rules)
+        content["request_display_pricing"] = "v1"
         content.pop("verified_at", None)
         content.pop("client_models", None)
         content.pop("client_model_sources", None)
         content["calendar"].pop("source", None)
         for row in content["models"]:
-            for key in ("tooltip", "tooltip_en", "display_name"):
+            for key in ("tooltip", "tooltip_en"):
                 row.pop(key, None)
         for row in content["other_rows"]:
             for key in ("source", "sources", "updated_at", "verified_at", "locked"):
@@ -150,6 +151,8 @@ class OfficialModelPrices:
         return next(iter(found)) if len(found) == 1 else None
 
     def resolve(self, record):
+        if record.get("model_display_name"):
+            return self.model(record["model_display_name"]), False
         returned = [record.get(key) for key in ("upstream_model", "returned_model") if record.get(key)]
         found = {model for value in returned if (model := self.model(value))}
         if len(found) == 1:

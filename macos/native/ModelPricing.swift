@@ -70,9 +70,9 @@ final class ModelPricing {
                 return (since,multiple)
             })
         })
-        var calculationRules=approved;for key in ["verified_at","client_models","client_model_sources"] {calculationRules.removeValue(forKey:key)}
+        var calculationRules=approved;calculationRules["request_display_pricing"]="v1";for key in ["verified_at","client_models","client_model_sources"] {calculationRules.removeValue(forKey:key)}
         calculationRules["models"]=descriptions.map {raw -> Object in
-            var row=raw;for key in ["tooltip","tooltip_en","display_name"] {row.removeValue(forKey:key)};return row
+            var row=raw;for key in ["tooltip","tooltip_en"] {row.removeValue(forKey:key)};return row
         }
         var calendarContent=approved.object("calendar");calendarContent.removeValue(forKey:"source");calculationRules["calendar"]=calendarContent
         func content(_ raw: Object) -> Object {var row=raw;for key in ["source","sources","updated_at","verified_at","locked"] {row.removeValue(forKey:key)};return row}
@@ -165,6 +165,7 @@ final class ModelPricing {
     }
     func group(_ model: String) -> String {definitions[model]?.string("group") ?? ""}
     func resolve(_ raw: Object,returnedOnly: Bool=false) -> (String,Bool)? {
+        if !raw.string("model_display_name").isEmpty {return model(raw.string("model_display_name")).map {($0,false)}}
         let returned=[raw.string("upstream_model"),raw.string("returned_model")].filter {!$0.isEmpty}
         let models=Set(returned.compactMap(model))
         if models.count==1 {return (models.first!,false)}
@@ -238,7 +239,8 @@ final class ModelPricing {
         var raw=input
         raw["cost_usd"]=NSNull();raw["pricing_status"]="unpriced";raw["price_version"]=version
         for key in ["price_rates","pricing_mode","pricing_identity_estimated","assumed_billing_source"] {raw.removeValue(forKey:key)}
-        guard let resolved=resolved ?? resolve(input,returnedOnly:returnedOnly),!input.flag("usage_conflict"),!input.string("quality").hasPrefix("invalid") else {return raw}
+        let selection = input.string("model_display_name").isEmpty ? (resolved ?? resolve(input,returnedOnly:returnedOnly)):resolve(input,returnedOnly:returnedOnly)
+        guard let resolved=selection,!input.flag("usage_conflict"),!input.string("quality").hasPrefix("invalid") else {return raw}
         let isClaude=input.string("client_kind")=="claude_code"
         guard let total=input.integer("input_tokens"),let output=input.integer("output_tokens"),total>=0,output>=0 else {return raw}
         let read=input.integer("cached_input_tokens") ?? (input["cached_input_tokens"]==nil ? 0:-1)

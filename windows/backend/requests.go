@@ -754,6 +754,9 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 			}
 		}
 		group["model"] = firstString(ownModel, "unknown")
+		if dataString(group, "model_display_name") == "" {
+			copyRequestModelName(group, earliest)
+		}
 		group["service_tiers"] = sortedKeys(tiers)
 		if ownTier != "unknown" {
 			group["service_tier"] = ownTier

@@ -155,7 +155,7 @@ func (q *ClaudeAllowance) serve(w http.ResponseWriter, r *http.Request) {
 		stamp, valid := ValueFloat(point["observed_at"])
 		session := dataString(point, "session_id")
 		uuid, prompt := dataString(point, "message_uuid"), dataString(point, "prompt_id")
-		if window >= 0 && window <= 2147483647 && len(claudePointFields(point)) > 0 && len(dataString(point, "model")) <= 256 && len(dataString(point, "reasoning_effort")) <= 32 && valid && stamp >= q.startedAt && stamp <= at+5 && session != "" && len(session) <= 256 && ((uuid != "" && len(uuid) <= 256) || (prompt != "" && len(prompt) <= 256)) {
+		if window >= 0 && window <= 2147483647 && len(claudePointFields(point)) > 0 && len(dataString(point, "model")) <= 256 && len(dataString(point, "model_display_name")) <= 512 && len(dataString(point, "model_display_id")) <= 512 && len(dataString(point, "model_display_source")) <= 32 && len(dataString(point, "reasoning_effort")) <= 32 && valid && stamp >= q.startedAt && stamp <= at+5 && session != "" && len(session) <= 256 && ((uuid != "" && len(uuid) <= 256) || (prompt != "" && len(prompt) <= 256)) {
 			contexts = append(contexts, point)
 		}
 		if len(contexts) >= 32 {
@@ -414,6 +414,11 @@ func RunClaudeStatusline(args []string) (bool, int) {
 			}
 			if model := dataString(ValueRow(raw["model"]), "id"); model != "" {
 				point["model"] = model
+			}
+			if name := dataString(ValueRow(raw["model"]), "display_name"); name != "" {
+				point["model_display_name"] = name
+				point["model_display_id"] = point["model"]
+				point["model_display_source"] = "statusline"
 			}
 			if effort := dataString(ValueRow(raw["effort"]), "level"); effort != "" {
 				point["reasoning_effort"] = effort

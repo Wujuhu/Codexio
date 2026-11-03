@@ -8,7 +8,7 @@
   export let id=''; export let record:Row={}; export let onerror:(e:any)=>void=()=>{}; export let hint='';
   let open=false, pinned=false, returningFocus=false, left=0, top=0;
   let detailRevision='';
-  $: revision=hint||JSON.stringify([id,record.client_kind,record.source_exists,record.source_revision,record.availability,record.model,record.models,record.reasoning_effort,record.service_tier,record.model_context_window,record.context_input_tokens,record.request_status??record.status,record.total_tokens,record.output_tokens,record.ttft_ms,record.cost_usd,record.duration_ms,record.duration_running,record.duration_started_at,record.duration_base_ms,record.prompt_preview,record.output_preview,record.call_count,record.upstream_observations??record.observations??record.upstream_models??record.upstream_model]);
+  $: revision=hint||JSON.stringify([id,record.client_kind,record.source_exists,record.source_revision,record.availability,record.model,record.model_display_name,record.models,record.reasoning_effort,record.service_tier,record.model_context_window,record.context_input_tokens,record.request_status??record.status,record.total_tokens,record.output_tokens,record.ttft_ms,record.cost_usd,record.duration_ms,record.duration_running,record.duration_started_at,record.duration_base_ms,record.prompt_preview,record.output_preview,record.call_count,record.upstream_observations??record.observations??record.upstream_models??record.upstream_model]);
   $: if(open&&revision!==detailRevision)detailRevision=revision;
   let trigger:HTMLButtonElement, popup:HTMLDivElement;
   let timer:ReturnType<typeof setTimeout>;

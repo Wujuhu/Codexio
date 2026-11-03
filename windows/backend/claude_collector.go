@@ -51,7 +51,7 @@ func (s *Store) claudeSchema() error {
 	if e != nil {
 		return e
 	}
-	for _, column := range []string{"model", "reasoning_effort"} {
+	for _, column := range []string{"model", "reasoning_effort", "model_display_name", "model_display_id", "model_display_source"} {
 		var found int
 		if e = s.db.QueryRow("SELECT count(*) FROM pragma_table_info('claude_context_windows') WHERE name=?", column).Scan(&found); e != nil {
 			return e
@@ -90,6 +90,9 @@ func (s *Store) ClientStatus(client string) Row {
 }
 func (s *Store) collectClaude(ctx context.Context, force bool) error {
 	root := claudeRoot()
+	if err := s.observeRequestModelNames(root, "claude_code"); err != nil {
+		return err
+	}
 	if err := s.prepareClaudeActivity(ctx, claudeNamespace(root)); err != nil {
 		return err
 	}
@@ -416,12 +419,13 @@ func claudeGetRequest(tx *sql.Tx, id string) Row {
 	_ = tx.QueryRow("SELECT data FROM claude_requests WHERE id=?", id).Scan(&raw)
 	return dataRow(raw)
 }
-func claudeSaveRequest(tx *sql.Tx, r Row) error {
+func (s *Store) claudeSaveRequest(tx *sql.Tx, r Row) error {
 	for key, value := range claudeContextFields(tx, dataString(r, "session_id"), dataString(r, "user_uuid"), dataString(r, "turn_id")) {
 		if r[key] == nil || dataString(r, key) == "" {
 			r[key] = value
 		}
 	}
+	s.captureRequestModelName(r, claudeRoot(), "claude_code", nil)
 	_, e := tx.Exec("INSERT INTO claude_requests VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data WHERE data<>excluded.data", r["id"], r["session_id"], dataJSON(r))
 	return e
 }
@@ -493,12 +497,13 @@ func (s *Store) claudeEntry(tx *sql.Tx, e, state Row, root, path, identity, gene
 			text, _ := claudeText(message["content"])
 			r = Row{"id": request, "client_kind": "claude_code", "session_id": session, "turn_id": prompt, "timestamp": timestamp, "started_at": timestamp, "prompt_preview": clip(text, 320), "request_status": "unknown", "status": "unknown", "record_kind": "user_request", "has_user_message": true, "source_id": "local:claude:" + HashString(root)[:16], "client_origin": state["client_origin"], "user_uuid": uuid, "model": e["requestedModel"], "reasoning_effort": e["effort"]}
 		}
+		explicitRequestModelName(r, e)
 		for _, key := range []string{"projectId", "projectName"} {
 			if dataString(e, key) != "" {
 				r[key] = e[key]
 			}
 		}
-		if err := claudeSaveRequest(tx, r); err != nil {
+		if err := s.claudeSaveRequest(tx, r); err != nil {
 			return err
 		}
 		state["request_id"] = request
@@ -526,7 +531,7 @@ func (s *Store) claudeEntry(tx *sql.Tx, e, state Row, root, path, identity, gene
 			owner := claudeGetRequest(tx, request)
 			if len(owner) > 0 && dataString(owner, "model") == "" && requestedModel != "" {
 				owner["model"] = requestedModel
-				if err := claudeSaveRequest(tx, owner); err != nil {
+				if err := s.claudeSaveRequest(tx, owner); err != nil {
 					return err
 				}
 			}
@@ -562,7 +567,10 @@ func (s *Store) claudeEntry(tx *sql.Tx, e, state Row, root, path, identity, gene
 			if dataString(r, "reasoning_effort") == "" && dataString(e, "effort") != "" {
 				r["reasoning_effort"] = requestEffortName(e["effort"])
 			}
-			if err := claudeSaveRequest(tx, r); err != nil {
+			if dataString(r, "model_display_name") == "" {
+				explicitRequestModelName(r, e)
+			}
+			if err := s.claudeSaveRequest(tx, r); err != nil {
 				return err
 			}
 		}
@@ -587,6 +595,7 @@ func (s *Store) claudeEntry(tx *sql.Tx, e, state Row, root, path, identity, gene
 		return err
 	}
 	r := Row{"id": id, "response_id": response, "client_kind": "claude_code", "client_origin": state["client_origin"], "session_id": firstString(oldNode["session_id"], session), "claude_request_id": request, "claude_session_scope": sessionScope, "claude_agent_id": agent, "turn_id": "", "timestamp": timestamp, "requested_model": requestedModel, "returned_model": message["model"], "upstream_model": message["model"], "upstream_mismatched": false, "model": requestedModel, "reasoning_effort": requestEffortName(e["effort"]), "service_tier": nil, "cost_usd": nil, "pricing_status": "unpriced", "quality": "response", "source_id": "local:claude:" + HashString(root)[:16], "source_path": path, "is_subagent": agent != "" || ValueBool(e["isSidechain"]), "parent_uuid": parent, "node_id": nodeID, "stop_reason": message["stop_reason"], "duration_ms": nil, "tps": nil, "ttft": nil, "model_context_window": claudeContextWindow(tx, session, uuid, dataString(e, "promptId"))}
+	explicitRequestModelName(r, e)
 	in, ki := knownCount(usage["input_tokens"])
 	read, kr := knownCount(usage["cache_read_input_tokens"])
 	write, kw := knownCount(usage["cache_creation_input_tokens"])
@@ -698,6 +707,17 @@ func (s *Store) saveClaudeRecord(tx *sql.Tx, r Row) error {
 	var raw string
 	_ = tx.QueryRow("SELECT data FROM usage_records WHERE id=?", r["id"]).Scan(&raw)
 	r = mergeClaudeUsage(dataRow(raw), r)
+	parent := Row{}
+	if !ValueBool(r["is_subagent"]) {
+		parent = claudeGetRequest(tx, dataString(r, "claude_request_id"))
+	}
+	if dataString(r, "model") == "" && dataString(parent, "model_display_name") != "" {
+		r["model"], r["requested_model"] = parent["model"], parent["model"]
+	}
+	if dataString(r, "model_display_name") == "" {
+		copyRequestModelName(r, parent)
+	}
+	s.captureRequestModelName(r, claudeRoot(), "claude_code", parent["timestamp"])
 	payload := dataJSON(r)
 	if payload != raw {
 		if _, e := tx.Exec("INSERT INTO usage_records VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET timestamp=excluded.timestamp,model=excluded.model,session_id=excluded.session_id,data=excluded.data", r["id"], dataString(r, "timestamp"), firstString(r["model"], "unknown"), dataString(r, "session_id"), payload); e != nil {

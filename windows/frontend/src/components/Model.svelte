@@ -7,23 +7,9 @@
   export let showUpstream=true;
   export let tableCell=false;
   function columnLabels(record:Row){
-    // Match Mac's claudeGridRow and LogFields.row without rewriting ledger IDs.
+    const name=typeof record.model_display_name==='string'?record.model_display_name.trim():'';
     const requested=typeof record.model==='string'?record.model:'';
-    const upstream=typeof record.upstream_model==='string'?record.upstream_model:'';
-    if(record.client_kind==='claude_code'){
-      const models=Array.isArray(record.upstream_models)&&record.upstream_models.every((value:unknown)=>typeof value==='string')?record.upstream_models as string[]:[];
-      const returned=[...new Set([...models,upstream].filter(Boolean))].sort();
-      return{requested:returned.join(' · ')||requested||'—',upstream:'',mismatch:false};
-    }
-    const format=(value:string)=>value.replaceAll('gpt-','GPT-').replaceAll('-astra',' Astra').replaceAll('-sol',' Sol').replaceAll('-luna',' Luna').replaceAll('-terra',' Terra');
-    const label=format(requested).trim();
-    const models=Array.isArray(record.upstream_models)?record.upstream_models.filter((value:unknown):value is string=>typeof value==='string'&&!!value):[];
-    const upstreams=[...new Set(models.length?models:upstream?[upstream]:[])].sort();
-    return{
-      requested:['','unknown','auto','未知','-','–','—'].includes(label.toLowerCase())?'—':label,
-      upstream:upstreams.map(format).join(' + '),
-      mismatch:typeof record.upstream_mismatched==='boolean'?record.upstream_mismatched:record.upstream_mismatched_calls!=null?Number(record.upstream_mismatched_calls)>0:!!requested&&upstreams.some(model=>model!==requested)
-    };
+    return{requested:name||modelName(requested)||'—',upstream:'',mismatch:false};
   }
   $: column=tableCell?columnLabels(record):null;
   $: observed=tableCell?[]:rows(record.upstream_observations??record.observations);
@@ -31,7 +17,7 @@
     ? observed.map(row=>text(row.upstream_model??row.response_model??row.model,'')).filter(Boolean)
     : Array.isArray(record.upstream_models) ? record.upstream_models.map((value:any)=>text(value,'')).filter(Boolean) : record.upstream_model ? [String(record.upstream_model)] : [];
   $: requested=text(record.model??record.models?.join(', '));
-  $: requestedLabel=column?.requested??modelName(requested);
+  $: requestedLabel=column?.requested??(text(record.model_display_name,'')||modelName(requested));
   $: mismatch=column?.mismatch??(record.upstream_mismatched_calls!=null ? Number(record.upstream_mismatched_calls)>0 : record.upstream_mismatched!=null ? !!record.upstream_mismatched : !['—','unknown','mixed'].includes(requested)&&upstream.some((model:string)=>model!==requested));
   $: upstreamLabel=column?.upstream??[...new Set(upstream)].map(modelName).join(' · ');
   $: hasUpstream=!!upstreamLabel;

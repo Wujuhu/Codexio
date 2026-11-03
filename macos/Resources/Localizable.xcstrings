@@ -16577,6 +16577,22 @@
         }
       }
     },
+    "请求模型 ID": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Request model ID"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请求模型 ID"
+          }
+        }
+      }
+    },
     "请求组": {
       "localizations": {
         "en": {

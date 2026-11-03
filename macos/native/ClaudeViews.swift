@@ -31,11 +31,6 @@ private func claudeGridRow(_ row: UsageRow,state: AppState,showYear: Bool,timeOn
             let suffix = [logDateText(row.date,timeOnly:timeOnly,showYear:showYear),logEffortName(row.raw.string("reasoning_effort")),logSpeedName(row.raw.string("service_tier")),contextWindowText(row.raw.number("model_context_window")),row.raw.flag("is_subagent") ? L("子代理", "Subagent") : row.raw.string("record_kind") == "unassigned" ? L("未归属调用", "Unassigned call") : ""].filter {!$0.isEmpty}.joined(separator:" · ")
             return GridText(main:"—",secondary:suffix)
         }
-        if key == "model" {
-            let values = (row.raw["upstream_models"] as? [String] ?? [])+[row.raw.string("upstream_model")]
-            let labels = Array(Set(values.filter {!$0.isEmpty})).sorted()
-            return GridText(main:labels.isEmpty ? (row.raw.string("model").isEmpty ? "—" : row.raw.string("model")) : labels.joined(separator:" · "))
-        }
         if key == "cache_rate" {
             let rate = row.raw.number("input_tokens").flatMap {input in input > 0 ? row.raw.number("cached_input_tokens").map {$0/input*100} : nil}
             return GridText(main:percent(rate,digits:1))
@@ -292,7 +287,8 @@ struct ClaudeDetailView: View {
                 Text(requestValueText(row.raw.string("prompt_preview"))).font(.system(size:14,weight:.medium))
                 Text(dateText(row.date)).font(.caption).foregroundStyle(.secondary)
                 Divider()
-                field(L("模型", "Model"),requestValueText(modelName(row.raw.string("model"))))
+                field(L("模型", "Model"),requestValueText(row.raw.string("model_display_name").isEmpty ? modelName(row.raw.string("model")):row.raw.string("model_display_name")))
+                if !row.raw.string("model_display_name").isEmpty {field(L("请求模型 ID", "Request model ID"),requestValueText(row.raw.string("model")))}
                 field(L("响应返回模型", "Response model"),requestValueText(((row.raw["upstream_models"] as? [String] ?? [])+[row.raw.string("upstream_model")]).filter {!$0.isEmpty}.joined(separator:" · ")))
                 field(L("推理强度", "Reasoning"),logEffortName(row.raw.string("reasoning_effort")))
                 field(L("速度", "Speed"),detailSpeedName(row.raw.string("service_tier"))); field(L("费用", "Cost"),row.costText)

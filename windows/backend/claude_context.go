@@ -1,6 +1,9 @@
 package backend
 
-import "database/sql"
+import (
+	"database/sql"
+	"strings"
+)
 
 // Live, explicit transcript IDs only. The bounded hints also cover a packet
 // arriving just before the unchanged incremental collector sees its log row.
@@ -68,7 +71,7 @@ func claudePointFields(point Row) Row {
 	if window, ok := knownCount(point["window"]); ok && window > 0 {
 		fields["model_context_window"] = window
 	}
-	for _, key := range []string{"model", "reasoning_effort"} {
+	for _, key := range []string{"model", "reasoning_effort", "model_display_name", "model_display_id", "model_display_source"} {
 		if value := dataString(point, key); value != "" {
 			fields[key] = value
 		}
@@ -80,12 +83,12 @@ func claudeContextFields(tx *sql.Tx, session, uuid, prompt string) Row {
 		return Row{}
 	}
 	var window int64
-	var model, effort string
-	e := tx.QueryRow("SELECT window,model,reasoning_effort FROM claude_context_windows WHERE session_id=? AND ((message_uuid<>'' AND message_uuid=?) OR (prompt_id<>'' AND prompt_id=?)) ORDER BY observed_at DESC LIMIT 1", session, uuid, prompt).Scan(&window, &model, &effort)
+	var model, effort, name, displayID, displaySource string
+	e := tx.QueryRow("SELECT window,model,reasoning_effort,model_display_name,model_display_id,model_display_source FROM claude_context_windows WHERE session_id=? AND ((message_uuid<>'' AND message_uuid=?) OR (prompt_id<>'' AND prompt_id=?)) ORDER BY observed_at DESC LIMIT 1", session, uuid, prompt).Scan(&window, &model, &effort, &name, &displayID, &displaySource)
 	if e != nil {
 		return Row{}
 	}
-	return claudePointFields(Row{"window": window, "model": model, "reasoning_effort": effort})
+	return claudePointFields(Row{"window": window, "model": model, "reasoning_effort": effort, "model_display_name": name, "model_display_id": displayID, "model_display_source": displaySource})
 }
 func claudeContextWindow(tx *sql.Tx, session, uuid, prompt string) any {
 	return claudeContextFields(tx, session, uuid, prompt)["model_context_window"]
@@ -123,9 +126,12 @@ func (s *Store) applyClaudeContexts() error {
 			continue
 		}
 		for key, value := range claudePointFields(point) {
+			if strings.HasPrefix(key, "model_display_") && dataString(fields, key) != "" {
+				continue
+			}
 			fields[key] = value
 		}
-		if _, e = tx.Exec("INSERT INTO claude_context_windows(session_id,message_uuid,prompt_id,observed_at,window,model,reasoning_effort) VALUES(?,?,?,?,?,?,?) ON CONFLICT(session_id,message_uuid,prompt_id) DO UPDATE SET observed_at=excluded.observed_at,window=excluded.window,model=excluded.model,reasoning_effort=excluded.reasoning_effort", session, uuid, prompt, at, ValueInt(fields["model_context_window"]), dataString(fields, "model"), dataString(fields, "reasoning_effort")); e != nil {
+		if _, e = tx.Exec("INSERT INTO claude_context_windows(session_id,message_uuid,prompt_id,observed_at,window,model,reasoning_effort,model_display_name,model_display_id,model_display_source) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id,message_uuid,prompt_id) DO UPDATE SET observed_at=excluded.observed_at,window=excluded.window,model=excluded.model,reasoning_effort=excluded.reasoning_effort,model_display_name=excluded.model_display_name,model_display_id=excluded.model_display_id,model_display_source=excluded.model_display_source", session, uuid, prompt, at, ValueInt(fields["model_context_window"]), dataString(fields, "model"), dataString(fields, "reasoning_effort"), dataString(fields, "model_display_name"), dataString(fields, "model_display_id"), dataString(fields, "model_display_source")); e != nil {
 			return e
 		}
 		if uuid != "" {
@@ -141,6 +147,23 @@ func (s *Store) applyClaudeContexts() error {
 		patch := dataJSON(fields)
 		if _, e = tx.Exec("UPDATE claude_requests SET data=json_patch(data,?) WHERE session_id=? AND ((?<>'' AND json_extract(data,'$.user_uuid')=?) OR (?<>'' AND id=?)) AND data<>json_patch(data,?)", patch, session, uuid, uuid, prompt, ns+"request:"+prompt, patch); e != nil {
 			return e
+		}
+		if dataString(fields, "model_display_name") != "" {
+			requests, err := queryJSON(tx, "SELECT data FROM claude_requests WHERE session_id=? AND ((?<>'' AND json_extract(data,'$.user_uuid')=?) OR (?<>'' AND id=?))", session, uuid, uuid, prompt, ns+"request:"+prompt)
+			if err != nil {
+				return err
+			}
+			for _, request := range requests {
+				calls, err := queryJSON(tx, "SELECT data FROM usage_records WHERE json_extract(data,'$.client_kind')='claude_code' AND json_extract(data,'$.claude_request_id')=? AND coalesce(json_extract(data,'$.model_display_name'),'')='' AND coalesce(json_extract(data,'$.is_subagent'),0)=0", request["id"])
+				if err != nil {
+					return err
+				}
+				for _, call := range calls {
+					if err := s.saveClaudeRecord(tx, call); err != nil {
+						return err
+					}
+				}
+			}
 		}
 	}
 	if _, e = tx.Exec("DELETE FROM claude_context_windows WHERE rowid NOT IN(SELECT rowid FROM claude_context_windows ORDER BY observed_at DESC LIMIT 256)"); e != nil {

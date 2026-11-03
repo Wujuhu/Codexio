@@ -385,7 +385,8 @@ enum Analytics {
             row["resume_turn_ids"] = members.filter {!$0.string("continuation_of").isEmpty}.map {$0.string("turn_id")}
             for key in ["input_tokens","cached_input_tokens","cache_write_input_tokens","output_tokens","reasoning_output_tokens"] { row[key] = calls.reduce(0) {$0+($1.raw.integer(key) ?? 0)} }
             let models = Array(Set(displayCalls.map {$0.raw.string("model")}.filter {!$0.isEmpty})).sorted()
-            row["model"] = models.count == 1 ? models[0] : models.isEmpty ? own.string("model") : models.joined(separator:" + ")
+            row["model"] = own.string("model").isEmpty ? (models.count == 1 ? models[0] : models.joined(separator:" + ")):own.string("model")
+            if row.string("model_display_name").isEmpty,let first = ownCalls.first {RequestModelNames.copy(first.raw,to:&row)}
             for key in ["reasoning_effort","service_tier"] {
                 // The main request owns its captured effort; child calls keep
                 // their individual settings in the member details.

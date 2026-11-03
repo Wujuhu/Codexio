@@ -153,7 +153,7 @@ func (s *Store) priceClaude(r Row) Row {
 	delete(r, "price_rates")
 	delete(r, "pricing_mode")
 	returned := dataString(r, "upstream_model")
-	if returned == "" {
+	if returned == "" && dataString(r, "model_display_name") == "" {
 		return r
 	}
 	model := frozenPrices.model(returned)

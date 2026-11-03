@@ -110,7 +110,7 @@ func mergeClaudeUsage(old, incoming Row) Row {
 	if dataString(r, "claude_request_id") == "" {
 		r["claude_request_id"] = old["claude_request_id"]
 	}
-	for _, field := range []string{"prompt_preview", "output_preview", "model", "returned_model", "upstream_model", "requested_model", "reasoning_effort", "service_tier", "auth_mode", "billing_source"} {
+	for _, field := range []string{"prompt_preview", "output_preview", "model", "returned_model", "upstream_model", "requested_model", "model_display_name", "model_display_id", "model_display_source", "reasoning_effort", "service_tier", "auth_mode", "billing_source"} {
 		if r[field] == nil || r[field] == "" {
 			r[field] = old[field]
 		}
@@ -216,7 +216,7 @@ func (s *Store) applyClaudeEvents(tx *sql.Tx, ns string) error {
 					}
 				}
 			}
-			if e = claudeSaveRequest(tx, r); e != nil {
+			if e = s.claudeSaveRequest(tx, r); e != nil {
 				return e
 			}
 			if _, e = tx.Exec(`INSERT OR IGNORE INTO claude_locators SELECT ?,uuid,path,offset,identity,line_hash,available,generation FROM claude_locators WHERE item_id=?`, owner, node["id"]); e != nil {

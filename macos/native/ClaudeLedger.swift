@@ -13,6 +13,7 @@ enum DesktopClient: String, CaseIterable {
 /// Full transcript bodies never enter the durable normalized ledger.
 final class ClaudeLedger {
     let database: Database
+    private lazy var modelNames = RequestModelNames(directory:database.url.deletingLastPathComponent(),client:"claude_code")
     let pricing: ClaudePricingCatalog
     let root: URL
     private let cancellationLock = NSLock()
@@ -69,7 +70,7 @@ final class ClaudeLedger {
             try database.script("ALTER TABLE claude_locations ADD COLUMN \(column) \(type)")
         }
         let contextColumns = Set(try database.query("PRAGMA table_info(claude_context_windows)").map {$0.string("name")})
-        for column in ["model","reasoning_effort"] where !contextColumns.contains(column) {
+        for column in ["model","reasoning_effort","model_display_name","model_display_id","model_display_source"] where !contextColumns.contains(column) {
             try database.script("ALTER TABLE claude_context_windows ADD COLUMN \(column) TEXT NOT NULL DEFAULT ''")
         }
         for table in ["claude_calls","claude_requests","claude_sessions","claude_locations","claude_search"] {
@@ -110,6 +111,7 @@ final class ClaudeLedger {
     func scan() throws {
         guard !isCancelled else {return}
         changedFiles = false
+        try modelNames.observe(root:root,client:"claude_code")
         try pricing.observeLabels(root:root)
         do {
             _ = try FileManager.default.attributesOfItem(atPath:root.appendingPathComponent("projects").path); warning = nil
@@ -296,6 +298,7 @@ final class ClaudeLedger {
                 }
                 if raw.string("model").isEmpty {raw["model"] = row.string("requestedModel")}
                 if raw.string("reasoning_effort").isEmpty {raw["reasoning_effort"] = row.string("effort")}
+                RequestModelNames.explicit(row,to:&raw)
                 try saveRequest(raw)
                 searchRecord = id
                 try location(id,uuid,file:file,offset:offset,length:length)
@@ -318,6 +321,7 @@ final class ClaudeLedger {
             } else if !message.object("usage").isEmpty, !message.string("id").isEmpty {
                 let usage = message.object("usage")
                 var raw: Object = ["client_kind":"claude_code","client_origin":sessionInfo["client_origin"] ?? NSNull(),"session_id":session,"source_id":"local","local_origin":true,"response_id":message.string("id"),"uuid":uuid,"parent_uuid":row.string("parentUuid"),"agent_id":row.string("agentId"),"request_id":request,"record_kind":request.isEmpty ? "unassigned" : "model_call","timestamp":row["timestamp"] ?? NSNull(),"model":row.string("requestedModel"),"upstream_model":message.string("model"),"upstream_mismatched":false,"reasoning_effort":row.string("effort"),"service_tier":"","is_subagent":child,"quality":"response","pricing_status":"unpriced","status":"","prompt_preview":""]
+                RequestModelNames.explicit(row,to:&raw)
                 let input = usage.integer("input_tokens"), read = usage.integer("cache_read_input_tokens"), write = usage.integer("cache_creation_input_tokens"), output = usage.integer("output_tokens")
                 let creation = usage.object("cache_creation")
                 raw["cache_write_5m_tokens"] = creation.integer("ephemeral_5m_input_tokens") as Any? ?? NSNull()
@@ -360,7 +364,7 @@ final class ClaudeLedger {
                     // evidence, but a child never rewrites captured main effort.
                     if !child {
                         var fill: Object = [:]
-                        for key in ["model","reasoning_effort"] where parent.string(key).isEmpty && !raw.string(key).isEmpty {fill[key] = raw[key]}
+                        for key in ["model","reasoning_effort","model_display_name","model_display_id","model_display_source"] where parent.string(key).isEmpty && !raw.string(key).isEmpty {fill[key] = raw[key]}
                         if !fill.isEmpty {try updateRequest(request,fields:fill)}
                     }
                 }
@@ -529,7 +533,7 @@ final class ClaudeLedger {
         result["call_timing_checked"] = old.flag("call_timing_checked") && incoming.flag("call_timing_checked") && !old.flag("call_timing_incomplete")
         result["call_timing_incomplete"] = old.flag("call_timing_incomplete") || incoming.flag("call_timing_incomplete")
         for (key,value) in mergeRecordedCallTiming(old,incoming) {result[key]=value}
-        for key in ["model","reasoning_effort","upstream_model","service_tier","auth_mode","billing_source"] where result.string(key).isEmpty {result[key] = old[key] ?? incoming[key]}
+        for key in ["model","reasoning_effort","upstream_model","service_tier","auth_mode","billing_source","model_display_name","model_display_id","model_display_source"] where result.string(key).isEmpty {result[key] = old[key] ?? incoming[key]}
         let conflict = old.flag("usage_conflict") || incoming.flag("usage_conflict") || terminalConflict
         result["usage_conflict"] = conflict
         if conflict {
@@ -641,6 +645,10 @@ final class ClaudeLedger {
         var input = input
         let observed = contextFields(session:input.string("session_id"),uuid:input.string("uuid"),prompt:"")
         for (key,value) in observed where input[key] == nil || input[key] is NSNull || (input[key] as? String) == "" {input[key] = value}
+        let parent = input.flag("is_subagent") ? [:] : try database.query("SELECT data FROM claude_requests WHERE id=?",[input.string("request_id")]).first.map {jsonObject(Data($0.string("data").utf8))} ?? [:]
+        if input.string("model").isEmpty,!parent.string("model_display_name").isEmpty {input["model"] = parent["model"]}
+        if input.string("model_display_name").isEmpty {RequestModelNames.copy(parent,to:&input)}
+        modelNames.capture(&input,root:root,client:"claude_code",at:parent["timestamp"])
         let raw = pricing.price(input,root:root)
         try database.run("INSERT INTO claude_calls VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET request_id=excluded.request_id,session_id=excluded.session_id,input=excluded.input,cache_read=excluded.cache_read,cache_write=excluded.cache_write,output=excluded.output,total=excluded.total,model=excluded.model,data=excluded.data WHERE data<>excluded.data",[raw.string("id"),raw.string("request_id"),raw.string("session_id"),parsedDate(raw["timestamp"])?.timeIntervalSince1970 as Any? ?? NSNull(),raw.string("model"),raw["input_tokens"] ?? NSNull(),raw["cached_input_tokens"] ?? NSNull(),raw["cache_write_input_tokens"] ?? NSNull(),raw["output_tokens"] ?? NSNull(),raw["total_tokens"] ?? NSNull(),jsonString(raw)])
     }
@@ -648,6 +656,7 @@ final class ClaudeLedger {
         var raw = value
         let observed = contextFields(session:raw.string("session_id"),uuid:raw.string("main_uuid"),prompt:String(raw.string("id").components(separatedBy:"request:").last ?? ""))
         for (key,value) in observed where raw[key] == nil || raw[key] is NSNull || (raw[key] as? String) == "" {raw[key] = value}
+        modelNames.capture(&raw,root:root,client:"claude_code")
         try database.run("INSERT INTO claude_requests(id,session_id,timestamp,model,status,input,cache_read,cache_write,output,total,data) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET model=excluded.model,status=excluded.status,input=excluded.input,cache_read=excluded.cache_read,cache_write=excluded.cache_write,output=excluded.output,total=excluded.total,data=excluded.data WHERE data<>excluded.data",[raw.string("id"),raw.string("session_id"),parsedDate(raw["timestamp"])?.timeIntervalSince1970 as Any? ?? NSNull(),raw.string("model"),raw.string("status"),raw["input_tokens"] ?? NSNull(),raw["cached_input_tokens"] ?? NSNull(),raw["cache_write_input_tokens"] ?? NSNull(),raw["output_tokens"] ?? NSNull(),raw["total_tokens"] ?? NSNull(),jsonString(raw)])
     }
     private func updateRequest(_ id: String,fields: Object) throws {
@@ -910,13 +919,13 @@ final class ClaudeLedger {
 extension ClaudeLedger {
     private func contextFields(session: String,uuid: String,prompt: String) -> Object {
         guard !session.isEmpty, !uuid.isEmpty || !prompt.isEmpty,
-              let point = try? database.query("SELECT window,model,reasoning_effort FROM claude_context_windows WHERE session_id=? AND ((message_uuid<>'' AND message_uuid=?) OR (prompt_id<>'' AND prompt_id=?)) ORDER BY observed_at DESC LIMIT 1",[session,uuid,prompt]).first else {return [:]}
+              let point = try? database.query("SELECT window,model,reasoning_effort,model_display_name,model_display_id,model_display_source FROM claude_context_windows WHERE session_id=? AND ((message_uuid<>'' AND message_uuid=?) OR (prompt_id<>'' AND prompt_id=?)) ORDER BY observed_at DESC LIMIT 1",[session,uuid,prompt]).first else {return [:]}
         return requestFields(point)
     }
     private func requestFields(_ point: Object) -> Object {
         var fields: Object = [:]
         if let window = point.integer("window"), window > 0 {fields["model_context_window"] = window}
-        for key in ["model","reasoning_effort"] where !point.string(key).isEmpty {fields[key] = point.string(key)}
+        for key in ["model","reasoning_effort","model_display_name","model_display_id","model_display_source"] where !point.string(key).isEmpty {fields[key] = point.string(key)}
         return fields
     }
     func observeContexts(_ points: [Object]) throws -> Bool {
@@ -931,12 +940,12 @@ extension ClaudeLedger {
                 guard let at = point.number("observed_at"), !point.string("session_id").isEmpty else {continue}
                 let session = namespaced(point.string("session_id")), uuid = point.string("message_uuid"), prompt = point.string("prompt_id")
                 guard !uuid.isEmpty || !prompt.isEmpty else {continue}
-                let prior = try database.query("SELECT window,model,reasoning_effort,observed_at FROM claude_context_windows WHERE session_id=? AND message_uuid=? AND prompt_id=?",[session,uuid,prompt]).first ?? [:]
+                let prior = try database.query("SELECT window,model,reasoning_effort,model_display_name,model_display_id,model_display_source,observed_at FROM claude_context_windows WHERE session_id=? AND message_uuid=? AND prompt_id=?",[session,uuid,prompt]).first ?? [:]
                 if (prior.number("observed_at") ?? 0) > at {continue}
                 var fields = requestFields(prior)
-                for (key,value) in requestFields(point) {fields[key] = value}
+                for (key,value) in requestFields(point) where !key.hasPrefix("model_display_") || fields.string(key).isEmpty {fields[key] = value}
                 guard !fields.isEmpty, identity(fields) != identity(requestFields(prior)) else {continue}
-                try database.run("INSERT INTO claude_context_windows(session_id,message_uuid,prompt_id,observed_at,window,model,reasoning_effort) VALUES(?,?,?,?,?,?,?) ON CONFLICT(session_id,message_uuid,prompt_id) DO UPDATE SET observed_at=excluded.observed_at,window=excluded.window,model=excluded.model,reasoning_effort=excluded.reasoning_effort",[session,uuid,prompt,at,fields.integer("model_context_window") ?? 0,fields.string("model"),fields.string("reasoning_effort")])
+                try database.run("INSERT INTO claude_context_windows(session_id,message_uuid,prompt_id,observed_at,window,model,reasoning_effort,model_display_name,model_display_id,model_display_source) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id,message_uuid,prompt_id) DO UPDATE SET observed_at=excluded.observed_at,window=excluded.window,model=excluded.model,reasoning_effort=excluded.reasoning_effort,model_display_name=excluded.model_display_name,model_display_id=excluded.model_display_id,model_display_source=excluded.model_display_source",[session,uuid,prompt,at,fields.integer("model_context_window") ?? 0,fields.string("model"),fields.string("reasoning_effort"),fields.string("model_display_name"),fields.string("model_display_id"),fields.string("model_display_source")])
                 changed = true
                 if !uuid.isEmpty {
                     for row in try database.query("SELECT data FROM claude_calls WHERE session_id=? AND json_extract(data,'$.uuid')=?",[session,uuid]) {
@@ -947,7 +956,15 @@ extension ClaudeLedger {
                     }
                 }
                 let ids = try database.query("SELECT id FROM claude_requests WHERE session_id=? AND ((?<>'' AND json_extract(data,'$.main_uuid')=?) OR (?<>'' AND id=?))",[session,uuid,uuid,prompt,namespaced("request:"+prompt)])
-                for row in ids {try updateRequest(row.string("id"),fields:fields); affected.insert(row.string("id"))}
+                for row in ids {
+                    let id = row.string("id")
+                    try updateRequest(id,fields:fields); affected.insert(id)
+                    if !fields.string("model_display_name").isEmpty {
+                        for call in try database.query("SELECT data FROM claude_calls WHERE request_id=? AND COALESCE(json_extract(data,'$.model_display_name'),'')='' AND COALESCE(json_extract(data,'$.is_subagent'),0)=0",[id]) {
+                            try saveCall(jsonObject(Data(call.string("data").utf8)))
+                        }
+                    }
+                }
             }
             try database.run("DELETE FROM claude_context_windows WHERE rowid NOT IN(SELECT rowid FROM claude_context_windows ORDER BY observed_at DESC LIMIT 256)")
         }

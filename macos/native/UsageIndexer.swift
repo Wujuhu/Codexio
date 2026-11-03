@@ -2,6 +2,7 @@ import Foundation
 
 final class UsageIndexer {
     let database: Database
+    private lazy var modelNames = RequestModelNames(directory:database.url.deletingLastPathComponent(),client:"codex")
     private var cancelled = false
     private struct Signature: Equatable { let stamp: FileStamp }
     private var scannedFiles: [String:Signature] = [:]
@@ -43,6 +44,7 @@ final class UsageIndexer {
         }
         for root in roots {
             if cancelled { return }
+            try modelNames.observe(root:root,client:"codex")
             try titles(root)
             let files = sessionFiles(root)
             for (index,file) in files.enumerated() {
@@ -449,6 +451,7 @@ final class UsageIndexer {
         }
         if !["","unknown"].contains(state.string("request_model").lowercased()) { row["model"] = state["request_model"] }
         mutate(&row); row["observed_at"] = stamp
+        if let (_,root) = activeSource {modelNames.capture(&row,root:root,client:"codex")}
         if state.flag("is_approval_review") || row.string("model").lowercased() == "codex-auto-review" {
             row["record_kind"] = RequestClassification.approval; row["is_approval_review"] = true
         } else if row.flag("has_user_message") || !row.string("continuation_of").isEmpty || (!row.string("root_turn_id").isEmpty && row.string("root_turn_id") != turn) {
@@ -616,7 +619,7 @@ final class UsageIndexer {
                 if let parent = payload["parent_thread_id"] ?? payload["parent_session_id"] { state["parent_session_id"] = parent }
                 if let parent = payload["parent_turn_id"] { state["parent_turn_id"] = parent }
             }
-            if !inherited { try saveTurn(&state,stamp:stamp) { _ in } }
+            if !inherited { try saveTurn(&state,stamp:stamp) { RequestModelNames.explicit(payload,to:&$0) } }
         }
         if kind == "event_msg" && ["task_started","turn_started"].contains(subtype) {
             let settings = payload.object("thread_settings").isEmpty ? payload.object("settings") : payload.object("thread_settings")
@@ -632,7 +635,7 @@ final class UsageIndexer {
                 if let parent = payload["parent_turn_id"] { state["parent_turn_id"] = parent }
             }
             state["output_preview"] = ""
-            if !inherited { try saveTurn(&state,stamp:stamp) { $0["started_at"] = payload["started_at"].flatMap(parsedDate).map(iso) ?? stamp; $0["started_inferred"] = false; $0["status"] = "running"; $0["explicit_task_start"] = true } }
+            if !inherited { try saveTurn(&state,stamp:stamp) { RequestModelNames.explicit(settings.isEmpty ? payload:settings,to:&$0); $0["started_at"] = payload["started_at"].flatMap(parsedDate).map(iso) ?? stamp; $0["started_inferred"] = false; $0["status"] = "running"; $0["explicit_task_start"] = true } }
         }
         let item = payload.object("item")
         if !inherited, (kind == "compacted" || (kind == "event_msg" && subtype == "item_completed" && item.string("type") == "ContextCompaction")) {
@@ -859,6 +862,7 @@ final class UsageIndexer {
         record["model"] = owns ? state.string("model","unknown") : "unknown"
         if owns {
             for key in ["reasoning_effort","service_tier","model_context_window","prompt_preview","cwd","session_cwd","is_approval_review","parent_session_id","parent_turn_id","auth_mode","billing_source","usage_source"] { record[key] = state[key] }
+            RequestModelNames.copy(state.object("turns").object(turn),to:&record,matchingModel:false)
             if RequestClassification.isApproval(record) { record["record_kind"] = RequestClassification.approval }
         }
         if usage[1]+usage[2] > usage[0] || usage[4] > usage[3] { record["quality"] = quality+":invalid_subsets" }

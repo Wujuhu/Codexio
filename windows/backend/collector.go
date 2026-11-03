@@ -190,6 +190,13 @@ func (s *Store) collect(ctx context.Context, force bool) error {
 		if index > 0 {
 			source = "local:" + HashString(strings.ToLower(root))[:16]
 		}
+		if s.modelNameRoots == nil {
+			s.modelNameRoots = map[string]string{}
+		}
+		s.modelNameRoots[source] = root
+		if e := s.observeRequestModelNames(root, "codex"); e != nil {
+			return e
+		}
 		active[source] = true
 		if e := s.readTitles(root, rediscover); e != nil {
 			if len(scanErrors) < 4 {
@@ -1273,6 +1280,15 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 		if m := dataString(state, "request_model"); m != "" && m != "unknown" {
 			r["model"] = m
 		}
+		if explicit != "" {
+			explicitRequestModelName(r, p)
+			settings := ValueRow(p["thread_settings"])
+			if len(settings) == 0 {
+				settings = ValueRow(p["settings"])
+			}
+			explicitRequestModelName(r, settings)
+		}
+		s.captureRequestModelName(r, s.modelNameRoots[source], "codex", nil)
 		if dataString(r, "model") == "codex-auto-review" {
 			r["record_kind"] = "automatic_approval_review"
 			r["is_subagent"] = true
@@ -1693,6 +1709,7 @@ func (s *Store) accounting(entry, state Row, tx *sql.Tx) (Row, error) {
 		copyRequestPricingIdentity(r, ValueRow(p["info"]))
 		copyRequestPricingIdentity(r, p)
 		meta := getTurn(state, turn, timestamp)
+		copyRequestModelName(r, meta, true)
 		r["prompt_preview"] = meta["prompt_preview"]
 		r["output_preview"] = state["pending_output"]
 		r["record_kind"] = meta["record_kind"]

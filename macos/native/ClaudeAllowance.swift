@@ -84,7 +84,7 @@ final class ClaudeAllowance {
         }
         let contexts = payload.objects("contexts").prefix(32).filter {point in
             let window = point.integer("window") ?? 0
-            guard window >= 0, window <= 2_147_483_647, point.string("model").count <= 256, point.string("reasoning_effort").count <= 32,
+            guard window >= 0, window <= 2_147_483_647, point.string("model").count <= 256, point.string("model_display_name").count <= 512, point.string("model_display_id").count <= 512, point.string("model_display_source").count <= 32, point.string("reasoning_effort").count <= 32,
                   window > 0 || !point.string("model").isEmpty || !point.string("reasoning_effort").isEmpty,
                   let at = point.number("observed_at"), at >= startedAt, at <= captured+5 else {return false}
             return point.string("session_id").count <= 256 && !point.string("session_id").isEmpty &&
@@ -164,6 +164,8 @@ final class ClaudeAllowance {
                 if let window = raw.object("context_window").integer("context_window_size"), window > 0 {point["window"] = window}
                 let model = raw.object("model").string("id"), effort = raw.object("effort").string("level")
                 if !model.isEmpty {point["model"] = model}
+                let name = raw.object("model").string("display_name")
+                if !name.isEmpty {point["model_display_name"] = name;point["model_display_id"] = model;point["model_display_source"] = "statusline"}
                 if !effort.isEmpty {point["reasoning_effort"] = effort}
                 contexts = [point]
             }

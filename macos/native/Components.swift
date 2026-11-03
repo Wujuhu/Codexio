@@ -299,7 +299,8 @@ struct LogDetail: View {
                 Text(row.title).font(.system(size:14,weight:.medium))
                 Text(dateText(row.date)).font(.caption).foregroundStyle(.secondary)
                 Divider()
-                field(L("模型", "Model"),modelName(row.raw.string("model")))
+                field(L("模型", "Model"),requestValueText(row.raw.string("model_display_name").isEmpty ? modelName(row.raw.string("model")):row.raw.string("model_display_name")))
+                if !row.raw.string("model_display_name").isEmpty {field(L("请求模型 ID", "Request model ID"),requestValueText(row.raw.string("model")))}
                 if !row.raw.string("upstream_model").isEmpty { field(L("响应返回模型", "Response model"),modelName(row.raw.string("upstream_model"))) }
                 field(L("推理强度", "Reasoning"),logEffortName(row.raw.string("reasoning_effort")))
                 field(L("速度", "Speed"),detailSpeedName(row.raw.string("service_tier")))
