@@ -28,6 +28,11 @@ struct UsageRow: Identifiable {
         confirmedCall = ["","response","legacy_last"].contains(quality) || (quality == "cumulative_delta" && id.hasPrefix("response:"))
         inputTokens = raw.integer("input_tokens"); cachedTokens = raw.integer("cached_input_tokens"); outputTokens = raw.integer("output_tokens")
     }
+    var pricingModelHint: String {
+        let models = (raw["pricing_models"] as? [String] ?? [])+[raw.object("price_rates").string("model")]
+        let names = Array(Set(models.filter {!$0.isEmpty})).sorted()
+        return names.isEmpty ? "—":names.joined(separator:"\n")
+    }
     var costText: String {
         let text = money(cost)
         return cost != nil && raw.string("client_kind") == "claude_code" && raw.string("pricing_status") == "estimated" ? "≈"+text : text
@@ -376,6 +381,7 @@ enum Analytics {
             }
             row["timestamp"] = own["started_at"] ?? calls.last?.raw["timestamp"]
             row["total_tokens"] = summary.tokens; row["cost_usd"] = summary.cost; row["pricing_status"] = summary.unknownCosts > 0 ? "estimated" : "priced"
+            row["pricing_models"] = Array(Set(calls.map {$0.raw.object("price_rates").string("model")}.filter {!$0.isEmpty})).sorted()
             row["call_count"] = summary.calls; row["cache_hit_rate"] = summary.cacheRate
             let ownSources = (own["source_ids"] as? [String] ?? [])+[own.string("source_id")]
             row["local_origin"] = calls.contains(where:{$0.local}) || ownSources.contains {$0 == "local" || $0.hasPrefix("local:")}

@@ -2,7 +2,7 @@
   import {onDestroy} from 'svelte';
   import {defaultQuery,rows,numeric,compact,priced,cost,text,type Row,type Query} from '../lib/api';
   import {tr} from '../lib/i18n';
-  import {preview,requestMetadata,hitRate,duration,effort,speed,logTime,fullTime,requestStatus,contextTokens,contextWindowText} from './logFormat';
+  import {pricingModelHint,preview,requestMetadata,hitRate,duration,effort,speed,logTime,fullTime,requestStatus,contextTokens,contextWindowText} from './logFormat';
   import Filters from './Filters.svelte';
   import DetailPopover from './DetailPopover.svelte';
   import Model from './Model.svelte';
@@ -48,7 +48,7 @@
     <table style:width={`${tableWidth}px`} style:min-width={`${tableWidth}px`}>
       <colgroup>{#each rendered as width}<col style:width={`${width}px`}/>{/each}</colgroup>
       <thead><tr>{#each columns as column,i}<th scope="col">{column.key==='content'?`${tr('请求')} / ${tr('时间')}`:tr(column.title)}<button type="button" class="column-handle" aria-label={`${tr(column.key==='content'?'请求':column.title)} · ${tr('请求详情')==='Request details'?'Resize column':'调整列宽'}`} onpointerdown={event=>begin(event,i)} onkeydown={event=>keyResize(event,i)}></button></th>{/each}</tr></thead>
-      <tbody>{#each rows(data.rows) as record (record.id)}<tr>{#each columns as column}<td>{#if column.key==='content'}<RequestLines primary={preview(record)} secondary={requestMetadata(record,query,data.show_year)} secondaryTitle={fullTime(record.timestamp)}/>{:else if column.key==='model'}<Model {record} showEffort={false} tableCell/>{:else if column.key==='duration'}<Duration {record} showTPS/>{:else if column.key==='details'}<DetailPopover id={String(record.id)} {record} {onerror}/>{:else}<span title={column.key==='cost'?priced(record):cell(record,column.key)}>{cell(record,column.key)}</span>{/if}</td>{/each}</tr>{/each}</tbody>
+      <tbody>{#each rows(data.rows) as record (record.id)}<tr>{#each columns as column}<td>{#if column.key==='content'}<RequestLines primary={preview(record)} secondary={requestMetadata(record,query,data.show_year)} secondaryTitle={fullTime(record.timestamp)}/>{:else if column.key==='model'}<Model {record} showEffort={false} tableCell/>{:else if column.key==='duration'}<Duration {record} showTPS/>{:else if column.key==='details'}<DetailPopover id={String(record.id)} {record} {onerror}/>{:else}<span title={column.key==='cost'?pricingModelHint(record):cell(record,column.key)}>{cell(record,column.key)}</span>{/if}</td>{/each}</tr>{/each}</tbody>
     </table>
     {#if !rows(data.rows).length}<div class="empty">{tr('暂无数据')}</div>{/if}
   </div>

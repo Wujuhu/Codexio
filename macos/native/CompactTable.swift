@@ -8,7 +8,7 @@ struct GridColumn {
     var maximum: CGFloat? = nil
     var alignment: NSTextAlignment = .left
 }
-struct GridText { var main: String; var secondary = ""; var upstream = ""; var upstreamMismatch = false; var hint = ""; var secondaryHint = "" }
+struct GridText { var main: String; var secondary = ""; var upstream = ""; var upstreamMismatch = false; var hint = ""; var secondaryHint = ""; var mainHint: String? = nil }
 struct GridRow {
     let id: String
     var text: (String) -> GridText
@@ -63,7 +63,7 @@ private final class GridTextCell: NSView {
         secondary.textColor = showsUpstream ? upstreamColor : .secondaryLabelColor
         secondary.toolTip = value.secondaryHint.isEmpty ? secondary.stringValue:value.secondaryHint
         main.alignment = alignment; secondary.alignment = alignment
-        main.toolTip = value.main
+        main.toolTip = value.mainHint ?? value.main
         if hint != value.hint {
             hintCoordinator?.close();hintCoordinator=nil;hint=value.hint;info.isHidden=hint.isEmpty
             info.target=nil;info.action=nil;info.entered=nil;info.exited=nil
@@ -390,7 +390,7 @@ enum LogFields {
             case "cache_rate":
                 let rate = raw.number("cache_hit_rate") ?? (raw.number("input_tokens").flatMap {$0 > 0 ? (raw.number("cached_input_tokens") ?? 0)/$0 : nil})
                 return GridText(main:percent(rate.map {$0*100},digits:1))
-            case "cost": return GridText(main:row.costText)
+            case "cost": return GridText(main:row.costText,mainHint:row.pricingModelHint)
             case "duration":
                 guard let seconds = row.duration, seconds >= 0, seconds < Double(Int.max) else { return GridText(main:"—",secondary:"—") }
                 let value = Int(seconds)

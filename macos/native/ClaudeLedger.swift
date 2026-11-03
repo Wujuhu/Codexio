@@ -731,6 +731,22 @@ final class ClaudeLedger {
     func models() throws -> [String] {
         try database.query("SELECT model FROM claude_calls WHERE id LIKE ? AND model<>'' UNION SELECT model FROM claude_requests WHERE id LIKE ? AND model<>'' UNION SELECT json_extract(data,'$.upstream_model') AS model FROM claude_calls WHERE id LIKE ? AND json_extract(data,'$.upstream_model')<>'' ORDER BY model",[scope+"%",scope+"%",scope+"%"]).map {$0.string("model")}
     }
+    // Enrich only the bounded visible page, using the existing request index.
+    // Historical prices supply the model; hovering never reads the ledger.
+    private func withPricingModels(_ rows: [UsageRow]) throws -> [UsageRow] {
+        let ids = rows.filter {$0.raw.string("record_kind") == "user_request"}.map(\.id)
+        guard !ids.isEmpty else {return rows}
+        let slots = Array(repeating:"?",count:ids.count).joined(separator:",")
+        var models: [String:Set<String>] = [:]
+        for item in try database.query("SELECT DISTINCT request_id,json_extract(data,'$.price_rates.model') AS pricing_model FROM claude_calls WHERE request_id IN (\(slots))",ids) {
+            let model = item.string("pricing_model")
+            if !model.isEmpty {models[item.string("request_id"),default:[]].insert(model)}
+        }
+        return rows.map {row in
+            var raw = row.raw;raw["pricing_models"] = (models[row.id] ?? []).sorted()
+            return UsageRow(raw:raw)
+        }
+    }
     func logPage(range: UsageRange,mode: String,model: String,status: String,query: String,page: Int) throws -> LogProjection {
         let table = mode == "calls" ? "claude_calls" : "claude_requests", (sql,args) = filtered(table,range:range,model:model,status:status,query:query)
         let (orphanSQL,orphanArgs) = filtered("claude_calls",range:range,model:model,status:status,query:query)
@@ -738,7 +754,7 @@ final class ClaudeLedger {
         let allArgs = args+(mode == "requests" ? orphanArgs : [])
         let count = try database.query("SELECT count(*) AS n,min(timestamp) AS first,sum(orphan) AS unassigned FROM (\(selectedRows))",allArgs).first ?? [:]
         let total = count.integer("n") ?? 0, selected = max(0,min(page,max(0,(total-1)/60)))
-        let rows = try database.query("SELECT data FROM (\(selectedRows)) ORDER BY timestamp DESC,id LIMIT 60 OFFSET ?",allArgs+[selected*60]).map {UsageRow(raw:jsonObject(Data($0.string("data").utf8)))}
+        let rows = try withPricingModels(database.query("SELECT data FROM (\(selectedRows)) ORDER BY timestamp DESC,id LIMIT 60 OFFSET ?",allArgs+[selected*60]).map {UsageRow(raw:jsonObject(Data($0.string("data").utf8)))})
         let orphans = mode == "requests" ? count.integer("unassigned") ?? 0 : (try database.query("SELECT count(*) AS n FROM claude_calls WHERE request_id='' AND \(orphanSQL)",orphanArgs).first?.integer("n") ?? 0)
         let year = Calendar.current.component(.year,from:Date()), first = count.number("first").map {Date(timeIntervalSince1970:$0)}
         let showYear = range.start == .distantPast ? first.map {Calendar.current.component(.year,from:$0) != year} ?? false : Calendar.current.component(.year,from:range.start) != year || Calendar.current.component(.year,from:range.end) != year
@@ -788,7 +804,7 @@ final class ClaudeLedger {
         let tokenCounts = Dictionary(uniqueKeysWithValues:rows.map {($0.string("model"),$0.integer("tokens"))})
         let groups = rows.map {row -> MobileModel in MobileModel(id:row.string("model"),name:requestValueText(modelName(row.string("model"))),metric:MobileMetric(tokens:row.integer("tokens"),cost:row.number("cost"),requests:requestCounts[row.string("model")] ?? 0,costComplete:row.integer("unknown_costs")==0,hitRate:nil))}
         let requestGroups = requestRows.map {row in MobileModel(id:row.string("model"),name:requestValueText(modelName(row.string("model"))),metric:MobileMetric(tokens:tokenCounts[row.string("model")] ?? nil,cost:costs[row.string("model")] ?? nil,requests:row.integer("n") ?? 0,costComplete:costComplete[row.string("model")] ?? false,hitRate:nil))}
-        let recent = try database.query("SELECT data FROM claude_requests WHERE \(requestSQL) ORDER BY timestamp DESC LIMIT 3",requestArgs).map {UsageRow(raw:jsonObject(Data($0.string("data").utf8)))}
+        let recent = try withPricingModels(database.query("SELECT data FROM claude_requests WHERE \(requestSQL) ORDER BY timestamp DESC LIMIT 3",requestArgs).map {UsageRow(raw:jsonObject(Data($0.string("data").utf8)))})
         return TrendProjection(summary:summary,days:try days(range:range,model:model,granularity:granularity),recent:recent,modelRows:[groups,groups,requestGroups])
     }
     private func days(range: UsageRange,model: String,granularity: String) throws -> [DayUsage] {

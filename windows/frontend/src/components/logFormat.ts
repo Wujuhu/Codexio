@@ -1,6 +1,12 @@
 import {compact, kind, number, percent, text, type Row, type Query} from '../lib/api';
 import {isEnglish, tr} from '../lib/i18n';
 
+export function pricingModelHint(record: Row): string {
+  const values=[...(Array.isArray(record.pricing_models)?record.pricing_models:[]),record.price_rates?.model];
+  const models=[...new Set(values.filter((value):value is string=>typeof value==='string'&&!!value.trim()))].sort();
+  return models.join('\n')||'—';
+}
+
 export function modelName(value: unknown): string {
   const raw=text(value,'').trim();
   if(['','unknown','未知','-','–','—'].includes(raw.toLowerCase()))return'—';

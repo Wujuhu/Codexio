@@ -190,6 +190,11 @@ func (s *Store) Page(q Query, contexts ...context.Context) (PageResult, error) {
 	if e != nil {
 		return result, e
 	}
+	if groups {
+		if e = s.enrichCostModels(result.Rows, reader); e != nil {
+			return result, e
+		}
+	}
 	if e = s.claudeSourceFields(result.Rows, reader.ctx); e != nil {
 		return result, e
 	}
@@ -197,6 +202,47 @@ func (s *Store) Page(q Query, contexts ...context.Context) (PageResult, error) {
 		s.enrichUpstream(result.Rows, groups, reader.ctx)
 	}
 	return result, nil
+}
+
+// The same member index used by details bounds this read to visible requests.
+// Use the stored rates so a tooltip cannot reinterpret historical prices.
+func (s *Store) enrichCostModels(records []Row, reader queryReader) error {
+	if len(records) == 0 {
+		return nil
+	}
+	args := make([]any, 0, len(records))
+	for _, row := range records {
+		args = append(args, row["id"])
+	}
+	slots := strings.TrimSuffix(strings.Repeat("?,", len(args)), ",")
+	rows, err := reader.Query("SELECT DISTINCT m.request_id,json_extract(c.data,'$.price_rates.model') FROM usage_request_members m JOIN usage_priced_calls c ON c.id=m.record_id WHERE m.request_id IN ("+slots+")", args...)
+	if err != nil {
+		return err
+	}
+	models := map[string]map[string]bool{}
+	for rows.Next() {
+		var id string
+		var model sql.NullString
+		if err = rows.Scan(&id, &model); err != nil {
+			rows.Close()
+			return err
+		}
+		if model.Valid && model.String != "" {
+			if models[id] == nil {
+				models[id] = map[string]bool{}
+			}
+			models[id][model.String] = true
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, row := range records {
+		row["pricing_models"] = sortedKeys(models[dataString(row, "id")])
+	}
+	return nil
 }
 func (s *Store) stream(q Query, fn func(Row), contexts ...context.Context) error {
 	reader := s.readDB(contexts)
@@ -334,6 +380,9 @@ func (s *Store) Recent(q Query, n int, contexts ...context.Context) ([]Row, erro
 	rows.Close()
 	if e == nil && normalizedClient(q.ClientKind) == "codex" {
 		s.enrichUpstream(result, true, reader.ctx)
+	}
+	if e == nil {
+		e = s.enrichCostModels(result, reader)
 	}
 	if e == nil {
 		e = s.claudeSourceFields(result, reader.ctx)
