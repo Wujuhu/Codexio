@@ -179,7 +179,7 @@
 
 ## v0.3.13 请求显示名称与计价（2026-11-03）
 
-- 用户明确指定 v0.3.13，Mac／Windows 开发版本升至 0.3.13，iOS 版本跟随；本次没有推送或正式发布授权。
+- 用户明确指定 v0.3.13，Mac／Windows 开发版本升至 0.3.13，iOS 版本跟随；2026-11-03 用户另行明确授权推送并发布 v0.3.13，覆盖 Mac、Windows 与 iOS。
 - Mac／Windows 日志和概览最近请求的模型列优先显示请求时用户选择的 display name，替代此前 Claude 返回模型优先和 Codex 日志上游双行展示规则。详情保留请求模型 ID、返回模型与原上游观测；原始模型标识及 Token 不改写。
 - 费用同样优先以这份 display name 匹配现有统一价格目录，复用已有 Standard 基础价、速度、长上下文及缓存规则；名称存在但无法唯一匹配时费用为 `—`，不得回退到另一个请求或返回型号的价格。没有显示名称证据的旧记录保留原计价口径。
 - 用户选择：仅有可靠历史依据时补名称并重算，不能用当前 modelPicker 配置追溯回填旧请求。Claude 复用 `ClaudePricing.swift`／`claude_pricing.go` 的配置变化检测与时间边界、既有 Mods／statusLine 的 UUID／prompt 关联；Codex 复用请求开始／turn_context 保存机制，读取来源自身的 `models_cache.json`。快照独立保存 `model_display_name`／对应 ID／证据来源，不把定价目录名称冒充当时客户端选择。
