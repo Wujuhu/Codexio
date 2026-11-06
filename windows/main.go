@@ -125,7 +125,7 @@ func desktopRun(args desktopArguments) error {
 	h.app = application.New(application.Options{Name: "Codexio", Description: "Codex usage and quota", Icon: h.brandIcon("main"), LogLevel: slog.LevelWarn,
 		Assets:         application.AssetOptions{Handler: application.BundledAssetFileServer(assets), DisableLogging: true},
 		Windows:        application.WindowsOptions{WndClass: "CodexioWailsWindow", DisableQuitOnLastWindowClosed: true, WebviewUserDataPath: filepath.Join(directory, "WebView2")},
-		SingleInstance: &application.SingleInstanceOptions{UniqueID: key, ExitCode: 0, AdditionalData: map[string]string{"action": "show-main"}, OnSecondInstanceLaunch: func(application.SecondInstanceData) { go h.openMain() }},
+		SingleInstance: &application.SingleInstanceOptions{UniqueID: key, ExitCode: 0, AdditionalData: map[string]string{"action": "show-main"}, OnSecondInstanceLaunch: func(application.SecondInstanceData) { h.requestOpenMain() }},
 		ShouldQuit:     h.shouldQuit, OnShutdown: h.shutdown, PostShutdown: h.releaseIcons,
 		ErrorHandler: func(err error) {
 			if h.smoke != nil {

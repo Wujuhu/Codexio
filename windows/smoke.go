@@ -102,7 +102,9 @@ func (s *SmokeService) Ready(ctx context.Context, values backend.Row) error {
 					s.mu.Lock()
 					s.step = 2
 					s.mu.Unlock()
-					h.openMain()
+					// Reopen through the tray's native-thread callback, still using
+					// the same off-screen window and original third smoke check.
+					application.InvokeSync(h.requestOpenMain)
 					return
 				}
 				select {

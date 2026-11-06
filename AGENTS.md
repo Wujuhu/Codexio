@@ -45,7 +45,7 @@
 
 # 当前开发流程
 
-- 当前 Mac 源码版本为 `0.3.13`，使用 Swift／SwiftUI／AppKit。Windows 已按用户明确授权迁移为 Wails + Go，版本由 `windows/VERSION` 独立管理，当前源码版本为 `0.3.13`，已发布版本以 GitHub 最新正式 Release 及其共享清单为准；旧 Python 版本号继续保留，Mac 与 Windows 的日常需求默认同步开发。iOS 版本由 `ios/VERSION` 记录，默认跟随 Mac／Windows 中较新的版本，当前为 `0.3.13`。此前 v0.3.10 的发布授权仅限该版本；用户于 2026-10-23 明确授权推送并发布 v0.3.11，2026-10-31 明确授权推送并发布 v0.3.12，两次均默认覆盖 Mac、Windows 与 iOS。此前 beta 只作本地测试、不上传。以后每次 Release 必须附带经过核验、版本已对齐的最新 `Codexio.ipa`。
+- 当前 Mac 源码版本为 `0.3.13`，使用 Swift／SwiftUI／AppKit。Windows 已按用户明确授权迁移为 Wails + Go，版本由 `windows/VERSION` 独立管理，当前源码版本为 `0.3.14`，已发布版本以 GitHub 最新正式 Release 及其共享清单为准；旧 Python 版本号继续保留，Mac 与 Windows 的日常需求默认同步开发。iOS 版本由 `ios/VERSION` 记录，默认跟随 Mac／Windows 中较新的版本，当前为 `0.3.13`，下次构建自动跟随。此前 v0.3.10 的发布授权仅限该版本；用户于 2026-10-23 明确授权推送并发布 v0.3.11，2026-10-31 明确授权推送并发布 v0.3.12，两次均默认覆盖 Mac、Windows 与 iOS。此前 beta 只作本地测试、不上传。以后每次 Release 必须附带经过核验、版本已对齐的最新 `Codexio.ipa`。
 - v0.3.2 已按当时授权完成 Mac ZIP 与清单双附件发布，保持原样。后续每次发布仍须用户新的明确发布指令；“推送并且发布”按上述规则直接授权，无需再次确认版本，默认必须包含 Mac ZIP、iOS IPA、Windows EXE 与清单；任何校验失败都保持草稿。
 - 每次修改完成并通过验证、开发打包后，提交到本地 Git；开发打包不等于确认正式发布。
 - 每次准备推送或发布时，默认检查仓库 `README.md` 是否需要同步更新，核对版本状态、各平台下载链接与系统要求、功能介绍、安装／更新说明、数据口径及开发流程。需要更新时在推送前完成并提交；无需更新时保持原文。明确区分已发布版本和开发版本，不把未发布的开发包写成已发布。
@@ -187,3 +187,8 @@
 
 - Windows Claude 请求分组从 `usage_priced_calls` 按 `claude_request_id` 读取成员及写入关联时，必须使用 `go_priced_claude_owner` 部分索引（Claude 请求 ID、timestamp、id），复用 Mac `claude_calls_request` 的按请求索引机制；不得因每个请求重新扫描整张计量表。2026-11-03 在 15,784 条计量记录、587 条 Claude 请求的隔离备份中确认此热点，修复保持 v0.3.13，不新增采集或定时任务。
 - Mac／Windows 日志费用单元格的原生灰色悬浮提示显示实际计价记录中的模型 ID（`price_rates.model`，例如 `gpt-6-astra`），不重复显示费用。请求组包含多个计价模型时去重排序、逐行显示，缺少依据显示 `—`；概览最近请求共用此规则。模型信息随现有后台投影或当前有界页读取准备，悬停不查询数据库、不重新计价或重扫日志。
+
+## v0.3.14 Windows 任务栏唤起（2026-11-06）
+
+- 用户明确指定 v0.3.14 修复 Windows 点击任务栏／托盘图标无法打开主窗口；本次仅升级 Windows 开发版本，未授权推送或正式发布。Mac 保持 0.3.13，iOS 下次构建按既有规则跟随。
+- 复用当前 `desktop.go` 的窗口创建／恢复与 `single_instance_windows.go` 的启动通知；参考固定 Wails v3.0.0-beta.26 的 `pkg/application/systemtray_windows.go`（点击直接调用原生 WndProc 回调）、`menuitem.go`（后台派发菜单动作）与 `webview_window.go`（同步切回原生线程）。托盘单击、双击、打开菜单和重复启动统一异步派发并合并待处理的主窗口打开请求，不在原生消息回调中等待窗口锁或创建 WebView2。原三项冒烟的关闭重开经同一回调执行，继续屏幕外运行，不增加测试项。

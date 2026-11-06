@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -29,6 +30,7 @@ type desktopHost struct {
 	quitting, quitApproved   bool
 	serial                   uint
 	mainReady                bool
+	mainOpenPending          atomic.Bool
 	pendingReport            bool
 	savedMain, savedFloating backend.Row
 	icons                    map[string]desktopIcon
@@ -74,15 +76,27 @@ func (h *desktopHost) setupTray() {
 	h.tray.SetDarkModeIcon(dark)
 	h.tray.SetTooltip("Codexio")
 	menu := h.app.NewMenu()
-	menu.Add(h.label("打开主窗口", "Open Codexio")).OnClick(func(*application.Context) { h.openMain() })
+	menu.Add(h.label("打开主窗口", "Open Codexio")).OnClick(func(*application.Context) { h.requestOpenMain() })
 	menu.Add(h.label("显示／隐藏悬浮窗", "Show / hide floating window")).OnClick(func(*application.Context) { _ = h.action("toggle-floating") })
 	menu.Add(h.label("AI 使用报告", "AI usage report")).OnClick(func(*application.Context) { _ = h.action("show-report") })
 	menu.Add(h.label("刷新", "Refresh")).OnClick(func(*application.Context) { h.service.Refresh() })
 	menu.AddSeparator()
 	menu.Add(h.label("退出", "Quit")).OnClick(func(*application.Context) { go h.requestQuit() })
 	h.tray.SetMenu(menu)
-	h.tray.OnDoubleClick(h.openMain)
-	h.tray.OnClick(h.openMain)
+	h.tray.OnDoubleClick(h.requestOpenMain)
+	h.tray.OnClick(h.requestOpenMain)
+}
+func (h *desktopHost) requestOpenMain() {
+	// Wails beta.26 invokes tray clicks directly from its Win32 WndProc.
+	// WebView2 creation pumps native messages while openMain holds windowMu;
+	// a second click must not wait for that lock on the same native thread.
+	if !h.mainOpenPending.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer h.mainOpenPending.Store(false)
+		h.openMain()
+	}()
 }
 func (h *desktopHost) openMain() {
 	h.windowMu.Lock()
