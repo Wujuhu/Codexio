@@ -150,19 +150,31 @@ final class Database {
             return value
         }
     }
-    private static let recordPayloadSQL = "SELECT r.id,r.data,t.title,c.cwd,EXISTS(SELECT 1 FROM usage_record_sources s WHERE s.record_id=r.id AND (s.source_id='local' OR s.source_id LIKE 'local:%')) AS local_origin FROM usage_records r LEFT JOIN usage_session_titles t ON r.session_id=t.session_id LEFT JOIN usage_session_context c ON r.session_id=c.session_id ORDER BY r.timestamp DESC"
-    func recordPayloads() throws -> [Object] { try query(Self.recordPayloadSQL) }
+    private static let recordPayloadSQL = "SELECT r.id,r.session_id,r.data,t.title,c.cwd,EXISTS(SELECT 1 FROM usage_record_sources s WHERE s.record_id=r.id AND (s.source_id='local' OR s.source_id LIKE 'local:%')) AS local_origin FROM usage_records r LEFT JOIN usage_session_titles t ON r.session_id=t.session_id LEFT JOIN usage_session_context c ON r.session_id=c.session_id"
+    private static let turnMetadataSQL = "SELECT t.data,c.cwd FROM usage_turns t LEFT JOIN usage_session_context c ON json_extract(t.data,'$.session_id')=c.session_id"
+    func recordPayloads() throws -> [Object] { try query(Self.recordPayloadSQL + " ORDER BY r.timestamp DESC") }
     func forEachRecordPayload(_ consume: (Object) throws -> Void) throws {
-        try forEachRow(Self.recordPayloadSQL, [], consume)
+        try forEachRow(Self.recordPayloadSQL + " ORDER BY r.timestamp DESC", [], consume)
+    }
+    func recordPayloads(sessions: [String], limit: Int) throws -> [Object] {
+        guard !sessions.isEmpty else { return [] }
+        let parameters = sessions.map { _ in "?" }.joined(separator:",")
+        return try query(Self.recordPayloadSQL + " WHERE r.session_id IN (\(parameters)) ORDER BY r.timestamp DESC LIMIT ?",sessions.map { $0 as Any } + [limit])
+    }
+    func turnMetadata(sessions: [String], limit: Int) throws -> [Object] {
+        guard !sessions.isEmpty else { return [] }
+        let parameters = sessions.map { _ in "?" }.joined(separator:",")
+        return try query(Self.turnMetadataSQL + " WHERE json_extract(t.data,'$.session_id') IN (\(parameters)) ORDER BY t.rowid LIMIT ?",sessions.map { $0 as Any } + [limit]).map(Self.decodeMetadata)
     }
     func metadata(_ table: String) throws -> [Object] {
         guard ["usage_turns","usage_agent_links"].contains(table) else { return [] }
-        let sql = table == "usage_turns" ? "SELECT t.data,c.cwd FROM usage_turns t LEFT JOIN usage_session_context c ON json_extract(t.data,'$.session_id')=c.session_id" : "SELECT data FROM \(table)"
-        return try query(sql).map { row in
-            var value = jsonObject(Data(row.string("data").utf8))
-            if !row.string("cwd").isEmpty { value["session_cwd"] = row.string("cwd") }
-            return value
-        }
+        let sql = table == "usage_turns" ? Self.turnMetadataSQL + " ORDER BY t.rowid" : "SELECT data FROM \(table)"
+        return try query(sql).map(Self.decodeMetadata)
+    }
+    private static func decodeMetadata(_ row: Object) -> Object {
+        var value = jsonObject(Data(row.string("data").utf8))
+        if !row.string("cwd").isEmpty { value["session_cwd"] = row.string("cwd") }
+        return value
     }
     func writeRecord(_ raw: Object, source: String = "local") throws {
         guard !raw.string("id").isEmpty else { return }

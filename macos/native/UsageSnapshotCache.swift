@@ -9,6 +9,22 @@ final class UsageSnapshotCache {
         let day: Date
         let zone: String
         let offset: Int
+        let sourceScope: String
+        let language: String
+
+        func allowsDelta(from prior: Input) -> Bool {
+            ledger > prior.ledger && upstream == prior.upstream && prices == prior.prices &&
+                day == prior.day && zone == prior.zone && offset == prior.offset &&
+                sourceScope == prior.sourceScope && language == prior.language
+        }
+    }
+    private struct Refresh {
+        let input: Input
+        let snapshot: UsageSnapshot
+        let turns: [Object]
+        let links: [Object]
+        let projection: IncrementalUsageProjection?
+        let dataVersion: Int?
     }
     let database: Database
     let catalog: PricingCatalog
@@ -32,6 +48,12 @@ final class UsageSnapshotCache {
     private var pricedRecords: [String:PricedRecord] = [:]
     private var turns: [Object] = []
     private var links: [Object] = []
+    private var journal: UsageChangeJournal?
+    private var journalAttempted = false
+    private var incremental: IncrementalUsageProjection?
+    private var dataVersion: Int?
+    private var consistentRecordScopes = true
+    var committedLedgerRevision: Int { input?.ledger ?? 0 }
     private static let overviewKey = "overview-today-v1"
     private static let overviewBytes = 64 * 1024
     private struct OverviewStamp: Codable, Equatable {
@@ -111,35 +133,92 @@ final class UsageSnapshotCache {
         return try jsonData(fields)
     }
 
-    func load(now: Date = Date()) throws -> UsageSnapshot {
+    func load(now: Date = Date(), roots: [URL] = []) throws -> UsageSnapshot {
         let calendar = Calendar.current
-        let revision = try database.query("SELECT revision FROM usage_revisions WHERE kind='ledger'").first?.integer("revision") ?? 0
+        let sourceScope = identity(roots.map(\.path))
         refreshUpstream()
-        let next = Input(ledger:revision,upstream:upstreamGeneration,prices:catalog.version,day:calendar.startOfDay(for:now),zone:calendar.timeZone.identifier,offset:calendar.timeZone.secondsFromGMT(for:now))
+        let next = try currentInput(now:now,calendar:calendar,sourceScope:sourceScope)
         let nextHour = calendar.dateInterval(of:.hour,for:now)?.start
         var result: UsageSnapshot
         if next == input, now >= checked, now < expires, let cached {
             result = cached
             if hour != nextHour { result.revision = UUID() }
         } else {
-            if input?.ledger != next.ledger {
-                turns = try database.metadata("usage_turns"); links = try database.metadata("usage_agent_links")
+            if !journalAttempted {
+                journalAttempted = true
+                journal = try? database.transaction { try UsageChangeJournal(database:database) }
             }
-            let reuseCalls = input?.ledger == next.ledger && input?.prices == next.prices && input?.upstream == next.upstream
-            let calls = reuseCalls ? cached?.calls ?? [] : try prepareCalls()
-            result = Analytics.build(records:[],turns:turns,links:links,catalog:catalog,now:now,preparedCalls:calls)
-            try LocalChatRankingStore.update(result,database:database)
+            let refresh: Refresh
+            if let prior = input, next.allowsDelta(from:prior), now >= checked, now < expires,
+               let scoped = try? refreshIncrementally(now:now,calendar:calendar,sourceScope:sourceScope) {
+                refresh = scoped
+            } else {
+                refresh = try rebuild(now:now,calendar:calendar,sourceScope:sourceScope)
+            }
+            result = refresh.snapshot
+            turns = refresh.turns; links = refresh.links
+            incremental = refresh.projection; dataVersion = refresh.dataVersion
             let statusExpiry = turns.filter {$0.string("status") == "running"}.compactMap {parsedDate($0["observed_at"])?.addingTimeInterval(900)}.filter {$0 > now}.min()
             let futureRecord = result.calls.compactMap(\.date).filter {$0 > now}.min()
             let futureTurn = turns.compactMap {parsedDate($0["observed_at"])}.filter {$0 > now}.min()
-            expires = [statusExpiry,futureRecord,futureTurn,calendar.date(byAdding:.day,value:1,to:next.day)].compactMap {$0}.min() ?? .distantFuture
-            input = next
+            expires = [statusExpiry,futureRecord,futureTurn,calendar.date(byAdding:.day,value:1,to:refresh.input.day)].compactMap {$0}.min() ?? .distantFuture
+            input = refresh.input
         }
         result.updated = now; cached = result; checked = now; hour = nextHour
         return result
     }
+    private func currentInput(now: Date, calendar: Calendar, sourceScope: String) throws -> Input {
+        let revision = try database.query("SELECT revision FROM usage_revisions WHERE kind='ledger'").first?.integer("revision") ?? 0
+        return Input(ledger:revision,upstream:upstreamGeneration,prices:catalog.version,day:calendar.startOfDay(for:now),zone:calendar.timeZone.identifier,offset:calendar.timeZone.secondsFromGMT(for:now),sourceScope:sourceScope,language:L("概览", "Overview"))
+    }
+
+    private func refreshIncrementally(now: Date, calendar: Calendar, sourceScope: String) throws -> Refresh? {
+        guard let journal, let incremental, let old = cached, let prior = input, let dataVersion else { return nil }
+        return try database.transaction {
+            let next = try currentInput(now:now,calendar:calendar,sourceScope:sourceScope)
+            // TEMP triggers only see this connection. An external commit can
+            // change ownership or derived rows without a local journal entry.
+            guard next.allowsDelta(from:prior),
+                  try database.query("PRAGMA data_version").first?.integer("data_version") == dataVersion,
+                  let changes = try journal.changes(expected:next.ledger-prior.ledger),
+                  let update = try incremental.prepare(changes:changes,old:old,rawTurns:turns,database:database,catalog:catalog,now:now,price:pricePayload) else { return nil }
+            try LocalChatRankingStore.write(update.scoped,database:database,sessions:update.sessions)
+            try journal.clear()
+            return Refresh(input:next,snapshot:update.snapshot,turns:update.rawTurns,links:links,projection:update.projection,dataVersion:dataVersion)
+        }
+    }
+
+    private func rebuild(now: Date, calendar: Calendar, sourceScope: String) throws -> Refresh {
+        try database.transaction {
+            let next = try currentInput(now:now,calendar:calendar,sourceScope:sourceScope)
+            let version = journal == nil ? nil : (try? database.query("PRAGMA data_version").first?.integer("data_version"))
+            let sameLedger = input?.ledger == next.ledger && dataVersion == version
+            let rawTurns = sameLedger ? turns : try database.metadata("usage_turns")
+            let rawLinks = sameLedger ? links : try database.metadata("usage_agent_links")
+            let reuseCalls = sameLedger && input?.prices == next.prices && input?.upstream == next.upstream
+            let calls = reuseCalls ? cached?.calls ?? [] : try prepareCalls()
+            var normalized: [Object] = []
+            let result = Analytics.build(records:[],turns:rawTurns,links:rawLinks,catalog:catalog,now:now,preparedCalls:calls,captureTurns:version == nil ? nil : {normalized = $0})
+            try LocalChatRankingStore.write(result,database:database)
+            try journal?.clear()
+            let projection = version != nil && consistentRecordScopes ? IncrementalUsageProjection(turns:rawTurns,normalizedTurns:normalized,calls:result.calls,links:rawLinks) : nil
+            return Refresh(input:next,snapshot:result,turns:rawTurns,links:rawLinks,projection:projection,dataVersion:version)
+        }
+    }
+
+    private func pricePayload(_ entry: Object) -> UsageRow {
+        var raw = jsonObject(Data(entry.string("data").utf8))
+        let title = entry.string("title"), cwd = entry.string("cwd")
+        if !title.isEmpty { raw["session_title"] = title }
+        if !cwd.isEmpty { raw["session_cwd"] = cwd }
+        raw["local_origin"] = entry.integer("local_origin") == 1 || raw.string("source_id").hasPrefix("local")
+        if upstreamPresent { raw["upstream_model"] = upstreamModels[raw.string("response_id")] }
+        return UsageRow(raw:catalog.price(raw))
+    }
+
     private func prepareCalls() throws -> [UsageRow] {
         var calls: [UsageRow] = [], retained: [String:PricedRecord] = [:], retainedBytes = 0
+        var scopesMatch = true
         try database.forEachRecordPayload { entry in
             autoreleasepool {
                 let id = entry.string("id"), payload = entry.string("data"), title = entry.string("title"), cwd = entry.string("cwd"), local = entry.integer("local_origin") == 1
@@ -150,13 +229,9 @@ final class UsageSnapshotCache {
                    (!upstreamPresent || old.row.raw.string("upstream_model") == (upstreamModels[old.row.raw.string("response_id")] ?? "")) {
                     value = old.row
                 } else {
-                    var raw = jsonObject(Data(payload.utf8))
-                    if !title.isEmpty { raw["session_title"] = title }
-                    if !cwd.isEmpty { raw["session_cwd"] = cwd }
-                    raw["local_origin"] = local || raw.string("source_id").hasPrefix("local")
-                    if upstreamPresent { raw["upstream_model"] = upstreamModels[raw.string("response_id")] }
-                    value = UsageRow(raw:catalog.price(raw))
+                    value = pricePayload(entry)
                 }
+                if value.id != id || value.raw.string("session_id") != entry.string("session_id") { scopesMatch = false }
                 calls.append(value)
                 let size = payload.utf8.count
                 if retained.count < 8192 && retainedBytes+size <= 8_388_608 {
@@ -165,6 +240,7 @@ final class UsageSnapshotCache {
             }
         }
         pricedRecords = retained
+        consistentRecordScopes = scopesMatch
         return calls
     }
     private func observationStamps() -> [FileStamp] {

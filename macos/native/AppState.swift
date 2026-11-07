@@ -287,12 +287,8 @@ final class AppState: ObservableObject {
                 if client == .claudeCode {
                     result = .success(try self.usageReportStore.load(claude:self.claudeLedger,sourceKey:sourceKey))
                 } else {
-                    let input = try self.database.transaction { () throws -> (UsageSnapshot,Int) in
-                        let snapshot = try self.usageCache.load()
-                        let generation = try self.database.query("SELECT revision FROM usage_revisions WHERE kind='ledger'").first?.integer("revision") ?? 0
-                        return (snapshot,generation)
-                    }
-                    result = .success(try self.usageReportStore.load(snapshot:input.0,ledger:input.1,priceVersion:self.catalog.version,sourceKey:sourceKey))
+                    let snapshot = try self.usageCache.load(roots:self.preferences.roots)
+                    result = .success(try self.usageReportStore.load(snapshot:snapshot,ledger:self.usageCache.committedLedgerRevision,priceVersion:self.catalog.version,sourceKey:sourceKey))
                 }
             } catch {result = .failure(error)}
             DispatchQueue.main.async {
@@ -449,8 +445,9 @@ final class AppState: ObservableObject {
     }
     private func publishUsage(finishLoading: Bool = true) {
         do {
-            let result = try usageCache.load()
-            let overview = usageCache.prepareOverview(result,roots:preferences.roots)
+            let roots = preferences.roots
+            let result = try usageCache.load(roots:roots)
+            let overview = usageCache.prepareOverview(result,roots:roots)
             let prices = catalog.rows, priceUpdated = catalog.updated, priceWarning = catalog.warning
             let models = paths.mock ? Set(["gpt-6-astra","gpt-5.6-sol","gpt-6-luna"]) : Set(objectFiles.read(accountRoot.appendingPathComponent("models_cache.json")).objects("models").filter { row in
                 !row.flag("hidden") && row.string("visibility") != "hide" && (row["hidden"] is Bool || row.string("visibility") == "list")

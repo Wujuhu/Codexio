@@ -5,6 +5,15 @@ import Combine
 // The materialized rows follow v0.2.10 usage_queries.py; views read 25 rows.
 enum LocalChatRankingStore {
     static func update(_ snapshot: UsageSnapshot, database: Database) throws {
+        try database.transaction { try write(snapshot,database:database) }
+    }
+
+    // UsageSnapshotCache commits these rows together with the projection journal.
+    static func write(_ snapshot: UsageSnapshot, database: Database, sessions: [String]? = nil) throws {
+        let bindings: [Any] = sessions ?? []
+        let parameters = bindings.map { _ in "?" }.joined(separator:",")
+        let sessionFilter = sessions == nil ? "" : " WHERE session_id IN (\(parameters))"
+        let threadFilter = sessions == nil ? "" : " WHERE thread_id IN (\(parameters))"
         var roots: [String:String] = [:]
         for row in snapshot.chatCandidates {
             let root = row.string("thread_id"); roots[root] = root
@@ -16,30 +25,28 @@ enum LocalChatRankingStore {
             calls[roots[id] ?? id,default:[]].append(row)
         }
         let requests = Dictionary(grouping:snapshot.requests.filter {$0.local && !$0.raw.flag("is_subagent") && $0.raw.string("record_kind") == "user_request"},by:{$0.raw.string("session_id")})
-        let names=Dictionary(try database.query("SELECT session_id,title FROM usage_session_titles").map {($0.string("session_id"),$0.string("title"))},uniquingKeysWith:{$1})
-        try database.transaction {
-            let old = Set(try database.query("SELECT thread_id FROM usage_local_chat_rank").map {$0.string("thread_id")})
-            for (id,values) in calls {
-                let total = UsageSummary(rows:values,requests:requests[id]?.count ?? 0)
-                let grouped = Dictionary(grouping:values) { row in
-                    [row.raw.string("model"),row.raw.string("reasoning_effort"),normalizedTier(row.raw.string("service_tier"))]
-                }
-                let groups: [Object] = grouped.map { key,rows in
-                    let sum = UsageSummary(rows:rows)
-                    return ["model":key[0],"reasoning_effort":key[1],"speed":key[2],"cost_usd":sum.cost as Any? ?? NSNull(),"tokens":sum.tokens as Any? ?? NSNull()]
-                }.sorted {jsonString($0) < jsonString($1)}
-                let row: Object = ["thread_id":id,"title":names[id] ?? snapshot.chatTitles[id] ?? id,"tokens":total.tokens as Any? ?? NSNull(),"cost_usd":total.cost as Any? ?? NSNull(),"cost_complete":total.unknownCosts == 0,"data_status":total.unknownCosts == 0 ? "complete" : "partial","calls":total.calls,"requests":total.requests,"groups":groups]
-                try database.run("INSERT INTO usage_local_chat_rank VALUES(?,?,?,?) ON CONFLICT(thread_id) DO UPDATE SET tokens=excluded.tokens,cost=excluded.cost,data=excluded.data WHERE data<>excluded.data",[id,total.tokens as Any? ?? NSNull(),total.cost as Any? ?? NSNull(),jsonString(row)])
+        let names=Dictionary(try database.query("SELECT session_id,title FROM usage_session_titles"+sessionFilter,bindings).map {($0.string("session_id"),$0.string("title"))},uniquingKeysWith:{$1})
+        let old = Set(try database.query("SELECT thread_id FROM usage_local_chat_rank"+threadFilter,bindings).map {$0.string("thread_id")})
+        for (id,values) in calls {
+            let total = UsageSummary(rows:values,requests:requests[id]?.count ?? 0)
+            let grouped = Dictionary(grouping:values) { row in
+                [row.raw.string("model"),row.raw.string("reasoning_effort"),normalizedTier(row.raw.string("service_tier"))]
             }
-            for id in old.subtracting(calls.keys) { try database.run("DELETE FROM usage_local_chat_rank WHERE thread_id=?",[id]) }
-            let prior = Set(try database.query("SELECT id FROM usage_journey_requests").map {$0.string("id")})
-            var retained=Set<String>()
-            for row in snapshot.requests where row.local && !row.raw.flag("is_subagent") && row.raw.string("record_kind")=="user_request" {
-                retained.insert(row.id)
-                try database.run("INSERT INTO usage_journey_requests VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET session_id=excluded.session_id,timestamp=excluded.timestamp,data=excluded.data WHERE data<>excluded.data",[row.id,row.raw.string("session_id"),row.raw.string("timestamp"),jsonString(row.raw)])
-            }
-            for id in prior.subtracting(retained) {try database.run("DELETE FROM usage_journey_requests WHERE id=?",[id])}
+            let groups: [Object] = grouped.map { key,rows in
+                let sum = UsageSummary(rows:rows)
+                return ["model":key[0],"reasoning_effort":key[1],"speed":key[2],"cost_usd":sum.cost as Any? ?? NSNull(),"tokens":sum.tokens as Any? ?? NSNull()]
+            }.sorted {jsonString($0) < jsonString($1)}
+            let row: Object = ["thread_id":id,"title":names[id] ?? snapshot.chatTitles[id] ?? id,"tokens":total.tokens as Any? ?? NSNull(),"cost_usd":total.cost as Any? ?? NSNull(),"cost_complete":total.unknownCosts == 0,"data_status":total.unknownCosts == 0 ? "complete" : "partial","calls":total.calls,"requests":total.requests,"groups":groups]
+            try database.run("INSERT INTO usage_local_chat_rank VALUES(?,?,?,?) ON CONFLICT(thread_id) DO UPDATE SET tokens=excluded.tokens,cost=excluded.cost,data=excluded.data WHERE data<>excluded.data",[id,total.tokens as Any? ?? NSNull(),total.cost as Any? ?? NSNull(),jsonString(row)])
         }
+        for id in old.subtracting(calls.keys) { try database.run("DELETE FROM usage_local_chat_rank WHERE thread_id=?",[id]) }
+        let prior = Set(try database.query("SELECT id FROM usage_journey_requests"+sessionFilter,bindings).map {$0.string("id")})
+        var retained=Set<String>()
+        for row in snapshot.requests where row.local && !row.raw.flag("is_subagent") && row.raw.string("record_kind")=="user_request" {
+            retained.insert(row.id)
+            try database.run("INSERT INTO usage_journey_requests VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET session_id=excluded.session_id,timestamp=excluded.timestamp,data=excluded.data WHERE data<>excluded.data",[row.id,row.raw.string("session_id"),row.raw.string("timestamp"),jsonString(row.raw)])
+        }
+        for id in prior.subtracting(retained) {try database.run("DELETE FROM usage_journey_requests WHERE id=?",[id])}
     }
     static func page(_ database: Database, metric: String, page: Int) throws -> Object {
         let count = try database.query("SELECT count(*) AS n FROM usage_local_chat_rank").first?.integer("n") ?? 0

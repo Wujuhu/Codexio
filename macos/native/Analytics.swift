@@ -12,6 +12,10 @@ struct UsageRow: Identifiable {
     let inputTokens: Int?
     let cachedTokens: Int?
     let outputTokens: Int?
+    static func newestFirst(_ a: UsageRow, _ b: UsageRow) -> Bool {
+        let first = a.date ?? .distantPast, second = b.date ?? .distantPast
+        return first == second ? a.id < b.id : first > second
+    }
     init(raw: Object) {
         var raw = recordedCallTiming(raw)
         for key in ["prompt_preview","session_title"] {
@@ -224,6 +228,7 @@ struct UsageSnapshot {
     var chatTitles: [String:String] = [:]
     var updated: Date?
     var callsByID: [String:UsageRow] = [:]
+    var dailyUsage: [Date:UsageDay] = [:]
     var models: [String] = []
     var hasRunningTask = false
     func members(of row: UsageRow) -> [UsageRow] { (row.raw["member_ids"] as? [String] ?? []).compactMap {callsByID[$0]} }
@@ -247,10 +252,10 @@ enum Analytics {
         if let ms = turn.number("duration_ms"), ms >= 0 { return (end.addingTimeInterval(-ms/1000),end) }
         return nil
     }
-    static func build(records: [Object], turns inputTurns: [Object], links: [Object] = [], catalog: PricingCatalog, now: Date = Date(), preparedCalls: [UsageRow]? = nil) -> UsageSnapshot {
+    static func build(records: [Object], turns inputTurns: [Object], links: [Object] = [], catalog: PricingCatalog, now: Date = Date(), preparedCalls: [UsageRow]? = nil, captureTurns: (([Object]) -> Void)? = nil) -> UsageSnapshot {
         var result = UsageSnapshot()
         var seenCalls = Set<String>()
-        result.calls = (preparedCalls ?? records.map { UsageRow(raw:catalog.price($0)) }).filter { seenCalls.insert($0.id).inserted }.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+        result.calls = (preparedCalls ?? records.map { UsageRow(raw:catalog.price($0)) }).filter { seenCalls.insert($0.id).inserted }.sorted(by:UsageRow.newestFirst)
         func reference(_ value: String,session: String) -> String { value.hasPrefix("turn:") ? value : "turn:"+session+":"+value }
         func callTurn(_ row: UsageRow) -> String {
             let requested = row.raw.string("request_turn_id")
@@ -424,22 +429,44 @@ enum Analytics {
             } else { row["completed_at"] = nil }
             result.requests.append(UsageRow(raw:row))
         }
-        result.requests.sort { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
-        let mainRequests = result.requests.filter {$0.raw.string("record_kind") == "user_request" && !$0.raw.flag("is_subagent") && $0.local}
+        result.requests.sort(by:UsageRow.newestFirst)
+        captureTurns?(turns)
+        return finish(result,turns:turns,now:now)
+    }
+
+    // Shared by full builds and scoped updates. Scoped callers supply only the
+    // day buckets they have refreshed and keep the rest of the committed set.
+    static func finish(_ snapshot: UsageSnapshot, turns: [Object], now: Date, dailyUsage: [Date:UsageDay]? = nil) -> UsageSnapshot {
+        var result = snapshot
+        let mainRequests = result.requests.filter {UsageDay.isRequest($0)}
         result.widgetRequest = mainRequests.first(where:{$0.raw.string("status") == "running"}) ?? mainRequests.filter { $0.raw.string("status") == "completed" }.max { ($0.raw.number("completed_at") ?? $0.date?.timeIntervalSince1970 ?? 0) < ($1.raw.number("completed_at") ?? $1.date?.timeIntervalSince1970 ?? 0) }
         let calendar = Calendar.current, startToday = calendar.startOfDay(for:now)
         let periods: [(String,Date)] = [("today",startToday),("week",calendar.date(byAdding:.day,value:-6,to:startToday)!),("month",calendar.date(byAdding:.day,value:-29,to:startToday)!),("all",.distantPast)]
         let local = result.calls.filter {$0.local && ($0.date ?? .distantFuture) <= now}
-        for (key,start) in periods {
-            result.summaries[key] = UsageSummary(rows:local.filter {($0.date ?? .distantPast) >= start},requests:result.requests.filter {$0.local && $0.raw.string("record_kind") == "user_request" && !$0.raw.flag("is_subagent") && ($0.date ?? .distantPast) >= start && ($0.date ?? .distantFuture) <= now}.count)
+        if let dailyUsage {
+            result.dailyUsage = dailyUsage
+            let days = dailyUsage.keys.sorted(by:>)
+            for (key,start) in periods {
+                var total = UsageSummary()
+                for day in days.prefix(while: { $0 >= start }) {
+                    if let usage = dailyUsage[day] { total.merge(usage.summary) }
+                }
+                result.summaries[key] = total
+            }
+        } else {
+            for (key,start) in periods {
+                result.summaries[key] = UsageSummary(rows:local.filter {($0.date ?? .distantPast) >= start},requests:mainRequests.filter {($0.date ?? .distantPast) >= start && ($0.date ?? .distantFuture) <= now}.count)
+            }
+            var byDay: [Date:[UsageRow]] = [:]
+            for row in local {
+                if let date = row.date { byDay[calendar.startOfDay(for:date),default:[]].append(row) }
+            }
+            let requestsByDay = Dictionary(grouping:mainRequests.filter {($0.date ?? .distantFuture) <= now},by:{calendar.startOfDay(for:$0.date!)}).mapValues(\.count)
+            for day in Set(byDay.keys).union(requestsByDay.keys) {
+                result.dailyUsage[day] = UsageDay(rows:byDay[day] ?? [],requests:requestsByDay[day] ?? 0)
+            }
         }
-        var daily: [Date:[UsageRow]] = [:]
-        for row in local { if let date = row.date { daily[calendar.startOfDay(for:date),default:[]].append(row) } }
-        let dailyRequests = Dictionary(grouping:mainRequests.filter {($0.date ?? .distantFuture) <= now},by:{calendar.startOfDay(for:$0.date!)}).mapValues(\.count)
-        result.allDays = Set(daily.keys).union(dailyRequests.keys).map { day in
-            let rows = daily[day] ?? [], summary = UsageSummary(rows:rows)
-            return DayUsage(date:day,tokens:rows.isEmpty ? 0 : summary.tokens,cost:rows.isEmpty ? 0 : summary.cost,calls:summary.calls,requests:dailyRequests[day] ?? 0)
-        }.sorted {$0.date < $1.date}
+        result.allDays = result.dailyUsage.map { $0.value.bucket(on:$0.key) }.sorted { $0.date < $1.date }
         result.activity.total = result.summaries["all"]?.tokens
         result.activity.peak = result.allDays.compactMap(\.tokens).max()
         let localPairs = Set(local.map {$0.raw.string("session_id")+":"+$0.raw.string("turn_id")})
