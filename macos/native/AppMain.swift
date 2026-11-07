@@ -162,7 +162,13 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         showWindow()
         if let window { usageReports?.requestManual(on: window) }
     }
-    func windowShouldClose(_ sender: NSWindow) -> Bool { saveGeometry(); state.mainWindowVisible = false; sender.orderOut(nil); return false }
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        saveGeometry()
+        state.mainWindowVisible = false
+        sender.orderOut(nil)
+        state.trimWindowProjections()
+        return false
+    }
     func windowDidChangeOcclusionState(_ notification: Notification) {
         state.mainWindowVisible = window?.isVisible == true && window?.occlusionState.contains(.visible) == true
         if state.mainWindowVisible { state.refreshVisibleReports() }

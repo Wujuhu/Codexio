@@ -51,7 +51,7 @@ func jsonData(_ value: Any) throws -> Data {
 func jsonObject(_ data: Data) -> Object { (try? JSONSerialization.jsonObject(with: data)) as? Object ?? [:] }
 func jsonString(_ value: Any) -> String { (try? jsonData(value)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}" }
 func readObject(_ url: URL) -> Object { (try? Data(contentsOf: url)).map(jsonObject) ?? [:] }
-struct FileStamp: Equatable {
+struct FileStamp: Codable, Equatable {
     let exists: Bool
     let size: UInt64
     let modified: Date?

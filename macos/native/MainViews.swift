@@ -158,7 +158,9 @@ struct OverviewView: View {
     @State private var period = "today"
     init(state: AppState) { self.state = state; projection = state.overviewProjection }
     private var key: String { state.usage.revision.uuidString+":"+period }
+    private var displayed: TrendProjection { period == "today" ? state.todayOverview ?? projection.value : projection.value }
     private func load() {
+        guard state.usage.updated != nil, period != "today" || state.todayOverview == nil else { return }
         let snapshot = state.usage, range = UsageRange(period:period), granularity = period == "today" ? "hour" : period == "all" ? "week" : "day"
         projection.load(key:key,revision:snapshot.revision) { TrendProjection.build(snapshot,range:range,model:"all",granularity:granularity) }
     }
@@ -171,22 +173,29 @@ struct OverviewView: View {
                 }
                 if let error = state.quota.error { StatusNote(text:error) }
                 HStack { SectionHeading(title:L("用量", "Usage")); Spacer(); PeriodPicker(selection:$period).fixedSize() }
-                IncompleteUsageNotice(state:state,hasIncomplete:projection.value.summary.incompleteRecords>0)
-                SummaryMetrics(summary:projection.value.summary)
-                VStack(alignment:.leading,spacing:16) { SectionHeading(title:L("详情", "Details")); TrendChart(days:projection.value.days) }.padding(18).overlay(RoundedRectangle(cornerRadius:13).stroke(.secondary.opacity(0.15)))
-                ModelShareCard(projection:projection.value)
+                IncompleteUsageNotice(state:state,hasIncomplete:displayed.summary.incompleteRecords>0)
+                SummaryMetrics(summary:displayed.summary)
+                VStack(alignment:.leading,spacing:16) { SectionHeading(title:L("详情", "Details")); TrendChart(days:displayed.days) }.padding(18).overlay(RoundedRectangle(cornerRadius:13).stroke(.secondary.opacity(0.15)))
+                ModelShareCard(projection:displayed)
                 HStack { SectionHeading(title:L("最近请求", "Recent requests")); Button(L("查看全部", "View all")) { state.selectedPage = "logs" }.buttonStyle(.plain).foregroundStyle(.secondary) }
-                if !projection.value.recent.isEmpty {
+                if !displayed.recent.isEmpty {
                     CompactTable(columns:LogFields.columns(["content","model","total","cost","duration","details"]).map { column in
                         var column = column; column.maximum = column.width+300; return column
                     },
-                        rows:projection.value.recent.map { row in LogFields.row(row,timeOnly:true) { state.usage.members(of:row) } },
-                        revision:key,preferences:state.preferences,storageKey:"overview-recent",verticalScrolling:false)
-                        .frame(height:CGFloat(projection.value.recent.count)*45+42)
+                         rows:displayed.recent.map { row in
+                             var result = LogFields.row(row,timeOnly:true) { state.usage.members(of:row) }
+                             if period == "today", state.overviewFromDisk { result.detail = nil }
+                             return result
+                         },
+                         revision:displayed.revision.uuidString+period,preferences:state.preferences,storageKey:"overview-recent",verticalScrolling:false)
+                         .frame(height:CGFloat(displayed.recent.count)*45+42)
                         .clipShape(RoundedRectangle(cornerRadius:14))
                         .overlay(RoundedRectangle(cornerRadius:14).stroke(.secondary.opacity(0.16)))
                 }
-                if projection.value.recent.isEmpty { EmptyState(title:state.loading ? L("正在读取本机记录", "Loading local records") : L("暂无请求", "No requests yet")) }
+                if displayed.recent.isEmpty {
+                    let waiting = state.loading && (period != "today" || state.todayOverview == nil)
+                    EmptyState(title:waiting ? L("正在读取本机记录", "Loading local records") : L("暂无请求", "No requests yet"))
+                }
             }.padding(.horizontal,PageLayout.inset).padding(.bottom,PageLayout.inset)
         }.onAppear(perform:load).onChange(of:key) { _,_ in load() }
     }

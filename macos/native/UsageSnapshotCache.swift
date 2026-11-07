@@ -32,7 +32,85 @@ final class UsageSnapshotCache {
     private var pricedRecords: [String:PricedRecord] = [:]
     private var turns: [Object] = []
     private var links: [Object] = []
+    private static let overviewKey = "overview-today-v1"
+    private static let overviewBytes = 64 * 1024
+    private struct OverviewStamp: Codable, Equatable {
+        let ledger: Int
+        let prices: String
+        let roots: String
+        let day: Date
+        let zone: String
+        let offset: Int
+        let language: String
+        let upstream: [FileStamp]
+    }
+    private struct OverviewArchive: Codable {
+        let stamp: OverviewStamp
+        let updated: Date
+        let validUntil: Date
+        let summary: UsageSummary
+        let days: [DayUsage]
+        let modelRows: [[MobileModel]]
+        let recent: [Data]
+    }
+    private var preparedOverview: (revision: UUID, roots: String, value: TrendProjection)?
     init(database: Database,catalog: PricingCatalog) { self.database = database; self.catalog = catalog }
+
+    private func overviewStamp(ledger: Int, roots: String, now: Date, upstream: [FileStamp]) -> OverviewStamp {
+        let calendar = Calendar.current, zone = calendar.timeZone
+        return OverviewStamp(ledger:ledger,prices:catalog.version,roots:roots,day:calendar.startOfDay(for:now),zone:zone.identifier,offset:zone.secondsFromGMT(for:now),language:L("概览", "Overview"),upstream:upstream)
+    }
+
+    // The archive lives alongside its committed ledger generation, in SQLite.
+    // A miss falls back to the existing background projection.
+    func restoreOverview(roots: [URL], now: Date = Date()) -> (value: TrendProjection, updated: Date)? {
+        guard let row = try? database.query("SELECT data FROM usage_meta WHERE key=? AND length(CAST(data AS BLOB))<=?",[Self.overviewKey,Self.overviewBytes]).first,
+              let archive = try? JSONDecoder().decode(OverviewArchive.self,from:Data(row.string("data").utf8)),
+              now >= archive.updated, now < archive.validUntil,
+              archive.modelRows.count == 3, archive.days.count <= 26, archive.recent.count <= 3,
+              let ledger = try? database.query("SELECT revision FROM usage_revisions WHERE kind='ledger'").first?.integer("revision"),
+              archive.stamp == overviewStamp(ledger:ledger,roots:identity(roots.map(\.path)),now:now,upstream:observationStamps()) else { return nil }
+        let recent = archive.recent.map { UsageRow(raw:jsonObject($0)) }
+        guard recent.allSatisfy({!$0.id.isEmpty}) else { return nil }
+        let stored = Dictionary(archive.days.map { ($0.date,$0) },uniquingKeysWith:{ $1 })
+        let days = UsageRange(period:"today",now:now).buckets([],granularity:"hour").map { stored[$0.date] ?? $0 }
+        return (TrendProjection(summary:archive.summary,days:days,recent:recent,modelRows:archive.modelRows),archive.updated)
+    }
+
+    func prepareOverview(_ snapshot: UsageSnapshot, roots: [URL]) -> TrendProjection {
+        let scope = identity(roots.map(\.path))
+        if let cached = preparedOverview, cached.revision == snapshot.revision, cached.roots == scope { return cached.value }
+        let now = snapshot.updated ?? Date()
+        let value = TrendProjection.build(snapshot,range:UsageRange(period:"today",now:now),model:"all",granularity:"hour")
+        preparedOverview = (snapshot.revision,scope,value)
+        guard let input, input.ledger > 0, let upstreamStamps else { return value }
+        let recent = value.recent.compactMap { try? Self.overviewRow($0) }
+        guard recent.count == value.recent.count else { return value }
+        let stamp = overviewStamp(ledger:input.ledger,roots:scope,now:now,upstream:upstreamStamps)
+        let archive = OverviewArchive(stamp:stamp,updated:now,validUntil:expires,summary:value.summary,days:value.days,modelRows:value.modelRows,recent:recent)
+        if let data = try? JSONEncoder().encode(archive), data.count <= Self.overviewBytes {
+            try? database.run("INSERT INTO usage_meta(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data WHERE data<>excluded.data",[Self.overviewKey,String(decoding:data,as:UTF8.self)])
+        }
+        return value
+    }
+
+    private static let overviewFields: Set<String> = [
+        "id", "timestamp", "session_id", "prompt_preview", "session_title", "model", "model_display_name",
+        "record_kind", "is_subagent", "reasoning_effort", "service_tier", "model_context_window", "quality",
+        "input_tokens", "output_tokens", "total_tokens", "cost_usd", "pricing_status", "pricing_models",
+        "status", "duration_ms", "duration_started_at", "duration_running", "duration_base_ms"
+    ]
+    private static func overviewRow(_ row: UsageRow) throws -> Data {
+        var fields = row.raw.filter { overviewFields.contains($0.key) }
+        for key in ["prompt_preview", "session_title"] {
+            if let text = fields[key] as? String { fields[key] = String(text.prefix(320)) }
+        }
+        if let ttft = row.firstTokenSeconds { fields["ttft_ms"] = ttft * 1000 }
+        let pricedModel = row.raw.object("price_rates").string("model")
+        if !pricedModel.isEmpty { fields["price_rates"] = ["model":pricedModel] }
+        return try jsonData(fields)
+    }
+
     func load(now: Date = Date()) throws -> UsageSnapshot {
         let calendar = Calendar.current
         let revision = try database.query("SELECT revision FROM usage_revisions WHERE kind='ledger'").first?.integer("revision") ?? 0
@@ -62,34 +140,40 @@ final class UsageSnapshotCache {
     }
     private func prepareCalls() throws -> [UsageRow] {
         var calls: [UsageRow] = [], retained: [String:PricedRecord] = [:], retainedBytes = 0
-        for entry in try database.recordPayloads() {
-            let id = entry.string("id"), payload = entry.string("data"), title = entry.string("title"), cwd = entry.string("cwd"), local = entry.integer("local_origin") == 1
-            let value: UsageRow
-            if let old = pricedRecords[id], old.payload == payload, old.title == title, old.cwd == cwd, old.local == local,
-               old.upstreamPresent == upstreamPresent,
-               old.row.raw.string("price_version") == catalog.version,
-               (!upstreamPresent || old.row.raw.string("upstream_model") == (upstreamModels[old.row.raw.string("response_id")] ?? "")) {
-                value = old.row
-            } else {
-                var raw = jsonObject(Data(payload.utf8))
-                if !title.isEmpty { raw["session_title"] = title }
-                if !cwd.isEmpty { raw["session_cwd"] = cwd }
-                raw["local_origin"] = local || raw.string("source_id").hasPrefix("local")
-                if upstreamPresent { raw["upstream_model"] = upstreamModels[raw.string("response_id")] }
-                value = UsageRow(raw:catalog.price(raw))
-            }
-            calls.append(value)
-            let size = payload.utf8.count
-            if retained.count < 8192 && retainedBytes+size <= 8_388_608 {
-                retained[id] = PricedRecord(payload:payload,title:title,cwd:cwd,local:local,upstreamPresent:upstreamPresent,row:value); retainedBytes += size
+        try database.forEachRecordPayload { entry in
+            autoreleasepool {
+                let id = entry.string("id"), payload = entry.string("data"), title = entry.string("title"), cwd = entry.string("cwd"), local = entry.integer("local_origin") == 1
+                let value: UsageRow
+                if let old = pricedRecords[id], old.payload == payload, old.title == title, old.cwd == cwd, old.local == local,
+                   old.upstreamPresent == upstreamPresent,
+                   old.row.raw.string("price_version") == catalog.version,
+                   (!upstreamPresent || old.row.raw.string("upstream_model") == (upstreamModels[old.row.raw.string("response_id")] ?? "")) {
+                    value = old.row
+                } else {
+                    var raw = jsonObject(Data(payload.utf8))
+                    if !title.isEmpty { raw["session_title"] = title }
+                    if !cwd.isEmpty { raw["session_cwd"] = cwd }
+                    raw["local_origin"] = local || raw.string("source_id").hasPrefix("local")
+                    if upstreamPresent { raw["upstream_model"] = upstreamModels[raw.string("response_id")] }
+                    value = UsageRow(raw:catalog.price(raw))
+                }
+                calls.append(value)
+                let size = payload.utf8.count
+                if retained.count < 8192 && retainedBytes+size <= 8_388_608 {
+                    retained[id] = PricedRecord(payload:payload,title:title,cwd:cwd,local:local,upstreamPresent:upstreamPresent,row:value); retainedBytes += size
+                }
             }
         }
         pricedRecords = retained
         return calls
     }
+    private func observationStamps() -> [FileStamp] {
+        let file = database.url.deletingLastPathComponent().appendingPathComponent("upstream.sqlite")
+        return [FileStamp(file),FileStamp(URL(fileURLWithPath:file.path+"-wal"))]
+    }
     private func refreshUpstream() {
         let file = database.url.deletingLastPathComponent().appendingPathComponent("upstream.sqlite")
-        let stamps = [FileStamp(file),FileStamp(URL(fileURLWithPath:file.path+"-wal"))]
+        let stamps = observationStamps()
         guard upstreamStamps != stamps else { return }
         var models: [String:String] = [:]
         if stamps[0].exists {

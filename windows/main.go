@@ -118,7 +118,7 @@ func desktopRun(args desktopArguments) error {
 	if e != nil {
 		return e
 	}
-	h := &desktopHost{directory: directory, mock: args.mock, assets: assets, icons: map[string]desktopIcon{}, savedMain: backend.Row{}, savedFloating: backend.Row{}}
+	h := &desktopHost{directory: directory, mock: args.mock, assets: assets, icons: map[string]desktopIcon{}, savedMain: backend.Row{}}
 	if args.smoke != "" {
 		h.smoke = &SmokeService{host: h, output: args.smoke}
 	}
@@ -152,7 +152,7 @@ func desktopRun(args desktopArguments) error {
 		// Plugin/sync setup and historical preparation must not hold the native
 		// event loop before the first WebView paint.
 		go h.service.Start()
-		h.applySettings()
+		h.applyAppearance()
 		if h.smoke != nil {
 			h.smoke.startDeadline()
 		}

@@ -102,9 +102,13 @@ final class Database {
         guard sqlite3_step(stmt) == SQLITE_DONE else { throw failure() }
     }
     func query(_ sql: String, _ args: [Any] = []) throws -> [Object] {
+        var rows: [Object] = []
+        try forEachRow(sql, args) { rows.append($0) }
+        return rows
+    }
+    private func forEachRow(_ sql: String, _ args: [Any], _ consume: (Object) throws -> Void) throws {
         lock.lock(); defer { lock.unlock() }
         let stmt = try statement(sql,args); defer { sqlite3_finalize(stmt) }
-        var rows: [Object] = []
         while true {
             let status = sqlite3_step(stmt)
             if status == SQLITE_DONE { break }
@@ -120,9 +124,8 @@ final class Database {
                 default: row[name] = NSNull()
                 }
             }
-            rows.append(row)
+            try consume(row)
         }
-        return rows
     }
     func transaction<T>(_ body: () throws -> T) throws -> T {
         lock.lock(); defer { lock.unlock() }
@@ -147,8 +150,10 @@ final class Database {
             return value
         }
     }
-    func recordPayloads() throws -> [Object] {
-        try query("SELECT r.id,r.data,t.title,c.cwd,EXISTS(SELECT 1 FROM usage_record_sources s WHERE s.record_id=r.id AND (s.source_id='local' OR s.source_id LIKE 'local:%')) AS local_origin FROM usage_records r LEFT JOIN usage_session_titles t ON r.session_id=t.session_id LEFT JOIN usage_session_context c ON r.session_id=c.session_id ORDER BY r.timestamp DESC")
+    private static let recordPayloadSQL = "SELECT r.id,r.data,t.title,c.cwd,EXISTS(SELECT 1 FROM usage_record_sources s WHERE s.record_id=r.id AND (s.source_id='local' OR s.source_id LIKE 'local:%')) AS local_origin FROM usage_records r LEFT JOIN usage_session_titles t ON r.session_id=t.session_id LEFT JOIN usage_session_context c ON r.session_id=c.session_id ORDER BY r.timestamp DESC"
+    func recordPayloads() throws -> [Object] { try query(Self.recordPayloadSQL) }
+    func forEachRecordPayload(_ consume: (Object) throws -> Void) throws {
+        try forEachRow(Self.recordPayloadSQL, [], consume)
     }
     func metadata(_ table: String) throws -> [Object] {
         guard ["usage_turns","usage_agent_links"].contains(table) else { return [] }

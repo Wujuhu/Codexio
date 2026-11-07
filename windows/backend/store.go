@@ -3,6 +3,7 @@ package backend
 // Durable schema and immutable-response merge ported from usage_store.py.
 import (
 	"bytes"
+	"container/list"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -62,7 +63,9 @@ type Store struct {
 	timeSignature           string
 	lastWallTime            time.Time
 	nextFuture              string
-	queryCache              map[string]string
+	queryCache              map[string]*list.Element
+	queryCacheOrder         list.List
+	queryCacheBytes         int
 	queryCacheGeneration    int64
 	reportSources           map[string]reportSourceState
 	metadataRepairRemaining int
@@ -126,7 +129,7 @@ func OpenStore(o DataOptions) (*Store, error) {
 	s.claudeCountRevision = -1
 	s.path = filepath.Join(o.Directory, name)
 	s.media = newRequestMediaCache(filepath.Dir(s.path), o.Mock)
-	s.queryCache = map[string]string{}
+	s.queryCache = map[string]*list.Element{}
 	s.reportSources = map[string]reportSourceState{}
 	s.parentSignatureCache = map[string]map[string]bool{}
 	if e = s.schema(); e != nil {

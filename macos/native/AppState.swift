@@ -71,6 +71,8 @@ final class AppState: ObservableObject {
     let journeyCatalog = JourneyCatalog()
     private let objectFiles = ObjectFileCache()
     let overviewProjection = AsyncProjection(TrendProjection())
+    @Published private(set) var todayOverview: TrendProjection?
+    private(set) var overviewFromDisk = false
     let trendProjection = AsyncProjection(TrendProjection())
     let logProjection = AsyncProjection(LogProjection())
     private let snapshotQueue = DispatchQueue(label:"com.wujuhu.codexio.widget-snapshot",qos:.utility)
@@ -323,7 +325,7 @@ final class AppState: ObservableObject {
         dataQueue.async { [weak self] in
             guard let self else { return }
             defer { DispatchQueue.main.async {self.fetchActivity.end(operation)} }
-            if initial { self.publishUsage(finishLoading:false) }
+            if initial { self.publishCommittedOverview(roots:roots) }
             do {
                 try self.indexer.scan(roots) { current,total in
                     if initial && (current == total || current % 50 == 0) { DispatchQueue.main.async { let text = "\(current) / \(total)"; if self.scanProgress != text { self.scanProgress = text } } }
@@ -346,6 +348,27 @@ final class AppState: ObservableObject {
             }
             DispatchQueue.main.async { self.scanning = false }
         }
+    }
+    private func publishCommittedOverview(roots: [URL]) {
+        guard let archived = usageCache.restoreOverview(roots:roots) else {
+            publishUsage(finishLoading:false)
+            return
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.stopped, self.preferences.roots == roots else { return }
+            self.overviewFromDisk = true
+            self.todayOverview = archived.value
+            self.clock.updated = archived.updated
+        }
+    }
+
+    func trimWindowProjections() {
+        if selectedPage == "overview" { overviewProjection.trimCache() }
+        else { overviewProjection.discardVisible(TrendProjection()) }
+        if selectedPage == "trends" { trendProjection.trimCache() }
+        else { trendProjection.discardVisible(TrendProjection()) }
+        if selectedPage == "logs" { logProjection.trimCache() }
+        else { logProjection.discardVisible(LogProjection()) }
     }
     private func receiveClaudeQuota(_ sample: Object) {
         guard !stopped, !paths.mock else {return}
@@ -427,6 +450,7 @@ final class AppState: ObservableObject {
     private func publishUsage(finishLoading: Bool = true) {
         do {
             let result = try usageCache.load()
+            let overview = usageCache.prepareOverview(result,roots:preferences.roots)
             let prices = catalog.rows, priceUpdated = catalog.updated, priceWarning = catalog.warning
             let models = paths.mock ? Set(["gpt-6-astra","gpt-5.6-sol","gpt-6-luna"]) : Set(objectFiles.read(accountRoot.appendingPathComponent("models_cache.json")).objects("models").filter { row in
                 !row.flag("hidden") && row.string("visibility") != "hide" && (row["hidden"] is Bool || row.string("visibility") == "list")
@@ -440,6 +464,8 @@ final class AppState: ObservableObject {
                     self.overviewProjection.invalidate(for:result.revision)
                     self.trendProjection.invalidate(for:result.revision)
                     self.logProjection.invalidate(for:result.revision)
+                    self.overviewFromDisk = false
+                    self.todayOverview = overview
                     self.usage = result
                 }
                 self.clock.updated = result.updated

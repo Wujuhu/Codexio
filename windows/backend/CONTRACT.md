@@ -22,7 +22,7 @@ Binding prefix: `codexio/windows/backend.Service`. Use `@wailsio/runtime` `Call.
 - `Refresh() -> void`, `Rescan() -> void`: asynchronous/coalesced; UI retains existing data with appropriate status.
 - `CheckUpdate() -> Row`, `InstallUpdate() -> void`: explicit download/install after user click; progress via scoped events/state. Mock cannot install. Fields `{status,version,notes,progress,error,url}`.
 - `ResetCredit(id: string) -> Row`: call only after user selects a concrete card and confirms. Pending unknown result retries same idempotency key, no automatic reset.
-- `DesktopAction(action: string) -> void`: `show-main`, `close-main`, `toggle-floating`, `hide-floating`, `quit`, `open-data`, `open-reports`, `show-report`, `restart-client`. Root uses native window/OS APIs and saves final geometry only.
+- `DesktopAction(action: string) -> void`: `show-main`, `close-main`, `quit`, `open-data`, `open-reports`, `show-report`, `restart-client`. Root uses native window/OS APIs and saves the main window's final geometry.
 - `OpenURL(url: string) -> void`: explicitly clicked HTTP(S) link in default browser.
 - `SaveReportPNG(data: string, period: string) -> Row`: bounded base64PNG, `{path}`; frontend generates the full card, root saves/shares.
 - `GetMobile() -> Row`, `MobileAction(action: string, values: Row) -> Row`: `enable`,`disable`,`pair`,`approve`,`deny`,`revoke`,`rename`,`note`,`enroll`,`remove-cloud`,`upload`. Public fields pairing QR/pending/readers/status; no secrets. Pairing up to3readers, ticket5min. Existing read-only protocol.

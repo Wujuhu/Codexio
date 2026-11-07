@@ -60,7 +60,6 @@ func NewService(directory, executable, version string, mock bool, callbacks Desk
 		c["mobile_sync_enabled"] = false
 		c["upstream_detection_enabled"] = false
 		c["auto_sync_prices"] = false
-		c["widget_visible"] = false
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Service{config: c, directory: directory, version: version, mock: mock, callbacks: callbacks, ctx: ctx, cancel: cancel}
@@ -415,44 +414,6 @@ func (s *Service) DismissIncompleteUsageNotice() {
 	s.incompleteUsageNoticeDismissed = true
 	s.mu.Unlock()
 }
-func normalizeFloatingChanges(old, changes Row) Row {
-	next := CloneRow(changes)
-	next["floating_layout_version"] = 1
-	changed := func(key string) bool {
-		value, present := changes[key]
-		return present && dataJSON(value) != dataJSON(old[key])
-	}
-	clearFree := func() { next["window_width"], next["window_height"] = nil, nil }
-	clearHorizontal := func() { next["dock_top_width"], next["dock_top_height"] = nil, nil }
-	clearVertical := func() { next["dock_side_width"], next["dock_side_height"] = nil, nil }
-	if changed("visual_style") {
-		clearFree()
-	}
-	if changed("quota_scope") {
-		clearFree()
-		clearHorizontal()
-		clearVertical()
-	}
-	if changed("dock_edge") {
-		oldEdge, newEdge := ValueString(old["dock_edge"]), ValueString(changes["dock_edge"])
-		if oldEdge == "" {
-			oldEdge = "none"
-		}
-		if newEdge == "" {
-			newEdge = "none"
-		}
-		if newEdge == "none" {
-			clearFree()
-		} else if newEdge == "top" || newEdge == "bottom" {
-			if oldEdge == "none" || oldEdge == "left" || oldEdge == "right" {
-				clearHorizontal()
-			}
-		} else if oldEdge == "none" || oldEdge == "top" || oldEdge == "bottom" {
-			clearVertical()
-		}
-	}
-	return next
-}
 func (s *Service) SaveSettings(changes Row) (Row, error) {
 	changes = CloneRow(changes)
 	delete(changes, "incomplete_usage_notice_dismissed")
@@ -469,7 +430,6 @@ func (s *Service) SaveSettings(changes Row) (Row, error) {
 			old = s.Config()
 		}
 	}
-	changes = normalizeFloatingChanges(old, changes)
 	if e := SaveConfig(s.directory, changes); e != nil {
 		return nil, e
 	}
@@ -482,7 +442,6 @@ func (s *Service) SaveSettings(changes Row) (Row, error) {
 		c["mobile_sync_enabled"] = false
 		c["upstream_detection_enabled"] = false
 		c["auto_sync_prices"] = false
-		c["widget_visible"] = false
 	}
 	s.mu.Lock()
 	s.config = c

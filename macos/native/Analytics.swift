@@ -162,7 +162,7 @@ func outputRateText(_ rate: Double?,unit: String = "TPS") -> String {
     return String(format:"%.0f",rate.rounded())+" "+unit
 }
 
-struct UsageSummary {
+struct UsageSummary: Codable {
     var tokens: Int?
     var cost: Double?
     var calls = 0
@@ -188,7 +188,7 @@ struct UsageSummary {
     }
 }
 
-struct DayUsage: Identifiable, Equatable {
+struct DayUsage: Codable, Identifiable, Equatable {
     var date: Date
     var tokens: Int?
     var cost: Double?
@@ -509,14 +509,14 @@ enum Analytics {
 struct UsageRange {
     let start: Date
     let end: Date
-    init(period: String,from: Date = Date(),through: Date = Date()) {
-        let calendar = Calendar.current, today = calendar.startOfDay(for:Date())
+    init(period: String,from: Date = Date(),through: Date = Date(),now: Date = Date()) {
+        let calendar = Calendar.current, today = calendar.startOfDay(for:now)
         switch period {
         case "all": start = .distantPast
         case "custom": start = calendar.startOfDay(for:min(from,through))
         default: start = calendar.date(byAdding:.day,value:period == "today" ? 0 : period == "week" ? -6 : -29,to:today)!
         }
-        end = period == "custom" ? min(Date(),calendar.date(byAdding:.day,value:1,to:calendar.startOfDay(for:max(from,through)))!) : Date()
+        end = period == "custom" ? min(now,calendar.date(byAdding:.day,value:1,to:calendar.startOfDay(for:max(from,through)))!) : now
     }
     func contains(_ row: UsageRow) -> Bool { row.date.map {$0 >= start && $0 <= end} ?? false }
     func buckets(_ rows: [UsageRow],requests: [UsageRow] = [],granularity: String) -> [DayUsage] {

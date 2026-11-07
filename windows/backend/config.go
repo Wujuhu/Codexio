@@ -14,17 +14,11 @@ import (
 )
 
 var systemConfigMu sync.Mutex
-var systemSettingDefaults = Row{
-	"refresh_interval_seconds": 60, "display_mode": "top", "window_x": nil, "window_y": nil, "window_width": nil, "window_height": nil,
-	"visual_style": "classic", "background_transparent": true, "background_opacity": 70, "show_border": true, "border_color": "#8AB4F8",
-	"dock_edge": "none", "dock_top_width": nil, "dock_top_height": nil, "dock_side_width": nil, "dock_side_height": nil, "quota_scope": "auto", "codex_path": nil,
-	"floating_layout_version": 0,
-	"floating_geometry_key":   "",
-}
+var systemSettingDefaults = Row{"refresh_interval_seconds": 60, "codex_path": nil}
 
 func systemDefaultConfig() Row {
 	r := CloneRow(systemSettingDefaults)
-	for k, v := range (Row{"version": 1, "theme": "system", "widget_visible": true, "auto_sync_prices": true, "auto_update": true, "macos_auto_update": true,
+	for k, v := range (Row{"version": 1, "theme": "system", "auto_sync_prices": true, "auto_update": true, "macos_auto_update": true,
 		"usage_report_auto": true, "usage_report_style": "garden", "app_icon": "main", "mobile_sync_enabled": false, "upstream_detection_enabled": false,
 		"usage_refresh_interval_seconds": 10, "usage_refresh_interval_user_set": false, "week_estimate_interval_minutes": 10, "week_estimate_interval_version": 3, "log_column_defaults_version": 1,
 		"codex_roots": []string{systemCodexRoot()}, "account_since": UTCStamp(time.Now()), "main_geometry": nil,
@@ -172,27 +166,20 @@ func PublicConfig(r Row) Row {
 	defaults := systemDefaultConfig()
 	for k, v := range r {
 		_, known := defaults[k]
-		if known || k == "column_widths" || k == "log_column_widths" || k == "tray_fields" || k == "floating_visible" || k == "floating_geometry" || k == "report_deferred_version" {
+		if known || k == "column_widths" || k == "log_column_widths" || k == "tray_fields" || k == "report_deferred_version" {
 			out[k] = v
 		}
 	}
 	return CloneRow(out)
 }
 func systemNormalizeConfig(r Row) Row {
-	// Discard dimensions saved by the old overlapping layouts once; keep position.
-	if ValueInt(r["floating_layout_version"]) < 1 {
-		for _, key := range []string{"window_width", "window_height", "dock_top_width", "dock_top_height", "dock_side_width", "dock_side_height"} {
-			r[key] = nil
-		}
-		r["floating_layout_version"] = 1
-	}
 	// These are the persisted palette identities from usage_report_ui.py.
 	if v := ValueString(r["usage_report_style"]); v == "cream" {
 		r["usage_report_style"] = "bookmark"
 	} else if v == "rose" {
 		r["usage_report_style"] = "afternoon"
 	}
-	choices := map[string][]string{"theme": {"system", "light", "dark"}, "display_mode": {"bottom", "top", "tray"}, "visual_style": {"classic", "rings", "tiles", "compact", "minimal", "orb"}, "dock_edge": {"none", "top", "bottom", "left", "right"}, "quota_scope": {"auto", "both", "week"}, "usage_report_style": {"garden", "bookmark", "afternoon"}, "language": {"zh", "en"}}
+	choices := map[string][]string{"theme": {"system", "light", "dark"}, "usage_report_style": {"garden", "bookmark", "afternoon"}, "language": {"zh", "en"}}
 	defaults := systemDefaultConfig()
 	for k, c := range choices {
 		if !systemContains(c, ValueString(r[k])) {
@@ -218,7 +205,7 @@ func systemNormalizeConfig(r Row) Row {
 			}
 		}
 	}
-	for k, b := range map[string][2]int64{"background_opacity": {0, 100}, "window_width": {100, 1200}, "window_height": {80, 800}, "dock_top_width": {40, 1200}, "dock_top_height": {32, 800}, "dock_side_width": {36, 1200}, "dock_side_height": {32, 800}, "sidebar_width": {140, 320}, "log_preview_width": {220, 480}} {
+	for k, b := range map[string][2]int64{"sidebar_width": {140, 320}, "log_preview_width": {220, 480}} {
 		if r[k] == nil {
 			continue
 		}

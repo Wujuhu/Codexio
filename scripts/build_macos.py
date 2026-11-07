@@ -20,7 +20,7 @@ from codexio.versions import AppVersion
 BUILD = ROOT / "build"
 STAGING = BUILD / "staging/macos"
 DESTINATION = BUILD / "dev/macos"
-WIDGET_VERSION = 33  # v0.3.13 host/version registration.
+WIDGET_VERSION = 34  # v0.3.16 host/version registration.
 
 
 def run(*args, **kwargs):

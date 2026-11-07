@@ -37,13 +37,8 @@ func (h *desktopHost) applyWindowAppearance(w *application.WebviewWindow) {
 		}
 		small := max(16, w32.GetSystemMetricsForDpi(w32.SM_CXSMICON, dpi))
 		large := max(32, w32.GetSystemMetricsForDpi(w32.SM_CXICON, dpi))
-		// One entry per window kind and configured icon: at most 2 × 13.
-		// Replace DPI variants only after the window has received the new handles.
-		kind := "main"
-		if w.Name() == "Codexio-floating" {
-			kind = "floating"
-		}
-		key := kind + ":" + id
+		// Replace DPI variants after the window receives the new handles.
+		key := id
 		h.iconMu.Lock()
 		defer h.iconMu.Unlock()
 		icon := h.icons[key]
@@ -73,14 +68,8 @@ func (h *desktopHost) applyWindowAppearance(w *application.WebviewWindow) {
 		} else if backend.ValueString(c["theme"]) == "light" {
 			dark = false
 		}
-		if w.Name() == "Codexio-floating" {
-			dark = true
-		}
 		w32.SetTheme(uintptr(hwnd), dark)
 	})
-	if w.Name() == "Codexio-floating" {
-		w.SetBackgroundColour(application.NewRGBA(0, 0, 0, 0))
-	}
 }
 
 // Adapt Wails w32/icon.go's embedded PNG-in-ICO loading to the target window's
@@ -131,14 +120,6 @@ func (h *desktopHost) releaseIcons() {
 	}
 	h.icons = map[string]desktopIcon{}
 }
-func desktopPlaceBottom(w *application.WebviewWindow) {
-	application.InvokeSync(func() {
-		hwnd := w32.HWND(uintptr(w.NativeWindow()))
-		if hwnd != 0 {
-			w32.SetWindowPos(hwnd, w32.HWND_BOTTOM, 0, 0, 0, 0, w32.SWP_NOMOVE|w32.SWP_NOSIZE|w32.SWP_NOACTIVATE)
-		}
-	})
-}
 func desktopOpenPath(path string) error {
 	absolute, e := filepath.Abs(path)
 	if e != nil {
@@ -153,7 +134,7 @@ func desktopOpenPath(path string) error {
 }
 func desktopError(message string) { w32.MessageBox(0, message, "Codexio", w32.MB_OK|w32.MB_ICONERROR) }
 func desktopWindowVisible(w *application.WebviewWindow) bool {
-    return w != nil && w.NativeWindow() != unsafe.Pointer(nil) && w.IsVisible()
+	return w != nil && w.NativeWindow() != unsafe.Pointer(nil) && w.IsVisible()
 }
 
 func desktopSmokePosition(width int) (int, int) {

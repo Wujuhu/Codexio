@@ -65,6 +65,9 @@ final class AsyncProjection<Value>: ObservableObject {
         cache.removeAll(keepingCapacity:true); order.removeAll(keepingCapacity:true)
         value = replacement
     }
+    func trimCache() {
+        cache.removeAll(); order.removeAll()
+    }
     func load(key: String,revision: UUID,compute: @escaping () -> Value) {
         invalidate(for:revision)
         guard key != requested else { return }
@@ -93,9 +96,10 @@ struct TrendProjection {
     var recent: [UsageRow] = []
     var modelRows: [[MobileModel]] = [[],[],[]]
     static func build(_ snapshot: UsageSnapshot,range: UsageRange,model: String,granularity: String) -> TrendProjection {
-        let rows = snapshot.calls.filter {$0.local && range.contains($0) && (model == "all" || $0.raw.string("model") == model)}
+        // Analytics keeps both arrays newest first. Stop at the lower bound.
+        let rows = snapshot.calls.prefix { ($0.date ?? .distantPast) >= range.start }.filter {$0.local && range.contains($0) && (model == "all" || $0.raw.string("model") == model)}
         let ids = model == "all" ? Set<String>() : Set(rows.map(\.id))
-        let requests = snapshot.requests.filter {$0.local && !$0.raw.flag("is_subagent") && $0.raw.string("record_kind") == "user_request" && range.contains($0) && (model == "all" || !ids.isDisjoint(with:$0.raw["member_ids"] as? [String] ?? []))}
+        let requests = snapshot.requests.prefix { ($0.date ?? .distantPast) >= range.start }.filter {$0.local && !$0.raw.flag("is_subagent") && $0.raw.string("record_kind") == "user_request" && range.contains($0) && (model == "all" || !ids.isDisjoint(with:$0.raw["member_ids"] as? [String] ?? []))}
         let callsByModel = Dictionary(grouping:rows,by:{$0.raw.string("model")})
         let requestsByModel = Dictionary(grouping:requests,by:{$0.raw.string("model")})
         let models = Set(callsByModel.keys).union(requestsByModel.keys).filter(MobileTrends.isSingleModel).map { key -> MobileModel in
