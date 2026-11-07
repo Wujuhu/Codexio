@@ -82,7 +82,7 @@ func NewService(directory, executable, version string, mock bool, callbacks Desk
 		if callbacks.Changed != nil {
 			callbacks.Changed("codexio:clock", Row{"updated_at": stamp})
 		}
-	}, RefreshChanged: func(active bool) { s.setRefreshActivity("usage", active) }})
+	}, RefreshChanged: func(active bool) { s.setRefreshActivity("usage", active) }, ReportSourcesChanged: func() { s.notify("report") }})
 	if err != nil {
 		cancel()
 		return nil, err
@@ -372,10 +372,16 @@ func (s *Service) SyncPrices() (Row, error) {
 	s.notify("pricing")
 	return s.GetPrices(), nil
 }
-func (s *Service) GetReports(period string) (Row, error) { return s.reports.Get(period) }
-func (s *Service) GetClientReports(client, period string) (Row, error) {
-	return s.reports.GetForClient(period, client)
+func (s *Service) GetReports(ctx context.Context, period string) (Row, error) {
+	return s.GetClientReports(ctx, "codex", period)
 }
+func (s *Service) GetClientReports(ctx context.Context, client, period string) (Row, error) {
+	ctx, cancel := s.readContext(ctx)
+	defer cancel()
+	document, err := s.reports.GetForClient(period, client, ctx)
+	return document, queryError(ctx, err)
+}
+func (s *Service) MarkReportSeen(day string) error { return s.reports.MarkSeen(day) }
 
 // First paint needs saved preferences, not discovery, sync or report state.
 func (s *Service) GetStartupSettings() Row {
@@ -395,6 +401,7 @@ func (s *Service) GetSettings() Row {
 	r["upstream"] = s.upstream.Public()
 	r["update"] = s.updater.Snapshot()
 	r["report_due"] = s.reports.Due()
+	r["report_ready"] = Row{"codex": s.store.reportSource("codex").ready, "claude_code": s.store.reportSource("claude_code").ready}
 	r["report_preferred_period"] = PreferredReportPeriod(time.Now())
 	s.mu.RLock()
 	r["incomplete_usage_notice_dismissed"] = s.incompleteUsageNoticeDismissed
@@ -519,9 +526,6 @@ func (s *Service) ResetCreditForAccount(id, expectedAccount string) (Row, error)
 	return s.quota.ResetCreditForAccount(id, expectedAccount)
 }
 func (s *Service) DesktopAction(action string) error {
-	if action == "report-seen" {
-		return s.reports.MarkSeen()
-	}
 	if action == "restart-client" && s.mock {
 		return errors.New("模拟模式不会重启真实客户端")
 	}

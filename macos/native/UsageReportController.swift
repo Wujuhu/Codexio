@@ -2,6 +2,10 @@ import AppKit
 import SwiftUI
 import Combine
 
+enum UsageReportSourceState: Equatable {
+    case loading, ready, failed(String)
+}
+
 final class UsageReportController: NSObject, NSWindowDelegate {
     private let state: AppState
     private let model = UsageReportViewModel()
@@ -10,7 +14,7 @@ final class UsageReportController: NSObject, NSWindowDelegate {
     private weak var parent: NSWindow?
     private var pendingAutomatic = false
     private var pendingManual = false
-    private var preparing = false
+    private var preparation: UUID?
     private var collection: UsageReportCollection?
     private var checkedDay = ""
     private var shown = Set<String>()
@@ -31,9 +35,13 @@ final class UsageReportController: NSObject, NSWindowDelegate {
         model.onStyle = { [weak self] style in self?.selectStyle(style) }
         model.onClient = { [weak self] client in self?.selectClient(client) }
         model.onShare = { [weak self] view in Task { @MainActor in self?.share(from: view) } }
-        state.$loading.removeDuplicates().sink { [weak self] loading in
-            guard let self, !loading, self.pendingAutomatic || self.pendingManual else { return }
+        state.usageReportSources.dropFirst().sink { [weak self] _ in
+            guard let self, self.pendingAutomatic || self.pendingManual || (self.isPresenting && self.model.documents.isEmpty) else { return }
             self.prepare()
+        }.store(in: &subscriptions)
+        state.$pageClient.dropFirst().sink { [weak self] client in
+            guard let self, self.pendingAutomatic, !self.pendingManual, !self.isPresenting else { return }
+            self.selectClient(client)
         }.store(in: &subscriptions)
         state.$prices.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in
             guard let self, self.model.client == .codex, self.isPresenting || self.pendingAutomatic || self.pendingManual else { return }
@@ -46,7 +54,7 @@ final class UsageReportController: NSObject, NSWindowDelegate {
         for name in [NSNotification.Name.NSCalendarDayChanged, NSNotification.Name.NSSystemTimeZoneDidChange] {
             NotificationCenter.default.publisher(for: name).receive(on: DispatchQueue.main).sink { [weak self] _ in
                 guard let self else { return }; self.checkedDay = ""
-                if self.isPresenting { self.prepare() }
+                if self.isPresenting || self.pendingManual || self.pendingAutomatic { self.prepare() }
             }.store(in: &subscriptions)
         }
     }
@@ -58,15 +66,19 @@ final class UsageReportController: NSObject, NSWindowDelegate {
     func windowOpened(_ window: NSWindow) {
         parent = window
         guard !state.paths.mock, !isPresenting, state.preferences.analytics.flag("usage_report_auto", true), Calendar.current.component(.hour, from: Date()) >= 8 else { return }
-        guard checkedDay != dayKey, !shown.contains(dayKey) else { return }
+        guard !pendingManual, !pendingAutomatic, checkedDay != dayKey, !shown.contains(dayKey) else { return }
         model.client = state.pageClient
         pendingAutomatic = true
-        if !state.loading { prepare() }
+        prepare()
     }
     func requestManual(on window: NSWindow) {
         parent = window; pendingManual = true
-        if !isPresenting {model.client = state.pageClient}
-        if !state.loading { prepare() }
+        if !isPresenting {
+            if model.client != state.pageClient { model.documents = [:]; collection = nil }
+            model.client = state.pageClient
+        }
+        prepare()
+        onPresentationNeeded?()
     }
     private func selectClient(_ client: DesktopClient) {
         guard client != model.client else {return}
@@ -75,34 +87,68 @@ final class UsageReportController: NSObject, NSWindowDelegate {
         prepare()
     }
     private func prepare() {
-        guard !preparing else { return }
-        preparing = true; collection = nil; model.busy = true; model.error = nil
+        guard preparation == nil else { return }
+        switch state.usageReportSources.value[model.client] ?? .loading {
+        case .loading:
+            model.busy = true; model.error = nil
+            return
+        case .failed(let message):
+            model.busy = false; model.error = message
+            return
+        case .ready:
+            break
+        }
+        let request = UUID()
+        preparation = request; collection = nil; model.busy = true; model.error = nil
         let client = model.client
         state.prepareUsageReports(client:client) { [weak self] result in
-            guard let self else { return }
-            self.preparing = false
+            guard let self, self.preparation == request else { return }
+            self.preparation = nil
+            guard self.isPresenting || self.pendingManual || self.pendingAutomatic else { return }
             guard self.model.client == client else {self.prepare();return}
-            self.model.busy = false
             switch result {
             case .success(let collection):
                 guard collection.presentationDay == self.dayKey, collection.documents[.day]?.timeZone == TimeZone.current.identifier else { self.prepare(); return }
-                self.collection = collection; self.model.documents = collection.documents
-                if self.pendingAutomatic || collection.alreadyPresented { self.checkedDay = collection.presentationDay }
-                if collection.alreadyPresented { self.pendingAutomatic = false }
-                self.onPresentationNeeded?()
+                self.collection = collection
+                if collection.alreadyPresented {
+                    self.checkedDay = collection.presentationDay
+                    self.pendingAutomatic = false
+                }
+                self.reportPrepared()
             case .failure(let error):
+                self.model.busy = false
                 self.model.error = error.localizedDescription
                 self.pendingAutomatic = false
-                if self.pendingManual { self.state.errorMessage = error.localizedDescription; self.pendingManual = false }
+                if self.pendingManual { self.onPresentationNeeded?() }
             }
         }
     }
+    private func reportPrepared() {
+        guard isPresenting else { onPresentationNeeded?(); return }
+        guard let collection else { return }
+        guard collection.presentationDay == dayKey, collection.documents[.day]?.timeZone == TimeZone.current.identifier else { prepare(); return }
+        guard resourceStyle == model.style else { loadResources(for: model.style); return }
+        model.documents = collection.documents; model.busy = false
+        recordPresentation()
+    }
+    private func recordPresentation() {
+        guard isPresenting, let collection, !model.documents.isEmpty,
+              collection.presentationDay == dayKey, Calendar.current.component(.hour, from: Date()) >= 8,
+              shown.insert(collection.presentationDay).inserted, !collection.alreadyPresented else { return }
+        state.markUsageReportPresented(collection.presentationDay)
+    }
     @discardableResult func presentIfNeeded(on window: NSWindow) -> Bool {
-        guard !isPresenting, !preparing, pendingManual || pendingAutomatic, let collection, collection.presentationDay == dayKey, collection.documents[.day]?.timeZone == TimeZone.current.identifier, !model.documents.isEmpty,
+        guard !isPresenting, pendingManual || pendingAutomatic,
               window.isVisible, NSApp.isActive, window.attachedSheet == nil else { return false }
-        guard pendingManual || Calendar.current.component(.hour, from: Date()) >= 8 else { return false }
-        if !pendingManual, (shown.contains(collection.presentationDay) || collection.alreadyPresented) { pendingAutomatic = false; return false }
-        guard resourceStyle == model.style else { loadResources(for: model.style); return false }
+        let manual = pendingManual
+        if !manual {
+            guard preparation == nil, let collection, collection.presentationDay == dayKey,
+                  collection.documents[.day]?.timeZone == TimeZone.current.identifier,
+                  state.preferences.analytics.flag("usage_report_auto", true), Calendar.current.component(.hour, from: Date()) >= 8 else { return false }
+            if shown.contains(collection.presentationDay) || collection.alreadyPresented { pendingAutomatic = false; return false }
+            guard resourceStyle == model.style else { loadResources(for: model.style); return false }
+            model.documents = collection.documents; model.busy = false
+        }
         model.period = UsageReportPeriod.preferred()
         let available = window.contentLayoutRect.size
         let height = min(820, max(620, available.height-12))
@@ -117,17 +163,16 @@ final class UsageReportController: NSObject, NSWindowDelegate {
         panel.setContentSize(size)
         self.panel = panel; self.parent = window
         pendingAutomatic = false; pendingManual = false
-        if Calendar.current.component(.hour, from: Date()) >= 8 {
-            shown.insert(collection.presentationDay)
-            state.markUsageReportPresented(collection.presentationDay)
-        }
         window.beginSheet(panel) { [weak self] _ in
             panel.orderOut(nil); panel.contentView = nil
             self?.finishPresentation()
         }
+        if manual { reportPrepared() }
+        else { recordPresentation() }
         return true
     }
     func close() {
+        pendingManual = false; pendingAutomatic = false; preparation = nil; collection = nil
         guard let panel else { return }
         if let parent = panel.sheetParent { parent.endSheet(panel) }
         else { panel.orderOut(nil); panel.contentView = nil; finishPresentation() }
@@ -144,7 +189,7 @@ final class UsageReportController: NSObject, NSWindowDelegate {
                 guard let self else { ReportArtworkResources.release(); return }
                 guard generation == self.resourceGeneration else { ReportArtworkResources.release(); return }
                 self.resourceLoading = false; self.resourceStyle = style
-                self.onPresentationNeeded?()
+                self.reportPrepared()
             }
         }
     }
@@ -160,6 +205,7 @@ final class UsageReportController: NSObject, NSWindowDelegate {
                 guard generation == self.resourceGeneration, self.panel != nil else { ReportArtworkResources.release(); return }
                 self.resourceLoading = false; self.resourceStyle = style; self.model.style = style
                 self.state.setPreference("usage_report_style", style.rawValue)
+                self.reportPrepared()
             }
         }
     }

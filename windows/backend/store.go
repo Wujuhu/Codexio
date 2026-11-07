@@ -64,6 +64,7 @@ type Store struct {
 	nextFuture              string
 	queryCache              map[string]string
 	queryCacheGeneration    int64
+	reportSources           map[string]reportSourceState
 	metadataRepairRemaining int
 	metadataRepairPriority  map[string]bool
 	media                   *requestMediaCache
@@ -126,6 +127,7 @@ func OpenStore(o DataOptions) (*Store, error) {
 	s.path = filepath.Join(o.Directory, name)
 	s.media = newRequestMediaCache(filepath.Dir(s.path), o.Mock)
 	s.queryCache = map[string]string{}
+	s.reportSources = map[string]reportSourceState{}
 	s.parentSignatureCache = map[string]map[string]bool{}
 	if e = s.schema(); e != nil {
 		db.Close()
@@ -336,9 +338,11 @@ func (s *Store) Run(ctx context.Context, changed func()) {
 				changed()
 			}
 		}
+		var codexErr, claudeErr error
 		if !s.options.Mock {
-			e = errors.Join(e, s.collect(ctx, force))
-			e = errors.Join(e, s.collectClaude(ctx, force))
+			codexErr = s.collect(ctx, force)
+			claudeErr = s.collectClaude(ctx, force)
+			e = errors.Join(e, codexErr, claudeErr)
 			if e == nil {
 				_ = s.syncPrices(ctx, false)
 				_ = s.syncClaudePrices(ctx, false)
@@ -346,8 +350,9 @@ func (s *Store) Run(ctx context.Context, changed func()) {
 		}
 		// Successful file transactions must be visible even when another file
 		// failed; its retained cursor will be retried on the next collection.
-		e = errors.Join(e, s.applyClaudeContexts())
-		e = errors.Join(e, s.project(ctx))
+		contextErr := s.applyClaudeContexts()
+		projectionErr := s.project(ctx)
+		e = errors.Join(e, contextErr, projectionErr)
 		upstreamSignature := s.pricingObservedKey
 		if upstreamSignature != s.upstreamSignature {
 			s.upstreamSignature = upstreamSignature
@@ -365,6 +370,15 @@ func (s *Store) Run(ctx context.Context, changed func()) {
 		s.lastWallTime = now
 		s.nextFuture = future.String
 		s.mu.Lock()
+		var reportSourcesChanged bool
+		if s.options.DeferProjection && (!s.reportSources["codex"].ready || !s.reportSources["claude_code"].ready) {
+			if claudeErr == nil && s.claudeStatus["source_status"] == "error" {
+				claudeErr = errors.New(dataString(s.claudeStatus, "error"))
+			}
+			codexChanged := s.finishInitialReportScanLocked("codex", errors.Join(codexErr, projectionErr))
+			claudeChanged := s.finishInitialReportScanLocked("claude_code", errors.Join(claudeErr, contextErr, projectionErr))
+			reportSourcesChanged = codexChanged || claudeChanged
+		}
 		previous := dataJSON(s.status)
 		s.status = Row{"status": "ready"}
 		if e != nil {
@@ -388,6 +402,9 @@ func (s *Store) Run(ctx context.Context, changed func()) {
 		}
 		s.mu.Unlock()
 		s.work.Unlock()
+		if reportSourcesChanged && s.options.ReportSourcesChanged != nil {
+			s.options.ReportSourcesChanged()
+		}
 		if s.options.Maintenance != nil {
 			s.options.Maintenance(e == nil)
 		}

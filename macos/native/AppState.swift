@@ -61,6 +61,9 @@ final class AppState: ObservableObject {
     private var claudeMobileSnapshot:ClaudeMobileSnapshot?
     var usageReportDirectory: URL { paths.data.appendingPathComponent("Reports", isDirectory: true) }
     private lazy var usageReportStore = UsageReportStore(directory: usageReportDirectory)
+    // Overview can use the saved ledger while the first scan is still running.
+    // Only report readers observe these per-source completion states.
+    let usageReportSources = CurrentValueSubject<[DesktopClient: UsageReportSourceState], Never>([:])
     private let brandingQueue = DispatchQueue(label:"com.wujuhu.codexio.branding",qos:.utility)
     private lazy var usageCache = UsageSnapshotCache(database:database,catalog:catalog)
     lazy var journeyReader = JourneyReader(database)
@@ -304,6 +307,16 @@ final class AppState: ObservableObject {
             catch { DispatchQueue.main.async { self.errorMessage = error.localizedDescription } }
         }
     }
+    private func finishInitialReportScan(_ client: DesktopClient, error: Error? = nil) {
+        let next = error.map { UsageReportSourceState.failed($0.localizedDescription) } ?? .ready
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.stopped else { return }
+            var sources = self.usageReportSources.value
+            guard sources[client] != .ready, sources[client] != next else { return }
+            sources[client] = next
+            self.usageReportSources.send(sources)
+        }
+    }
     func refreshUsage() {
         guard !scanning, !stopped, !paths.mock else { return }
         scanning = true; let roots = preferences.roots; let initial = loading; let operation = fetchActivity.begin()
@@ -316,11 +329,21 @@ final class AppState: ObservableObject {
                     if initial && (current == total || current % 50 == 0) { DispatchQueue.main.async { let text = "\(current) / \(total)"; if self.scanProgress != text { self.scanProgress = text } } }
                 }
                 self.publishUsage()
-            } catch {self.estimator.interrupt(); DispatchQueue.main.async { self.errorMessage = error.localizedDescription; self.loading = false } }
+                self.finishInitialReportScan(.codex)
+            } catch {
+                self.estimator.interrupt()
+                DispatchQueue.main.async { self.errorMessage = error.localizedDescription; self.loading = false }
+                self.finishInitialReportScan(.codex, error: error)
+            }
             do {
                 try self.claudeLedger.scan()
                 self.publishClaude(); self.receiveClaudeQuota(self.claudeAllowance.snapshot())
-            } catch {self.claudeEstimator.interrupt(); DispatchQueue.main.async { self.claudeWarning = error.localizedDescription } }
+                self.finishInitialReportScan(.claudeCode)
+            } catch {
+                self.claudeEstimator.interrupt()
+                DispatchQueue.main.async { self.claudeWarning = error.localizedDescription }
+                self.finishInitialReportScan(.claudeCode, error: error)
+            }
             DispatchQueue.main.async { self.scanning = false }
         }
     }
@@ -772,7 +795,14 @@ final class AppState: ObservableObject {
                     }]
                     self.onQuotaChange?()
                 }
-            } catch {self.estimator.interrupt(); DispatchQueue.main.async { self.errorMessage = error.localizedDescription; self.loading = false } }
+                self.finishInitialReportScan(.codex)
+                self.finishInitialReportScan(.claudeCode)
+            } catch {
+                self.estimator.interrupt()
+                DispatchQueue.main.async { self.errorMessage = error.localizedDescription; self.loading = false }
+                self.finishInitialReportScan(.codex, error: error)
+                self.finishInitialReportScan(.claudeCode, error: error)
+            }
         }
     }
 }

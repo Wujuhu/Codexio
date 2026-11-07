@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -9,6 +10,38 @@ import (
 	"sync"
 	"time"
 )
+
+type reportSourceState struct {
+	ready   bool
+	problem string
+}
+
+func (s *Store) reportSource(client string) reportSourceState {
+	if !s.options.DeferProjection || s.options.Mock {
+		return reportSourceState{ready: true}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.reportSources[normalizedClient(client)]
+}
+
+// Only the collector can complete report startup, after committing its projection.
+// Later refreshes keep the last confirmed report available.
+func (s *Store) finishInitialReportScanLocked(client string, err error) bool {
+	current := s.reportSources[client]
+	if current.ready {
+		return false
+	}
+	next := reportSourceState{ready: err == nil}
+	if err != nil {
+		next.problem = err.Error()
+	}
+	if next == current {
+		return false
+	}
+	s.reportSources[client] = next
+	return true
+}
 
 type ReportManager struct {
 	mu        sync.Mutex
@@ -44,10 +77,14 @@ func (r *ReportManager) Due() bool {
 	now := time.Now()
 	return ValueBool(r.config()["usage_report_auto"]) && now.Hour() >= 8 && !r.seen[now.Format("2006-01-02")]
 }
-func (r *ReportManager) MarkSeen() error {
+func (r *ReportManager) MarkSeen(day string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.seen[time.Now().Format("2006-01-02")] = true
+	now := time.Now()
+	if now.Hour() < 8 || day != now.Format("2006-01-02") || r.seen[day] {
+		return nil
+	}
+	r.seen[day] = true
 	days := []string{}
 	for d := range r.seen {
 		days = append(days, d)
@@ -63,13 +100,24 @@ func (r *ReportManager) MarkSeen() error {
 	return WriteJSON(filepath.Join(r.directory, "presentation.json"), Row{"days": days})
 }
 func (r *ReportManager) Get(period string) (Row, error) { return r.GetForClient(period, "codex") }
-func (r *ReportManager) GetForClient(period, client string) (Row, error) {
+func (r *ReportManager) GetForClient(period, client string, contexts ...context.Context) (Row, error) {
 	client = normalizedClient(client)
 	if period != "day" && period != "week" && period != "month" {
 		return nil, errors.New("无效报告周期")
 	}
+	sourceState := r.store.reportSource(client)
+	if !sourceState.ready {
+		if sourceState.problem != "" {
+			return nil, errors.New(sourceState.problem)
+		}
+		return Row{"status": "loading"}, nil
+	}
+	ctx := queryContext(contexts)
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	now := time.Now()
 	_, offset := now.Zone()
 	cfg := r.config()
@@ -86,16 +134,16 @@ func (r *ReportManager) GetForClient(period, client string) (Row, error) {
 	}
 	start, end, prior := reportBounds(period, now)
 	q := Query{ClientKind: client, Period: "all", Start: UTCStamp(start), End: UTCStamp(end), Source: "local"}
-	summary, e := r.store.Summary(q)
+	summary, e := r.store.Summary(q, ctx)
 	if e != nil {
 		return nil, e
 	}
 	summary = closedReportSummary(summary)
-	models, e := reportModels(r.store, q)
+	models, e := reportModels(r.store, q, ctx)
 	if e != nil {
 		return nil, e
 	}
-	previous, e := r.store.Summary(Query{ClientKind: client, Period: "all", Start: UTCStamp(prior), End: UTCStamp(start), Source: "local"})
+	previous, e := r.store.Summary(Query{ClientKind: client, Period: "all", Start: UTCStamp(prior), End: UTCStamp(start), Source: "local"}, ctx)
 	if e != nil {
 		return nil, e
 	}
@@ -117,7 +165,8 @@ func (r *ReportManager) GetForClient(period, client string) (Row, error) {
 	slices := []Row{{"name": "凌晨", "requests": 0}, {"name": "上午", "requests": 0}, {"name": "午后", "requests": 0}, {"name": "晚间", "requests": 0}}
 	var first, last any
 	firstClock, lastClock := 86400, -1
-	rows, e := r.store.Database().Query(`SELECT timestamp,data FROM usage_request_groups WHERE coalesce(json_extract(data,'$.client_kind'),'codex')=? AND timestamp>=? AND timestamp<? AND record_kind='user_request' AND is_subagent=0 ORDER BY timestamp`, client, reportIndexStamp(start), reportIndexStamp(end))
+	reader := r.store.readDB([]context.Context{ctx})
+	rows, e := reader.Query(`SELECT timestamp,data FROM usage_request_groups WHERE coalesce(json_extract(data,'$.client_kind'),'codex')=? AND timestamp>=? AND timestamp<? AND record_kind='user_request' AND is_subagent=0 ORDER BY timestamp`, client, reportIndexStamp(start), reportIndexStamp(end))
 	if e != nil {
 		return nil, e
 	}
@@ -147,7 +196,11 @@ func (r *ReportManager) GetForClient(period, client string) (Row, error) {
 			last = UTCStamp(t)
 		}
 	}
+	e = rows.Err()
 	rows.Close()
+	if e != nil {
+		return nil, e
+	}
 	label := start.Format("2006.01.02")
 	if period == "week" {
 		label += " — " + end.AddDate(0, 0, -1).Format("01.02")
@@ -169,15 +222,16 @@ func (r *ReportManager) GetForClient(period, client string) (Row, error) {
 			return nil, e
 		}
 	}
+	d["presentation_day"] = now.Format("2006-01-02")
 	r.documents[documentKey] = d
 	return CloneRow(d), nil
 }
 
 // Reuse the ledger's streaming query and metric completeness rules. Claude
 // model breakdowns use the actual returned model, as its logs and pricing do.
-func reportModels(store *Store, q Query) ([]Row, error) {
+func reportModels(store *Store, q Query, ctx context.Context) ([]Row, error) {
 	if normalizedClient(q.ClientKind) != "claude_code" {
-		return store.Models(q)
+		return store.Models(q, ctx)
 	}
 	groups := map[string]*metricSum{}
 	if e := store.stream(q, func(call Row) {
@@ -186,7 +240,7 @@ func reportModels(store *Store, q Query) ([]Row, error) {
 			groups[model] = newMetricSum()
 		}
 		groups[model].add(call)
-	}); e != nil {
+	}, ctx); e != nil {
 		return nil, e
 	}
 	result := []Row{}

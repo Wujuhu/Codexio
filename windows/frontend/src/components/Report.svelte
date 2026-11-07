@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick, onMount, onDestroy } from 'svelte';
-  import { api, rows, text, numeric, number, type Row, type ClientKind } from '../lib/api';
+  import { api, listen, revisionRead, rows, text, numeric, number, type Row, type ClientKind } from '../lib/api';
   import { tr } from '../lib/i18n';
   import { toPng } from 'html-to-image';
   import Icon from './Icon.svelte';
@@ -11,7 +11,7 @@
   export let onsave: (r: Row) => Promise<void>;
   export let onclose: () => void;
   export let onerror: (e: any) => void;
-  export let onpresent: () => void;
+  export let onpresent: (day: string) => void;
 
   const palettes: Record<string, string[]> = {
     garden: ['#FFFDF7','#173C31','#4C6959','#7CA88B','#C7DCC8','#F1BAA1','#F1F7EE'],
@@ -22,11 +22,12 @@
   let client:ClientKind=initialClient;
   let style = palettes[settings.usage_report_style] ? settings.usage_report_style : 'garden';
   let data: Row = {};
-  let busy = false, exporting = false, savingStyle = false, presented = false;
+  let busy = true, exporting = false, savingStyle = false, presented = false;
+  let mounted = false, sourceRevision = 0;
   let sequence = 0, exported = '', error = '';
   let card: HTMLElement, reader: HTMLElement, dialog: HTMLDivElement, closeButton: HTMLButtonElement;
   let readerWidth = 480, readerHeight = 800, scrollTop = 0;
-  $: void load(period,client);
+  $: if (mounted) void load(period, client, sourceRevision);
   $: summary = data.summary ?? {};
   $: top = rows(data.models).slice(0, 3);
   $: slices = rows(data.time_slices).slice(0, 4);
@@ -45,6 +46,10 @@
   $: metrics = [[costLabel(summary), tr('费用')], [tokenLabel(summary.tokens, summary.tokens_complete !== false && Number(summary.skipped?.tokens ?? 0) === 0), tr('总 Token')], [numeric(summary.user_requests), tr('用户请求')], [number(summary.cache_hit_rate) === null ? '—' : `${Math.round(Number(summary.cache_hit_rate) * 100)}%`, tr('命中率')]];
 
   onMount(() => {
+    const stop = listen('codexio:changed', event => {
+      if (event.scope === 'report' && !data.summary) sourceRevision++;
+    });
+    mounted = true;
     const previousFocus = document.activeElement as HTMLElement | null;
     const observer = new ResizeObserver(entries => {
       const box = entries[0]?.contentRect;
@@ -52,21 +57,27 @@
     });
     observer.observe(reader);
     closeButton.focus();
-    return () => { observer.disconnect(); if (previousFocus?.isConnected) previousFocus.focus(); };
+    return () => { stop(); observer.disconnect(); if (previousFocus?.isConnected) previousFocus.focus(); };
   });
   onDestroy(() => { sequence++; });
-  async function load(p: string,source:ClientKind) {
+  async function load(p: string, source: ClientKind, revision: number) {
     const ticket = ++sequence;
     busy = true; error = ''; data = {}; exported = '';
     if (reader) reader.scrollTop = 0;
+    let waitingForSource = false;
     try {
-      const next = await api('GetClientReports',source,p);
+      const next = await revisionRead('GetClientReports', String(revision), source, p);
       if (ticket !== sequence) return;
+      if (next.status === 'loading') { waitingForSource = true; return; }
       data = next;
+      busy = false;
       await tick();
-      if (ticket === sequence && !presented) { presented = true; onpresent(); }
-    } catch (e) { if (ticket === sequence) { error = String(e); onerror(e); } }
-    finally { if (ticket === sequence) busy = false; }
+      if (ticket === sequence && !presented && next.summary && next.presentation_day) {
+        presented = true;
+        onpresent(next.presentation_day);
+      }
+    } catch (e) { if (ticket === sequence) error = String(e); }
+    finally { if (ticket === sequence && !waitingForSource) busy = false; }
   }
   async function selectStyle(value: string) {
     const previous = style;
