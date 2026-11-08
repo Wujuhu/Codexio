@@ -12,7 +12,7 @@ import (
 
 // Mac Analytics.localChatRows: rank root threads by all local meter tokens,
 // including explicitly known descendant threads, independent of request count.
-func (s *Store) rebuildSessionRoots(tx *sql.Tx, metadata map[string]Row, links []Row) error {
+func (s *Store) rebuildSessionRoots(tx *sql.Tx, metadata map[string]Row, links []Row, scope *projectionScope) error {
 	seen := map[string]bool{}
 	parents := map[string]map[string]bool{}
 	put := func(child, parent string) {
@@ -33,7 +33,8 @@ func (s *Store) rebuildSessionRoots(tx *sql.Tx, metadata map[string]Row, links [
 	for _, link := range links {
 		put(dataString(link, "child_session_id"), dataString(link, "parent_session_id"))
 	}
-	rows, e := tx.Query("SELECT DISTINCT session_id FROM usage_priced_calls WHERE session_id<>''")
+	filter, args := scope.filter("session_id")
+	rows, e := tx.Query("SELECT DISTINCT session_id FROM usage_priced_calls WHERE session_id<>''"+filter, args...)
 	if e != nil {
 		return e
 	}
@@ -45,8 +46,12 @@ func (s *Store) rebuildSessionRoots(tx *sql.Tx, metadata map[string]Row, links [
 		}
 		seen[session] = true
 	}
+	e = rows.Err()
 	rows.Close()
-	if _, e = tx.Exec("DELETE FROM usage_query_session_roots"); e != nil {
+	if e != nil {
+		return e
+	}
+	if _, e = tx.Exec("DELETE FROM usage_query_session_roots WHERE 1"+filter, args...); e != nil {
 		return e
 	}
 	for session := range seen {
@@ -78,6 +83,9 @@ func (s *Store) localChatRows(q Query, page, size int, contexts ...context.Conte
 func (s *Store) localChatRowsSorted(q Query, page, size int, metric string, contexts ...context.Context) ([]Row, int, int, error) {
 	reader := s.readDB(contexts)
 	q.Source = "local"
+	if chats, total, index, used, err := materializedLocalRank(reader, q, page, size, metric); used || err != nil {
+		return chats, total, index, err
+	}
 	where, args := queryFilter(q, false)
 	where = strings.ReplaceAll(where, "usage_priced_calls.id", "p.id")
 	var total int
@@ -96,42 +104,13 @@ func (s *Store) localChatRowsSorted(q Query, page, size int, metric string, cont
 	if normalizedClient(q.ClientKind) == "claude_code" {
 		orderExpression = `CASE WHEN count(json_extract(p.metrics,'$.` + order + `'))=count(*) THEN sum(json_extract(p.metrics,'$.` + order + `')) END`
 	}
-	query := `SELECT coalesce(roots.root_session_id,p.session_id),coalesce(t.title,max(CASE WHEN roots.root_session_id=p.session_id OR roots.root_session_id IS NULL THEN json_extract(p.data,'$.session_title') END),''),CASE WHEN coalesce(json_extract(p.data,'$.client_kind'),'codex')='claude_code' AND count(json_extract(p.metrics,'$.tokens'))<>count(*) THEN NULL ELSE sum(json_extract(p.metrics,'$.tokens')) END,CASE WHEN coalesce(json_extract(p.data,'$.client_kind'),'codex')='claude_code' AND count(json_extract(p.metrics,'$.usd'))<>count(*) THEN NULL ELSE sum(json_extract(p.metrics,'$.usd')) END,sum(coalesce(json_extract(p.metrics,'$.unpriced_calls'),0)),sum(CASE WHEN json_extract(p.data,'$.client_kind')='claude_code' AND (coalesce(json_extract(p.data,'$.usage_complete'),0)=0 OR json_extract(p.data,'$.usage_conflict')=1) THEN 1 ELSE 0 END) FROM usage_priced_calls p LEFT JOIN usage_query_session_roots roots ON roots.session_id=p.session_id LEFT JOIN usage_session_titles t ON t.session_id=coalesce(roots.root_session_id,p.session_id) WHERE ` + where + ` GROUP BY coalesce(roots.root_session_id,p.session_id) ORDER BY ` + orderExpression + ` DESC,coalesce(roots.root_session_id,p.session_id) LIMIT ? OFFSET ?`
+	query := "SELECT " + rankColumns + rankFrom + " WHERE " + where + " GROUP BY " + rankRoot + " ORDER BY " + orderExpression + " DESC," + rankRoot + " LIMIT ? OFFSET ?"
 	params := append(append([]any{}, args...), size, (page-1)*size)
 	rows, e := reader.Query(query, params...)
 	if e != nil {
 		return nil, 0, 0, e
 	}
-	chats := []Row{}
-	for rows.Next() {
-		var session, title string
-		var tokens sql.NullInt64
-		var usd sql.NullFloat64
-		var unpriced, incomplete int
-		if e = rows.Scan(&session, &title, &tokens, &usd, &unpriced, &incomplete); e != nil {
-			rows.Close()
-			return nil, 0, 0, e
-		}
-		r := Row{"client_kind": normalizedClient(q.ClientKind), "session_id": session, "thread_id": session, "session_title": title, "name": title, "title": title, "tokens": nil, "local_tokens": nil, "usd": nil, "cost_usd": nil, "cost_partial": unpriced > 0, "cost_complete": unpriced == 0}
-		if unpriced > 0 {
-			r["data_status"] = "partial"
-		}
-		if normalizedClient(q.ClientKind) == "claude_code" {
-			if incomplete > 0 {
-				r["data_status"] = "partial"
-			}
-		}
-		if tokens.Valid {
-			r["tokens"], r["local_tokens"] = tokens.Int64, tokens.Int64
-		}
-		if usd.Valid {
-			r["usd"] = usd.Float64
-			r["cost_usd"] = usd.Float64
-		}
-		chats = append(chats, r)
-	}
-	e = rows.Err()
-	rows.Close()
+	chats, e := scanLocalRank(rows, normalizedClient(q.ClientKind), false)
 	if e != nil {
 		return nil, 0, 0, e
 	}

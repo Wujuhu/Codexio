@@ -50,7 +50,7 @@ func (s *Service) GetClientChatRanking(ctx context.Context, clientKind, metric s
 	s.store.cacheQuery(key, result)
 	return result, nil
 }
-func (s *Store) rebuildClaudeGroups(tx *sql.Tx, dirty map[string]bool, full bool) error {
+func (s *Store) rebuildClaudeGroups(tx *sql.Tx, full bool, now time.Time) error {
 	// Only changed request IDs are materialized. The immutable calls and request
 	// metadata remain on disk; each group streams its member calls.
 	var query string
@@ -64,8 +64,8 @@ func (s *Store) rebuildClaudeGroups(tx *sql.Tx, dirty map[string]bool, full bool
 	for {
 		args := []any{}
 		if !full {
-			now := float64(time.Now().UnixNano()) / 1e9
-			args = append(args, now, now)
+			seconds := float64(now.UnixNano()) / 1e9
+			args = append(args, seconds, seconds)
 		}
 		args = append(args, lastRequest)
 		rows, err := tx.Query("SELECT request_id FROM (SELECT id AS request_id FROM ("+query+")) WHERE request_id>? ORDER BY request_id LIMIT 250", args...)
@@ -225,7 +225,7 @@ func (s *Store) rebuildClaudeGroups(tx *sql.Tx, dirty map[string]bool, full bool
 			for key, value := range claudeRequestTiming(group, mainTiming) {
 				group[key] = value
 			}
-			if err := applyClaudeActivity(tx, group, time.Now()); err != nil {
+			if err := applyClaudeActivity(tx, group, now); err != nil {
 				return err
 			}
 			if duration, ok := ValueFloat(group["duration_ms"]); ok && duration > 0 && outputsComplete && dataString(group, "request_status") == "completed" {

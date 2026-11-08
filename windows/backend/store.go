@@ -140,6 +140,10 @@ func OpenStore(o DataOptions) (*Store, error) {
 		db.Close()
 		return nil, e
 	}
+	if e = s.installScopeGuards(); e != nil {
+		db.Close()
+		return nil, e
+	}
 	if e = s.mobileImageSchema(); e != nil {
 		db.Close()
 		return nil, e
@@ -184,6 +188,7 @@ func (s *Store) schema() error {
  CREATE TABLE IF NOT EXISTS usage_records(id TEXT PRIMARY KEY,timestamp TEXT NOT NULL,model TEXT NOT NULL,session_id TEXT NOT NULL,data TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS usage_records_time ON usage_records(timestamp DESC);
  CREATE INDEX IF NOT EXISTS usage_records_model_time ON usage_records(model,timestamp);
+ CREATE INDEX IF NOT EXISTS go_records_session ON usage_records(session_id);
  CREATE TABLE IF NOT EXISTS usage_record_sources(record_id TEXT NOT NULL,source_id TEXT NOT NULL,PRIMARY KEY(record_id,source_id));
  CREATE INDEX IF NOT EXISTS usage_record_response_lookup ON usage_records(json_extract(data,'$.response_id'));
  CREATE TABLE IF NOT EXISTS usage_observations(id TEXT PRIMARY KEY,timestamp TEXT NOT NULL,data TEXT NOT NULL);
@@ -219,9 +224,19 @@ func (s *Store) schema() error {
  CREATE INDEX IF NOT EXISTS go_query_session_roots_root ON usage_query_session_roots(root_session_id,session_id);
  CREATE INDEX IF NOT EXISTS go_query_turns_alias ON usage_query_turns(json_extract(data,'$.resolved_id'),json_extract(data,'$.session_id'),json_extract(data,'$.turn_id'));
  CREATE INDEX IF NOT EXISTS go_query_turns_root ON usage_query_turns(json_extract(data,'$.root_id'));
+ CREATE INDEX IF NOT EXISTS go_query_turns_session ON usage_query_turns(json_extract(data,'$.session_id'));
+ CREATE INDEX IF NOT EXISTS go_groups_refresh ON usage_request_groups(json_extract(data,'$.duration_refresh_at')) WHERE json_extract(data,'$.duration_refresh_at') IS NOT NULL;
+ CREATE INDEX IF NOT EXISTS go_groups_valid_after ON usage_request_groups(json_extract(data,'$.duration_valid_after')) WHERE json_extract(data,'$.duration_valid_after') IS NOT NULL;
+ CREATE TABLE IF NOT EXISTS usage_query_unsafe_sessions(session_id TEXT PRIMARY KEY);
+ CREATE TABLE IF NOT EXISTS usage_query_local_rank(client TEXT NOT NULL,session_id TEXT NOT NULL,title TEXT NOT NULL,tokens INTEGER,usd REAL,unpriced INTEGER NOT NULL,incomplete INTEGER NOT NULL,requests INTEGER NOT NULL,PRIMARY KEY(client,session_id));
+ CREATE INDEX IF NOT EXISTS go_local_rank_tokens ON usage_query_local_rank(client,tokens DESC,session_id);
+ CREATE INDEX IF NOT EXISTS go_local_rank_usd ON usage_query_local_rank(client,usd DESC,session_id);
+ CREATE TABLE IF NOT EXISTS usage_query_day_buckets(client TEXT NOT NULL,local INTEGER NOT NULL,day TEXT NOT NULL,first TEXT NOT NULL,last TEXT NOT NULL,data TEXT NOT NULL,hours TEXT NOT NULL,PRIMARY KEY(client,local,day));
+ CREATE INDEX IF NOT EXISTS go_day_buckets_day ON usage_query_day_buckets(day);
  CREATE INDEX IF NOT EXISTS go_turns_owner ON usage_turns(json_extract(data,'$.session_id'),json_extract(data,'$.turn_id'));
  CREATE TABLE IF NOT EXISTS usage_query_state(key TEXT PRIMARY KEY,data TEXT NOT NULL);
- CREATE TABLE IF NOT EXISTS usage_query_changes(seq INTEGER PRIMARY KEY AUTOINCREMENT,kind TEXT NOT NULL,item_id TEXT NOT NULL);`)
+ CREATE TABLE IF NOT EXISTS usage_query_changes(seq INTEGER PRIMARY KEY AUTOINCREMENT,kind TEXT NOT NULL,item_id TEXT NOT NULL);
+ CREATE INDEX IF NOT EXISTS go_changes_kind_item ON usage_query_changes(kind,item_id);`)
 	if e != nil {
 		return e
 	}

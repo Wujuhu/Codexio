@@ -3,6 +3,8 @@ package backend
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,76 +17,6 @@ type requestBase struct {
 	meta  Row
 	calls []Row
 	note  string
-}
-
-func projectionDirtySessions(tx *sql.Tx, timeChanged bool, now time.Time) (map[string]bool, error) {
-	result := map[string]bool{}
-	rows, e := tx.Query(`SELECT session_id FROM usage_records WHERE id IN(SELECT item_id FROM usage_query_changes WHERE kind='record') UNION SELECT session_id FROM usage_priced_calls WHERE id IN(SELECT item_id FROM usage_query_changes WHERE kind='record') UNION SELECT item_id FROM usage_query_changes WHERE kind='title'`)
-	if e != nil {
-		return nil, e
-	}
-	for rows.Next() {
-		var session string
-		if e = rows.Scan(&session); e != nil {
-			rows.Close()
-			return nil, e
-		}
-		result[session] = true
-	}
-	rows.Close()
-	changes, e := tx.Query("SELECT DISTINCT kind,item_id FROM usage_query_changes WHERE kind IN ('turn','agent')")
-	if e != nil {
-		return nil, e
-	}
-	items := [][2]string{}
-	for changes.Next() {
-		var kind, id string
-		if e = changes.Scan(&kind, &id); e != nil {
-			changes.Close()
-			return nil, e
-		}
-		items = append(items, [2]string{kind, id})
-	}
-	changes.Close()
-	for _, item := range items {
-		var raw string
-		if item[0] == "turn" {
-			_ = tx.QueryRow("SELECT data FROM usage_turns WHERE id=?", item[1]).Scan(&raw)
-			r := dataRow(raw)
-			if session := dataString(r, "session_id"); session != "" {
-				result[session] = true
-			} else if i := strings.Index(item[1], "|turn:"); i >= 0 {
-				part := item[1][i+6:]
-				if j := strings.LastIndex(part, ":"); j >= 0 {
-					result[part[:j]] = true
-				}
-			}
-		} else {
-			_ = tx.QueryRow("SELECT data FROM usage_agent_links WHERE id=?", item[1]).Scan(&raw)
-			r := dataRow(raw)
-			result[dataString(r, "parent_session_id")] = true
-			result[dataString(r, "child_session_id")] = true
-		}
-	}
-	if timeChanged {
-		seconds := float64(now.Unix()) + float64(now.Nanosecond())/1e9
-		rows, e := tx.Query(`SELECT DISTINCT json_extract(data,'$.session_id') FROM usage_request_groups WHERE json_extract(data,'$.duration_refresh_at')<=? OR json_extract(data,'$.duration_valid_after')>?`, seconds, seconds)
-		if e != nil {
-			return nil, e
-		}
-		for rows.Next() {
-			var session sql.NullString
-			if e = rows.Scan(&session); e != nil {
-				rows.Close()
-				return nil, e
-			}
-			if session.Valid {
-				result[session.String] = true
-			}
-		}
-		rows.Close()
-	}
-	return result, nil
 }
 
 func queryJSON(tx *sql.Tx, q string, args ...any) ([]Row, error) {
@@ -103,7 +35,18 @@ func queryJSON(tx *sql.Tx, q string, args ...any) ([]Row, error) {
 	}
 	return result, rows.Err()
 }
+
+var errScopedProjection = errors.New("scoped usage projection")
+
 func (s *Store) project(contexts ...context.Context) error {
+	err := s.projectOnce(false, contexts...)
+	if errors.Is(err, errScopedProjection) && queryContext(contexts).Err() == nil {
+		return s.projectOnce(true, contexts...)
+	}
+	return err
+}
+
+func (s *Store) projectOnce(forceFull bool, contexts ...context.Context) (err error) {
 	reader := s.readDB(contexts)
 	tx, e := reader.Begin()
 	if e != nil {
@@ -111,10 +54,19 @@ func (s *Store) project(contexts ...context.Context) error {
 	}
 	defer tx.Rollback()
 	var revision int64
-	_ = tx.QueryRow("SELECT revision FROM usage_revisions WHERE kind='ledger'").Scan(&revision)
+	if e = tx.QueryRow("SELECT revision FROM usage_revisions WHERE kind='ledger'").Scan(&revision); e != nil {
+		return e
+	}
 	var prior string
-	_ = tx.QueryRow("SELECT data FROM usage_query_state WHERE key='go_projection'").Scan(&prior)
+	if e = tx.QueryRow("SELECT data FROM usage_query_state WHERE key='go_projection'").Scan(&prior); e != nil && e != sql.ErrNoRows {
+		return e
+	}
 	state := dataRow(prior)
+	journalSize, journalKnown, e := projectionJournalSize(tx)
+	if e != nil {
+		return e
+	}
+	journalKnown = journalKnown && int64(journalSize) == revision-ValueInt(state["revision"])
 	source, observedError := s.observedPricing(reader.ctx, tx, state)
 	if observedError != nil {
 		return observedError
@@ -129,7 +81,7 @@ func (s *Store) project(contexts ...context.Context) error {
 	s.mu.RUnlock()
 	priceChanged := dataString(state, "prices") != version
 	claudeProjectionChanged := ValueInt(state["claude_projection_version"]) != 2
-	full := prior == "" || priceChanged
+	full := prior == "" || priceChanged || forceFull || !journalKnown
 	durationChanged := ValueInt(state["duration_projection_version"]) != requestDurationProjectionVersion
 	groupFull := full || claudeProjectionChanged || ValueInt(state["request_projection_version"]) != requestMetadataVersion || durationChanged
 	// Source observations, future timestamps and clock rollback are time
@@ -142,17 +94,47 @@ func (s *Store) project(contexts ...context.Context) error {
 	if validAfter, ok := ParseStamp(state["duration_valid_after"]); ok && now.Before(validAfter) {
 		timeChanged = true
 	}
-	if !groupFull && ValueInt(state["revision"]) == revision && !timeChanged && !source.changed {
+	// A rollup migration, pricing/source change or time boundary can affect
+	// rows outside the journal. The original full projection remains available.
+	calendar := projectionCalendar(now)
+	sourceScope := pythonHash(s.roots())
+	groupFull = groupFull || full || timeChanged ||
+		ValueInt(state["scope_version"]) != projectionScopeVersion ||
+		dataString(state, "bucket_calendar") != calendar || dataString(state, "source_scope") != sourceScope
+	if !groupFull && ValueInt(state["revision"]) == revision && !source.changed {
 		if s.Generation() == 0 {
 			s.generation.Store(ValueInt(state["generation"]))
 		}
 		return nil
 	}
-	// A rule change repairs all derived groups once; existing priced calls and
-	// byte cursors remain valid. Later changes rebuild only affected groups.
-	dirty, e := projectionDirtySessions(tx, timeChanged, now)
-	if e != nil {
-		return e
+	var scope *projectionScope
+	if !groupFull {
+		bounded := true
+		if source.changed {
+			// observedPricing contributes explicit record IDs without a ledger
+			// revision. Its hint list must still fit the same scoped budget.
+			_, bounded, e = projectionJournalSize(tx)
+			if e != nil {
+				return e
+			}
+		}
+		if bounded {
+			scope, e = readProjectionScope(tx)
+			if e != nil {
+				return e
+			}
+		}
+		groupFull = scope == nil
+	}
+	if scope != nil {
+		defer func() {
+			if err != nil {
+				err = fmt.Errorf("%w: %w", errScopedProjection, err)
+			}
+		}()
+		if e = beginBucketChanges(tx); e != nil {
+			return e
+		}
 	}
 	changedSQL := "SELECT r.data FROM usage_records r"
 	if !full {
@@ -233,25 +215,38 @@ func (s *Store) project(contexts ...context.Context) error {
 			break
 		}
 	}
-	if _, e = tx.Exec("DELETE FROM usage_priced_calls WHERE id NOT IN(SELECT id FROM usage_records)"); e != nil {
+	for _, target := range []struct{ table, key string }{{"usage_priced_calls", "id"}, {"usage_query_sources", "record_id"}} {
+		where := " WHERE "
+		if !full {
+			where += target.key + " IN(SELECT item_id FROM usage_query_changes WHERE kind='record') AND "
+		}
+		if _, e = tx.Exec("DELETE FROM " + target.table + where + target.key + " NOT IN(SELECT id FROM usage_records)"); e != nil {
+			return e
+		}
+	}
+	if e = s.rebuildGroups(tx, now, scope); e != nil {
 		return e
 	}
-	if _, e = tx.Exec("DELETE FROM usage_query_sources WHERE record_id NOT IN(SELECT id FROM usage_records)"); e != nil {
+	if e = s.rebuildClaudeGroups(tx, groupFull, now); e != nil {
 		return e
 	}
-	// Metadata graph is rebuilt only after ledger/price dependencies change. Calls
-	// are streamed per connected session component, bounding historical meter memory.
-	if e = s.rebuildGroups(tx, now, groupFull, dirty); e != nil {
+	if e = rebuildLocalRank(tx, scope); e != nil {
 		return e
 	}
-	if e = s.rebuildClaudeGroups(tx, dirty, groupFull); e != nil {
+	if e = rebuildUsageBuckets(tx, scope, now.Location()); e != nil {
 		return e
 	}
 	var nextDurationRefresh, durationValidAfter sql.NullFloat64
-	if e = tx.QueryRow(`SELECT MIN(json_extract(data,'$.duration_refresh_at')),MAX(json_extract(data,'$.duration_valid_after')) FROM usage_request_groups`).Scan(&nextDurationRefresh, &durationValidAfter); e != nil {
-		return e
+	for _, boundary := range []struct {
+		field, aggregate string
+		value            *sql.NullFloat64
+	}{{"duration_refresh_at", "MIN", &nextDurationRefresh}, {"duration_valid_after", "MAX", &durationValidAfter}} {
+		expression := "json_extract(data,'$." + boundary.field + "')"
+		if e = tx.QueryRow("SELECT " + boundary.aggregate + "(" + expression + ") FROM usage_request_groups WHERE " + expression + " IS NOT NULL").Scan(boundary.value); e != nil {
+			return e
+		}
 	}
-	projection := Row{"pricing_upstream": source.key, "pricing_upstream_revision": source.revision, "revision": revision, "prices": version, "generation": s.Generation() + 1, "claude_projection_version": 2, "request_projection_version": requestMetadataVersion, "duration_projection_version": requestDurationProjectionVersion}
+	projection := Row{"pricing_upstream": source.key, "pricing_upstream_revision": source.revision, "revision": revision, "prices": version, "generation": s.Generation() + 1, "claude_projection_version": 2, "request_projection_version": requestMetadataVersion, "duration_projection_version": requestDurationProjectionVersion, "scope_version": projectionScopeVersion, "bucket_calendar": calendar, "source_scope": sourceScope}
 	if nextDurationRefresh.Valid {
 		projection["duration_refresh_at"] = nextDurationRefresh.Float64
 	}
@@ -271,14 +266,24 @@ func (s *Store) project(contexts ...context.Context) error {
 	}
 	return e
 }
-func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[string]bool) error {
-	turns, e := queryJSON(tx, "SELECT data FROM usage_turns WHERE coalesce(json_extract(data,'$.client_kind'),'codex')='codex' ORDER BY json_extract(data,'$.observed_at'),id")
-	if e != nil {
-		return e
-	}
-	links, e := queryJSON(tx, "SELECT data FROM usage_agent_links")
-	if e != nil {
-		return e
+func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, scope *projectionScope) error {
+	full := scope == nil
+	var turns, links []Row
+	var e error
+	if full {
+		turns, e = queryJSON(tx, "SELECT data FROM usage_turns WHERE "+codexTurnFilter+" ORDER BY json_extract(data,'$.observed_at'),id")
+		if e != nil {
+			return e
+		}
+		links, e = queryJSON(tx, "SELECT data FROM usage_agent_links")
+		if e != nil {
+			return e
+		}
+		if e = rebuildUnsafeProjectionSessions(tx, turns, links); e != nil {
+			return e
+		}
+	} else {
+		turns = scope.turns
 	}
 	metadata := map[string]Row{}
 	for _, incoming := range turns {
@@ -333,7 +338,9 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 		}
 	}
 	// Index call ownership in SQLite; only per-turn IDs/metadata reside in the graph.
-	rows, e := tx.Query("SELECT DISTINCT session_id,turn_id FROM usage_priced_calls WHERE turn_id<>'' AND coalesce(json_extract(data,'$.client_kind'),'codex')='codex'")
+	callScope, callArgs := scope.filter("session_id")
+	turnScope, turnArgs := scope.filter(projectionTurnSession)
+	rows, e := tx.Query("SELECT DISTINCT session_id,turn_id FROM usage_priced_calls WHERE turn_id<>'' AND "+codexTurnFilter+callScope, callArgs...)
 	if e != nil {
 		return e
 	}
@@ -352,8 +359,12 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 			bases[key] = &requestBase{meta: meta}
 		}
 	}
+	e = rows.Err()
 	rows.Close()
-	if e = s.rebuildSessionRoots(tx, metadata, links); e != nil {
+	if e != nil {
+		return e
+	}
+	if e = s.rebuildSessionRoots(tx, metadata, links, scope); e != nil {
 		return e
 	}
 	edges := map[string]string{}
@@ -560,28 +571,18 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 	}
 	affected := map[string]bool{}
 	if !full {
-		old, e := queryJSON(tx, "SELECT data FROM usage_query_turns")
+		old, e := queryJSON(tx, "SELECT data FROM usage_query_turns WHERE 1"+turnScope, turnArgs...)
 		if e != nil {
 			return e
 		}
 		for _, meta := range old {
-			oldRoot := dataString(meta, "root_id")
-			newRoot := rootOf(resolve(turnKey(dataString(meta, "session_id"), dataString(meta, "turn_id"))))
-			if dirty[dataString(meta, "session_id")] || oldRoot != newRoot {
+			if oldRoot := dataString(meta, "root_id"); oldRoot != "" {
 				affected[oldRoot] = true
-				if bases[newRoot] != nil {
-					affected[newRoot] = true
-				}
 			}
 		}
 	}
-	for root, keys := range components {
-		for _, key := range keys {
-			if full || dirty[dataString(bases[key].meta, "session_id")] {
-				affected[root] = true
-				break
-			}
-		}
+	for root := range components {
+		affected[root] = true
 	}
 	if full {
 		if _, e = tx.Exec("DELETE FROM usage_request_groups; DELETE FROM usage_request_members;"); e != nil {
@@ -589,8 +590,11 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 		}
 	} else {
 		for root := range affected {
-			if _, e = tx.Exec("DELETE FROM usage_request_groups WHERE id=?", root); e != nil {
-				return e
+			// Preserve an existing row until the upsert can compare its contents.
+			if _, stillPresent := components[root]; !stillPresent {
+				if _, e = tx.Exec("DELETE FROM usage_request_groups WHERE id=?", root); e != nil {
+					return e
+				}
 			}
 			if _, e = tx.Exec("DELETE FROM usage_request_members WHERE request_id=?", root); e != nil {
 				return e
@@ -610,13 +614,10 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 			return e
 		}
 	}
-	if _, e = tx.Exec("DELETE FROM usage_query_turns WHERE id NOT IN(SELECT id FROM go_turns_seen)"); e != nil {
+	if _, e = tx.Exec("DELETE FROM usage_query_turns WHERE id NOT IN(SELECT id FROM go_turns_seen)"+turnScope, turnArgs...); e != nil {
 		return e
 	}
 	for root, keys := range components {
-		if !affected[root] {
-			continue
-		}
 		base := bases[root]
 		group := CloneRow(base.meta)
 		group["id"] = root
@@ -791,17 +792,25 @@ func (s *Store) rebuildGroups(tx *sql.Tx, now time.Time, full bool, dirty map[st
 		}
 	}
 	// Rows without ownership remain individual calls, never synthetic user requests.
-	if _, e = tx.Exec("DELETE FROM usage_request_groups WHERE record_kind='unassigned' AND id NOT IN(SELECT 'unassigned:'||id FROM usage_priced_calls WHERE turn_id=''); DELETE FROM usage_request_members WHERE request_id LIKE 'unassigned:%' AND request_id NOT IN(SELECT id FROM usage_request_groups)"); e != nil {
-		return e
+	if !full {
+		stale, e := queryJSON(tx, "SELECT data FROM usage_request_groups WHERE record_kind='unassigned' AND "+codexTurnFilter+turnScope+
+			" AND NOT EXISTS(SELECT 1 FROM usage_priced_calls p WHERE p.id=substr(usage_request_groups.id,12) AND p.turn_id='' AND coalesce(json_extract(p.data,'$.client_kind'),'codex')='codex')", turnArgs...)
+		if e != nil {
+			return e
+		}
+		for _, row := range stale {
+			if _, e = tx.Exec("DELETE FROM usage_request_groups WHERE id=?", row["id"]); e != nil {
+				return e
+			}
+			if _, e = tx.Exec("DELETE FROM usage_request_members WHERE request_id=?", row["id"]); e != nil {
+				return e
+			}
+		}
 	}
 	last := ""
 	for {
-		query := "SELECT data FROM usage_priced_calls WHERE turn_id='' AND coalesce(json_extract(data,'$.client_kind'),'codex')='codex' AND id>?"
-		if !full {
-			query += " AND id IN(SELECT item_id FROM usage_query_changes WHERE kind='record')"
-		}
-		query += " ORDER BY id LIMIT 500"
-		records, e := queryJSON(tx, query, last)
+		query := "SELECT data FROM usage_priced_calls WHERE turn_id='' AND " + codexTurnFilter + " AND id>?" + callScope + " ORDER BY id LIMIT 500"
+		records, e := queryJSON(tx, query, append([]any{last}, callArgs...)...)
 		if e != nil {
 			return e
 		}

@@ -477,49 +477,55 @@ func (s *Store) Chart(q Query, contexts ...context.Context) (resultRows []Row, e
 	} else if granularity == "hour" && end.Sub(start) > 60*24*time.Hour {
 		granularity = "day"
 	}
-	buckets := map[string]*metricSum{}
-	requests := map[string]int{}
-	firstBucket := time.Time{}
-	if e := s.streamMetrics(q, false, func(item usageMetric) {
-		if t, ok := ParseStamp(item.timestamp); ok {
-			if firstBucket.IsZero() || t.Before(firstBucket) {
-				firstBucket = t
-			}
-			k := chartKey(t, granularity)
-			if buckets[k] == nil {
-				buckets[k] = newMetricSum()
-			}
-			buckets[k].merge(item.values, normalizedClient(q.ClientKind) == "claude_code")
-		}
-	}, reader.ctx); e != nil {
-		return nil, e
+	buckets, requests, firstBucket, used, err := materializedChart(reader, q, start, end, granularity)
+	if err != nil {
+		return nil, err
 	}
-	where, args := queryFilter(q, true)
-	rows, e := reader.Query("SELECT timestamp FROM usage_request_groups WHERE record_kind='user_request' AND is_subagent=0 AND "+where, args...)
-	if e != nil {
-		return nil, e
-	}
-	for rows.Next() {
-		var raw string
-		if e = rows.Scan(&raw); e != nil {
-			rows.Close()
+	if !used {
+		buckets = map[string]*metricSum{}
+		requests = map[string]int{}
+		firstBucket = time.Time{}
+		if e := s.streamMetrics(q, false, func(item usageMetric) {
+			if t, ok := ParseStamp(item.timestamp); ok {
+				if firstBucket.IsZero() || t.Before(firstBucket) {
+					firstBucket = t
+				}
+				k := chartKey(t, granularity)
+				if buckets[k] == nil {
+					buckets[k] = newMetricSum()
+				}
+				buckets[k].merge(item.values, normalizedClient(q.ClientKind) == "claude_code")
+			}
+		}, reader.ctx); e != nil {
 			return nil, e
 		}
-		if t, ok := ParseStamp(raw); ok {
-			if firstBucket.IsZero() || t.Before(firstBucket) {
-				firstBucket = t
+		where, args := queryFilter(q, true)
+		rows, e := reader.Query("SELECT timestamp FROM usage_request_groups WHERE record_kind='user_request' AND is_subagent=0 AND "+where, args...)
+		if e != nil {
+			return nil, e
+		}
+		for rows.Next() {
+			var raw string
+			if e = rows.Scan(&raw); e != nil {
+				rows.Close()
+				return nil, e
 			}
-			k := chartKey(t, granularity)
-			requests[k]++
-			if buckets[k] == nil {
-				buckets[k] = newMetricSum()
+			if t, ok := ParseStamp(raw); ok {
+				if firstBucket.IsZero() || t.Before(firstBucket) {
+					firstBucket = t
+				}
+				k := chartKey(t, granularity)
+				requests[k]++
+				if buckets[k] == nil {
+					buckets[k] = newMetricSum()
+				}
 			}
 		}
-	}
-	e = rows.Err()
-	rows.Close()
-	if e != nil {
-		return nil, e
+		e = rows.Err()
+		rows.Close()
+		if e != nil {
+			return nil, e
+		}
 	}
 	bucketStart := start
 	if bucketStart.IsZero() {
