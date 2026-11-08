@@ -36,6 +36,8 @@ type Service struct {
 	cancel           context.CancelFunc
 	closeOnce        sync.Once
 	startOnce        sync.Once
+	firstOverview    chan struct{}
+	firstPaintOnce   sync.Once
 	reportMu         sync.Mutex
 	reportBusy       bool
 	reportGeneration int64
@@ -62,7 +64,7 @@ func NewService(directory, executable, version string, mock bool, callbacks Desk
 		c["auto_sync_prices"] = false
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Service{config: c, directory: directory, version: version, mock: mock, callbacks: callbacks, ctx: ctx, cancel: cancel}
+	s := &Service{config: c, directory: directory, version: version, mock: mock, callbacks: callbacks, ctx: ctx, cancel: cancel, firstOverview: make(chan struct{})}
 	s.store, err = OpenStore(DataOptions{Directory: directory, Roots: ValueStrings(c["codex_roots"]), Mock: mock, DeferProjection: !mock, Config: CloneRow(c), Maintenance: func(healthy bool) {
 		if !s.mock {
 			if healthy {
@@ -167,10 +169,14 @@ func (s *Service) Start() {
 		return
 	}
 	s.startOnce.Do(func() {
+		var firstOverview <-chan struct{}
+		if !s.mock {
+			firstOverview = s.firstOverview
+		}
 		go s.store.Run(s.ctx, func() {
 			s.notify("usage")
 			s.mobile.RequestProjection()
-		})
+		}, firstOverview)
 		if !s.mock {
 			s.claudeQuota.Start()
 		}
@@ -594,6 +600,7 @@ func (s *Service) Ready() error {
 		}
 	}
 	if !s.mock {
+		s.firstPaintOnce.Do(func() { close(s.firstOverview) })
 		return s.updater.AcknowledgeUpdate()
 	}
 	return nil

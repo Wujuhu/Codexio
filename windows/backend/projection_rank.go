@@ -25,16 +25,20 @@ func rebuildLocalRank(tx *sql.Tx, scope *projectionScope) error {
 	if _, err := tx.Exec("DELETE FROM usage_query_local_rank WHERE 1"+filter, args...); err != nil {
 		return err
 	}
-	filter, args = scope.filter("p.session_id")
-	// Independent scoped threads are their own roots. The same statement
-	// includes all descendants when rebuilding the full projection.
-	requests := `(SELECT count(*) FROM usage_request_groups g
-        WHERE g.record_kind='user_request' AND g.is_subagent=0
-        AND coalesce(json_extract(g.data,'$.client_kind'),'codex')=` + rankClient + `
-        AND json_extract(g.data,'$.session_id') IN(SELECT session_id FROM usage_query_session_roots WHERE root_session_id=` + rankRoot + `)
-        AND ` + rankLocalRequests + `)`
-	_, err := tx.Exec("INSERT INTO usage_query_local_rank SELECT "+rankClient+","+rankColumns+","+requests+
-		rankFrom+" WHERE "+rankLocalCalls+filter+" GROUP BY "+rankClient+","+rankRoot, args...)
+	rootFilter, rootArgs := scope.filter("r.root_session_id")
+	callFilter, callArgs := scope.filter("p.session_id")
+	// Count requests once per root and client. A correlated count can scan
+	// the whole request ledger again for every root during a cold rebuild.
+	_, err := tx.Exec(`WITH request_counts AS (
+		SELECT r.root_session_id AS session_id,coalesce(json_extract(g.data,'$.client_kind'),'codex') AS client,count(*) AS requests
+		FROM usage_request_groups g JOIN usage_query_session_roots r ON r.session_id=json_extract(g.data,'$.session_id')
+		WHERE g.record_kind='user_request' AND g.is_subagent=0 AND `+rankLocalRequests+rootFilter+`
+		GROUP BY 1,2
+	)
+	INSERT INTO usage_query_local_rank
+	SELECT `+rankClient+`,`+rankColumns+`,coalesce(max(n.requests),0)`+rankFrom+`
+	LEFT JOIN request_counts n ON n.session_id=`+rankRoot+` AND n.client=`+rankClient+`
+	WHERE `+rankLocalCalls+callFilter+` GROUP BY `+rankClient+`,`+rankRoot, append(rootArgs, callArgs...)...)
 	return err
 }
 

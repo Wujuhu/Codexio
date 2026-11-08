@@ -328,14 +328,19 @@ func (s *Store) Close() error {
 	})
 	return e
 }
-func (s *Store) Run(ctx context.Context, changed func()) {
+func (s *Store) Run(ctx context.Context, changed func(), firstOverview <-chan struct{}) {
 	if s.options.RefreshChanged != nil {
 		defer s.options.RefreshChanged(false)
 	}
-	tick := time.NewTimer(time.Millisecond)
+	delay := time.Millisecond
+	if firstOverview != nil {
+		// Let the first overview read the committed ledger before the cold scan.
+		// If there is no window or its first read fails, still start promptly.
+		delay = 2 * time.Second
+	}
+	tick := time.NewTimer(delay)
 	defer tick.Stop()
 	force := false
-	initial := true
 	for {
 		select {
 		case <-ctx.Done():
@@ -343,34 +348,33 @@ func (s *Store) Run(ctx context.Context, changed func()) {
 		case <-s.closed:
 			return
 		case force = <-s.refresh:
+		case <-firstOverview:
 		case <-tick.C:
+		}
+		if firstOverview != nil {
+			firstOverview = nil
+			tick.Stop()
+		}
+		if ctx.Err() != nil {
+			return
 		}
 		s.refreshActivity(true)
 		s.work.Lock()
 		before := s.Generation()
-		var e error
-		if initial {
-			e = s.project(ctx)
-			initial = false
-			if e == nil && before != s.Generation() && changed != nil {
-				changed()
-			}
-		}
 		var codexErr, claudeErr error
 		if !s.options.Mock {
 			codexErr = s.collect(ctx, force)
 			claudeErr = s.collectClaude(ctx, force)
-			e = errors.Join(e, codexErr, claudeErr)
-			if e == nil {
+			if codexErr == nil && claudeErr == nil {
 				_ = s.syncPrices(ctx, false)
 				_ = s.syncClaudePrices(ctx, false)
 			}
 		}
-		// Successful file transactions must be visible even when another file
-		// failed; its retained cursor will be retried on the next collection.
+		// The first screen can read the previous projection throughout collection.
+		// Publish once after scanning, including successful files if others failed.
 		contextErr := s.applyClaudeContexts()
 		projectionErr := s.project(ctx)
-		e = errors.Join(e, contextErr, projectionErr)
+		e := errors.Join(codexErr, claudeErr, contextErr, projectionErr)
 		upstreamSignature := s.pricingObservedKey
 		if upstreamSignature != s.upstreamSignature {
 			s.upstreamSignature = upstreamSignature
