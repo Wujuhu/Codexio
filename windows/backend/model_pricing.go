@@ -125,15 +125,31 @@ func newModelPriceReference() *modelPriceReference {
 				copy["service_tier"] = "default"
 				copy["threshold"] = 0
 				p.catalog = append(p.catalog, copy)
-				allowed, limited := ValueRow(rules["client_models"])[dataString(r, "group")]
-				visible := !limited
-				for _, id := range ValueStrings(allowed) {
-					visible = visible || id == model
-				}
-				if visible {
-					p.display = append(p.display, copy)
-				}
 				break
+			}
+		}
+	}
+	// Follow the shared client list for display without reordering pricing rows.
+	clientModels := ValueRow(rules["client_models"])
+	catalogGroups := map[string][]Row{}
+	for _, row := range p.catalog {
+		group := dataString(row, "group")
+		catalogGroups[group] = append(catalogGroups[group], row)
+	}
+	for _, group := range []string{"gpt", "claude", "other"} {
+		rows := catalogGroups[group]
+		order, limited := clientModels[group]
+		if !limited {
+			p.display = append(p.display, rows...)
+			continue
+		}
+		byID := make(map[string]Row, len(rows))
+		for _, row := range rows {
+			byID[dataString(row, "model")] = row
+		}
+		for _, id := range ValueStrings(order) {
+			if row := byID[id]; row != nil {
+				p.display = append(p.display, row)
 			}
 		}
 	}

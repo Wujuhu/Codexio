@@ -1,14 +1,28 @@
 {
   "schema": 1,
   "unit": "USD per million tokens",
-  "verified_at": "2026-10-16",
-  "rule_version": "claude-code-2026-10-17-returned-model",
+  "verified_at": "2026-11-10",
+  "rule_version": "claude-code-2026-11-10-fable-5-2",
   "sources": [
     "https://platform.claude.com/docs/en/about-claude/pricing",
     "https://code.claude.com/docs/en/fast-mode",
     "https://code.claude.com/docs/en/model-config#extended-context"
   ],
   "rows": [
+    {
+      "model": "claude-fable-5-2",
+      "display_name": "Claude Fable 5.2",
+      "aliases": [],
+      "input": 8,
+      "cache_read": 0.2,
+      "cache_write": 10,
+      "cache_write_1h": 16,
+      "output": 40,
+      "service_tier": "default",
+      "threshold": 0,
+      "source": "https://platform.claude.com/docs/en/models/fable-5-2/overview",
+      "fast_multiplier": 2
+    },
     {
       "model": "claude-fable-5-1",
       "display_name": "Claude Fable 5.1",

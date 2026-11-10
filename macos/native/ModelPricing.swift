@@ -90,10 +90,15 @@ final class ModelPricing {
             row["service_tier"]="default";row["threshold"]=0;return PriceRow(raw:row)
         }
         catalogRows=catalog
-        let clientModels=approved.object("client_models")
-        displayRows=catalog.filter {row in
-            guard let models=clientModels[row.raw.string("group")] as? [String] else {return true}
-            return models.contains(row.model)
+        // The shared client list also defines display order. Pricing still uses
+        // the full catalog, including historical models outside that list.
+        let clientModels = approved.object("client_models")
+        let catalogGroups = Dictionary(grouping: catalog) { $0.raw.string("group") }
+        displayRows = ["gpt", "claude", "other"].flatMap { group -> [PriceRow] in
+            let rows = catalogGroups[group] ?? []
+            guard let order = clientModels[group] as? [String] else { return rows }
+            let byID = Dictionary(rows.map { ($0.model, $0) }, uniquingKeysWith: { first, _ in first })
+            return order.compactMap { byID[$0] }
         }
         for row in allPrices+descriptions {
             let model=row.string("model")

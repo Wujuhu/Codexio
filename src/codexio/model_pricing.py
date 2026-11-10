@@ -67,7 +67,15 @@ class OfficialModelPrices:
                 row.pop("cache_write_1h", None)
                 row["cache_write_ttl"] = rules["other_cache_write_ttl"]
             self.catalog_rows.append(row)
-        self.display_rows = [row for row in self.catalog_rows if row["group"] not in rules["client_models"] or row["model"] in rules["client_models"][row["group"]]]
+        self.display_rows = []
+        for group in ("gpt", "claude", "other"):
+            rows = [row for row in self.catalog_rows if row["group"] == group]
+            order = rules["client_models"].get(group)
+            if order is None:
+                self.display_rows.extend(rows)
+            else:
+                by_id = {row["model"]: row for row in rows}
+                self.display_rows.extend(by_id[model] for model in order if model in by_id)
         for row in all_rows + rules["models"]:
             for name in [row["model"], row.get("display_name", "")] + row.get("aliases", []):
                 key = _key(name)

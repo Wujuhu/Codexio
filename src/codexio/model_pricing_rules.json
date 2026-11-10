@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "rule_version": "unified-official-2026-10-30-v6-gemini-4-argon",
-  "verified_at": "2026-10-30T00:00:00+00:00",
+  "rule_version": "unified-official-2026-11-10-v7-fable-5-2",
+  "verified_at": "2026-11-10T00:00:00+00:00",
   "models": [
     {
       "model": "gpt-6.1-sol",
@@ -232,6 +232,17 @@
       ],
       "tooltip": "按基础价计费",
       "tooltip_en": "Base prices apply"
+    },
+    {
+      "model": "claude-fable-5-2",
+      "group": "claude",
+      "display_name": "Claude Fable 5.2",
+      "aliases": [
+        "Claude Fable 5.2",
+        "Fable 5.2"
+      ],
+      "tooltip": "Fast ×2",
+      "tooltip_en": "Fast ×2"
     },
     {
       "model": "claude-fable-5-1",
@@ -680,20 +691,21 @@
       "gpt-5.6-luna"
     ],
     "claude": [
-      "claude-fable-5-1",
       "claude-opus-5-5",
       "claude-sonnet-5-5",
       "claude-haiku-5-5",
+      "claude-fable-5-2",
+      "claude-fable-5-1",
+      "claude-fable-5",
       "claude-opus-5",
       "claude-sonnet-5",
-      "claude-fable-5",
       "claude-opus-4-8",
       "claude-opus-4-7",
-      "claude-sonnet-4-6",
       "claude-opus-4-6",
+      "claude-sonnet-4-6",
       "claude-opus-4-5",
-      "claude-haiku-4-5",
-      "claude-sonnet-4-5"
+      "claude-sonnet-4-5",
+      "claude-haiku-4-5"
     ]
   },
   "client_model_sources": {

@@ -60,7 +60,11 @@ API Standard 基础价（美元／百万 Token）为输入 1.00、缓存读取 0
 
 ## v0.3.11 统一目录与模型识别
 
-`pricing_seed.json`、`claude_pricing_seed.json` 保存官方基础价；`model_pricing_rules.json` 保存经确认的型号范围、别名、倍率文案和实际计价条件。三个文件在 Windows assets 中保存字节相同的副本，Mac 打包时复制为 Bundle 资源。GPT／Claude／其他三组默认展开，切换 Agent 不切换目录、搜索或展开状态。前两组仅展示客户端官方支持清单：GPT 8 款（6.1 Sol／Terra、6 Astra、6 Sol／Luna、5.6 Sol／Terra／Luna），Claude 14 款（Fable 5.1／5、Opus 5.5／5／4.8／4.7／4.6／4.5、Sonnet 5.5／5／4.6／4.5、Haiku 5.5／4.5）。Claude 4.x 中仍获客户端官方支持的型号继续显示；Mythos、已退役及仅 API 可用的旧型号不显示。历史计价目录完整保留；显示清单与来源链接不参与价格版本，不因隐藏型号重算费用。GPT／Claude 目录只读，移除手动编辑、恢复和自动同步入口，旧缓存／覆盖配置保留在磁盘但不参与计算。
+`pricing_seed.json`、`claude_pricing_seed.json` 保存官方基础价；`model_pricing_rules.json` 保存经确认的型号范围、别名、倍率文案和实际计价条件。三个文件在 Windows assets 中保存字节相同的副本，Mac 打包时复制为 Bundle 资源。GPT／Claude／其他三组默认展开，切换 Agent 不切换目录、搜索或展开状态。前两组仅展示客户端官方支持清单：GPT 8 款（6.1 Sol／Terra、6 Astra、6 Sol／Luna、5.6 Sol／Terra／Luna），Claude 15 款（Fable 5.2／5.1／5、Opus 5.5／5／4.8／4.7／4.6／4.5、Sonnet 5.5／5／4.6／4.5、Haiku 5.5／4.5）。Claude 4.x 中仍获客户端官方支持的型号继续显示；Mythos、已退役及仅 API 可用的旧型号不显示。历史计价目录完整保留；显示清单与来源链接不参与价格版本，不因隐藏型号重算费用。GPT／Claude 目录只读，移除手动编辑、恢复和自动同步入口，旧缓存／覆盖配置保留在磁盘但不参与计算。
+
+Claude Fable 5.2（`claude-fable-5-2`）按每百万 Token 计价。标准价为输入 $8、缓存读取 $0.20、5 分钟缓存写入 $10、1 小时缓存写入 $16、输出 $40。记录明确为 Fast 时，这五项均按标准价的 2 倍计算。沿用现有的分档缓存计价与型号匹配机制，原始模型 ID 保留在账本中。[Anthropic 模型规格](https://platform.claude.com/docs/en/models/fable-5-2/overview) · [Claude Code Fast 费率](https://code.claude.com/docs/en/fast-mode#understand-the-cost-tradeoff) · [Fast 缓存计价](https://platform.claude.com/docs/en/about-claude/pricing#fast-mode-pricing)
+
+两端定价表按共享目录的 `client_models` 清单顺序展示。Claude 先按版本号降序，同版本按标准输出单价降序。显示顺序不参与计价版本。
 
 Mac `ModelPricing.swift`、Windows `model_pricing.go` 与 Python `model_pricing.py` 共用 `model_matching` 的结构化规则。初始化时预编译表达式；完整官方型号／已有明确别名优先于强度剥离，避免把型号本体的 Max 当成修饰词。匹配时先处理宽字符、大小写、驼峰和上下文容量，再分离供应商边界，识别品牌、核心代际和型号。完整基础型号可位于供应商前后缀之间，日期、构建号、版本标签、思考强度及 `-n` 等路由修饰不再依赖逐项追加完整别名。支持分开的代际数字（如 `gemini-3-8-flash`）、DeepSeek V4 系列、GLM Flash／FlashX 的不同写法及 Kimi K3。
 
