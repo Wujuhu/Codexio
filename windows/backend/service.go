@@ -83,6 +83,10 @@ func NewService(directory, executable, version string, mock bool, callbacks Desk
 		if callbacks.Changed != nil {
 			callbacks.Changed("codexio:clock", Row{"updated_at": stamp})
 		}
+	}, StartupChanged: func(stage string) {
+		if callbacks.Changed != nil {
+			callbacks.Changed("codexio:startup", Row{"stage": stage})
+		}
 	}, RefreshChanged: func(active bool) { s.setRefreshActivity("usage", active) }, ReportSourcesChanged: func() { s.notify("report") }})
 	if err != nil {
 		cancel()
@@ -173,9 +177,11 @@ func (s *Service) Start() {
 		if !s.mock {
 			firstOverview = s.firstOverview
 		}
-		go s.store.Run(s.ctx, func() {
+		go s.store.Run(s.ctx, func(partial bool) {
 			s.notify("usage")
-			s.mobile.RequestProjection()
+			if !partial {
+				s.mobile.RequestProjection()
+			}
 		}, firstOverview)
 		if !s.mock {
 			s.claudeQuota.Start()

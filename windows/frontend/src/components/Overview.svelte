@@ -4,6 +4,13 @@
  import RequestLines from './RequestLines.svelte';
  import Quota from './Quota.svelte';import Metrics from './Metrics.svelte';import Chart from './Chart.svelte';import Filters from './Filters.svelte';import Model from './Model.svelte';import DetailPopover from './DetailPopover.svelte';import ModelShare from './ModelShare.svelte';import Duration from './Duration.svelte';import {pricingModelHint,preview,fullTime,requestMetadata} from './logFormat';
  export let data:Row={};export let query:Query;export let onchange:(q:Query)=>void;export let onerror:(e:any)=>void;export let onlogs:()=>void=()=>{};
+ export let startupStage='';
+ const startupMessages:Record<string,string>={
+   codex:'正在读取 Codex 记录',
+   codex_projection:'正在汇总 Codex 用量',
+   claude:'正在读取 Claude Code 记录',
+   projection:'正在汇总用量',
+ };
  $: summary=data.summary??{};
  $: recent=rows(data.recent).filter(row=>!['automatic_approval_review','context_compaction'].includes(row.record_kind)).slice(0,3);
 </script>
@@ -11,4 +18,4 @@
 <ModelShare models={data.models??[]} {summary} clientKind={query.client_kind??'codex'}/>
 <div class="row recent-heading"><h3 class="section-title">{tr('最近请求')}</h3><button class="quiet muted" onclick={onlogs}>{tr('查看全部')}</button></div>
 {#if recent.length}<section class="recent recent-table"><div class="recent-columns"><span>{tr('请求')} / {tr('时间')}</span><span>{tr('模型')}</span><span>{tr('总 Token')}</span><span>{tr('费用')}</span><span>{tr('耗时')}</span><span>{tr('详情')}</span></div>{#each recent as record}<div class="recent-item"><div class="recent-prompt"><RequestLines primary={preview(record)} secondary={requestMetadata(record,query)} secondaryTitle={fullTime(record.timestamp)}/></div><Model {record} showEffort={false} tableCell/><span>{compact(record.total_tokens)}</span><span title={pricingModelHint(record)}>{cost(record.cost_usd??record.usd)}</span><Duration {record} showTPS/><DetailPopover id={String(record.id)} {record} {onerror}/></div>{/each}</section>
-{:else}<div class="empty" role="status">{tr(data.state?.status==='starting'?'正在读取本机记录':'暂无请求')}</div>{/if}
+{:else}<div class="empty" role="status">{tr(startupMessages[startupStage]??(data.state?.status==='starting'?'正在读取本机记录':'暂无请求'))}</div>{/if}

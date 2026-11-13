@@ -28,6 +28,8 @@
  const filtersDirty=new Set<ClientKind>(['codex','claude_code']);
  let page='overview';let settings:Row={};let data:Row={};let query=defaultQuery();let pageQueries:Record<string,Query>={};let cache:Record<string,Row>={};let busy=true;let error='';let notice='';let ready=false;let report=false;let reportPeriod='day';let language='zh';let theme='light';let sequence=0;let mounted=false;let eventTimer:ReturnType<typeof setTimeout>;let saveQueue=Promise.resolve();let smokeSent=false;let updateOpen=false;
  let nativeReady=false;
+ let startupStage='';
+ let startupEventSeen=false;
  let incompleteUsageNoticeClosed=false;
  $: incompleteUsageNoticeDismissed=incompleteUsageNoticeClosed||settings.incomplete_usage_notice_dismissed===true;
  $: claudeSourceIsIncomplete=activeClient==='claude_code'&&(selectedState.source_status==='partial'||(!['error','unavailable','empty'].includes(String(selectedState.source_status??''))&&Number(selectedState.incomplete_records??0)>0));
@@ -216,7 +218,8 @@
    mounted=true;
    const off=listen('codexio:changed',changed);
    const offClock=listen('codexio:clock',event=>{if(mounted&&event.updated_at!=null){const client:ClientKind=event.client_kind==='claude_code'?'claude_code':'codex';adoptState({...clientStates[client],updated_at:event.updated_at},client);}});
-   void api('GetState').then(state=>{if(mounted){adoptState(state,'codex');adoptRefresh(state);}}).catch(e=>{if(mounted&&activeClient==='codex')fail(e);});
+   const offStartup=listen('codexio:startup',event=>{startupEventSeen=true;startupStage=text(event.stage,'');});
+   void api('GetState').then(state=>{if(mounted){adoptState(state,'codex');adoptRefresh(state);if(!startupEventSeen)startupStage=text(state.startup_stage,'');}}).catch(e=>{if(mounted&&activeClient==='codex')fail(e);});
    const offReport=listen('codexio:show-report',e=>{void showReport(e.period??'day')});
    const offNotice=listen('codexio:notice',e=>{notice=text(e.message??e.status,'');if(e.scope==='update')changed(e)});
    const media=matchMedia('(prefers-color-scheme: dark)');
@@ -234,7 +237,7 @@
      settingsSequence++;
      settingsPending=false;
      eventSequence++;
-     off();offNotice();offReport();offClock();
+     off();offNotice();offReport();offClock();offStartup();
      clearTimeout(eventTimer);clearTimeout(navTimer);
      media.removeEventListener('change',systemTheme);
    };
@@ -250,7 +253,7 @@
   {#if busy&&!ready&&!Object.keys(data).length}
     {@render pageLoading()}
   {:else if page==='overview'}
-    {#key clientKind}<Overview {data} {query} onchange={filter} onerror={fail} onlogs={()=>go('logs')}/>{/key}
+    {#key clientKind}<Overview {data} {query} {startupStage} onchange={filter} onerror={fail} onlogs={()=>go('logs')}/>{/key}
   {:else if page==='logs'}
     {#await loadLogs()}
       {@render pageLoading()}

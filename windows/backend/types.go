@@ -42,6 +42,7 @@ type DataOptions struct {
 	Mock                 bool
 	Config               Row
 	ScanUpdated          func(string)
+	StartupChanged       func(string)
 	ClientScanUpdated    func(string, string)
 	RefreshChanged       func(bool)
 	ReportSourcesChanged func()

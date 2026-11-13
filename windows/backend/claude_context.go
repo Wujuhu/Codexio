@@ -38,6 +38,11 @@ func (s *Store) ObserveClaudeContexts(sample Row) {
 		for k, v := range point {
 			merged[k] = v
 		}
+		if id := dataString(merged, "model_display_id"); id != "" && requestModelID(id) != requestModelID(dataString(merged, "model")) {
+			delete(merged, "model_display_name")
+			delete(merged, "model_display_id")
+			delete(merged, "model_display_source")
+		}
 		if dataJSON(claudePointFields(merged)) == dataJSON(claudePointFields(old)) {
 			continue
 		}
@@ -82,17 +87,44 @@ func claudeContextFields(tx *sql.Tx, session, uuid, prompt string) Row {
 	if session == "" || uuid == "" && prompt == "" {
 		return Row{}
 	}
-	var window int64
-	var model, effort, name, displayID, displaySource string
-	e := tx.QueryRow("SELECT window,model,reasoning_effort,model_display_name,model_display_id,model_display_source FROM claude_context_windows WHERE session_id=? AND ((message_uuid<>'' AND message_uuid=?) OR (prompt_id<>'' AND prompt_id=?)) ORDER BY observed_at DESC LIMIT 1", session, uuid, prompt).Scan(&window, &model, &effort, &name, &displayID, &displaySource)
+	rows, e := tx.Query("SELECT window,model,reasoning_effort,model_display_name,model_display_id,model_display_source FROM claude_context_windows WHERE session_id=? AND ((message_uuid<>'' AND message_uuid=?) OR (prompt_id<>'' AND prompt_id=?)) ORDER BY observed_at DESC", session, uuid, prompt)
 	if e != nil {
 		return Row{}
 	}
-	return claudePointFields(Row{"window": window, "model": model, "reasoning_effort": effort, "model_display_name": name, "model_display_id": displayID, "model_display_source": displaySource})
+	defer rows.Close()
+	fields := Row{}
+	for rows.Next() {
+		var window int64
+		var model, effort, name, displayID, displaySource string
+		if e = rows.Scan(&window, &model, &effort, &name, &displayID, &displaySource); e != nil {
+			break
+		}
+		if len(fields) == 0 {
+			fields = claudePointFields(Row{"window": window, "model": model, "reasoning_effort": effort})
+		}
+		if id := requestModelID(firstString(displayID, model)); name != "" && id != "" && id == requestModelID(dataString(fields, "model")) {
+			fields["model_display_name"], fields["model_display_id"], fields["model_display_source"] = name, displayID, displaySource
+			break
+		}
+	}
+	return fields
 }
 func claudeContextWindow(tx *sql.Tx, session, uuid, prompt string) any {
 	return claudeContextFields(tx, session, uuid, prompt)["model_context_window"]
 }
+
+// Once a request has a display name, keep its model and name together while
+// still allowing later samples to supply context capacity and effort.
+func claudeContextPatch(fields Row) (sql.NamedArg, sql.NamedArg) {
+	contextFields := CloneRow(fields)
+	for _, key := range []string{"model", "requested_model", "model_display_name", "model_display_id", "model_display_source"} {
+		delete(contextFields, key)
+	}
+	return sql.Named("full", dataJSON(fields)), sql.Named("context", dataJSON(contextFields))
+}
+
+const claudeContextMerge = "CASE WHEN coalesce(json_extract(data,'$.model_display_name'),'')='' THEN @full ELSE @context END"
+
 func (s *Store) applyClaudeContexts() error {
 	s.mu.RLock()
 	pending := map[string]Row{}
@@ -126,10 +158,19 @@ func (s *Store) applyClaudeContexts() error {
 			continue
 		}
 		for key, value := range claudePointFields(point) {
-			if strings.HasPrefix(key, "model_display_") && dataString(fields, key) != "" {
+			if strings.HasPrefix(key, "model_display_") {
 				continue
 			}
 			fields[key] = value
+		}
+		model := requestModelID(dataString(fields, "model"))
+		if model != requestModelID(dataString(fields, "model_display_id")) {
+			delete(fields, "model_display_name")
+			delete(fields, "model_display_id")
+			delete(fields, "model_display_source")
+		}
+		if model != "" && dataString(fields, "model_display_name") == "" {
+			copyRequestModelName(fields, point)
 		}
 		if _, e = tx.Exec("INSERT INTO claude_context_windows(session_id,message_uuid,prompt_id,observed_at,window,model,reasoning_effort,model_display_name,model_display_id,model_display_source) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id,message_uuid,prompt_id) DO UPDATE SET observed_at=excluded.observed_at,window=excluded.window,model=excluded.model,reasoning_effort=excluded.reasoning_effort,model_display_name=excluded.model_display_name,model_display_id=excluded.model_display_id,model_display_source=excluded.model_display_source", session, uuid, prompt, at, ValueInt(fields["model_context_window"]), dataString(fields, "model"), dataString(fields, "reasoning_effort"), dataString(fields, "model_display_name"), dataString(fields, "model_display_id"), dataString(fields, "model_display_source")); e != nil {
 			return e
@@ -139,13 +180,22 @@ func (s *Store) applyClaudeContexts() error {
 			if model := dataString(fields, "model"); model != "" {
 				callFields["requested_model"] = model
 			}
-			patch := dataJSON(callFields)
-			if _, e = tx.Exec("UPDATE usage_records SET model=coalesce(nullif(json_extract(?, '$.model'),''),model),data=json_patch(data,?) WHERE session_id=? AND json_extract(data,'$.client_kind')='claude_code' AND json_extract(data,'$.node_id')=? AND data<>json_patch(data,?)", patch, patch, session, ns+"uuid:"+uuid, patch); e != nil {
+			fullPatch, contextPatch := claudeContextPatch(callFields)
+			if _, e = tx.Exec(`UPDATE usage_records SET
+				model=coalesce(nullif(json_extract(json_patch(data, `+claudeContextMerge+`), '$.model'),''),model),
+				data=json_patch(data, `+claudeContextMerge+`)
+				WHERE session_id=@session AND json_extract(data,'$.client_kind')='claude_code'
+				AND json_extract(data,'$.node_id')=@node
+				AND data<>json_patch(data, `+claudeContextMerge+`)`,
+				fullPatch, contextPatch, sql.Named("session", session), sql.Named("node", ns+"uuid:"+uuid)); e != nil {
 				return e
 			}
 		}
-		patch := dataJSON(fields)
-		if _, e = tx.Exec("UPDATE claude_requests SET data=json_patch(data,?) WHERE session_id=? AND ((?<>'' AND json_extract(data,'$.user_uuid')=?) OR (?<>'' AND id=?)) AND data<>json_patch(data,?)", patch, session, uuid, uuid, prompt, ns+"request:"+prompt, patch); e != nil {
+		fullPatch, contextPatch := claudeContextPatch(fields)
+		if _, e = tx.Exec(`UPDATE claude_requests SET data=json_patch(data, `+claudeContextMerge+`)
+			WHERE session_id=@session AND ((@uuid<>'' AND json_extract(data,'$.user_uuid')=@uuid) OR (@prompt<>'' AND id=@request))
+			AND data<>json_patch(data, `+claudeContextMerge+`)`,
+			fullPatch, contextPatch, sql.Named("session", session), sql.Named("uuid", uuid), sql.Named("prompt", prompt), sql.Named("request", ns+"request:"+prompt)); e != nil {
 			return e
 		}
 		if dataString(fields, "model_display_name") != "" {

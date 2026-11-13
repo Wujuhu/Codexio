@@ -37,6 +37,7 @@ type Store struct {
 	work                    queryWorkLock
 	config                  Row
 	status                  Row
+	startupStage            string
 	lastScanAt              string
 	lastScanDisplay         string
 	prices                  []Row
@@ -59,6 +60,7 @@ type Store struct {
 	lastDiscovery           time.Time
 	files                   map[string][]string
 	parentSignatureCache    map[string]map[string]bool
+	submissionDatabases     map[string][]*sql.DB
 	upstreamSignature       string
 	timeSignature           string
 	lastWallTime            time.Time
@@ -234,6 +236,7 @@ func (s *Store) schema() error {
  CREATE TABLE IF NOT EXISTS usage_query_day_buckets(client TEXT NOT NULL,local INTEGER NOT NULL,day TEXT NOT NULL,first TEXT NOT NULL,last TEXT NOT NULL,data TEXT NOT NULL,hours TEXT NOT NULL,PRIMARY KEY(client,local,day));
  CREATE INDEX IF NOT EXISTS go_day_buckets_day ON usage_query_day_buckets(day);
  CREATE INDEX IF NOT EXISTS go_turns_owner ON usage_turns(json_extract(data,'$.session_id'),json_extract(data,'$.turn_id'));
+ CREATE INDEX IF NOT EXISTS go_turns_request_id ON usage_turns(json_extract(data,'$.id'));
  CREATE TABLE IF NOT EXISTS usage_query_state(key TEXT PRIMARY KEY,data TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS usage_query_changes(seq INTEGER PRIMARY KEY AUTOINCREMENT,kind TEXT NOT NULL,item_id TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS go_changes_kind_item ON usage_query_changes(kind,item_id);`)
@@ -260,6 +263,7 @@ func (s *Store) Status() Row {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	r := CloneRow(s.status)
+	r["startup_stage"] = s.startupStage
 	r["generation"] = s.Generation()
 	r["updated_at"] = s.lastScanAt
 	r["last_scan_at"] = s.lastScanAt
@@ -328,7 +332,15 @@ func (s *Store) Close() error {
 	})
 	return e
 }
-func (s *Store) Run(ctx context.Context, changed func(), firstOverview <-chan struct{}) {
+func (s *Store) setStartupStage(stage string) {
+	s.mu.Lock()
+	s.startupStage = stage
+	s.mu.Unlock()
+	if s.options.StartupChanged != nil {
+		s.options.StartupChanged(stage)
+	}
+}
+func (s *Store) Run(ctx context.Context, changed func(partial bool), firstOverview <-chan struct{}) {
 	if s.options.RefreshChanged != nil {
 		defer s.options.RefreshChanged(false)
 	}
@@ -341,6 +353,7 @@ func (s *Store) Run(ctx context.Context, changed func(), firstOverview <-chan st
 	tick := time.NewTimer(delay)
 	defer tick.Stop()
 	force := false
+	initial := s.options.DeferProjection && !s.options.Mock
 	for {
 		select {
 		case <-ctx.Done():
@@ -363,15 +376,38 @@ func (s *Store) Run(ctx context.Context, changed func(), firstOverview <-chan st
 		before := s.Generation()
 		var codexErr, claudeErr error
 		if !s.options.Mock {
+			if initial {
+				s.setStartupStage("codex")
+			}
 			codexErr = s.collect(ctx, force)
+			if initial && before == 0 && codexErr == nil && ctx.Err() == nil {
+				var hasCodex bool
+				start, end := queryBounds(Query{Period: "today"})
+				_ = s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM usage_records
+					WHERE timestamp>=? AND timestamp<?
+					AND coalesce(json_extract(data,'$.client_kind'),'codex')='codex')`, ledgerStamp(start), ledgerStamp(end)).Scan(&hasCodex)
+				if hasCodex {
+					s.setStartupStage("codex_projection")
+					// Finish Codex's parent-first import before publishing. The
+					// desktop can show it while Claude prepares its own history.
+					if s.project(ctx) == nil && changed != nil {
+						changed(true)
+					}
+				}
+			}
+			if initial {
+				s.setStartupStage("claude")
+			}
 			claudeErr = s.collectClaude(ctx, force)
 			if codexErr == nil && claudeErr == nil {
 				_ = s.syncPrices(ctx, false)
 				_ = s.syncClaudePrices(ctx, false)
 			}
 		}
-		// The first screen can read the previous projection throughout collection.
-		// Publish once after scanning, including successful files if others failed.
+		if initial {
+			s.setStartupStage("projection")
+		}
+		// Publish the full result, including successful files if others failed.
 		contextErr := s.applyClaudeContexts()
 		projectionErr := s.project(ctx)
 		e := errors.Join(codexErr, claudeErr, contextErr, projectionErr)
@@ -424,6 +460,10 @@ func (s *Store) Run(ctx context.Context, changed func(), firstOverview <-chan st
 		}
 		s.mu.Unlock()
 		s.work.Unlock()
+		if initial {
+			s.setStartupStage("")
+			initial = false
+		}
 		if reportSourcesChanged && s.options.ReportSourcesChanged != nil {
 			s.options.ReportSourcesChanged()
 		}
@@ -434,7 +474,7 @@ func (s *Store) Run(ctx context.Context, changed func(), firstOverview <-chan st
 			s.options.ScanUpdated(scanUpdated)
 		}
 		if (before != s.Generation() || statusChanged) && changed != nil {
-			changed()
+			changed(false)
 		}
 		s.refreshActivity(false)
 		force = false

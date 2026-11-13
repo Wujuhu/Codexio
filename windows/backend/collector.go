@@ -144,6 +144,15 @@ func fileStamp(p string) string {
 	return fmt.Sprintf("%d:%d", st.Size(), st.ModTime().UnixNano())
 }
 func (s *Store) collect(ctx context.Context, force bool) error {
+	// Reuse Codex's read-only log connections for this scan. Release them at
+	// the end so a rotated log database is rediscovered on the next pass.
+	s.submissionDatabases = map[string][]*sql.DB{}
+	defer func() {
+		for _, databases := range s.submissionDatabases {
+			closeSubmissionDatabases(databases)
+		}
+		s.submissionDatabases = nil
+	}()
 	var scanErrors []error
 	if err := s.migrateMessageArchives(); err != nil {
 		return err
@@ -1368,9 +1377,6 @@ func (s *Store) processEntry(tx *sql.Tx, entry, state Row, source, file, generat
 			r["has_final_message"] = true
 		}
 		if e := persistCollectedMessage(tx, dataString(r, "id"), Row{"final": text, "final_complete": complete, "final_attachments": attachments, "final_source": "completion", "final_message_key": pythonHash([]any{state["turn_id"], text}), "final_fallback": true, "final_media_schema": requestMediaSchema}, state); e != nil {
-			return e
-		}
-		if e := persistCollectedMessage(tx, dataString(r, "id"), Row{}, state); e != nil {
 			return e
 		}
 	}

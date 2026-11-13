@@ -192,6 +192,42 @@ func (s *Store) requestSubmission(source, session, turn, timestamp string) (Row,
 	if !ok || session == "" || turn == "" || s.options.Mock {
 		return nil, nil
 	}
+	databases, opened := s.submissionDatabases[source]
+	if !opened {
+		databases = s.openSubmissionDatabases(source)
+		if s.submissionDatabases == nil {
+			defer closeSubmissionDatabases(databases)
+		} else {
+			s.submissionDatabases[source] = databases
+		}
+	}
+	for _, db := range databases {
+		// thread_id + ts uses the existing Codex index.
+		rows, err := db.Query(`SELECT feedback_log_body FROM logs WHERE thread_id=? AND ts>=? AND ts<=? AND target='codex_core::session::handlers' AND length(feedback_log_body)<=2097152 ORDER BY ts DESC,ts_nanos DESC,id DESC LIMIT 64`, session, started.Unix()-60, started.Unix()+2)
+		if err != nil {
+			continue
+		}
+		var snapshot Row
+		var input []any
+		for rows.Next() {
+			var body string
+			if rows.Scan(&body) == nil {
+				snapshot, input = parseRequestSubmission(body, turn)
+				if snapshot != nil {
+					break
+				}
+			}
+		}
+		rows.Close()
+		if snapshot != nil {
+			return snapshot, input
+		}
+	}
+	return nil, nil
+}
+
+func (s *Store) openSubmissionDatabases(source string) []*sql.DB {
+	var databases []*sql.DB
 	for index, root := range s.roots() {
 		root = filepath.Clean(root)
 		id := "local"
@@ -204,30 +240,17 @@ func (s *Store) requestSubmission(source, session, turn, timestamp string) (Row,
 		paths, _ := filepath.Glob(filepath.Join(root, "logs_*.sqlite"))
 		for _, path := range paths {
 			db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro&_pragma=busy_timeout(100)")
-			if err != nil {
-				continue
-			}
-			// thread_id + ts uses Codex's existing index, not a full log scan.
-			rows, err := db.Query(`SELECT feedback_log_body FROM logs WHERE thread_id=? AND ts>=? AND ts<=? AND target='codex_core::session::handlers' AND length(feedback_log_body)<=2097152 ORDER BY ts DESC,ts_nanos DESC,id DESC LIMIT 64`, session, started.Unix()-60, started.Unix()+2)
-			var snapshot Row
-			var input []any
 			if err == nil {
-				for rows.Next() {
-					var body string
-					if rows.Scan(&body) == nil {
-						snapshot, input = parseRequestSubmission(body, turn)
-						if snapshot != nil {
-							break
-						}
-					}
-				}
-				rows.Close()
-			}
-			db.Close()
-			if snapshot != nil {
-				return snapshot, input
+				db.SetMaxOpenConns(1)
+				databases = append(databases, db)
 			}
 		}
 	}
-	return nil, nil
+	return databases
+}
+
+func closeSubmissionDatabases(databases []*sql.DB) {
+	for _, db := range databases {
+		db.Close()
+	}
 }
