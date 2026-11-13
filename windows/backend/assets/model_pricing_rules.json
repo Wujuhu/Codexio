@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "rule_version": "unified-official-2026-11-10-v7-fable-5-2",
-  "verified_at": "2026-11-10T00:00:00+00:00",
+  "rule_version": "unified-official-2026-11-13-v8-gemini-carbon-hydrogen",
+  "verified_at": "2026-11-13T00:00:00+00:00",
   "models": [
     {
       "model": "gpt-6.1-sol",
@@ -465,6 +465,16 @@
       "tooltip_en": "Base prices apply"
     },
     {
+      "model": "gemini-4-carbon",
+      "group": "other",
+      "display_name": "Gemini 4 Carbon",
+      "aliases": [
+        "Gemini 4 Carbon"
+      ],
+      "tooltip": "2026.12.1 起：×2",
+      "tooltip_en": "From 2026.12.1: ×2"
+    },
+    {
       "model": "gemini-4-argon",
       "group": "other",
       "display_name": "Gemini 4 Argon",
@@ -473,6 +483,16 @@
       ],
       "tooltip": "2026.12.1 起：×2",
       "tooltip_en": "From 2026.12.1: ×2"
+    },
+    {
+      "model": "gemini-4-hydrogen",
+      "group": "other",
+      "display_name": "Gemini 4 Hydrogen",
+      "aliases": [
+        "Gemini 4 Hydrogen"
+      ],
+      "tooltip": "按基础价计费",
+      "tooltip_en": "Base prices apply"
     },
     {
       "model": "gemini-3.8-flash",
@@ -558,6 +578,20 @@
   ],
   "other_rows": [
     {
+      "model": "gemini-4-carbon",
+      "input": 2,
+      "cache_read": 0.1,
+      "cache_write": null,
+      "output": 10,
+      "source": "https://aistudio.google.com/docs/pricing#gemini-4-carbon",
+      "price_changes": [
+        {
+          "since": "2026-12-01T00:00:00Z",
+          "multiplier": 2
+        }
+      ]
+    },
+    {
       "model": "gemini-4-argon",
       "input": 2,
       "cache_read": 0.1,
@@ -570,6 +604,14 @@
           "multiplier": 2
         }
       ]
+    },
+    {
+      "model": "gemini-4-hydrogen",
+      "input": 1.5,
+      "cache_read": 0.075,
+      "cache_write": null,
+      "output": 7.5,
+      "source": "https://aistudio.google.com/docs/pricing#gemini-4-hydrogen"
     },
     {
       "model": "gemini-3.8-flash",
@@ -763,12 +805,21 @@
           "embeddings",
           "rerank",
           "argon",
-          "carbon"
+          "carbon",
+          "hydrogen"
         ],
         "models": [
           {
+            "model": "gemini-4-carbon",
+            "prefix": "^(?:v )?4 carbon(?: |$)"
+          },
+          {
             "model": "gemini-4-argon",
             "prefix": "^(?:v )?4 argon(?: |$)"
+          },
+          {
+            "model": "gemini-4-hydrogen",
+            "prefix": "^(?:v )?4 hydrogen(?: |$)"
           },
           {
             "model": "gemini-3.8-flash",
