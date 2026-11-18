@@ -1,8 +1,28 @@
 {
   "schema": 1,
-  "rule_version": "unified-official-2026-11-13-v8-gemini-carbon-hydrogen",
-  "verified_at": "2026-11-13T00:00:00+00:00",
+  "rule_version": "unified-official-2026-11-18-v9-gpt-6.2",
+  "verified_at": "2026-11-18T00:00:00+00:00",
   "models": [
+    {
+      "model": "gpt-6.2-astra",
+      "group": "gpt",
+      "display_name": "GPT-6.2 Astra",
+      "aliases": [
+        "GPT-6.2 Astra"
+      ],
+      "tooltip": "订阅：Fast ×2，Ultra Fast ×6\nCredits／API Key：Fast ×2，Ultra Fast ×3，太平洋时间 2027.3.1 起 ×6\n仅 API Key 输入 >272K：输入及缓存 ×2，输出 ×1.5",
+      "tooltip_en": "Included usage: Fast ×2, Ultra Fast ×6\nCredits / API key: Fast ×2, Ultra Fast ×3, then ×6 from Mar 1, 2027 (Pacific time)\nAPI key only, input >272K: input and cache ×2, output ×1.5"
+    },
+    {
+      "model": "gpt-6.2-sol",
+      "group": "gpt",
+      "display_name": "GPT-6.2 Sol",
+      "aliases": [
+        "GPT-6.2 Sol"
+      ],
+      "tooltip": "订阅：Fast ×2，Ultra Fast ×6\nCredits／API Key：Fast ×2，Ultra Fast ×3，太平洋时间 2027.3.1 起 ×6\n仅 API Key 输入 >272K：输入及缓存 ×2，输出 ×1.5",
+      "tooltip_en": "Included usage: Fast ×2, Ultra Fast ×6\nCredits / API key: Fast ×2, Ultra Fast ×3, then ×6 from Mar 1, 2027 (Pacific time)\nAPI key only, input >272K: input and cache ×2, output ×1.5"
+    },
     {
       "model": "gpt-6.1-sol",
       "group": "gpt",
@@ -723,6 +743,8 @@
   },
   "client_models": {
     "gpt": [
+      "gpt-6.2-astra",
+      "gpt-6.2-sol",
       "gpt-6.1-sol",
       "gpt-6.1-terra",
       "gpt-6-astra",

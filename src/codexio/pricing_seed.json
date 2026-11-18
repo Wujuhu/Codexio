@@ -255,6 +255,30 @@
       "source": "https://developers.openai.com/api/docs/models/gpt-6.1-terra",
       "updated_at": "2026-10-29T00:00:00+00:00",
       "locked": false
+    },
+    {
+      "model": "gpt-6.2-astra",
+      "input": 8,
+      "cache_read": 0.4,
+      "cache_write": 10,
+      "output": 40,
+      "service_tier": "default",
+      "threshold": 0,
+      "source": "https://developers.openai.com/api/docs/models/gpt-6.2-astra",
+      "updated_at": "2026-11-18T00:00:00+00:00",
+      "locked": false
+    },
+    {
+      "model": "gpt-6.2-sol",
+      "input": 2,
+      "cache_read": 0.1,
+      "cache_write": 2.5,
+      "output": 10,
+      "service_tier": "default",
+      "threshold": 0,
+      "source": "https://developers.openai.com/api/docs/models/gpt-6.2-sol",
+      "updated_at": "2026-11-18T00:00:00+00:00",
+      "locked": false
     }
   ],
   "billing_policies": {
@@ -350,6 +374,114 @@
       ],
       "unknown_official_estimated": false,
       "ultrafast_basis": "user-approved-sol-policy-2026-10-29"
+    },
+    "gpt-6.2-astra": {
+      "rule_version": "codex-api-base-2026-11-18-gpt-6.2",
+      "unknown_official_mode": "subscription",
+      "subscription": {
+        "long_context_threshold": 0,
+        "speeds": {
+          "default": 1,
+          "priority": 2,
+          "ultrafast": 6
+        },
+        "cache_write_basis": "input"
+      },
+      "api_key": {
+        "long_context_threshold": 272000,
+        "speeds": {
+          "default": 1,
+          "priority": 2,
+          "ultrafast": 3
+        },
+        "cache_write_basis": "api",
+        "speed_changes": {
+          "ultrafast": [
+            {
+              "since": "2027-03-01T08:00:00Z",
+              "multiplier": 2
+            }
+          ]
+        }
+      },
+      "credits": {
+        "long_context_threshold": 0,
+        "speeds": {
+          "default": 1,
+          "priority": 2,
+          "ultrafast": 3
+        },
+        "cache_write_basis": "input",
+        "speed_changes": {
+          "ultrafast": [
+            {
+              "since": "2027-03-01T08:00:00Z",
+              "multiplier": 2
+            }
+          ]
+        }
+      },
+      "sources": [
+        "https://developers.openai.com/api/docs/models/gpt-6.2-astra",
+        "https://developers.openai.com/api/docs/pricing",
+        "https://learn.chatgpt.com/docs/pricing#speed-multipliers",
+        "https://help.openai.com/en/articles/20001415-chatgpt-rate-card-enterprise-token-based-pricing"
+      ],
+      "unknown_official_estimated": false
+    },
+    "gpt-6.2-sol": {
+      "rule_version": "codex-api-base-2026-11-18-gpt-6.2",
+      "unknown_official_mode": "subscription",
+      "subscription": {
+        "long_context_threshold": 0,
+        "speeds": {
+          "default": 1,
+          "priority": 2,
+          "ultrafast": 6
+        },
+        "cache_write_basis": "input"
+      },
+      "api_key": {
+        "long_context_threshold": 272000,
+        "speeds": {
+          "default": 1,
+          "priority": 2,
+          "ultrafast": 3
+        },
+        "cache_write_basis": "api",
+        "speed_changes": {
+          "ultrafast": [
+            {
+              "since": "2027-03-01T08:00:00Z",
+              "multiplier": 2
+            }
+          ]
+        }
+      },
+      "credits": {
+        "long_context_threshold": 0,
+        "speeds": {
+          "default": 1,
+          "priority": 2,
+          "ultrafast": 3
+        },
+        "cache_write_basis": "input",
+        "speed_changes": {
+          "ultrafast": [
+            {
+              "since": "2027-03-01T08:00:00Z",
+              "multiplier": 2
+            }
+          ]
+        }
+      },
+      "sources": [
+        "https://developers.openai.com/api/docs/models/gpt-6.2-sol",
+        "https://developers.openai.com/api/docs/pricing",
+        "https://learn.chatgpt.com/docs/pricing#speed-multipliers",
+        "https://help.openai.com/en/articles/20001415-chatgpt-rate-card-enterprise-token-based-pricing"
+      ],
+      "unknown_official_estimated": false
     }
   }
 }

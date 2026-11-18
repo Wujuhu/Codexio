@@ -1,8 +1,21 @@
 # Codexio 计价规则
 
-价格核对日期：2026-10-29。当前源码版本为 0.3.12；本地开发版支持 GPT‑6.1 Terra 及用户指定的 Ultra Fast 计价，正式安装包以对应 Release 说明为准。其余型号继续沿用已确认内容。
+最近核对日期为 2026-11-18，涵盖 GPT‑6.2 Astra、GPT‑6.2 Sol 和 Claude Fable 5.2。正式安装包以对应 Release 说明为准。
 
 费用是本地 Token 账本的美元参考估值，不是 ChatGPT 订阅实际扣款或官方额度百分比。普通输入、缓存读取、缓存写入、输出使用已核对的 API Standard 基础价，再按请求的认证与消费来源应用规则。上游额度百分比、重置时间仍直接读取，不由费用推算替代。
+
+## GPT-6.2 Astra 和 Sol
+
+API Standard 基础价按每百万 Token 计。定价页的 GPT 缓存写入列沿用 30 分钟价。
+
+| 型号 | 输入 | 缓存读取 | 缓存写入（30 分钟） | 输出 |
+| --- | ---: | ---: | ---: | ---: |
+| GPT-6.2 Astra | $8 | $0.40 | $10 | $40 |
+| GPT-6.2 Sol | $2 | $0.10 | $2.50 | $10 |
+
+Fast 在三种消费来源下均乘 2。订阅内 Ultra Fast 始终乘 6。明确购买的 credits 和 API Key 的 Ultra Fast 先乘 3，自 2027-03-01 太平洋时间 00:00（北京时间 16:00）起乘 6，按调用发生时间选档。API Key 单次输入超过 272,000 Token 时，整次调用的输入及缓存价乘 2、输出价乘 1.5。ChatGPT 登录下两款模型的订阅及 credits 无长上下文附加倍率，缓存写入按普通输入价估值。账本现有 GPT 写入计量按 30 分钟基础价，未独立区分 API 的 12 小时写入档。[Astra API 规格](https://developers.openai.com/api/docs/models/gpt-6.2-astra)、[Sol API 规格](https://developers.openai.com/api/docs/models/gpt-6.2-sol)、[API 速度费率](https://developers.openai.com/api/docs/pricing)、[Codex 速度费率](https://learn.chatgpt.com/docs/pricing#speed-multipliers)、[ChatGPT 登录长上下文规则](https://help.openai.com/en/articles/20001415-chatgpt-rate-card-enterprise-token-based-pricing#long-context-pricing-in-codex)。
+
+两端复用共享种子和现有价格版本失效机制。档期随新规则进入价格版本，换档由调用时间决定。
 
 ## GPT-6.1 Sol 的消费来源与倍率
 
@@ -60,7 +73,7 @@ API Standard 基础价（美元／百万 Token）为输入 1.00、缓存读取 0
 
 ## v0.3.11 统一目录与模型识别
 
-`pricing_seed.json`、`claude_pricing_seed.json` 保存官方基础价；`model_pricing_rules.json` 保存经确认的型号范围、别名、倍率文案和实际计价条件。三个文件在 Windows assets 中保存字节相同的副本，Mac 打包时复制为 Bundle 资源。GPT／Claude／其他三组默认展开，切换 Agent 不切换目录、搜索或展开状态。前两组仅展示客户端官方支持清单：GPT 8 款（6.1 Sol／Terra、6 Astra、6 Sol／Luna、5.6 Sol／Terra／Luna），Claude 15 款（Fable 5.2／5.1／5、Opus 5.5／5／4.8／4.7／4.6／4.5、Sonnet 5.5／5／4.6／4.5、Haiku 5.5／4.5）。Claude 4.x 中仍获客户端官方支持的型号继续显示；Mythos、已退役及仅 API 可用的旧型号不显示。历史计价目录完整保留；显示清单与来源链接不参与价格版本，不因隐藏型号重算费用。GPT／Claude 目录只读，移除手动编辑、恢复和自动同步入口，旧缓存／覆盖配置保留在磁盘但不参与计算。
+`pricing_seed.json`、`claude_pricing_seed.json` 保存官方基础价。`model_pricing_rules.json` 保存经确认的型号范围、别名、倍率文案和实际计价条件。三个文件在 Windows assets 中保存字节相同的副本，Mac 打包时复制为 Bundle 资源。GPT／Claude／其他三组默认展开，切换 Agent 不切换目录、搜索或展开状态。GPT 目录包含 6.2 Astra／Sol、6.1 Sol／Terra、6 Astra／Sol／Luna、5.6 Sol／Terra／Luna。Claude 目录包含 Fable 5.2／5.1／5、Opus 5.5／5／4.8／4.7／4.6／4.5、Sonnet 5.5／5／4.6／4.5、Haiku 5.5／4.5。历史计价目录完整保留。显示清单与来源链接不参与价格版本。GPT／Claude 目录只读。
 
 Claude Fable 5.2（`claude-fable-5-2`）按每百万 Token 计价。标准价为输入 $8、缓存读取 $0.20、5 分钟缓存写入 $10、1 小时缓存写入 $16、输出 $40。记录明确为 Fast 时，这五项均按标准价的 2 倍计算。沿用现有的分档缓存计价与型号匹配机制，原始模型 ID 保留在账本中。[Anthropic 模型规格](https://platform.claude.com/docs/en/models/fable-5-2/overview) · [Claude Code Fast 费率](https://code.claude.com/docs/en/fast-mode#understand-the-cost-tradeoff) · [Fast 缓存计价](https://platform.claude.com/docs/en/about-claude/pricing#fast-mode-pricing)
 

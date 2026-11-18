@@ -83,7 +83,11 @@ func billingPolicyContent() Row {
 		modelContent := Row{"rule_version": rules["rule_version"], "unknown_official_mode": rules["unknown_official_mode"], "unknown_official_estimated": rules["unknown_official_estimated"]}
 		for _, mode := range []string{"subscription", "api_key", "credits", "legacy"} {
 			policy := ValueRow(rules[mode])
-			modelContent[mode] = Row{"long_context_threshold": policy["long_context_threshold"], "speeds": policy["speeds"], "cache_write_basis": policy["cache_write_basis"]}
+			modeContent := Row{"long_context_threshold": policy["long_context_threshold"], "speeds": policy["speeds"], "cache_write_basis": policy["cache_write_basis"]}
+			if changes, exists := policy["speed_changes"]; exists {
+				modeContent["speed_changes"] = changes
+			}
+			modelContent[mode] = modeContent
 		}
 		content[model] = modelContent
 	}

@@ -52,6 +52,15 @@ class OfficialModelPrices:
         self.model_normalization = [(re.compile(row["pattern"]), re.sub(r"\$(\d+)", lambda m: "\\g<" + m[1] + ">", row["replacement"])) for row in matching["normalization"]]
         self.model_families = [dict(family, anchor=re.compile(family["anchor"]), shape=re.compile(family["shape"]), reject=re.compile(family["reject"]) if family.get("reject") else None, variant_tokens=set(family["variant_tokens"]), models=[(model["model"], re.compile(model["prefix"])) for model in family["models"]]) for family in matching["families"]]
         self.policies = gpt.get("billing_policies", {})
+        self.speed_changes = {}
+        for model, modes in self.policies.items():
+            for mode in ("subscription", "api_key", "credits", "legacy"):
+                for tier, changes in modes.get(mode, {}).get("speed_changes", {}).items():
+                    schedule = [(_stamp(change["since"]), change["multiplier"]) for change in changes]
+                    self.speed_changes[model, mode, tier] = sorted(
+                        ((since, multiple) for since, multiple in schedule if since is not None),
+                        reverse=True,
+                    )
         self.definitions = {row["model"]: row for row in rules["models"]}
         self.prices = {}
         self.identifiers = {}
@@ -201,6 +210,11 @@ class OfficialModelPrices:
             speed = selected.get("speeds", {}).get(tier) if selected else 1 if tier == "default" else descriptor.get("fast_multiplier" if tier == "priority" else "ultrafast_multiplier") if tier in ("priority", "ultrafast") else None
             if speed is None:
                 return result
+            if schedule := self.speed_changes.get((model, mode, tier)):
+                stamp = _stamp(record.get("timestamp"))
+                if stamp is None:
+                    return result
+                speed *= next((multiple for since, multiple in schedule if since <= stamp), 1)
             threshold = selected.get("long_context_threshold", 0) if selected else descriptor.get("long_context_threshold", 0)
             long = threshold > 0 and context > threshold
             im, om = speed * (2 if long else 1), speed * (1.5 if long else 1)

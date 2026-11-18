@@ -192,7 +192,19 @@ final class ModelPricing {
             let policy=policies.object(model).object(mode)
             let threshold=policy.isEmpty ? descriptor.integer("long_context_threshold") ?? 0 : policy.integer("long_context_threshold") ?? 0
             var speed=1.0
-            if !policy.isEmpty {guard let value=policy.object("speeds").number(tier) else {return nil};speed=value}
+            if !policy.isEmpty {
+                guard let value=policy.object("speeds").number(tier) else {return nil}
+                speed=value
+                let schedule=policy.object("speed_changes").objects(tier)
+                if !schedule.isEmpty {
+                    guard let date=parsedDate(raw["timestamp"]) else {return nil}
+                    if let change=schedule.last(where:{change in
+                        parsedDate(change["since"]).map {$0<=date} ?? false
+                    }),let multiplier=change.number("multiplier") {
+                        speed *= multiplier
+                    }
+                }
+            }
             else if tier=="priority" {guard let value=descriptor.number("fast_multiplier") else {return nil};speed=value}
             else if tier=="ultrafast" {guard let value=descriptor.number("ultrafast_multiplier") else {return nil};speed=value}
             else if tier != "default" {return nil}

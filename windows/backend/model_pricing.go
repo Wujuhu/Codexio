@@ -405,6 +405,20 @@ func (p *modelPriceReference) rates(model string, input int64, r Row) (Row, bool
 			if !ok {
 				return nil, false
 			}
+			if schedule := ValueRows(ValueRow(policy["speed_changes"])[tier]); len(schedule) > 0 {
+				stamp, ok := ParseStamp(r["timestamp"])
+				if !ok {
+					return nil, false
+				}
+				for i := len(schedule) - 1; i >= 0; i-- {
+					change := schedule[i]
+					since, valid := ParseStamp(change["since"])
+					if factor, known := ValueFloat(change["multiplier"]); valid && known && !stamp.Before(since) {
+						speed *= factor
+						break
+					}
+				}
+			}
 		} else if tier == "priority" || tier == "ultrafast" {
 			key := "fast_multiplier"
 			if tier == "ultrafast" {
