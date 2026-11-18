@@ -22,7 +22,7 @@ Codexio 是 Codex 与 Claude Code 的用量和请求看板。它读取本机日�
 
 ## 下载与安装
 
-当前 Mac、Windows 与 iOS 源码版本统一为 **0.3.16**。正式安装包、各平台版本与更新说明以 **[最新 Release](https://github.com/Wujuhu/Codexio/releases/latest)** 和其中的 `latest.json` 为准。
+当前 Mac、Windows 与 iOS 源码版本统一为 **0.3.17**。正式安装包、各平台版本与更新说明以 **[最新 Release](https://github.com/Wujuhu/Codexio/releases/latest)** 和其中的 `latest.json` 为准。
 
 | 平台 | 系统要求 | 安装包 |
 | --- | --- | --- |
@@ -89,7 +89,9 @@ Mac／Windows 日志与概览最近请求优先显示请求时选择的 display 
 
 v0.3.16 优化桌面启动和后台刷新。Mac 首屏读取轻量概览快照，Windows 先显示已提交的统计，再在后台采集和更新。少量记录变化时，仅更新受影响的请求、排行和时间分桶，复杂归属或依赖变化时回退全量。使用报告会等待所选客户端的首轮数据准备完成，避免首次打开时生成空报告。Windows 关闭主窗口后通过系统托盘继续使用。
 
-定价目录支持 Claude Fable 5.2，以及“其他”组的 Gemini 4 Carbon、Argon 和 Hydrogen。Claude 按版本号降序，同版本按标准输出单价降序排列。Carbon 与 Argon 的优惠在 2026-11-30 后结束，后续调用按目录中预设的生效时间采用新费率，历史调用按发生时的价格统计。具体费率和日期边界见 [计价规则](docs/codex-pricing.md)。
+v0.3.17 缩短 Windows 首次导入时打开概览后等待统计的路径。空账本有当天 Codex 记录时，Codex 扫描完成后可先看到统计，Claude Code 历史继续在后台导入。Windows 日志也会按 Claude 会话实际生效的模型选择器配置保存显示名称。
+
+定价目录支持 GPT‑6.2 Astra、GPT‑6.2 Sol、Claude Fable 5.2 和“其他”组的 Gemini 4 Carbon、Argon、Hydrogen。两款 GPT‑6.2 按订阅、credits 与 API Key 分别计算速度和长上下文倍率，Ultra Fast 的优惠与后续费率按调用时间选用。Claude 按版本号降序，同版本按标准输出单价降序排列。Carbon 与 Argon 的优惠在 2026-11-30 后结束，历史调用按发生时的价格统计。具体费率和日期边界见 [计价规则](docs/codex-pricing.md)。
 
 ## 数据与隐私
 
