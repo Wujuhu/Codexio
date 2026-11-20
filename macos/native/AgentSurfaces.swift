@@ -17,15 +17,19 @@ struct AgentSurfaceData {
 }
 
 extension DesktopClient {
-    var surfaceTitle: String {self == .codex ? "ChatGPT" : "Claude"}
-    var widgetAgent: WidgetAgent {self == .codex ? .chatgpt : .claude}
+    var surfaceTitle: String { widgetAgent.title }
+    var widgetAgent: WidgetAgent {
+        switch self { case .codex: .chatgpt; case .claudeCode: .claude; case .antigravity: .antigravity }
+    }
 }
 
 enum AgentWidgetPayload {
     static func make(request: UsageRow?,today: UsageSummary?,quota: QuotaState,fresh: Bool,observed: Date?) -> Object {
         var selected: Any = NSNull()
         if let request {
-            var value: Object = ["id":request.id,"prompt":String(request.raw.string("prompt_preview").prefix(240)),"model":modelName(request.raw.string("model")),"reasoning_effort":logEffortName(request.raw.string("reasoning_effort")),"duration_running":request.raw.flag("duration_running")]
+            let rawModel = request.raw.string("model")
+            let model = rawModel.isEmpty && request.raw.string("client_kind") == "antigravity" ? request.raw.string("model_display_name") : modelName(rawModel)
+            var value: Object = ["id":request.id,"prompt":String(request.raw.string("prompt_preview").prefix(240)),"model":model,"reasoning_effort":logEffortName(request.raw.string("reasoning_effort")),"duration_running":request.raw.flag("duration_running")]
             for key in ["cost_usd","duration_ms","input_tokens","output_tokens","total_tokens","cached_input_tokens","cache_hit_rate","service_tier","model_context_window"] {value[key] = request.raw[key] ?? NSNull()}
             if let start = parsedDate(request.raw["duration_started_at"]) {value["duration_started_at"] = start.timeIntervalSince1970-(request.raw.number("duration_base_ms") ?? 0)/1000}
             selected = value

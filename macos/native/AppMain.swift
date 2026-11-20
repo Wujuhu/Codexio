@@ -176,8 +176,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     func applicationShouldHandleReopen(_ sender: NSApplication,hasVisibleWindows flag: Bool) -> Bool { showWindow(); return true }
     func application(_ application: NSApplication,open urls: [URL]) {
         if let url = urls.last(where:{$0.scheme == "codexio"}), let agent = URLComponents(url:url,resolvingAgainstBaseURL:false)?.queryItems?.first(where:{$0.name == "agent"})?.value {
-            if agent == "claude" {state.pageClient = .claudeCode}
-            else if agent == "chatgpt" {state.pageClient = .codex}
+            if let client = DesktopClient.allCases.first(where: {$0.widgetAgent.rawValue == agent}) {state.pageClient = client}
         }
         if urls.contains(where:{$0.scheme == "codexio" && $0.host == "subscription"}) { state.selectedPage = "subscription" }
         showWindow()

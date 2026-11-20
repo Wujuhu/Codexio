@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -32,6 +33,7 @@ type desktopHost struct {
 	mainReady              bool
 	mainOpenPending        atomic.Bool
 	pendingReport          bool
+	pendingClient          string
 	savedMain              backend.Row
 	icons                  map[string]desktopIcon
 	trayLabel              string
@@ -74,6 +76,7 @@ func (h *desktopHost) setupTray() {
 	h.tray.SetTooltip("Codexio")
 	menu := h.app.NewMenu()
 	menu.Add(h.label("打开主窗口", "Open Codexio")).OnClick(func(*application.Context) { h.requestOpenMain() })
+	menu.Add("Antigravity").OnClick(func(*application.Context) { h.openClient("antigravity") })
 	menu.Add(h.label("AI 使用报告", "AI usage report")).OnClick(func(*application.Context) { _ = h.action("show-report") })
 	menu.Add(h.label("刷新", "Refresh")).OnClick(func(*application.Context) { h.service.Refresh() })
 	menu.AddSeparator()
@@ -306,12 +309,26 @@ func (h *desktopHost) applyAppearance() {
 		h.applyWindowAppearance(main)
 	}
 }
+func (h *desktopHost) openClient(client string) {
+	h.mu.Lock()
+	h.pendingClient = client
+	ready := h.mainReady
+	if ready {
+		h.pendingClient = ""
+	}
+	h.mu.Unlock()
+	h.requestOpenMain()
+	if ready {
+		h.app.Event.Emit("codexio:select-client", backend.Row{"client_kind": client})
+	}
+}
+
 func (h *desktopHost) changed(name string, row backend.Row) {
 	if h.app == nil {
 		return
 	}
 	h.app.Event.Emit(name, row)
-	if name == "codexio:changed" && backend.ValueString(row["scope"]) == "quota" {
+	if name == "codexio:changed" && (backend.ValueString(row["scope"]) == "quota" || backend.ValueString(row["scope"]) == "antigravity_quota") {
 		h.updateTray()
 	}
 }
@@ -324,6 +341,20 @@ func (h *desktopHost) updateTray() {
 	caption := "Codexio"
 	if n, ok := backend.ValueFloat(week["remaining_percent"]); ok {
 		caption += " · " + h.label("周额度 ", "Weekly remaining ") + backend.ValueString(n) + "%"
+	}
+	ag := backend.ValueRow(q["antigravity"])
+	if ag["status"] == "ok" {
+		five, fiveKnown := backend.ValueFloat(backend.ValueRow(ag["primary"])["remaining_percent"])
+		week, weekKnown := backend.ValueFloat(backend.ValueRow(ag["secondary"])["remaining_percent"])
+		if fiveKnown || weekKnown {
+			caption += " · Antigravity"
+			if fiveKnown {
+				caption += fmt.Sprintf(" 5h %.0f%%", five)
+			}
+			if weekKnown {
+				caption += fmt.Sprintf(" · %s%.0f%%", h.label("周 ", "weekly "), week)
+			}
+		}
 	}
 	h.mu.Lock()
 	same := h.trayLabel == caption
@@ -345,7 +376,12 @@ func (h *desktopHost) action(action string) error {
 		h.mainReady = h.main != nil
 		report := h.pendingReport && h.mainReady
 		h.pendingReport = false
+		client := h.pendingClient
+		h.pendingClient = ""
 		h.mu.Unlock()
+		if client != "" {
+			h.app.Event.Emit("codexio:select-client", backend.Row{"client_kind": client})
+		}
 		if report {
 			h.app.Event.Emit("codexio:show-report", backend.Row{"period": backend.PreferredReportPeriod(time.Now())})
 		}

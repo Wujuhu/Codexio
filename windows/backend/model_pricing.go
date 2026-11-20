@@ -391,6 +391,25 @@ func (p *modelPriceReference) rates(model string, input int64, r Row) (Row, bool
 	rates := CloneRow(base)
 	estimated := false
 	tier := normalizedTier(r["service_tier"])
+	if family == "gpt" && dataString(r, "client_kind") == antigravityClient {
+		threshold := ValueInt(ValueRow(ValueRow(modelBillingPolicies[model])["api_key"])["long_context_threshold"])
+		if threshold == 0 {
+			threshold = ValueInt(descriptor["long_context_threshold"])
+		}
+		if threshold > 0 && input > threshold {
+			for _, key := range []string{"input", "cache_read", "output"} {
+				factor := 2.0
+				if key == "output" {
+					factor = 1.5
+				}
+				if value, known := ValueFloat(rates[key]); known {
+					rates[key] = value * factor
+				}
+			}
+		}
+		rates["model"], rates["pricing_basis"] = model, "official_api_reference"
+		return rates, true
+	}
 	if family == "gpt" {
 		mode, identityEstimated, assumed := solFunding(r, true)
 		policy := ValueRow(ValueRow(modelBillingPolicies[model])[mode])
@@ -646,7 +665,7 @@ func (p *modelPriceReference) price(input Row, model string, aliasEstimated bool
 		r["pricing_status"] = "estimated"
 	}
 	r["pricing_basis"] = "official_api_reference"
-	if family == "gpt" {
+	if family == "gpt" && dataString(input, "client_kind") != antigravityClient {
 		r["pricing_basis"] = "standard_api_x_codex"
 	}
 	for _, key := range []string{"pricing_mode", "pricing_identity_estimated", "assumed_billing_source"} {

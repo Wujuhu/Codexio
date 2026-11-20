@@ -230,6 +230,9 @@ func (s *Store) projectOnce(forceFull bool, contexts ...context.Context) (err er
 	if e = s.rebuildClaudeGroups(tx, groupFull, now); e != nil {
 		return e
 	}
+	if e = s.rebuildAntigravityGroups(tx, groupFull); e != nil {
+		return e
+	}
 	if e = rebuildLocalRank(tx, scope); e != nil {
 		return e
 	}
@@ -870,7 +873,7 @@ func newMetricSum() *metricSum {
 }
 func (m *metricSum) add(r Row) {
 	m.records++
-	if normalizedClient(dataString(r, "client_kind")) == "claude_code" {
+	if normalizedClient(dataString(r, "client_kind")) != "codex" {
 		m.strict = true
 	}
 	total, tok := knownCount(r["total_tokens"])

@@ -25,7 +25,11 @@ struct QuotaWidgetView: View {
     private var dark: Bool { entry.style == .dual || systemScheme == .dark }
     private var fresh: Bool { entry.snapshot.map {Date().timeIntervalSince1970-($0.quota.updated_at ?? $0.updated_at) < 900 && $0.quota.applicable != false && ($0.quota.week != nil || $0.quota.five_hour != nil)} ?? false }
     private var color: Color { entry.style == .dual ? Color(red:0.88,green:0.49,blue:0.36) : Color.blue }
-    private func remaining(_ week: Bool) -> Double? { guard fresh else { return nil }; return week ? entry.snapshot?.quota.week : entry.snapshot?.quota.five_hour }
+    private func remaining(_ week: Bool) -> Double? {
+        guard fresh else { return nil }
+        if entry.agent == .antigravity, let reset = reset(week), reset <= Date().timeIntervalSince1970 { return nil }
+        return week ? entry.snapshot?.quota.week : entry.snapshot?.quota.five_hour
+    }
     private func reset(_ week: Bool) -> Double? { week ? entry.snapshot?.quota.week_reset_at : entry.snapshot?.quota.five_hour_reset_at }
     private func percentage(_ value: Double?) -> String { guard let value else { return "—" }; return value > 0 && value < 1 ? "<1%" : String(format:"%.0f%%",max(0,min(100,value))) }
     private func countdown(_ value: Double?) -> String {
@@ -132,15 +136,15 @@ private func quotaConfiguration(agent: WidgetAgent,suffix: String,title: String,
 }
 struct CodexioQuotaWidget: Widget {
     var agent: WidgetAgent = .chatgpt
-    var body: some WidgetConfiguration { quotaConfiguration(agent:agent,suffix:".quota",title:agent == .chatgpt ? WL("Codex 单额度", "Codex Weekly Allowance") : WL("Claude 单额度", "Claude Weekly Allowance"),style:.single) }
+    var body: some WidgetConfiguration { quotaConfiguration(agent:agent,suffix:".quota",title:String(format:WL("%@ 单额度", "%@ Weekly Allowance"),agent.quotaTitle),style:.single) }
 }
 struct CodexioDualQuotaWidget: Widget {
     var agent: WidgetAgent = .chatgpt
-    var body: some WidgetConfiguration { quotaConfiguration(agent:agent,suffix:".quota.dual",title:agent == .chatgpt ? WL("Codex 双额度", "Codex Dual Allowance") : WL("Claude 双额度", "Claude Dual Allowance"),style:.dual) }
+    var body: some WidgetConfiguration { quotaConfiguration(agent:agent,suffix:".quota.dual",title:String(format:WL("%@ 双额度", "%@ Dual Allowance"),agent.quotaTitle),style:.dual) }
 }
 struct CodexioSegmentedQuotaWidget: Widget {
     var agent: WidgetAgent = .chatgpt
-    var body: some WidgetConfiguration { quotaConfiguration(agent:agent,suffix:".quota.segmented",title:agent == .chatgpt ? WL("Codex 刻度额度", "Codex Segmented Allowance") : WL("Claude 刻度额度", "Claude Segmented Allowance"),style:.segmented) }
+    var body: some WidgetConfiguration { quotaConfiguration(agent:agent,suffix:".quota.segmented",title:String(format:WL("%@ 刻度额度", "%@ Segmented Allowance"),agent.quotaTitle),style:.segmented) }
 }
 
 func WL(_ chinese: String,_ english: String) -> String { NSLocalizedString(chinese,tableName:"Localizable",bundle:.main,value:english,comment:"") }

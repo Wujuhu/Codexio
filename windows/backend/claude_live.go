@@ -118,7 +118,7 @@ func applyClaudeActivity(tx *sql.Tx, group Row, now time.Time) error {
 		return nil
 	}
 	if observed.After(now) {
-		group["duration_refresh_at"] = mobileUnixSeconds(observed)
+		group["duration_refresh_at"] = unixSeconds(observed)
 		return nil
 	}
 	ended, hasEnd := ParseStamp(dataString(group, "ended_at"))
@@ -130,8 +130,8 @@ func applyClaudeActivity(tx *sql.Tx, group Row, now time.Time) error {
 		if !expires.After(now) {
 			return nil
 		}
-		group["duration_refresh_at"] = mobileUnixSeconds(expires)
-		group["duration_valid_after"] = mobileUnixSeconds(observed)
+		group["duration_refresh_at"] = unixSeconds(expires)
+		group["duration_valid_after"] = unixSeconds(observed)
 	} else {
 		group["ended_at"] = stamp
 	}

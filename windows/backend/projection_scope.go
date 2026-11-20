@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	projectionScopeVersion = 1
+	projectionScopeVersion = 2
 	projectionMaxChanges   = 256
 	projectionMaxSessions  = 8
 	projectionMaxCalls     = 4096
@@ -40,7 +40,7 @@ func (s *projectionScope) filter(column string) (string, []any) {
 
 func projectionJournalSize(tx *sql.Tx) (count int, known bool, err error) {
 	var unsupported int
-	err = tx.QueryRow(`SELECT count(*),coalesce(max(kind NOT IN ('record','turn','title','agent','claude_request')),0)
+	err = tx.QueryRow(`SELECT count(*),coalesce(max(kind NOT IN ('record','turn','title','agent','claude_request','antigravity_request')),0)
 		FROM (SELECT kind FROM usage_query_changes LIMIT ?)`, projectionMaxChanges+1).Scan(&count, &unsupported)
 	return count, count <= projectionMaxChanges && unsupported == 0, err
 }
@@ -68,6 +68,7 @@ func readProjectionScope(tx *sql.Tx) (scope *projectionScope, err error) {
 		  UNION SELECT item_id FROM changes WHERE kind='title'
 		  UNION SELECT json_extract(t.data,'$.session_id') FROM changes c JOIN usage_turns t ON t.id=c.item_id WHERE c.kind='turn'
 		  UNION SELECT r.session_id FROM changes c JOIN claude_requests r ON r.id=c.item_id WHERE c.kind='claude_request'
+		  UNION SELECT r.session_id FROM changes c JOIN antigravity_requests r ON r.id=c.item_id WHERE c.kind='antigravity_request'
 		  UNION SELECT json_extract(g.data,'$.session_id') FROM changes c JOIN usage_request_groups g ON g.id=c.item_id WHERE c.kind='claude_request'
 		) SELECT id,EXISTS(SELECT 1 FROM usage_query_unsafe_sessions u WHERE u.session_id=sessions.id) FROM sessions LIMIT ?`, projectionMaxSessions+1)
 	if err != nil {
@@ -82,7 +83,7 @@ func readProjectionScope(tx *sql.Tx) (scope *projectionScope, err error) {
 			rows.Close()
 			return nil, err
 		}
-		safe = safe && id.Valid && id.String != "" && !strings.Contains(id.String, ":") && !unsafe
+		safe = safe && id.Valid && id.String != "" && (!strings.Contains(id.String, ":") || strings.HasPrefix(id.String, "antigravity:app:")) && !unsafe
 		sessions = append(sessions, id.String)
 	}
 	err = rows.Err()

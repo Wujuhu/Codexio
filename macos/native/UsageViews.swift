@@ -30,6 +30,7 @@ struct UsageView: View {
 
 struct LocalActivityView: View {
     var scopedActivity: ActivityStats? = nil
+    var includeJourney = true
     @Environment(\.compactPage) private var isCompact
     @ObservedObject var state: AppState
     @State private var aggregation = "day"
@@ -79,7 +80,9 @@ struct LocalActivityView: View {
             }.font(.system(size:16))
             Divider()
             Button { state.usageSection = "threads" } label: { HStack { Text(L("聊天用量排行", "Chat usage ranking")); Spacer(); Image(systemName:"arrow.right") } }.buttonStyle(.plain)
-            JourneyView(state:state,client:scopedActivity == nil ? .codex : .claudeCode).id(scopedActivity == nil ? DesktopClient.codex : .claudeCode)
+            if includeJourney {
+                JourneyView(state:state,client:scopedActivity == nil ? .codex : .claudeCode).id(scopedActivity == nil ? DesktopClient.codex : .claudeCode)
+            }
         }
     }
     @ViewBuilder private func activityMetrics(separators: Bool) -> some View {
@@ -178,7 +181,7 @@ struct UsageTrendsView: View {
             ScrollView(.horizontal) { HStack(spacing:12) {
                 PeriodPicker(selection:$period,custom:true,condensed:true)
                 if period == "custom" { Button {datesOpen = true} label:{Image(systemName:"calendar")}.popover(isPresented:$datesOpen) {DateRangeControls(from:$from,through:$through).padding(18).frame(width:360)} }
-                Picker("",selection:$model) { Text(L("全部模型", "All models")).tag("all"); ForEach(state.usage.models.filter(MobileTrends.isSingleModel),id:\.self) { Text($0).tag($0) } }.labelsHidden().frame(width:112)
+                Picker("",selection:$model) { Text(L("全部模型", "All models")).tag("all"); ForEach(state.usage.models.filter(UsageModel.isSingleModel),id:\.self) { Text($0).tag($0) } }.labelsHidden().frame(width:112)
                 Picker("",selection:$granularity) { Text(L("每小时", "Hourly")).tag("hour"); Text(L("每天", "Daily")).tag("day"); Text(L("每周", "Weekly")).tag("week") }.labelsHidden().pickerStyle(.segmented).fixedSize()
             }}.scrollIndicators(.hidden).frame(height:30)
             IncompleteUsageNotice(state:state,hasIncomplete:projection.value.summary.incompleteRecords>0)

@@ -89,12 +89,32 @@ final class AsyncProjection<Value>: ObservableObject {
     }
 }
 
+struct ModelMetrics: Codable, Equatable {
+    var tokens: Int? = nil
+    var cost: Double? = nil
+    var requests = 0
+    var costComplete = true
+    var hitRate: Double? = nil
+}
+
+struct UsageModel: Codable, Identifiable, Equatable {
+    var id: String
+    var name: String
+    var metric: ModelMetrics
+
+    static func isSingleModel(_ value: String) -> Bool {
+        let name = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !["", "unknown", "mixed", "multiple", "—", "未知", "多模型", "多个模型"].contains(name.lowercased())
+            && !["+", "→", ",", "，", "\n"].contains(where: name.contains)
+    }
+}
+
 struct TrendProjection {
     var revision = UUID()
     var summary = UsageSummary()
     var days: [DayUsage] = []
     var recent: [UsageRow] = []
-    var modelRows: [[MobileModel]] = [[],[],[]]
+    var modelRows: [[UsageModel]] = [[],[],[]]
     static func build(_ snapshot: UsageSnapshot,range: UsageRange,model: String,granularity: String) -> TrendProjection {
         // Analytics keeps both arrays newest first. Stop at the lower bound.
         let rows = snapshot.calls.prefix { ($0.date ?? .distantPast) >= range.start }.filter {$0.local && range.contains($0) && (model == "all" || $0.raw.string("model") == model)}
@@ -102,9 +122,9 @@ struct TrendProjection {
         let requests = snapshot.requests.prefix { ($0.date ?? .distantPast) >= range.start }.filter {$0.local && !$0.raw.flag("is_subagent") && $0.raw.string("record_kind") == "user_request" && range.contains($0) && (model == "all" || !ids.isDisjoint(with:$0.raw["member_ids"] as? [String] ?? []))}
         let callsByModel = Dictionary(grouping:rows,by:{$0.raw.string("model")})
         let requestsByModel = Dictionary(grouping:requests,by:{$0.raw.string("model")})
-        let models = Set(callsByModel.keys).union(requestsByModel.keys).filter(MobileTrends.isSingleModel).map { key -> MobileModel in
+        let models = Set(callsByModel.keys).union(requestsByModel.keys).filter(UsageModel.isSingleModel).map { key -> UsageModel in
             let total = UsageSummary(rows:callsByModel[key] ?? [],requests:requestsByModel[key]?.count ?? 0)
-            return MobileModel(id:key,name:modelName(key),metric:MobileMetric(tokens:total.tokens,cost:total.cost,requests:total.requests,costComplete:total.unknownCosts == 0,hitRate:total.cacheRate))
+            return UsageModel(id:key,name:modelName(key),metric:ModelMetrics(tokens:total.tokens,cost:total.cost,requests:total.requests,costComplete:total.unknownCosts == 0,hitRate:total.cacheRate))
         }
         let sorted = (0..<3).map { metric in models.sorted { a,b in let x = ModelShareCard.amount(a.metric,metric), y = ModelShareCard.amount(b.metric,metric); return x == y ? a.id < b.id : x > y } }
         return TrendProjection(summary:UsageSummary(rows:rows,requests:requests.count),days:range.buckets(rows,requests:requests,granularity:granularity),recent:Array(requests.prefix(3)),modelRows:sorted)

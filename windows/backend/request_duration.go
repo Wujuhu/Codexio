@@ -341,3 +341,7 @@ func projectRequestDuration(group Row, members []Row, now time.Time) {
 	group["status"], group["request_status"] = status, status
 	group["status_label"] = map[string]string{"running": "回复中", "completed": "完成", "aborted": "已中断", "unknown": "未知"}[status]
 }
+
+func unixSeconds(value time.Time) float64 {
+	return float64(value.Unix()) + float64(value.Nanosecond())/1e9
+}

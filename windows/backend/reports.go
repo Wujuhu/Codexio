@@ -212,6 +212,9 @@ func (r *ReportManager) GetForClient(period, client string, contexts ...context.
 	if client == "claude_code" {
 		source += "\nclaude_code\n" + claudeRoot()
 	}
+	if client == antigravityClient {
+		source += "\nantigravity\n" + antigravityRoot()
+	}
 	sourceID := HashString(source)[:16]
 	d := Row{"client_kind": client, "period": period, "start": start.Format("2006-01-02"), "end": end.Format("2006-01-02"), "date_label": label, "summary": summary, "models": models, "time_slices": slices, "first": first, "last": last, "previous": previous, "style": cfg["usage_report_style"], "source_id": sourceID}
 	p := filepath.Join(r.directory, sourceID, period, start.Format("2006-01-02")+".json")

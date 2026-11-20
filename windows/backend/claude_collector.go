@@ -17,7 +17,7 @@ import (
 )
 
 func normalizedClient(v string) string {
-	if v == "claude_code" {
+	if v == "claude_code" || v == antigravityClient {
 		return v
 	}
 	return "codex"
@@ -75,6 +75,17 @@ func claudeNamespace(root string) string {
 	return "claude:" + HashString(filepath.Clean(root))[:16] + ":"
 }
 func (s *Store) ClientStatus(client string) Row {
+	if normalizedClient(client) == antigravityClient {
+		s.mu.RLock()
+		r := CloneRow(s.antigravity.status)
+		if r == nil {
+			r = Row{"status": "starting"}
+		}
+		r["updated_at"] = s.antigravity.updated
+		s.mu.RUnlock()
+		r["client_kind"], r["generation"] = antigravityClient, s.Generation()
+		return r
+	}
 	if normalizedClient(client) == "codex" {
 		r := s.Status()
 		r["client_kind"] = "codex"

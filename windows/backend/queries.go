@@ -706,6 +706,9 @@ func (s *Store) Detail(id string, page int, contexts ...context.Context) (Row, e
 	if normalizedClient(dataString(request, "client_kind")) == "claude_code" {
 		return s.claudeDetail(request, call, page, reader.ctx)
 	}
+	if normalizedClient(dataString(request, "client_kind")) == antigravityClient {
+		return s.antigravityDetail(request, call, page, reader.ctx)
+	}
 	result := Row{"request": request, "user": request["prompt_preview"], "final": request["output_preview"], "attachments": []Row{}, "members": []Row{}, "composition": request["composition"], "page": page, "pages": 1, "user_complete": false, "final_complete": false, "availability": "legacy_preview"}
 	var message Row
 	if call {

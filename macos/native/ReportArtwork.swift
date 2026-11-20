@@ -280,7 +280,7 @@ private struct ReportArtModelRows: View {
                     }
                     Spacer(minLength: 8)
                     VStack(alignment: .trailing, spacing: 1) {
-                        ReportArtNumber(value: reportTokenLabel(model.tokens) + " Token")
+                        ReportArtNumber(value: model.tokenLabel)
                         ReportArtNumber(value: model.costLabel).frame(height: 20)
                     }
                     .font(.system(size: 18, weight: .medium)).lineLimit(1).minimumScaleFactor(0.9).layoutPriority(1)

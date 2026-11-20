@@ -3,9 +3,12 @@ import Foundation
 // Client identity belongs to the source, never to the returned model/provider.
 // Legacy Codex rows stay in their existing ledger and consumers.
 enum DesktopClient: String, CaseIterable {
-    case codex, claudeCode = "claude_code"
-    var title: String { self == .codex ? "ChatGPT / Codex" : "Claude Code" }
-    var logo: String { self == .codex ? "chatgpt" : "claude-code" }
+    case codex, claudeCode = "claude_code", antigravity
+    var title: String {
+        switch self { case .codex: "ChatGPT / Codex"; case .claudeCode: "Claude Code"; case .antigravity: "Antigravity" }
+    }
+    var logo: String { widgetAgent.logo }
+    var logoExtension: String { widgetAgent.logoExtension }
 }
 
 /// Read-only source adapter, owned by AppState.dataQueue. Reuses FileStamp,
@@ -802,8 +805,8 @@ final class ClaudeLedger {
         let costs = Dictionary(uniqueKeysWithValues:rows.map {($0.string("model"),$0.number("cost"))})
         let costComplete = Dictionary(uniqueKeysWithValues:rows.map {($0.string("model"),$0.integer("unknown_costs")==0)})
         let tokenCounts = Dictionary(uniqueKeysWithValues:rows.map {($0.string("model"),$0.integer("tokens"))})
-        let groups = rows.map {row -> MobileModel in MobileModel(id:row.string("model"),name:requestValueText(modelName(row.string("model"))),metric:MobileMetric(tokens:row.integer("tokens"),cost:row.number("cost"),requests:requestCounts[row.string("model")] ?? 0,costComplete:row.integer("unknown_costs")==0,hitRate:nil))}
-        let requestGroups = requestRows.map {row in MobileModel(id:row.string("model"),name:requestValueText(modelName(row.string("model"))),metric:MobileMetric(tokens:tokenCounts[row.string("model")] ?? nil,cost:costs[row.string("model")] ?? nil,requests:row.integer("n") ?? 0,costComplete:costComplete[row.string("model")] ?? false,hitRate:nil))}
+        let groups = rows.map {row -> UsageModel in UsageModel(id:row.string("model"),name:requestValueText(modelName(row.string("model"))),metric:ModelMetrics(tokens:row.integer("tokens"),cost:row.number("cost"),requests:requestCounts[row.string("model")] ?? 0,costComplete:row.integer("unknown_costs")==0,hitRate:nil))}
+        let requestGroups = requestRows.map {row in UsageModel(id:row.string("model"),name:requestValueText(modelName(row.string("model"))),metric:ModelMetrics(tokens:tokenCounts[row.string("model")] ?? nil,cost:costs[row.string("model")] ?? nil,requests:row.integer("n") ?? 0,costComplete:costComplete[row.string("model")] ?? false,hitRate:nil))}
         let recent = try withPricingModels(database.query("SELECT data FROM claude_requests WHERE \(requestSQL) ORDER BY timestamp DESC LIMIT 3",requestArgs).map {UsageRow(raw:jsonObject(Data($0.string("data").utf8)))})
         return TrendProjection(summary:summary,days:try days(range:range,model:model,granularity:granularity),recent:recent,modelRows:[groups,groups,requestGroups])
     }

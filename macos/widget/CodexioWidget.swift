@@ -5,16 +5,20 @@ import SwiftUI
 import WidgetKit
 
 enum WidgetAgent: String, CaseIterable {
-    case chatgpt, claude
-    var title: String {self == .chatgpt ? "ChatGPT" : "Claude"}
-    var quotaTitle: String {self == .chatgpt ? "Codex" : "Claude"}
-    var requestTitle: String {self == .chatgpt ? WL("Codexio 请求 · ChatGPT", "Codexio Request · ChatGPT") : WL("Codexio 请求 · Claude", "Codexio Request · Claude")}
-    var quotaDescription: String {self == .chatgpt ? WL("查看 ChatGPT 剩余额度与重置时间", "View ChatGPT remaining allowance and reset times") : WL("查看 Claude 剩余额度与重置时间", "View Claude remaining allowance and reset times")}
-    var kindPrefix: String {"com.wujuhu.codexio"+(self == .chatgpt ? "" : ".claude")}
-    var logo: String {self == .chatgpt ? "chatgpt" : "claude-code"}
+    case chatgpt, claude, antigravity
+
+    var title: String {
+        switch self { case .chatgpt: "ChatGPT"; case .claude: "Claude"; case .antigravity: "Antigravity" }
+    }
+    var quotaTitle: String { self == .chatgpt ? "Codex" : title }
+    var requestTitle: String { String(format: WL("Codexio 请求 · %@", "Codexio Request · %@"), title) }
+    var quotaDescription: String { String(format: WL("查看 %@ 剩余额度与重置时间", "View %@ remaining allowance and reset times"), title) }
+    var kindPrefix: String { "com.wujuhu.codexio" + (self == .chatgpt ? "" : "." + rawValue) }
+    var logo: String { self == .claude ? "claude-code" : rawValue }
+    var logoExtension: String { self == .antigravity ? "png" : "svg" }
     func url(_ page: String) -> URL? {URL(string:"codexio://"+page+"?agent="+rawValue)}
     private static let images: [WidgetAgent:NSImage] = Dictionary(uniqueKeysWithValues:allCases.compactMap {agent in
-        guard let file = Bundle.main.resourceURL?.appendingPathComponent("client-icons/"+agent.logo+".svg"), let image = NSImage(contentsOf:file) else {return nil}
+        guard let file = Bundle.main.resourceURL?.appendingPathComponent("client-icons/"+agent.logo+"."+agent.logoExtension), let image = NSImage(contentsOf:file) else {return nil}
         image.isTemplate = true; return (agent,image)
     })
     var image: NSImage? {Self.images[self]}
@@ -25,7 +29,7 @@ struct WidgetAgentLogo: View {
     var body: some View {
         Group {
             if let image = agent.image {Image(nsImage:image).resizable().scaledToFit()}
-            else {Text(agent == .chatgpt ? "G" : "C")}
+            else {Text(String(agent.title.prefix(1)))}
         }.accessibilityLabel(agent.title)
     }
 }
@@ -102,7 +106,7 @@ struct Snapshot: Decodable {
         if let source = snapshot.agents?[agent.rawValue] {
             return Snapshot(schema:snapshot.schema,updated_at:source.updated_at ?? snapshot.updated_at,request:source.request,quota:source.quota,today:source.today,host_running:snapshot.host_running,host_pid:snapshot.host_pid)
         }
-        if agent == .claude {
+        if agent != .chatgpt {
             return Snapshot(schema:snapshot.schema,updated_at:snapshot.updated_at,request:nil,quota:QuotaSnapshot(applicable:true,five_hour:nil,week:nil,has_five_hour:nil,has_week:nil,five_hour_reset_at:nil,week_reset_at:nil),today:nil,host_running:snapshot.host_running,host_pid:snapshot.host_pid)
         }
         return snapshot
@@ -436,6 +440,13 @@ struct CodexioWidgetBundle: WidgetBundle {
         CodexioQuotaWidget(agent:.claude)
         CodexioDualQuotaWidget(agent:.claude)
         CodexioSegmentedQuotaWidget(agent:.claude)
+        antigravityWidgets
+    }
+    @WidgetBundleBuilder private var antigravityWidgets: some Widget {
+        CodexioRequestWidget(agent:.antigravity)
+        CodexioQuotaWidget(agent:.antigravity)
+        CodexioDualQuotaWidget(agent:.antigravity)
+        CodexioSegmentedQuotaWidget(agent:.antigravity)
     }
 }
 

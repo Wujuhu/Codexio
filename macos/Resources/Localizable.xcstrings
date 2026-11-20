@@ -353,6 +353,54 @@
         }
       }
     },
+    "%@ 刻度额度": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ Segmented Allowance"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 刻度额度"
+          }
+        }
+      }
+    },
+    "%@ 单额度": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ Weekly Allowance"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 单额度"
+          }
+        }
+      }
+    },
+    "%@ 双额度": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ Dual Allowance"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 双额度"
+          }
+        }
+      }
+    },
     "%d 分钟前": {
       "localizations": {
         "en": {
@@ -1153,50 +1201,50 @@
         }
       }
     },
-    "Claude 刻度额度": {
+    "Antigravity App 日志目录": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Claude Segmented Allowance"
+            "value": "Antigravity App log folder"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Claude 刻度额度"
+            "value": "Antigravity App 日志目录"
           }
         }
       }
     },
-    "Claude 单额度": {
+    "Antigravity 本机记录暂不可读": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Claude Weekly Allowance"
+            "value": "Local Antigravity records are temporarily unreadable"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Claude 单额度"
+            "value": "Antigravity 本机记录暂不可读"
           }
         }
       }
     },
-    "Claude 双额度": {
+    "Antigravity 额度暂不可用": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Claude Dual Allowance"
+            "value": "Antigravity allowances are temporarily unavailable"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Claude 双额度"
+            "value": "Antigravity 额度暂不可用"
           }
         }
       }
@@ -1713,34 +1761,18 @@
         }
       }
     },
-    "Codexio 请求 · ChatGPT": {
+    "Codexio 请求 · %@": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codexio Request · ChatGPT"
+            "value": "Codexio Request · %@"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codexio 请求 · ChatGPT"
-          }
-        }
-      }
-    },
-    "Codexio 请求 · Claude": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Codexio Request · Claude"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Codexio 请求 · Claude"
+            "value": "Codexio 请求 · %@"
           }
         }
       }
@@ -5633,6 +5665,22 @@
         }
       }
     },
+    "回复": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Response"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回复"
+          }
+        }
+      }
+    },
     "回复中": {
       "localizations": {
         "en": {
@@ -8257,6 +8305,22 @@
         }
       }
     },
+    "打开 Antigravity App 后可读取额度": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Antigravity App to read allowances"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开 Antigravity App 后可读取额度"
+          }
+        }
+      }
+    },
     "打开 Codexio 主程序": {
       "localizations": {
         "en": {
@@ -10273,6 +10337,54 @@
         }
       }
     },
+    "暂无 Antigravity 聊天记录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No Antigravity chats yet"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂无 Antigravity 聊天记录"
+          }
+        }
+      }
+    },
+    "暂无 Antigravity 记录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No Antigravity records yet"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂无 Antigravity 记录"
+          }
+        }
+      }
+    },
+    "暂无 Antigravity 请求": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No Antigravity requests yet"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂无 Antigravity 请求"
+          }
+        }
+      }
+    },
     "暂无 Claude 聊天记录": {
       "localizations": {
         "en": {
@@ -11489,6 +11601,22 @@
         }
       }
     },
+    "未找到 Antigravity App 本机记录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No local Antigravity App records found"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未找到 Antigravity App 本机记录"
+          }
+        }
+      }
+    },
     "未找到 Codex 客户端，未修改路由": {
       "localizations": {
         "en": {
@@ -12337,34 +12465,18 @@
         }
       }
     },
-    "查看 ChatGPT 剩余额度与重置时间": {
+    "查看 %@ 剩余额度与重置时间": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "View ChatGPT remaining allowance and reset times"
+            "value": "View %@ remaining allowance and reset times"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "查看 ChatGPT 剩余额度与重置时间"
-          }
-        }
-      }
-    },
-    "查看 Claude 剩余额度与重置时间": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "View Claude remaining allowance and reset times"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "查看 Claude 剩余额度与重置时间"
+            "value": "查看 %@ 剩余额度与重置时间"
           }
         }
       }
@@ -13997,6 +14109,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "源码和预览模式不安装更新"
+          }
+        }
+      }
+    },
+    "源记录 Token": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Source token counters"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "源记录 Token"
+          }
+        }
+      }
+    },
+    "源记录中的正文已截断": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The source transcript truncated this text"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "源记录中的正文已截断"
           }
         }
       }
@@ -18029,6 +18173,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "速度未知 %d 次"
+          }
+        }
+      }
+    },
+    "部分 Antigravity 记录不完整，已保存历史保留": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Some Antigravity records are incomplete; saved history is retained"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "部分 Antigravity 记录不完整，已保存历史保留"
+          }
+        }
+      }
+    },
+    "部分 Antigravity 记录暂不可读，已保存历史保留": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Some Antigravity records could not be read; saved history is retained"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "部分 Antigravity 记录暂不可读，已保存历史保留"
           }
         }
       }

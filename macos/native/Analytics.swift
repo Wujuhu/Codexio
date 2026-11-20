@@ -39,7 +39,7 @@ struct UsageRow: Identifiable {
     }
     var costText: String {
         let text = money(cost)
-        return cost != nil && raw.string("client_kind") == "claude_code" && raw.string("pricing_status") == "estimated" ? "≈"+text : text
+        return cost != nil && ["claude_code", "antigravity"].contains(raw.string("client_kind")) && raw.string("pricing_status") == "estimated" ? "≈"+text : text
     }
     var title: String {
         if RequestClassification.isApproval(raw) { return L("自动审批审查", "Automatic approval review") }

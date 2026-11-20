@@ -20,10 +20,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT / "scripts")]
 
 from codexio.updates import UpdateError, file_sha256, version_tuple
-from verify_release import verify_release
+from verify_release import LEGACY_IPA_NAME, verify_release
 
 REPOSITORY = "Wujuhu/Codexio"
-APPLE = ("Codexio.app.zip", "Codexio.ipa", "latest.json")
+MAC_ASSETS = ("Codexio.app.zip", "latest.json")
 
 
 def run(*args):
@@ -85,8 +85,10 @@ def same_release(before, after):
     for key in ("tagName", "name", "isDraft", "isPrerelease", "targetCommitish", "body"):
         if before.get(key) != after.get(key):
             raise UpdateError("The existing release changed concurrently: " + key)
-    for name in APPLE[:2]:
-        old = next(x for x in before["assets"] if x["name"] == name)
+    for name in ("Codexio.app.zip", LEGACY_IPA_NAME):
+        old = next((x for x in before["assets"] if x["name"] == name), None)
+        if old is None:
+            continue
         new = next((x for x in after["assets"] if x["name"] == name), {})
         if any(old.get(key) != new.get(key) for key in ("id", "size", "digest", "updatedAt")):
             raise UpdateError("Existing Apple asset changed: " + name)
@@ -109,8 +111,11 @@ def append_windows(version, *, asset_only=False, prepare_only=False, sync_only=F
         raise UpdateError("Commit the verified merge and release preparation first")
     tag = "v" + version
     before = release(tag)
-    expected_before = set(APPLE)
     names = {x["name"] for x in before["assets"]}
+    include_ios = LEGACY_IPA_NAME in names
+    apple_assets = MAC_ASSETS + ((LEGACY_IPA_NAME,) if include_ios else ())
+    payloads = tuple(name for name in apple_assets if name != "latest.json")
+    expected_before = set(apple_assets)
     if before.get("isDraft") or before.get("isPrerelease") or before.get("tagName") != tag or before.get("name") != tag or names not in (expected_before, expected_before | {"Codexio.exe"}):
         raise UpdateError("Target must be the existing published Apple release")
     tag_sha = ref("refs/tags/" + tag)
@@ -124,11 +129,13 @@ def append_windows(version, *, asset_only=False, prepare_only=False, sync_only=F
         if not path.resolve().is_relative_to(ROOT / "build"):
             raise UpdateError("Release staging resolves outside this workspace's build directory")
         path.mkdir(parents=True)
-    run("gh", "release", "download", tag, "--repo", REPOSITORY, "--dir", existing,
-        "--pattern", APPLE[0], "--pattern", APPLE[1], "--pattern", APPLE[2])
-    verify_release(existing, version, platform="macos", include_ios=True)
+    patterns = []
+    for name in apple_assets:
+        patterns.extend(("--pattern", name))
+    run("gh", "release", "download", tag, "--repo", REPOSITORY, "--dir", existing, *patterns)
+    verify_release(existing, version, platform="macos", include_ios=include_ios)
     original = json.loads((existing / "latest.json").read_text(encoding="utf-8-sig"))
-    for name in APPLE:
+    for name in apple_assets:
         asset = next(x for x in before["assets"] if x["name"] == name)
         if asset.get("digest") != "sha256:" + file_sha256(existing / name) or asset["size"] != (existing / name).stat().st_size:
             raise UpdateError("Downloaded release asset does not match GitHub metadata: " + name)
@@ -142,7 +149,7 @@ def append_windows(version, *, asset_only=False, prepare_only=False, sync_only=F
                         notes=original.get("notes", "") if original.get("version") == windows_version and original.get("sha256") == delivery["sha256"] else "Codexio " + windows_version)
         (candidate / "latest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     if not asset_only:
-        verify_release(candidate, version, platform="both", include_ios=True)
+        verify_release(candidate, version, platform="both", include_ios=include_ios)
     report = {"release": before["url"], "release_version": version, "windows_version": windows_version,
               "sha256": delivery["sha256"], "size": delivery["size"], "asset_only": asset_only,
               "source_sha256": delivery["source_sha256"], "tag_commit": tag_sha, "staging": str(stage)}
@@ -190,14 +197,14 @@ def append_windows(version, *, asset_only=False, prepare_only=False, sync_only=F
                 raise
     published = release(tag)
     same_release(before, published)
-    if {x["name"] for x in published["assets"]} != set(APPLE) | {"Codexio.exe"} or ref("refs/tags/" + tag) != tag_sha:
+    if {x["name"] for x in published["assets"]} != set(apple_assets) | {"Codexio.exe"} or ref("refs/tags/" + tag) != tag_sha:
         raise UpdateError("Final release attachment/tag check failed")
     run("gh", "release", "download", tag, "--repo", REPOSITORY, "--dir", downloaded)
-    for name in (*APPLE, "Codexio.exe"):
+    for name in (*apple_assets, "Codexio.exe"):
         if file_sha256(downloaded / name) != file_sha256(candidate / name):
             raise UpdateError("Published download differs from the verified candidate: " + name)
     if not asset_only:
-        verify_release(downloaded, version, platform="both", include_ios=True)
+        verify_release(downloaded, version, platform="both", include_ios=include_ios)
     destination = ROOT / "release" / version
     if not destination.resolve().is_relative_to(ROOT) or destination.parent.resolve() != ROOT / "release":
         raise UpdateError("Remote succeeded; local release archive resolves outside its intended directory")
@@ -205,11 +212,11 @@ def append_windows(version, *, asset_only=False, prepare_only=False, sync_only=F
         destination.parent.mkdir(parents=True, exist_ok=True)
         downloaded.rename(destination)
     else:
-        if destination.is_symlink() or {p.name for p in destination.iterdir()} - (set(APPLE) | {"Codexio.exe"}):
+        if destination.is_symlink() or {p.name for p in destination.iterdir()} - (set(apple_assets) | {"Codexio.exe"}):
             raise UpdateError("Remote succeeded; local archive contains unexpected files and was preserved")
         # Preserve any running EXE. Only absent/identical binaries are accepted;
         # update the manifest atomically after every payload is in place.
-        for name in (*APPLE[:2], "Codexio.exe", "latest.json"):
+        for name in (*payloads, "Codexio.exe", "latest.json"):
             target = destination / name
             if target.exists() and file_sha256(target) == file_sha256(downloaded / name):
                 continue

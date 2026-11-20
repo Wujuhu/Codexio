@@ -19,7 +19,8 @@ var systemSettingDefaults = Row{"refresh_interval_seconds": 60, "codex_path": ni
 func systemDefaultConfig() Row {
 	r := CloneRow(systemSettingDefaults)
 	for k, v := range (Row{"version": 1, "theme": "system", "auto_sync_prices": true, "auto_update": true, "macos_auto_update": true,
-		"usage_report_auto": true, "usage_report_style": "garden", "app_icon": "main", "mobile_sync_enabled": false, "upstream_detection_enabled": false,
+		"antigravity_log_columns": []string{"content", "model", "input", "output", "cost", "duration", "details"}, "antigravity_log_column_widths": Row{},
+		"usage_report_auto": true, "usage_report_style": "garden", "app_icon": "main", "upstream_detection_enabled": false,
 		"usage_refresh_interval_seconds": 10, "usage_refresh_interval_user_set": false, "week_estimate_interval_minutes": 10, "week_estimate_interval_version": 3, "log_column_defaults_version": 1,
 		"codex_roots": []string{systemCodexRoot()}, "account_since": UTCStamp(time.Now()), "main_geometry": nil,
 		"navigation_order": []string{"overview", "logs", "trends", "subscription", "pricing", "settings"}, "navigation_order_version": 1,
@@ -112,7 +113,7 @@ func LoadConfig(directory string) (Row, error) {
 			}
 			if ValueInt(raw["log_column_defaults_version"]) != 1 {
 				old := "content,model,input,output,cache_rate,cost,duration,details"
-				for _, key := range []string{"native_log_columns", "claude_log_columns"} {
+				for _, key := range []string{"native_log_columns", "claude_log_columns", "antigravity_log_columns"} {
 					if strings.Join(ValueStrings(raw[key]), ",") == old {
 						r[key] = systemDefaultConfig()[key]
 					}
@@ -234,7 +235,7 @@ func systemNormalizeConfig(r Row) Row {
 		}
 	}
 	r["navigation_order"] = nav
-	for _, columnKey := range []string{"native_log_columns", "claude_log_columns"} {
+	for _, columnKey := range []string{"native_log_columns", "claude_log_columns", "antigravity_log_columns"} {
 		columns := []string{"content"}
 		selected := ValueStrings(r[columnKey])
 		for _, field := range []string{"time", "model", "input", "output", "total", "cached", "cache_write", "cache_rate", "cost", "duration", "effort", "speed", "context", "status"} {

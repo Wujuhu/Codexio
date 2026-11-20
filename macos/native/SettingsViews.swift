@@ -60,18 +60,18 @@ struct SettingsView: View {
     @State private var logRoot = ""
     @State private var upstreamConfirmation = false
     @State private var desiredUpstream = false
-    private func sectionTitle(_ section: String) -> String { section == "mobile" ? L("同步", "Sync") : section == "appearance" ? L("外观", "Appearance") : section == "data" ? L("数据", "Data") : section == "menubar" ? L("菜单栏", "Menu bar") : L("应用", "App") }
+    private func sectionTitle(_ section: String) -> String { section == "appearance" ? L("外观", "Appearance") : section == "data" ? L("数据", "Data") : section == "menubar" ? L("菜单栏", "Menu bar") : L("应用", "App") }
     var body: some View {
         ScrollView {
             VStack(alignment:.leading,spacing:20) {
                 AdaptiveRow(spacing:28,alignment:.top) {
                     if compact {
                         Picker("",selection:$state.settingsSection) {
-                            ForEach(["appearance","data","app","mobile","menubar"],id:\.self) { Text(sectionTitle($0)).tag($0) }
+                            ForEach(["appearance","data","app","menubar"],id:\.self) { Text(sectionTitle($0)).tag($0) }
                         }.labelsHidden().pickerStyle(.menu).fixedSize()
                     } else {
                         VStack(spacing:5) {
-                            ForEach(["appearance","data","app","mobile","menubar"],id:\.self) { section in
+                            ForEach(["appearance","data","app","menubar"],id:\.self) { section in
                                 Button { state.settingsSection = section } label: { Text(sectionTitle(section)).frame(maxWidth:.infinity,alignment:.leading).padding(10).contentShape(Rectangle()).background(state.settingsSection == section ? Color.primary.opacity(0.07) : .clear,in:RoundedRectangle(cornerRadius:7)) }.buttonStyle(.plain)
                             }
                         }.frame(width:145)
@@ -83,7 +83,6 @@ struct SettingsView: View {
                         case "appearance": appearance
                         case "data": data
                         case "menubar": menuBar
-                        case "mobile": MobileSyncSettings(sync:state.mobileSync) { state.mobileSync.update(state.usage,quota:state.menuQuota) }
                         default: app
                         }
                     }.frame(maxWidth:.infinity,alignment:.leading)
@@ -112,6 +111,9 @@ struct SettingsView: View {
             Text(L("本机日志目录", "Local log directory")).font(.system(size:13,weight:.medium))
             HStack { TextField("~/.codex",text:$logRoot).textFieldStyle(.roundedBorder); Button(L("选择", "Choose")) { choose(directory:true) } }
             Button(L("应用目录", "Apply directory")) { state.setPreference("codex_roots",[logRoot]); state.rescan() }.controlSize(.small)
+            row(L("Antigravity App 日志目录", "Antigravity App log folder")) {
+                Text(state.antigravityLedger.root.path).font(.system(size: 11)).foregroundStyle(.secondary).textSelection(.enabled)
+            }
             Divider().padding(.vertical,6)
             row(L("本地索引", "Local index")) { Text("\(state.usage.calls.count)").foregroundStyle(.secondary).monospacedDigit() }
             row(L("重新扫描本地记录", "Rescan local records")) { Button(L("开始扫描", "Rescan now")) { state.rescan() }.disabled(state.loading || state.paths.mock) }

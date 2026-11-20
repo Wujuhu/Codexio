@@ -4,7 +4,6 @@ import SQLite3
 final class Database {
     private var handle: OpaquePointer?
     private let lock = NSRecursiveLock()
-    private var messageEvictionGeneration: UInt64 = 0
     private let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
     private let sourceDateFormatter: DateFormatter = {
         let formatter = DateFormatter(); formatter.locale = Locale(identifier:"en_US_POSIX")
@@ -46,7 +45,6 @@ final class Database {
             CREATE TABLE IF NOT EXISTS usage_session_files(path TEXT PRIMARY KEY,session_id TEXT NOT NULL,root TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS usage_session_files_session ON usage_session_files(session_id);
             CREATE TABLE IF NOT EXISTS usage_request_sources(id TEXT PRIMARY KEY,path TEXT NOT NULL,root TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS usage_request_ids(id TEXT PRIMARY KEY,mobile_id TEXT NOT NULL UNIQUE);
             CREATE TABLE IF NOT EXISTS usage_request_messages(id TEXT PRIMARY KEY,data TEXT NOT NULL,digest TEXT NOT NULL,revision INTEGER NOT NULL,size INTEGER NOT NULL,accessed REAL NOT NULL);
             CREATE INDEX IF NOT EXISTS usage_request_messages_accessed ON usage_request_messages(accessed);
             CREATE TABLE IF NOT EXISTS usage_request_archives(id TEXT PRIMARY KEY,codec TEXT NOT NULL,payload BLOB NOT NULL,checksum TEXT NOT NULL,digest TEXT NOT NULL,revision INTEGER NOT NULL,size INTEGER NOT NULL);
@@ -62,16 +60,6 @@ final class Database {
                 let kind = table == "usage_observations" ? "observations" : "ledger"
                 for action in ["INSERT","UPDATE","DELETE"] {
                     try script("CREATE TRIGGER IF NOT EXISTS revision_\(table)_\(action.lowercased()) AFTER \(action) ON \(table) BEGIN UPDATE usage_revisions SET revision=revision+1 WHERE kind='\(kind)'; END;")
-                }
-            }
-            if object("usage_meta",key:"request-message-ids-v1").isEmpty {
-                try transaction {
-                    for row in try query("SELECT id FROM usage_turns") { try registerRequestID(row.string("id")) }
-                    for row in try query("SELECT DISTINCT session_id,COALESCE(NULLIF(json_extract(data,'$.request_turn_id'),''),json_extract(data,'$.turn_id')) AS turn_id FROM usage_records WHERE session_id<>''") {
-                        let turn = row.string("turn_id")
-                        if !turn.isEmpty { try registerRequestID(turn.hasPrefix("turn:") ? turn : "turn:"+row.string("session_id")+":"+turn) }
-                    }
-                    try put("usage_meta",key:"request-message-ids-v1",value:["ready":true])
                 }
             }
         }
@@ -191,8 +179,6 @@ final class Database {
         }
         try run("INSERT INTO usage_records VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET timestamp=excluded.timestamp,model=excluded.model,session_id=excluded.session_id,data=excluded.data WHERE data<>excluded.data",[record.string("id"),record.string("timestamp"),record.string("model","unknown"),record.string("session_id"),jsonString(record)])
         try run("INSERT OR IGNORE INTO usage_record_sources VALUES(?,?)",[record.string("id"),source])
-        let turn = record.string("request_turn_id").isEmpty ? record.string("turn_id") : record.string("request_turn_id")
-        if !record.string("session_id").isEmpty, !turn.isEmpty { try registerRequestID(turn.hasPrefix("turn:") ? turn : "turn:"+record.string("session_id")+":"+turn) }
     }
     func writeTurn(_ row: Object) throws {
         guard !row.string("id").isEmpty else { return }
@@ -215,7 +201,6 @@ final class Database {
         }
         RequestResume.preserveMainOwnership(&value)
         try run("INSERT INTO usage_turns VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data WHERE data<>excluded.data",[value.string("id"),jsonString(value)])
-        try registerRequestID(value.string("id"))
     }
     func repairRequestMetadata(_ evidence: Object) throws {
         guard var row = try requestTurn(evidence.string("id")) else { return }
@@ -257,11 +242,6 @@ final class Database {
         guard !id.isEmpty else { return }
         try run("INSERT INTO usage_request_sources VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET path=excluded.path,root=excluded.root WHERE path<>excluded.path OR root<>excluded.root",[id,file.path,root.path])
     }
-    private func registerRequestID(_ id: String) throws {
-        guard !id.isEmpty else { return }
-        try run("INSERT OR IGNORE INTO usage_request_ids VALUES(?,?)",[id,digest(Data(id.utf8))])
-    }
-
     // Bodies have independent, bounded storage. No full message enters a ledger
     // payload or UsageSnapshot. The digest excludes access/recovery timestamps.
     func writeRequestMessage(_ id: String,patch: Object) throws {
@@ -336,7 +316,6 @@ final class Database {
             bytes += row.integer("size") ?? 0
             if (index >= 512 || bytes > 67_108_864), row.integer("archived")==1 {
                 try run("DELETE FROM usage_request_messages WHERE id=?",[row.string("id")])
-                if sqlite3_changes(handle) > 0 { messageEvictionGeneration &+= 1 }
             }
         }
     }
@@ -357,25 +336,6 @@ final class Database {
         let parts = id.split(separator:":",maxSplits:2).map(String.init)
         guard parts.count == 3, parts[0] == "turn", let call = try query("SELECT timestamp FROM usage_records WHERE session_id=? AND COALESCE(NULLIF(json_extract(data,'$.request_turn_id'),''),json_extract(data,'$.turn_id')) IN (?,?) ORDER BY timestamp LIMIT 1",[parts[1],parts[2],id]).first else { return nil }
         return ["id":id,"session_id":parts[1],"turn_id":parts[2],"started_at":call.string("timestamp"),"started_inferred":true,"metadata_missing":true,"status":"unknown"]
-    }
-    private func detailMembers(_ root: Object) throws -> [Object] {
-        let session = root.string("session_id")
-        var ids: Set<String> = [root.string("id"),root.string("turn_id")]
-        var result = [root]
-        // Only explicit continuation/root edges can contribute a final answer.
-        // Child-agent answers and unrelated messages never become the main reply.
-        var cursor = 0
-        while cursor < result.count && result.count < 64 {
-            let current = result[cursor]; cursor += 1
-            let key = current.string("id"), turn = current.string("turn_id")
-            let related = try query("SELECT data FROM usage_turns WHERE json_extract(data,'$.session_id')=? AND (json_extract(data,'$.continuation_of') IN (?,?) OR json_extract(data,'$.root_turn_id') IN (?,?)) LIMIT 65",[session,key,turn,key,turn]).map {jsonObject(Data($0.string("data").utf8))}
-            let additions = related.filter { row in
-                !row.flag("is_subagent") && !RequestClassification.isApproval(row) && !RequestResume.ownsMainMessage(row) && row.string("alias_of").isEmpty && !ids.contains(row.string("id")) &&
-                [row.string("continuation_of"),row.string("root_turn_id")].contains(where:{!$0.isEmpty && ids.contains($0)})
-            }
-            for row in additions.prefix(max(0,64-result.count)) { result.append(row); ids.insert(row.string("id")); ids.insert(row.string("turn_id")) }
-        }
-        return result.sorted {$0.string("started_at") < $1.string("started_at")}
     }
     private func sourceFiles(_ request: Object) throws -> [(URL,URL)] {
         lock.lock(); defer { lock.unlock() }
@@ -430,142 +390,6 @@ final class Database {
             done.append(contentsOf:ids)
         }
         return (done, unavailable)
-    }
-    private func messageRoot(_ requestID: String) throws -> Object? {
-        guard !requestID.isEmpty, requestID.utf8.count <= 512,
-              let lookup = try query("SELECT id FROM usage_request_ids WHERE id=? OR mobile_id=? LIMIT 1",[requestID,requestID]).first,
-              var root = try requestTurn(lookup.string("id")) else { return nil }
-        var seen = Set<String>()
-        while !root.string("alias_of").isEmpty, seen.insert(root.string("id")).inserted, seen.count <= 64 {
-            guard let parent = try requestTurn(root.string("alias_of")) else { break }; root = parent
-        }
-        return root.string("record_kind") == "context_compaction" ? nil : root
-    }
-    private func messagePromptSource(_ root: Object) throws -> Object? {
-        let source = root.flag("has_user_message") ? "" : root.string("prompt_source_turn_id")
-        guard !source.isEmpty else { return nil }
-        let key = source.hasPrefix("turn:") ? source : "turn:"+root.string("session_id")+":"+source
-        return try requestTurn(key)
-    }
-    private struct MessageRecoveryNeed {
-        let files: [(URL,URL)]
-        let fileSignature: [[Any]]
-        let ownsInput: Bool
-        let terminal: Bool
-        func signature(_ detail: Object,store: RequestMediaStore) -> String {
-            identity(["message-recovery-v2",RequestMedia.schema,ownsInput,terminal,fileSignature,store.missingIDs(detail)])
-        }
-        func incomplete(_ detail: Object,store: RequestMediaStore) -> Bool {
-            (ownsInput && (!detail.flag("user_complete") || detail.integer("user_media_schema") != RequestMedia.schema))
-                || (terminal && (!detail.flag("final_complete") || detail.integer("final_media_schema") != RequestMedia.schema))
-                || !store.missingIDs(detail).isEmpty
-        }
-    }
-    func prepareRequestMessageDetails(_ requestIDs: [String]) throws {
-        lock.lock(); defer { lock.unlock() }
-        let messageGeneration = messageEvictionGeneration, mediaGeneration = requestMedia.evictionGeneration
-        var members: [String:Object] = [:], inputs = Set<String>(), roots = Set<String>()
-        // Reuse the existing bounded continuation/source lookup, collecting only
-        // metadata. Bodies remain per-request instead of accumulating a batch.
-        for requestID in requestIDs.prefix(64) {
-            try autoreleasepool {
-                guard let root = try messageRoot(requestID), roots.insert(root.string("id")).inserted else { return }
-                inputs.insert(root.string("id"))
-                for member in try detailMembers(root) { members[member.string("id")] = member }
-                if let source = try messagePromptSource(root) { inputs.insert(source.string("id")); members[source.string("id")] = source }
-            }
-        }
-        var missing: [String:MessageRecoveryNeed] = [:]
-        for (id,member) in members {
-            try autoreleasepool {
-                let stored = try requestMessageRow(id) ?? [:]
-                let detail = jsonObject(Data(stored.string("data").utf8))
-                let files = try sourceFiles(member)
-                let signature = files.map { value -> [Any] in
-                    let stamp = FileStamp(value.0)
-                    return [value.0.path,stamp.size,stamp.modified?.timeIntervalSince1970 ?? 0,stamp.device,stamp.inode]
-                }
-                let need = MessageRecoveryNeed(files:files,fileSignature:signature,ownsInput:inputs.contains(id) || member.flag("has_user_message"),terminal:["completed","aborted"].contains(member.string("status")))
-                if need.incomplete(detail,store:requestMedia), detail.string("recovery_signature") != need.signature(detail,store:requestMedia) { missing[id] = need }
-            }
-        }
-        var pending = Set(missing.keys)
-        // Keep each request's preferred source ahead of its archive/fork
-        // fallbacks while coalescing requests at the same source priority.
-        for priority in 0..<(missing.values.map { $0.files.count }.max() ?? 0) {
-            var batches: [URL:(URL,Set<String>)] = [:]
-            for id in pending.sorted() {
-                guard let need = missing[id], need.files.indices.contains(priority) else { continue }
-                let (file,root) = need.files[priority]
-                if batches[file] == nil { batches[file] = (root,[]) }
-                batches[file]?.1.insert(id)
-            }
-            for file in batches.keys.sorted(by:{$0.path < $1.path}) {
-                guard let (root,ids) = batches[file] else { continue }
-                try autoreleasepool {
-                    try UsageIndexer(self).recoverMessageDetails(ids:ids,file:file,root:root)
-                    for id in ids {
-                        let detail = jsonObject(Data((try requestMessageRow(id) ?? [:]).string("data").utf8))
-                        if let need = missing[id], !need.incomplete(detail,store:requestMedia) { pending.remove(id) }
-                    }
-                }
-            }
-        }
-        for (id,need) in missing {
-            try autoreleasepool {
-                let detail = jsonObject(Data((try requestMessageRow(id) ?? [:]).string("data").utf8))
-                if (messageEvictionGeneration != messageGeneration || requestMedia.evictionGeneration != mediaGeneration), need.incomplete(detail,store:requestMedia) {
-                    // A later member may evict an earlier recovered body/image.
-                    // Allow the consumer to recover it immediately; do not turn
-                    // cache pressure into a persistent source-failure result.
-                    if detail["recovery_signature"] != nil { try writeRequestMessage(id,patch:["recovery_signature":NSNull()]) }
-                    return
-                }
-                // Keep the pre-read file stamp: an append during recovery must
-                // invalidate this attempt. Refreshed media may now exist on disk.
-                try writeRequestMessage(id,patch:["recovery_signature":need.signature(detail,store:requestMedia)])
-            }
-        }
-    }
-    func requestMessageDetail(_ requestID: String) throws -> Object? {
-        lock.lock(); defer { lock.unlock() }
-        try prepareRequestMessageDetails([requestID])
-        guard let root = try messageRoot(requestID) else { return nil }
-        let members = try detailMembers(root), promptSource = try messagePromptSource(root)
-        if let promptSource, let stored = try requestMessageRow(promptSource.string("id")) {
-            let input = jsonObject(Data(stored.string("data").utf8))
-            if input.flag("user_complete") || !input.string("user").isEmpty || !input.objects("attachments").isEmpty {
-                try writeRequestMessage(root.string("id"),patch:["user":input.string("user"),"user_complete":input.flag("user_complete"),"attachments":input.objects("attachments"),"user_media_schema":input.integer("user_media_schema") ?? 0,"user_message_key":input.string("user_message_key")])
-            }
-        }
-        guard (try requestTurn(root.string("id")))?.string("record_kind") != "context_compaction" else { return nil }
-        var details: [Object] = []
-        for member in members {
-            let id = member.string("id")
-            var detail = jsonObject(Data((try requestMessageRow(id) ?? [:]).string("data").utf8))
-            let metadata: Object = ["started_at":parsedDate(member["started_at"])?.timeIntervalSince1970 as Any? ?? NSNull(),"completed_at":parsedDate(member["ended_at"])?.timeIntervalSince1970 as Any? ?? NSNull(),"status":member.string("status","unknown")]
-            for (key,value) in metadata { detail[key] = value }
-            try writeRequestMessage(id,patch:detail)
-            let stored = try requestMessageRow(id) ?? [:]
-            detail = jsonObject(Data(stored.string("data").utf8)); detail["digest"] = stored["digest"]; detail["revision"] = stored["revision"]
-            try run("UPDATE usage_request_messages SET accessed=? WHERE id=?",[Date().timeIntervalSince1970,id])
-            details.append(detail)
-        }
-        guard let first = details.first, let last = details.last else { return nil }
-        let users = details.map {$0.string("user")}.filter {!$0.isEmpty}
-        let user = (text:users.joined(separator:"\n\n"),complete:true), final = last.string("final")
-        let terminal = ["completed","aborted"].contains(last.string("status"))
-        let usesGenerated = final.isEmpty && last.objects("final_attachments").isEmpty && terminal
-        let finalAttachments = usesGenerated ? last.objects("generated_attachments") : last.objects("final_attachments")
-        let allAttachments = RequestMedia.deduplicated(details.flatMap {$0.objects("attachments")}+finalAttachments)
-        let attachments = Array(allAttachments.prefix(RequestMedia.limit)), fits = allAttachments.count <= RequestMedia.limit
-        let userComplete = user.complete && members.count < 64 && fits && first.flag("user_complete") && first.integer("user_media_schema") == RequestMedia.schema && details.dropFirst().allSatisfy {($0.string("user").isEmpty && $0.objects("attachments").isEmpty) || ($0.flag("user_complete") && $0.integer("user_media_schema") == RequestMedia.schema)}
-        let finalComplete = members.count < 64 && fits && last.flag("final_complete") && last.integer("final_media_schema") == RequestMedia.schema && (!usesGenerated || finalAttachments.isEmpty || last.flag("generated_complete"))
-        let available = !user.text.isEmpty || !final.isEmpty || !attachments.isEmpty
-        var result: Object = ["id":root.string("id"),"user":user.text,"final":final,"user_complete":userComplete,"final_complete":finalComplete,"started_at":first["started_at"] ?? NSNull(),"completed_at":last["completed_at"] ?? NSNull(),"status":last.string("status","unknown"),"attachments":attachments,"availability":!available ? "unavailable" : userComplete && (!terminal || finalComplete) ? "available" : "partial"]
-        result["digest"] = identity(result)
-        result["revision"] = details.reduce(0) {$0+($1.integer("revision") ?? 0)}
-        return result
     }
 }
 

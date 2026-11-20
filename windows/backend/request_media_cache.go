@@ -14,14 +14,12 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
-	"math"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -588,78 +586,4 @@ func (s *Store) requestImage(ctx context.Context, requestID, imageID string) (Ro
 		return Row{"id": imageID, "availability": "available", "mime": preview.mime, "width": preview.width, "height": preview.height, "sha256": preview.digest, "dataURL": "data:" + preview.mime + ";base64," + base64.StdEncoding.EncodeToString(data)}, nil
 	}
 	return Row{"id": imageID, "availability": "unavailable"}, nil
-}
-
-// Public fields exactly match apple/shared/MobileProtocol.swift. Payloads are
-// transient host output for the transport/outbox, never desktop Detail content.
-func (s *Store) prepareRequestImages(ctx context.Context, raw Row, requestID string, started float64, enforceRetention bool) (Row, error) {
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	if !requestImageID.MatchString(requestID) {
-		return nil, errors.New("invalid mobile request identity")
-	}
-	result := Row{"user": dataString(raw, "user"), "final": dataString(raw, "final"), "images": []Row{}, "image_payloads": Row{}}
-	items := append([]Row{}, ValueRows(raw["attachments"])...)
-	createdAt := func(item Row) float64 {
-		created, valid := ValueFloat(item["created_at"])
-		if !valid || created <= 0 {
-			created = started
-		}
-		return math.Floor(created)
-	}
-	sort.SliceStable(items, func(i, j int) bool { return createdAt(items[i]) < createdAt(items[j]) })
-	refs, payloads, content := []Row{}, Row{}, map[string]Row{}
-	used := map[string]bool{}
-	for _, item := range items[:min(requestMediaLimit, len(items))] {
-		if !strings.HasPrefix(dataString(item, "mime"), "image/") {
-			continue
-		}
-		placement := firstString(item["placement"], "user")
-		if placement != "final" {
-			placement = "user"
-		}
-		source := firstString(item["path"], item["reference"], item["id"], item["name"])
-		key := requestID + "|" + placement + "|" + source
-		if used[key] {
-			continue
-		}
-		used[key] = true
-		created := createdAt(item)
-		expires := created + requestImageRetention
-		id := HashString(key)
-		availability := "unavailable"
-		if enforceRetention && expires <= float64(time.Now().Unix()) {
-			availability = "expired"
-		}
-		name, _ := requestBoundedText(firstString(item["name"], "图片"), 240)
-		ref := Row{"id": id, "name": name, "mime": firstString(item["mime"], "image/png"), "placement": placement, "width": 0, "height": 0, "expires": expires, "availability": availability}
-		if availability != "expired" && created > 0 && created <= float64(time.Now().Unix()+300) {
-			if preview, err := s.media.preview(ctx, item); err == nil {
-				identity := requestID + "|" + placement + "|" + preview.digest
-				if previous := content[identity]; previous != nil {
-					ref = previous
-				} else if data, err := s.media.readPreview(preview); err == nil {
-					// Swift String(floor(Double)) preserves its .0 suffix.
-					id = HashString(identity + "|" + fmt.Sprintf("%.1f", created))
-					ref["id"], ref["mime"], ref["width"], ref["height"], ref["availability"] = id, preview.mime, preview.width, preview.height, "available"
-					payloads[id] = Row{"id": id, "request": requestID, "mime": preview.mime, "width": preview.width, "height": preview.height, "created": created, "expires": expires, "data": base64.StdEncoding.EncodeToString(data)}
-					content[identity] = ref
-				}
-			}
-		}
-		id = dataString(ref, "id")
-		found := false
-		for _, previous := range refs {
-			if dataString(previous, "id") == id {
-				found = true
-				break
-			}
-		}
-		if !found {
-			refs = append(refs, ref)
-		}
-		result[placement] = rewriteRequestImages(dataString(result, placement), item, "codexio-image://"+id)
-	}
-	result["images"], result["image_payloads"] = refs, payloads
-	return result, nil
 }

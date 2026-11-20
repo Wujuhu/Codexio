@@ -17,8 +17,8 @@
   let drag:{key:string,start:number,width:number}|null=null;
   let loadedWidths:any;
   let savedWidths=new Set<string>();
-  $: columnsKey=query.client_kind==='claude_code'?'claude_log_columns':'native_log_columns';
-  $: widthsKey=query.client_kind==='claude_code'?'claude_log_column_widths':'log_column_widths';
+  $: columnsKey=query.client_kind==='antigravity'?'antigravity_log_columns':query.client_kind==='claude_code'?'claude_log_columns':'native_log_columns';
+  $: widthsKey=query.client_kind==='antigravity'?'antigravity_log_column_widths':query.client_kind==='claude_code'?'claude_log_column_widths':'log_column_widths';
   $: columns=definitions.filter(c=>c.key==='content'||c.key==='details'||(Array.isArray(settings[columnsKey])?settings[columnsKey]:defaults).includes(c.key));
   $: if(!drag&&settings[widthsKey]!==loadedWidths){
     loadedWidths=settings[widthsKey];

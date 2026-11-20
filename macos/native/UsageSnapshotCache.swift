@@ -72,7 +72,7 @@ final class UsageSnapshotCache {
         let validUntil: Date
         let summary: UsageSummary
         let days: [DayUsage]
-        let modelRows: [[MobileModel]]
+        let modelRows: [[UsageModel]]
         let recent: [Data]
     }
     private var preparedOverview: (revision: UUID, roots: String, value: TrendProjection)?

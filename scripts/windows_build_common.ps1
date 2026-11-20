@@ -59,15 +59,15 @@ function ConvertTo-CodexioHashtable { param($Value)
     return $Value
 }
 function Get-CodexioBaseManifest { param([string]$ProjectRoot,[string]$ExplicitPath,[string]$Version)
-    if ($ExplicitPath) { return ConvertTo-CodexioHashtable (Get-Content -LiteralPath $ExplicitPath -Encoding UTF8 -Raw | ConvertFrom-Json) }
+    if ($ExplicitPath) { $Manifest=ConvertTo-CodexioHashtable (Get-Content -LiteralPath $ExplicitPath -Encoding UTF8 -Raw | ConvertFrom-Json); $Manifest.Remove("ios"); return $Manifest }
     $Roots=@($ProjectRoot)
     Push-Location $ProjectRoot
     try { $Common=(& git rev-parse --git-common-dir 2>$null); if ($LASTEXITCODE -eq 0 -and $Common) { if (-not [IO.Path]::IsPathRooted($Common)) { $Common=Join-Path $ProjectRoot $Common }; $Common=[IO.Path]::GetFullPath($Common); $Original=Split-Path -Parent $Common; if ($Original -ne $ProjectRoot) { $Roots += $Original } } } finally { Pop-Location }
     $Candidates=New-Object 'System.Collections.Generic.List[string]'
     $Candidates.Add((Join-Path $ProjectRoot ('build\checks\v'+$Version+'\manifest-base\latest.json')))
     foreach ($Root in $Roots) { foreach ($Relative in @('build\dev\macos\latest.json',('release\'+$Version+'\latest.json'),'build\dev\windows\latest.json')) { $Candidates.Add((Join-Path $Root $Relative)) }; $Formal=Join-Path $Root 'release'; if (Test-Path -LiteralPath $Formal) { foreach ($Item in @(Get-ChildItem -LiteralPath $Formal -Directory | Where-Object { $_.Name -match '^\d+\.\d+\.\d+$' } | Sort-Object { [Version]$_.Name } -Descending)) { $Candidates.Add((Join-Path $Item.FullName 'latest.json')) } } }
-    foreach ($Path in $Candidates) { if (Test-Path -LiteralPath $Path) { $Manifest=ConvertTo-CodexioHashtable (Get-Content -LiteralPath $Path -Encoding UTF8 -Raw | ConvertFrom-Json); if ($Manifest.ContainsKey('macos')) { return $Manifest } } }
-    foreach ($Path in $Candidates) { if (Test-Path -LiteralPath $Path) { return ConvertTo-CodexioHashtable (Get-Content -LiteralPath $Path -Encoding UTF8 -Raw | ConvertFrom-Json) } }
+    foreach ($Path in $Candidates) { if (Test-Path -LiteralPath $Path) { $Manifest=ConvertTo-CodexioHashtable (Get-Content -LiteralPath $Path -Encoding UTF8 -Raw | ConvertFrom-Json); if ($Manifest.ContainsKey('macos')) { $Manifest.Remove('ios'); return $Manifest } } }
+    foreach ($Path in $Candidates) { if (Test-Path -LiteralPath $Path) { $Manifest=ConvertTo-CodexioHashtable (Get-Content -LiteralPath $Path -Encoding UTF8 -Raw | ConvertFrom-Json); $Manifest.Remove("ios"); return $Manifest } }
     return @{}
 }
 function New-CodexioWindowsSourceSnapshot { param([string]$ProjectRoot,[string]$Destination,[string]$Resource)

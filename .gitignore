@@ -25,4 +25,3 @@ windows/frontend/dist/
 # Retired generated UI review matrices; keep curated documentation images only.
 .impeccable/review/
 .wrangler/
-cloudflare/.wrangler/

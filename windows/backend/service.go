@@ -24,13 +24,13 @@ type Service struct {
 	mock             bool
 	store            *Store
 	quota            *QuotaService
+	antigravityQuota *AntigravityQuota
 	claudeQuota      *ClaudeAllowance
 	claudeEstimate   *RollingEstimator
 	updater          *Updater
 	reports          *ReportManager
 	estimate         *RollingEstimator
 	upstream         *UpstreamProxy
-	mobile           *MobileHost
 	callbacks        DesktopCallbacks
 	ctx              context.Context
 	cancel           context.CancelFunc
@@ -57,9 +57,11 @@ func NewService(directory, executable, version string, mock bool, callbacks Desk
 	if err != nil {
 		return nil, fmt.Errorf("读取设置失败，原文件已保留: %w", err)
 	}
+	if !mock {
+		_ = retireMobileFiles(directory)
+	}
 	if mock {
 		c["auto_update"] = false
-		c["mobile_sync_enabled"] = false
 		c["upstream_detection_enabled"] = false
 		c["auto_sync_prices"] = false
 	}
@@ -106,9 +108,6 @@ func NewService(directory, executable, version string, mock bool, callbacks Desk
 	}
 	s.claudeQuota = NewClaudeAllowance(directory, executable, func() {
 		s.notify("claude_quota")
-		if s.mobile != nil {
-			s.mobile.RequestProjection()
-		}
 	}, func(r Row) {
 		s.claudeEstimate.Sample(r)
 		s.store.ObserveClaudeContexts(r)
@@ -134,8 +133,7 @@ func NewService(directory, executable, version string, mock bool, callbacks Desk
 	s.updater = NewUpdater(opts)
 	s.reports = NewReportManager(s.store, directory, s.Config)
 	s.upstream = NewUpstreamProxy(directory, version, s.Config, mock, func(id string) { s.store.markObservedPrice(id); s.notify("upstream") })
-	s.mobile = NewMobileHost(directory, s.store, s.quota, s.Config, mock, func() { s.notify("mobile") })
-	s.mobile.claudeQuota = s.claudeQuota.Snapshot
+	s.antigravityQuota = NewAntigravityQuota(s.Config, func() { s.notify("antigravity_quota") })
 	return s, nil
 }
 
@@ -179,16 +177,15 @@ func (s *Service) Start() {
 		}
 		go s.store.Run(s.ctx, func(partial bool) {
 			s.notify("usage")
-			if !partial {
-				s.mobile.RequestProjection()
-			}
 		}, firstOverview)
 		if !s.mock {
 			s.claudeQuota.Start()
 		}
+		if !s.mock {
+			go s.antigravityQuota.Run(s.ctx)
+		}
 		s.quota.Start(s.ctx)
 		s.updater.Start(s.ctx)
-		s.mobile.Start(s.ctx)
 		if !s.mock {
 			go func() {
 				s.lifecycleMu.Lock()
@@ -234,6 +231,8 @@ func (s *Service) GetOverview(ctx context.Context, q Query) (Row, error) {
 	var quota any
 	if normalizedClient(q.ClientKind) == "codex" {
 		quota = s.subscription(false)
+	} else if normalizedClient(q.ClientKind) == antigravityClient {
+		quota = s.antigravityQuota.Snapshot()
 	} else {
 		quota = s.claudeQuota.Snapshot()
 	}
@@ -263,7 +262,7 @@ func (s *Service) GetDetails(ctx context.Context, id string, page int) (Row, err
 	if err := queryError(ctx, nil); err != nil {
 		return nil, err
 	}
-	if normalizedClient(dataString(ValueRow(raw["request"]), "client_kind")) == "claude_code" {
+	if normalizedClient(dataString(ValueRow(raw["request"]), "client_kind")) != "codex" {
 		return raw, nil
 	}
 	return s.store.desktopRequestImages(raw, id), nil
@@ -318,6 +317,9 @@ func (s *Service) GetTrends(ctx context.Context, q Query) (Row, error) {
 }
 func (s *Service) GetSubscription() Row { return s.subscription(true) }
 func (s *Service) GetClientSubscription(client string) Row {
+	if normalizedClient(client) == antigravityClient {
+		return s.antigravityQuota.Snapshot()
+	}
 	if normalizedClient(client) != "claude_code" {
 		return s.GetSubscription()
 	}
@@ -329,6 +331,7 @@ func (s *Service) GetTrayState() Row {
 	r := s.quota.Snapshot()
 	delete(r, "reports")
 	r["state"] = s.store.Status()
+	r["antigravity"] = s.antigravityQuota.Snapshot()
 	return r
 }
 func (s *Service) subscription(reports bool) Row {
@@ -408,11 +411,10 @@ func (s *Service) GetStartupSettings() Row {
 }
 func (s *Service) GetSettings() Row {
 	r := s.GetStartupSettings()
-	r["mobile"] = s.mobile.Public()
 	r["upstream"] = s.upstream.Public()
 	r["update"] = s.updater.Snapshot()
 	r["report_due"] = s.reports.Due()
-	r["report_ready"] = Row{"codex": s.store.reportSource("codex").ready, "claude_code": s.store.reportSource("claude_code").ready}
+	r["report_ready"] = Row{"codex": s.store.reportSource("codex").ready, "claude_code": s.store.reportSource("claude_code").ready, antigravityClient: s.store.reportSource(antigravityClient).ready}
 	r["report_preferred_period"] = PreferredReportPeriod(time.Now())
 	s.mu.RLock()
 	r["incomplete_usage_notice_dismissed"] = s.incompleteUsageNoticeDismissed
@@ -429,7 +431,7 @@ func (s *Service) DismissIncompleteUsageNotice() {
 func (s *Service) SaveSettings(changes Row) (Row, error) {
 	changes = CloneRow(changes)
 	delete(changes, "incomplete_usage_notice_dismissed")
-	if s.mock && (ValueBool(changes["upstream_detection_enabled"]) || ValueBool(changes["mobile_sync_enabled"])) {
+	if s.mock && (ValueBool(changes["upstream_detection_enabled"])) {
 		return nil, errors.New("模拟模式不会修改真实服务或 Codex 配置")
 	}
 	old := s.Config()
@@ -451,7 +453,6 @@ func (s *Service) SaveSettings(changes Row) (Row, error) {
 	}
 	if s.mock {
 		c["auto_update"] = false
-		c["mobile_sync_enabled"] = false
 		c["upstream_detection_enabled"] = false
 		c["auto_sync_prices"] = false
 	}
@@ -463,11 +464,6 @@ func (s *Service) SaveSettings(changes Row) (Row, error) {
 		s.estimate.Interrupt()
 		s.claudeEstimate.Interrupt()
 	}
-	if ValueBool(old["mobile_sync_enabled"]) != ValueBool(c["mobile_sync_enabled"]) {
-		if _, e = s.mobile.Action("enable", Row{"enabled": ValueBool(c["mobile_sync_enabled"])}); e != nil {
-			s.notice(e.Error())
-		}
-	}
 	if s.callbacks.Action != nil {
 		_ = s.callbacks.Action("apply-settings")
 	}
@@ -475,6 +471,11 @@ func (s *Service) SaveSettings(changes Row) (Row, error) {
 	return s.GetSettings(), nil
 }
 func (s *Service) RefreshClient(client string) {
+	if normalizedClient(client) == antigravityClient {
+		s.store.Refresh()
+		s.antigravityQuota.Refresh()
+		return
+	}
 	if normalizedClient(client) == "claude_code" {
 		s.store.Refresh()
 		s.notify("claude_quota")
@@ -485,8 +486,8 @@ func (s *Service) RefreshClient(client string) {
 func (s *Service) Refresh() {
 	s.store.Refresh()
 	s.quota.Refresh()
+	s.antigravityQuota.Refresh()
 	s.requestAccountReports(true)
-	s.mobile.RequestProjection()
 }
 func (s *Service) Rescan()                            { s.store.Rescan() }
 func (s *Service) CheckUpdate() (Row, error)          { return s.updater.Check(s.ctx) }
@@ -548,7 +549,9 @@ func (s *Service) SaveClientReportPNG(data, period, client string) (Row, error) 
 		return nil, errors.New("无效报告周期")
 	}
 	agent := "ChatGPT"
-	if normalizedClient(client) == "claude_code" {
+	if normalizedClient(client) == antigravityClient {
+		agent = "Antigravity"
+	} else if normalizedClient(client) == "claude_code" {
 		agent = "Claude"
 	}
 	name := agent + "-" + period + "-" + time.Now().Format("20060102-150405") + ".png"
@@ -561,24 +564,6 @@ func (s *Service) SaveClientReportPNG(data, period, client string) (Row, error) 
 		return nil, e
 	}
 	return Row{"path": p}, nil
-}
-func (s *Service) GetMobile() Row { return s.mobile.Public() }
-func (s *Service) MobileAction(action string, values Row) (Row, error) {
-	r, e := s.mobile.Action(action, values)
-	if e != nil {
-		return r, e
-	}
-	if action == "enable" || action == "disable" {
-		c, err := LoadConfig(s.directory)
-		if err != nil {
-			return r, err
-		}
-		s.mu.Lock()
-		s.config = c
-		s.mu.Unlock()
-		s.notify("settings")
-	}
-	return r, nil
 }
 func (s *Service) UpstreamAction(enabled bool) (Row, error) {
 	previous := s.upstream.Public()
@@ -627,7 +612,6 @@ func (s *Service) Close() error {
 		if !s.mock {
 			s.claudeQuota.Close()
 		}
-		_ = s.mobile.Close()
 		if e := s.upstream.Stop(); e != nil {
 			result = e
 		}

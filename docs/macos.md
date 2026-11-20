@@ -1,6 +1,6 @@
-# macOS 原生开发说明 · v0.3.1
+# macOS 原生开发说明
 
-Mac 运行端已迁移到 Swift、SwiftUI、AppKit、SQLite 与 WidgetKit，最低 macOS 15。Windows 继续使用 Python/PySide6。Python 构建脚本仅负责组装与交付校验。
+Mac 运行端已迁移到 Swift、SwiftUI、AppKit、SQLite 与 WidgetKit，最低 macOS 15。Windows 使用 Wails + Go。Python 构建脚本仅负责组装与交付校验。
 
 ## 构建与启动
 
@@ -75,4 +75,4 @@ Widget Bundle 为 `com.wujuhu.codexio.widget`，本次构建号 **16**、短版�
 
 `./build_macos.sh` 已包含隔离模拟冒烟，固定检查启动、基本数据显示、关闭与重开，结果位于 `build/checks/macos-smoke/result.json`。签名、APP 版本、Widget 构建号、ZIP 解压与 SHA-256 校验继续保留。当前界面确需查看时只保存一张截图；不运行页面矩阵或全量回归。
 
-开发完成后提交到本地 Git。正式推送与发布仍按 AGENTS.md 的第二次明确确认流程，正式 Windows EXE 在 Windows CI 构建；本机开发阶段不创建正式版本目录。
+开发完成后提交到本地 Git。明确收到“推送并且发布”后，由发布协调脚本验证 Mac ZIP、Windows EXE 与共享清单，再推送、发布并归档。Windows 通过本地 Windows 主机的 SSH 交互会话构建。云端构建需要单独授权。开发产物保存在 build。

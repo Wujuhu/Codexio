@@ -20,7 +20,7 @@ from codexio.versions import AppVersion
 BUILD = ROOT / "build"
 STAGING = BUILD / "staging/macos"
 DESTINATION = BUILD / "dev/macos"
-WIDGET_VERSION = 35  # v0.3.17 host/version registration.
+WIDGET_VERSION = 36  # Antigravity Widget kinds.
 
 
 def run(*args, **kwargs):
@@ -120,8 +120,6 @@ def build_native(bundle, version):
         "LSMinimumSystemVersion": "15.0", "NSHighResolutionCapable": True,
         "NSPrincipalClass": "NSApplication", "NSSupportsAutomaticTermination": False,
         "CFBundleSupportedPlatforms": ["MacOSX"],
-        "NSLocalNetworkUsageDescription": "发现并安全连接你配对的 iPhone，同步用量与请求内容。",
-        "NSBonjourServices": ["_codexio._tcp"],
         "CFBundleURLTypes": [{"CFBundleURLName": "Codexio", "CFBundleURLSchemes": ["codexio"]}],
         "NSAppTransportSecurity": {"NSAllowsArbitraryLoads": True, "NSAllowsLocalNetworking": True},
     }

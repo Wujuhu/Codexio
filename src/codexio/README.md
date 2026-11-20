@@ -36,4 +36,4 @@ git show v0.2.10:src/codexio/desktop_widgets.py
 
 ## 共享资源
 
-`icons/`、`pricing_seed.json` 与 `translations.json` 仍由当前平台构建使用。不要随旧 Python 界面一起删除、移动或重命名。各平台实际版本分别读取 `macos/VERSION`、`windows/VERSION` 和 `ios/VERSION`。
+`icons/`、`pricing_seed.json` 与 `translations.json` 仍由当前平台构建使用。不要随旧 Python 界面一起删除、移动或重命名。各平台实际版本分别读取 `macos/VERSION` 和 `windows/VERSION`。

@@ -15,41 +15,32 @@ struct MenuBarView: View {
     @ObservedObject var state: AppState
     var dismiss: () -> Void
     private var summary: UsageSummary {state.menuSummary}
+    private var quotaClock: ScanClock {
+        switch state.menuClient {
+        case .codex: return state.menuQuotaClock
+        case .claudeCode: return state.claudeQuotaClock
+        case .antigravity: return state.antigravityQuotaClock
+        }
+    }
     var body: some View {
         ScrollView {
             VStack(spacing:12) {
                 HStack {
                     Button("Codexio ↗") { dismiss(); state.onOpenWindow?() }.buttonStyle(.plain).font(.system(size:13,weight:.medium)).foregroundStyle(.secondary)
                     Spacer()
-                    ScanStamp(clock:state.menuClient == .codex ? state.menuQuotaClock : state.claudeQuotaClock).font(.system(size:9)).foregroundStyle(.secondary)
+                    ScanStamp(clock:quotaClock).font(.system(size:9)).foregroundStyle(.secondary)
                 }.padding(.horizontal,6).padding(.bottom,3)
-                card(padding:5) {
-                    HStack(alignment:.top,spacing:5) {
-                        ForEach(DesktopClient.allCases,id:\.self) {client in
-                            Button {state.selectMenuClient(client)} label: {
-                                VStack(alignment:.leading,spacing:16) {
-                                    HStack(spacing:6) {
-                                        WidgetAgentLogo(agent:client.widgetAgent).frame(width:18,height:18)
-                                        Text(client.surfaceTitle).font(.system(size:14,weight:.semibold))
-                                        Spacer(minLength:2)
-                                        Image(systemName:state.menuClient == client ? "checkmark.circle.fill" : "circle")
-                                            .font(.system(size:12)).foregroundStyle(state.menuClient == client ? Color.blue : Color.secondary.opacity(0.3))
-                                    }
-                                    meter(state.menuWindow(client,week:false),title:L("5 小时额度", "5-hour limit"),week:false)
-                                    meter(state.menuWindow(client,week:true),title:L("周额度", "Weekly limit"),week:true)
-                                }.padding(.horizontal,10).padding(.vertical,12).frame(maxWidth:.infinity,alignment:.leading)
-                                    .background(state.menuClient == client ? Color.blue.opacity(0.055) : Color.clear,in:RoundedRectangle(cornerRadius:12))
-                                    .overlay(RoundedRectangle(cornerRadius:12).stroke(state.menuClient == client ? Color.blue.opacity(0.22) : .clear,lineWidth:0.7))
-                                    .contentShape(RoundedRectangle(cornerRadius:12))
-                            }.buttonStyle(.plain).accessibilityLabel(client.surfaceTitle)
-                                .accessibilityAddTraits(state.menuClient == client ? .isSelected : [])
-                        }
-                    }
+                ForEach(DesktopClient.allCases, id: \.self) { client in
+                    quotaCard(client)
                 }
                 if state.menuClient == .codex {
                     if state.menuQuota.retained {StatusNote(text:L("显示上次成功获取的额度", "Showing the last successfully retrieved limits"))}
                     if let error = state.quota.error {StatusNote(text:error)}
-                } else if let warning = state.claudeWarning {StatusNote(text:warning)}
+                } else if state.menuClient == .claudeCode, let warning = state.claudeWarning {
+                    StatusNote(text:warning)
+                } else if state.menuClient == .antigravity, let warning = state.antigravityWarning {
+                    StatusNote(text:warning)
+                }
                 card {
                     HStack { Text(L("今天", "Today")).fontWeight(.medium); Spacer(); Text(Date().formatted(.dateTime.month().day())).foregroundStyle(.secondary) }.font(.system(size:12))
                     HStack(alignment:.firstTextBaseline) {
@@ -84,21 +75,75 @@ struct MenuBarView: View {
     private func card<Content:View>(padding: CGFloat = 18,@ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment:.leading,spacing:17,content:content).padding(padding).frame(maxWidth:.infinity,alignment:.leading).background(Color.primary.opacity(0.025),in:RoundedRectangle(cornerRadius:16)).overlay(RoundedRectangle(cornerRadius:16).stroke(.primary.opacity(0.12),lineWidth:0.5))
     }
-    private func meter(_ window: QuotaWindow?,title: String,week: Bool) -> some View {
-        VStack(alignment:.leading,spacing:5) {
+    private func quotaCard(_ client: DesktopClient) -> some View {
+        let selected = state.menuClient == client
+        return Button { state.selectMenuClient(client) } label: {
+            VStack(alignment: .leading, spacing: 9) {
+                HStack(spacing: 6) {
+                    WidgetAgentLogo(agent: client.widgetAgent).frame(width: 18, height: 18)
+                    Text(client.surfaceTitle).font(.system(size: 14, weight: .semibold))
+                    Spacer(minLength: 2)
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 12))
+                        .foregroundStyle(selected ? Color.blue : Color.secondary.opacity(0.32))
+                }
+                HStack(alignment: .top, spacing: 14) {
+                    if client == .antigravity {
+                        antigravityMeter(cadence: "5h", title: L("5 小时额度", "5-hour limit"), timeOnly: true)
+                        antigravityMeter(cadence: "weekly", title: L("周额度", "Weekly limit"), timeOnly: false)
+                    } else {
+                        meter(state.menuWindow(client,week:false),title:L("5 小时额度", "5-hour limit"),week:false)
+                        meter(state.menuWindow(client,week:true),title:L("周额度", "Weekly limit"),week:true)
+                    }
+                }
+                if client == .antigravity, let message = state.antigravityQuota.message {
+                    Text(message).font(.system(size: 10)).foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(selected ? Color.blue.opacity(0.055) : Color.primary.opacity(0.025),
+                        in: RoundedRectangle(cornerRadius: 16))
+            .overlay(RoundedRectangle(cornerRadius: 16)
+                .stroke(selected ? Color.blue.opacity(0.22) : Color.primary.opacity(0.12), lineWidth: 0.7))
+            .contentShape(RoundedRectangle(cornerRadius: 16))
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+    private func antigravityMeter(cadence: String, title: String, timeOnly: Bool) -> some View {
+        let window = state.antigravityQuota.windows.first { $0.cadence == cadence && !$0.expired }
+        return meter(remaining: window?.remaining,
+                     reset: window?.reset_at.map(Date.init(timeIntervalSince1970:)),
+                     resetText: window?.reset_text ?? "", title: title, timeOnly: timeOnly)
+    }
+    private func meter(_ window: QuotaWindow?, title: String, week: Bool) -> some View {
+        meter(remaining: window?.remaining, reset: window?.reset, resetText: "", title: title, timeOnly: !week)
+    }
+    private func meter(remaining: Double?, reset: Date?, resetText: String, title: String, timeOnly: Bool) -> some View {
+        let calendar = Calendar.current
+        let showYear = reset.map { calendar.component(.year, from:$0) != calendar.component(.year, from:Date()) } ?? false
+        return VStack(alignment:.leading,spacing:5) {
             HStack(alignment:.firstTextBaseline,spacing:2) {
                 Text(title).font(.system(size:11)).lineLimit(1)
                 Spacer(minLength:2)
-                Text(percent(window?.remaining)).font(.system(size:19,weight:.semibold)).monospacedDigit().fixedSize()
-                if window?.remaining != nil {Text(L("剩余", "remaining")).font(.system(size:9)).foregroundStyle(.secondary)}
+                Text(percent(remaining)).font(.system(size:19,weight:.semibold)).monospacedDigit().fixedSize()
+                if remaining != nil {Text(L("剩余", "remaining")).font(.system(size:9)).foregroundStyle(.secondary)}
             }
             GeometryReader {geometry in
                 Capsule().fill(Color.secondary.opacity(0.16)).overlay(alignment:.leading) {
-                    Capsule().fill(Color.blue).frame(width:geometry.size.width*max(0,min(100,window?.remaining ?? 0))/100)
+                    Capsule().fill(Color.blue).frame(width:geometry.size.width*max(0,min(100,remaining ?? 0))/100)
                 }
             }.frame(height:6)
-            HStack(spacing:3) {Text(L("重置", "Resets")); Text(logDateText(window?.reset,timeOnly:!week,showYear:window?.reset.map {Calendar.current.component(.year,from:$0) != Calendar.current.component(.year,from:Date())} ?? false)).monospacedDigit()}
-                .font(.system(size:9)).foregroundStyle(.secondary).lineLimit(1).help(dateText(window?.reset))
+            if reset == nil, !resetText.isEmpty {
+                Text(resetText).font(.system(size:9)).foregroundStyle(.secondary).lineLimit(1).help(resetText)
+            } else {
+                HStack(spacing:3) {
+                    Text(L("重置", "Resets"))
+                    Text(logDateText(reset, timeOnly:timeOnly, showYear:showYear)).monospacedDigit()
+                }
+                .font(.system(size:9)).foregroundStyle(.secondary).lineLimit(1).help(dateText(reset))
+            }
         }
     }
     private func tokenRow(_ name: String,_ value: Int?) -> some View { HStack { Circle().fill(.blue.opacity(0.7)).frame(width:4,height:4); Text(name).foregroundStyle(.secondary); Spacer(); Text(compact(value.map(Double.init))).monospacedDigit() }.font(.system(size:11)) }

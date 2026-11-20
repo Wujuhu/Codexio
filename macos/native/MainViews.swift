@@ -26,7 +26,7 @@ struct MainView: View {
                     Button { state.toggleSidebar() } label: { Image(systemName:"sidebar.left") }.buttonStyle(.plain).accessibilityLabel(L("切换侧边栏", "Toggle sidebar"))
                     Spacer()
                     if ["overview","logs","trends","subscription","pricing"].contains(state.selectedPage) { ClientSwitcher(state:state) }
-                    FetchRefreshControls(activity:state.fetchActivity,clock:state.selectedPage == "pricing" ? state.pricingClock : (state.pageClient == .claudeCode && ["overview","logs","trends","subscription"].contains(state.selectedPage) ? (state.selectedPage == "subscription" ? state.claudeQuotaClock : state.claudeClock) : state.clock),openReport:{state.onOpenUsageReport?()}) {state.refresh()}
+                    FetchRefreshControls(activity:state.fetchActivity,clock:pageClock,openReport:{state.onOpenUsageReport?()}) {state.refresh()}
                 }.padding(.horizontal,PageLayout.inset).frame(height:48)
                 Divider()
                 HStack(alignment:.firstTextBaseline) {
@@ -44,12 +44,41 @@ struct MainView: View {
         .preferredColorScheme(state.theme == "dark" ? .dark : state.theme == "light" ? .light : nil)
         .onChange(of:state.selectedPage) { _,page in if state.pageClient == .codex && (page == "subscription" || (page == "trends" && state.usageSection == "threads")) { state.refreshReports() } }
     }
+    private var pageClock: ScanClock {
+        if state.selectedPage == "pricing" { return state.pricingClock }
+        guard ["overview", "logs", "trends", "subscription"].contains(state.selectedPage) else { return state.clock }
+        switch state.pageClient {
+        case .codex: return state.clock
+        case .claudeCode: return state.selectedPage == "subscription" ? state.claudeQuotaClock : state.claudeClock
+        case .antigravity: return state.selectedPage == "subscription" ? state.antigravityQuotaClock : state.antigravityClock
+        }
+    }
     @ViewBuilder private var page: some View {
         switch state.selectedPage {
-        case "overview": if state.pageClient == .claudeCode { ClaudeOverviewView(state:state) } else { OverviewView(state:state) }
-        case "logs": if state.pageClient == .claudeCode { ClaudeLogsView(state:state) } else { LogsView(state:state) }
-        case "trends": if state.pageClient == .claudeCode { ClaudeUsageView(state:state) } else { UsageView(state:state) }
-        case "subscription": if state.pageClient == .claudeCode {ClaudeSubscriptionView(state:state)} else {SubscriptionView(state:state)}
+        case "overview":
+            switch state.pageClient {
+            case .codex: OverviewView(state:state)
+            case .claudeCode: ClaudeOverviewView(state:state)
+            case .antigravity: ScrollView { AntigravityOverviewView(state:state).padding(.horizontal, PageLayout.inset).padding(.bottom, PageLayout.inset) }
+            }
+        case "logs":
+            switch state.pageClient {
+            case .codex: LogsView(state:state)
+            case .claudeCode: ClaudeLogsView(state:state)
+            case .antigravity: AntigravityLogsView(state:state)
+            }
+        case "trends":
+            switch state.pageClient {
+            case .codex: UsageView(state:state)
+            case .claudeCode: ClaudeUsageView(state:state)
+            case .antigravity: AntigravityUsageView(state:state)
+            }
+        case "subscription":
+            switch state.pageClient {
+            case .codex: SubscriptionView(state:state)
+            case .claudeCode: ClaudeSubscriptionView(state:state)
+            case .antigravity: AntigravitySubscriptionView(state:state)
+            }
         case "pricing": PricingView(state:state)
         default: SettingsView(state:state)
         }
@@ -253,7 +282,7 @@ struct LogsView: View {
     }
     var body: some View {
         VStack(alignment:.leading,spacing:14) {
-            LogFilterBar(period:$period,mode:$mode,model:$model,status:$status,query:$query,from:$from,through:$through,models:state.usage.models.filter(MobileTrends.isSingleModel),fields:fields) {state.setPreference("native_log_columns",$0)}
+            LogFilterBar(period:$period,mode:$mode,model:$model,status:$status,query:$query,from:$from,through:$through,models:state.usage.models.filter(UsageModel.isSingleModel),fields:fields) {state.setPreference("native_log_columns",$0)}
             CompactTable(columns:LogFields.columns(fields),rows:projection.value.rows.map { row in LogFields.row(row,timeOnly:period == "today",showYear:projection.value.showYear) {state.usage.members(of:row)} },revision:projection.value.revision.uuidString+period,preferences:state.preferences,storageKey:"logs",scrollResetKey:projection.value.scrollResetKey)
                 .overlay(RoundedRectangle(cornerRadius:10).stroke(.secondary.opacity(0.16)))
             HStack {

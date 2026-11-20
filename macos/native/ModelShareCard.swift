@@ -6,8 +6,8 @@ struct ModelShareCard: View {
     @State private var metric: Int
     init(projection: TrendProjection,client: DesktopClient = .codex) {self.projection = projection; self.client = client; _metric = State(initialValue:0)}
     @State private var visible = 5
-    nonisolated static func amount(_ value: MobileMetric,_ index: Int) -> Double { index == 0 ? value.cost ?? 0 : index == 1 ? Double(value.tokens ?? 0) : Double(value.requests) }
-    private func share(_ value: MobileMetric,_ index: Int) -> Double {
+    nonisolated static func amount(_ value: ModelMetrics,_ index: Int) -> Double { index == 0 ? value.cost ?? 0 : index == 1 ? Double(value.tokens ?? 0) : Double(value.requests) }
+    private func share(_ value: ModelMetrics,_ index: Int) -> Double {
         let total = index == 0 ? projection.summary.cost ?? 0 : index == 1 ? Double(projection.summary.tokens ?? 0) : Double(projection.summary.requests)
         return total > 0 ? min(1,max(0,Self.amount(value,index)/total)) : 0
     }

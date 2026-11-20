@@ -5,7 +5,7 @@ import SwiftUI
 enum MenuBarField {
     static let metrics = ["week","task","today_cost","today_tokens","task_cost","task_tokens"]
     // Existing IDs retain their ChatGPT meaning when upgrading saved choices.
-    static let all = ["logo"]+metrics+metrics.map {"claude_"+$0}
+    static let all = ["logo"]+metrics+metrics.map {"claude_"+$0}+metrics.map {"antigravity_"+$0}
     static let defaults = ["task","week","claude_task","claude_week"]
     static func normalize(_ values: [String]) -> [String] {
         var seen = Set<String>()
@@ -13,8 +13,16 @@ enum MenuBarField {
         if fields.isEmpty { return ["logo"] }
         return fields.contains("logo") ? ["logo"]+fields.filter {$0 != "logo"} : fields
     }
-    static func client(_ field: String) -> DesktopClient {field.hasPrefix("claude_") ? .claudeCode : .codex}
-    static func metric(_ field: String) -> String {field.hasPrefix("claude_") ? String(field.dropFirst(7)) : field}
+    static func client(_ field: String) -> DesktopClient {
+        if field.hasPrefix("antigravity_") { return .antigravity }
+        if field.hasPrefix("claude_") { return .claudeCode }
+        return .codex
+    }
+    static func metric(_ field: String) -> String {
+        if field.hasPrefix("antigravity_") { return String(field.dropFirst("antigravity_".count)) }
+        if field.hasPrefix("claude_") { return String(field.dropFirst("claude_".count)) }
+        return field
+    }
     static func isTask(_ field: String) -> Bool {metric(field) == "task"}
     static func title(_ field: String) -> String {
         if field == "logo" {return "Codexio Logo"}
@@ -33,10 +41,10 @@ enum MenuBarField {
         if field == "logo" { return "" }
         let client = Self.client(field), today = state.menuSummary(for:client)
         let recent = state.menuRequest(for:client), running = state.menuTaskRunning(for:client)
-        let ready = running != nil
-        let current = !ready || (running == true && recent?.raw.string("status") != "running") ? nil : recent
-        let todayCost = ready ? today.cost ?? (today.unknownCosts == 0 ? 0 : nil) : nil
-        let todayTokens = ready ? today.tokens ?? (today.unknownCosts == 0 ? 0 : nil) : nil
+        let ready = client == .antigravity ? state.menuDataReady(for:client) : running != nil
+        let current = running == nil || (running == true && recent?.raw.string("status") != "running") ? nil : recent
+        let todayCost = ready ? today.cost ?? (client != .antigravity && today.unknownCosts == 0 ? 0 : nil) : nil
+        let todayTokens = ready ? today.tokens ?? (client != .antigravity && today.unknownCosts == 0 ? 0 : nil) : nil
         switch metric(field) {
         case "week": return percent(state.menuWindow(client,week:true)?.remaining)
         case "task": return running.map {$0 ? L("运行中", "Running") : L("已完成", "Completed")} ?? "—"

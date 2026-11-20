@@ -36,8 +36,10 @@ struct UsageReportModel: Codable, Identifiable, Sendable {
     var tokens: Int
     var costUSD: Double?
     var costComplete = true
+    var tokensKnown: Bool? = nil
     var id: String { name }
     var costLabel: String { (costUSD != nil && !costComplete ? "≥" : "") + reportUSDLabel(costUSD) }
+    var tokenLabel: String { tokensKnown == false ? "—" : reportTokenLabel(tokens) + " Token" }
 }
 struct UsageReportProject: Codable, Identifiable, Sendable {
     var id: String
@@ -85,7 +87,10 @@ struct UsageReportData: Codable, Sendable {
     var cachePercent: Int { percent(cachedInputTokens, of: inputTokens) }
     var cacheLabel: String { inputTokens > 0 ? "\(cachePercent)%" : "—" }
     var costLabel: String { (costUSD != nil && !costComplete ? "≥" : "") + reportUSDLabel(costUSD) }
-    var tokenSummary: String { (tokensComplete ? "" : "≥") + reportTokenLabel(totalTokens) }
+    var tokenSummary: String {
+        if clientKind == "antigravity", totalTokens == 0, !tokensComplete, !models.contains(where: { $0.tokensKnown == true }) { return "—" }
+        return (tokensComplete ? "" : "≥") + reportTokenLabel(totalTokens)
+    }
     var topModel: UsageReportModel? { models.filter { $0.name != L("其他模型", "Other models") }.max { $0.calls < $1.calls } }
     var topProject: UsageReportProject? { projects.filter { $0.id != "other" }.max { $0.requests < $1.requests } }
     var peakTimeSlice: UsageReportTimeSlice? { timeSlices.filter { $0.requests > 0 }.max { $0.requests < $1.requests } }
@@ -208,6 +213,11 @@ final class UsageReportStore {
     func load(claude: ClaudeLedger,sourceKey: String,now: Date = Date()) throws -> UsageReportCollection {
         try load(ledger:claude.revision,priceVersion:claude.pricing.version,sourceKey:sourceKey,client:.claudeCode,now:now) {ranges,_ in
             try ranges.map {try claude.reportAggregate(range:$0)}
+        }
+    }
+    func load(antigravity: AntigravityLedger, sourceKey: String, now: Date = Date()) throws -> UsageReportCollection {
+        try load(ledger: antigravity.revision, priceVersion: ModelPricing.shared.version, sourceKey: sourceKey, client: .antigravity, now: now) { ranges, _ in
+            try ranges.map { try antigravity.reportAggregate(range: $0) }
         }
     }
     private func load(ledger: Int,priceVersion: String,sourceKey: String,client: DesktopClient,now: Date,aggregate: ([DateInterval],Calendar) throws -> [Aggregate]) throws -> UsageReportCollection {

@@ -170,7 +170,7 @@
               {#if style === 'bookmark'}<path d={`M447 ${height*.19}C475 ${height*.29} 410 ${height*.43} 456 ${height*.58}C480 ${height*.72} 478 ${height-38} 431 ${height-70}C389 ${height-99} 384 ${height-50} 413 ${height-55}`} fill="none" stroke={paper[1]} stroke-opacity=".72" stroke-width="3" stroke-linecap="round"/>{/if}
             </svg>
             <div class="mac-report-content">
-              <header class="mac-report-header"><img src="/ReportCards/brand-mark.png" alt=""/><div><strong>{client==='claude_code'?'Claude':'ChatGPT'}</strong><span>{tr(period === 'day' ? 'AI日报' : period === 'week' ? 'AI周报' : 'AI月报')}</span></div><time>{text(data.date_label)}</time></header>
+              <header class="mac-report-header"><img src="/ReportCards/brand-mark.png" alt=""/><div><strong>{client==='claude_code'?'Claude':client==='antigravity'?'Antigravity':'ChatGPT'}</strong><span>{tr(period === 'day' ? 'AI日报' : period === 'week' ? 'AI周报' : 'AI月报')}</span></div><time>{text(data.date_label)}</time></header>
               <div class="mac-report-rule mac-report-header-rule"></div>
               <section class="mac-report-hero">
                 <div class="mac-report-hero-copy"><h1 style:font-size={style === 'bookmark' ? '41px' : '43px'}>{headline}</h1>
@@ -202,8 +202,8 @@
     <aside class="mac-report-controls">
       <button bind:this={closeButton} class="mac-report-close" onclick={onclose} aria-label={tr('关闭报告')}><Icon name="close" size={14}/></button>
       <div class="mac-report-agents" role="group" aria-label={tr('客户端来源')}>
-        {#each [['codex','ChatGPT','chatgpt'],['claude_code','Claude','claude-code']] as [source,label,icon]}
-          <button class:mac-report-selected={client===source} aria-label={label} title={label} aria-pressed={client===source} disabled={exporting} onclick={()=>{client=source as ClientKind;}}><span style:mask-image={`url(/client-icons/${icon}.svg)`} aria-hidden="true"></span></button>
+        {#each [['codex','ChatGPT','chatgpt'],['claude_code','Claude','claude-code'],['antigravity','Antigravity','antigravity.png']] as [source,label,icon]}
+          <button class:mac-report-selected={client===source} aria-label={label} title={label} aria-pressed={client===source} disabled={exporting} onclick={()=>{client=source as ClientKind;}}><span style:mask-image={`url(/client-icons/${icon.includes('.')?icon:icon+'.svg'})`} aria-hidden="true"></span></button>
         {/each}
       </div>
       <div class="mac-report-periods">{#each [['day','日报'],['week','周报'],['month','月报']] as [p,label]}<button class:mac-report-selected={period === p} aria-pressed={period === p} disabled={exporting} onclick={() => { period = p; }}>{tr(label)}</button>{/each}</div>

@@ -12,6 +12,9 @@ import (
 // Reuse the Codex journey presentation and bounded source reader. Ownership is
 // resolved by indexed UUID ancestry, never by time or matching prompt text.
 func (s *Service) GetClientJourneyCatalog(client, project, before string) (Row, error) {
+	if normalizedClient(client) == antigravityClient {
+		return Row{"projects": []Row{}, "threads": []Row{}, "available": false}, nil
+	}
 	if normalizedClient(client) != "claude_code" {
 		return s.GetJourneyCatalog(project, before)
 	}
@@ -277,6 +280,9 @@ func claudeJourneyEvents(row, meter Row, last *string) []Row {
 }
 
 func (s *Service) OpenJourneySource(client, thread string) error {
+	if normalizedClient(client) == antigravityClient {
+		return fmt.Errorf("Antigravity 不提供执行行程")
+	}
 	if normalizedClient(client) != "claude_code" {
 		return s.OpenChat(thread)
 	}

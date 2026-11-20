@@ -232,6 +232,17 @@ func (s *Store) Prices() []Row {
 func (s *Store) SetPrice(model string, rates Row) error { return officialPriceReadOnly() }
 func (s *Store) price(r Row) Row {
 	r = CloneRow(r)
+	if dataString(r, "client_kind") == antigravityClient {
+		s.mu.RLock()
+		version := s.priceVersion
+		s.mu.RUnlock()
+		priced := frozenPrices.price(r, frozenPrices.model(dataString(r, "model")), false, true, version)
+		if priced["cost_usd"] != nil {
+			priced["pricing_status"] = "estimated"
+			priced["pricing_basis"] = "official_api_reference"
+		}
+		return priced
+	}
 	if normalizedClient(dataString(r, "client_kind")) == "claude_code" {
 		r["cost_usd"] = nil
 		r["pricing_status"] = "not_applicable"

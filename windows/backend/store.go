@@ -18,6 +18,7 @@ import (
 )
 
 type Store struct {
+	antigravity             antigravityScan
 	modelNames              map[string]*requestModelNames
 	modelNameRoots          map[string]string
 	pendingObservedPrices   map[string]bool
@@ -142,14 +143,15 @@ func OpenStore(o DataOptions) (*Store, error) {
 		db.Close()
 		return nil, e
 	}
+	if e = s.antigravitySchema(); e != nil {
+		db.Close()
+		return nil, e
+	}
 	if e = s.installScopeGuards(); e != nil {
 		db.Close()
 		return nil, e
 	}
-	if e = s.mobileImageSchema(); e != nil {
-		db.Close()
-		return nil, e
-	}
+	_ = s.retireMobileSchema()
 	if e = s.loadPrices(); e != nil {
 		db.Close()
 		return nil, e
@@ -374,7 +376,7 @@ func (s *Store) Run(ctx context.Context, changed func(partial bool), firstOvervi
 		s.refreshActivity(true)
 		s.work.Lock()
 		before := s.Generation()
-		var codexErr, claudeErr error
+		var codexErr, claudeErr, antigravityErr error
 		if !s.options.Mock {
 			if initial {
 				s.setStartupStage("codex")
@@ -399,6 +401,7 @@ func (s *Store) Run(ctx context.Context, changed func(partial bool), firstOvervi
 				s.setStartupStage("claude")
 			}
 			claudeErr = s.collectClaude(ctx, force)
+			antigravityErr = s.collectAntigravity(ctx, force)
 			if codexErr == nil && claudeErr == nil {
 				_ = s.syncPrices(ctx, false)
 				_ = s.syncClaudePrices(ctx, false)
@@ -429,13 +432,14 @@ func (s *Store) Run(ctx context.Context, changed func(partial bool), firstOvervi
 		s.nextFuture = future.String
 		s.mu.Lock()
 		var reportSourcesChanged bool
-		if s.options.DeferProjection && (!s.reportSources["codex"].ready || !s.reportSources["claude_code"].ready) {
+		if s.options.DeferProjection && (!s.reportSources["codex"].ready || !s.reportSources["claude_code"].ready || !s.reportSources[antigravityClient].ready) {
 			if claudeErr == nil && s.claudeStatus["source_status"] == "error" {
 				claudeErr = errors.New(dataString(s.claudeStatus, "error"))
 			}
 			codexChanged := s.finishInitialReportScanLocked("codex", errors.Join(codexErr, projectionErr))
 			claudeChanged := s.finishInitialReportScanLocked("claude_code", errors.Join(claudeErr, contextErr, projectionErr))
-			reportSourcesChanged = codexChanged || claudeChanged
+			antigravityChanged := s.finishInitialReportScanLocked(antigravityClient, errors.Join(antigravityErr, projectionErr))
+			reportSourcesChanged = codexChanged || claudeChanged || antigravityChanged
 		}
 		previous := dataJSON(s.status)
 		s.status = Row{"status": "ready"}

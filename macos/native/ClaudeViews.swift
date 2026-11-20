@@ -4,7 +4,7 @@ import AppKit
 struct ClientSwitcher: View {
     @ObservedObject var state: AppState
     private static let images: [DesktopClient:NSImage] = Dictionary(uniqueKeysWithValues:DesktopClient.allCases.compactMap { client in
-        guard let url = Bundle.main.resourceURL?.appendingPathComponent("client-icons/"+client.logo+".svg"), let image = NSImage(contentsOf:url) else {return nil}
+        guard let url = Bundle.main.resourceURL?.appendingPathComponent("client-icons/"+client.logo+"."+client.logoExtension), let image = NSImage(contentsOf:url) else {return nil}
         image.isTemplate = true; return (client,image)
     })
     var body: some View {

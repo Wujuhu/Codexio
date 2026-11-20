@@ -62,6 +62,7 @@ def write_manifest(system, asset, version, output, *, base=None, architecture=No
     if asset.name != name:
         raise UpdateError("更新文件名必须为 " + name)
     data = load_base(system, base, version=version)
+    data.pop("ios", None)
     if system == "macos":
         # Keep every existing Windows field intact, including its own version.
         if "version" in data:

@@ -27,6 +27,19 @@ final class AppState: ObservableObject {
     var claudeQuotaFresh: Bool {claudeObserved.map {Date().timeIntervalSince($0) >= 0 && Date().timeIntervalSince($0) < 900} == true}
     let claudeLedger: ClaudeLedger
     let claudeClock = ScanClock()
+    let antigravityLedger: AntigravityLedger
+    let antigravityClock = ScanClock()
+    let antigravityQuotaClock = ScanClock()
+    private let antigravityAllowance = AntigravityAllowance()
+    private var antigravityQuotaRequest: UUID?
+    private(set) var antigravityQuota = AntigravityQuota()
+    @Published private(set) var antigravityRevision = UUID()
+    @Published private(set) var antigravityModels: [String] = []
+    @Published private(set) var antigravityWarning: String?
+    @Published private(set) var antigravitySurface = AgentSurfaceData()
+    private var antigravityPublishedKey = "" // dataQueue-owned
+    private var antigravityLastScan = Date.distantPast
+    private var antigravityFutureBoundary = Date.distantFuture
     @Published var pageClient: DesktopClient = .codex
     var logFilters: [DesktopClient:LogFilterMemory] = [:]
     @Published private(set) var claudeRevision = UUID()
@@ -48,17 +61,6 @@ final class AppState: ObservableObject {
     let fetchActivity = FetchActivity()
     let quotaClock = ScanClock()
     let menuQuotaClock = ScanClock()
-    lazy var mobileSync = MobileSync(paths: paths, detailProvider: { [weak self] id in
-        guard let self else{return nil}
-        return try self.dataQueue.sync {id.hasPrefix("claude_code:") ? try self.claudeLedger.mobileDetail(id) : try self.database.requestMessageDetail(id)}
-    }, detailPreparer: { [weak self] ids in try self?.dataQueue.sync {try self?.database.prepareRequestMessageDetails(ids.filter{!$0.hasPrefix("claude_code:")})} })
-    private var claudeMobilePending=false
-    private var claudeMobileKey=""
-    private var claudeMobileNext=Date.distantPast
-    private var claudeMobileTimeBoundary=Date.distantFuture
-    private var claudeMobileLastObserved=Date.distantPast
-    private var claudeMobileDayKey=""
-    private var claudeMobileSnapshot:ClaudeMobileSnapshot?
     var usageReportDirectory: URL { paths.data.appendingPathComponent("Reports", isDirectory: true) }
     private lazy var usageReportStore = UsageReportStore(directory: usageReportDirectory)
     // Overview can use the saved ledger while the first scan is still running.
@@ -107,12 +109,30 @@ final class AppState: ObservableObject {
     @Published private(set) var menuFields = MenuBarField.defaults
     @Published private(set) var menuClient: DesktopClient = .codex
     var menuSummary: UsageSummary {menuSummary(for:menuClient)}
-    func menuSummary(for client: DesktopClient) -> UsageSummary {client == .codex ? usage.summaries["today"] ?? UsageSummary() : claudeSurface.today}
-    var menuDays: [DayUsage] {menuClient == .codex ? Array(usage.activity.days.suffix(7)) : claudeSurface.days}
-    func menuRequest(for client: DesktopClient) -> UsageRow? {client == .codex ? usage.widgetRequest : claudeSurface.request}
-    func menuTaskRunning(for client: DesktopClient) -> Bool? {client == .codex ? taskRunning : claudeSurface.ready ? claudeSurface.hasRunningTask : nil}
+    func menuSummary(for client: DesktopClient) -> UsageSummary {
+        switch client { case .codex: usage.summaries["today"] ?? UsageSummary(); case .claudeCode: claudeSurface.today; case .antigravity: antigravitySurface.today }
+    }
+    var menuDays: [DayUsage] {
+        switch menuClient { case .codex: Array(usage.activity.days.suffix(7)); case .claudeCode: claudeSurface.days; case .antigravity: antigravitySurface.days }
+    }
+    func menuRequest(for client: DesktopClient) -> UsageRow? {
+        switch client { case .codex: usage.widgetRequest; case .claudeCode: claudeSurface.request; case .antigravity: antigravitySurface.request }
+    }
+    func menuTaskRunning(for client: DesktopClient) -> Bool? {
+        switch client { case .codex: taskRunning; case .claudeCode: claudeSurface.ready ? claudeSurface.hasRunningTask : nil; case .antigravity: nil }
+    }
+    func menuDataReady(for client: DesktopClient) -> Bool {
+        client == .antigravity ? antigravitySurface.ready : menuTaskRunning(for: client) != nil
+    }
     func menuWindow(_ client: DesktopClient,week: Bool) -> QuotaWindow? {
-        let window = client == .codex ? (week ? menuQuota.week : menuQuota.five) : (claudeQuotaFresh ? (week ? claudeQuota.week : claudeQuota.five) : nil)
+        let window: QuotaWindow?
+        switch client {
+        case .codex: window = week ? menuQuota.week : menuQuota.five
+        case .claudeCode: window = claudeQuotaFresh ? (week ? claudeQuota.week : claudeQuota.five) : nil
+        case .antigravity:
+            let bucket = antigravityQuota.representative(week ? .weekly : .fiveHour)
+            window = bucket.map { QuotaWindow(id: $0.id, minutes: week ? 10080 : 300, used: $0.remaining.map {100-$0}, reset: parsedDate($0.reset_at)) }
+        }
         return window.flatMap {window in window.reset.map {$0 <= Date()} == true ? nil : window}
     }
     func selectMenuClient(_ client: DesktopClient) {setPreference("menu_bar_agent",client.rawValue)}
@@ -164,6 +184,7 @@ final class AppState: ObservableObject {
         self.paths = paths; preferences = Preferences(paths)
         claudeCatalog = ClaudePricingCatalog(paths.pricing)
         claudeLedger = try ClaudeLedger(paths:paths,pricing:claudeCatalog)
+        antigravityLedger = try AntigravityLedger(paths: paths)
         claudePrices = claudeCatalog.rows; claudePricesRevision = claudeCatalog.version
         claudeAllowance = ClaudeAllowance(paths:paths,root:claudeLedger.root)
         let ledger = claudeLedger
@@ -202,13 +223,14 @@ final class AppState: ObservableObject {
     deinit {if let sleepObserver {NSWorkspace.shared.notificationCenter.removeObserver(sleepObserver)}}
     func start() {
         if paths.mock { seedMock(); return }
-        if UserDefaults.standard.bool(forKey:"codexio.mobile.enabled") { mobileSync.start() }
         claudeAllowance.onSample = { [weak self] sample in self?.dataQueue.async { [weak self] in self?.receiveClaudeQuota(sample)} }
         claudeAllowance.start()
-        refreshUsage(); refreshQuota()
+        refreshUsage(); refreshQuota(); refreshAntigravityQuota()
         configureTimers()
         dataQueue.async { [weak self] in
-            try? self?.catalog.sync();try? self?.claudeCatalog.sync()
+            guard let self else { return }
+            retireMobileStorage(self.paths)
+            try? self.catalog.sync(); try? self.claudeCatalog.sync()
         }
 
     }
@@ -216,14 +238,16 @@ final class AppState: ObservableObject {
         scanTimer?.invalidate(); quotaTimer?.invalidate(); priceTimer?.invalidate()
         guard !paths.mock else { return }
         scanTimer = Timer.scheduledTimer(withTimeInterval:max(5,preferences.analytics.number("usage_refresh_interval_seconds") ?? 10),repeats:true) { [weak self] _ in self?.refreshUsage() }
-        quotaTimer = Timer.scheduledTimer(withTimeInterval:max(30,preferences.general.number("refresh_interval_seconds") ?? 60),repeats:true) { [weak self] _ in self?.refreshQuota() }
+        quotaTimer = Timer.scheduledTimer(withTimeInterval:max(30,preferences.general.number("refresh_interval_seconds") ?? 60),repeats:true) { [weak self] _ in
+            self?.refreshQuota(); self?.refreshAntigravityQuota()
+        }
         scanTimer?.tolerance = 1
         quotaTimer?.tolerance = 5
 
     }
     func stop() {
-        if !paths.mock { mobileSync.stop() }
         stopped = true; claudeAllowance.stop(); scanTimer?.invalidate(); quotaTimer?.invalidate(); priceTimer?.invalidate(); indexer.cancel(); claudeLedger.cancel(); client.close()
+        antigravityLedger.cancel(); antigravityAllowance.stop(); antigravityQuotaRequest = nil
         fetchActivity.clear()
         reportGeneration = UUID()
     }
@@ -255,10 +279,11 @@ final class AppState: ObservableObject {
             guard stopped, quitGeneration == generation else { return }
             client.resumeAfterCancelledShutdown()
             claudeLedger.resume()
+            antigravityLedger.resume()
             stopped = false; scanning = false; refreshing = false; reportInFlight = false
             loading = false; reportsLoading = false
             configureTimers()
-            if !paths.mock, UserDefaults.standard.bool(forKey:"codexio.mobile.enabled") { mobileSync.start() }
+            refreshAntigravityQuota()
             announceWidgetHost()
         }
     }
@@ -274,9 +299,36 @@ final class AppState: ObservableObject {
         if paths.snapshot != canonical, ProcessInfo.processInfo.environment["CODEXIO_DATA_DIR"] == nil { try atomicJSON(snapshot,to:canonical) }
         WidgetCenter.shared.reloadAllTimelines()
     }
-    func refresh() { if selectedPage == "pricing" {syncPrices();return}; refreshUsage(); if pageClient == .codex || !["overview","logs","trends","subscription"].contains(selectedPage) { refreshQuota(force:true) }; if selectedPage == "subscription" && pageClient == .codex { refreshReports(force:true) } }
+    func refresh() {
+        if selectedPage == "pricing" { syncPrices(); return }
+        refreshUsage()
+        if pageClient == .antigravity { refreshAntigravityQuota() }
+        if pageClient == .codex || !["overview","logs","trends","subscription"].contains(selectedPage) { refreshQuota(force:true) }
+        if selectedPage == "subscription" && pageClient == .codex { refreshReports(force:true) }
+    }
+    private func refreshAntigravityQuota() {
+        guard !stopped, !paths.mock, antigravityQuotaRequest == nil else { return }
+        let request = UUID()
+        antigravityQuotaRequest = request
+        antigravityAllowance.refresh { [weak self] quota in
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.antigravityQuotaRequest == request, !self.stopped else { return }
+                self.antigravityQuotaRequest = nil
+                let changed = self.antigravityQuota.windows != quota.windows || self.antigravityQuota.availability != quota.availability
+                if changed { self.objectWillChange.send() }
+                self.antigravityQuota = quota
+                if let observed = quota.observed { self.antigravityQuotaClock.updated = observed }
+                if changed { self.onMenuDataChange?() }
+                self.publishWidget()
+            }
+        }
+    }
     private func usageReportSourceKey(for client: DesktopClient) -> String {
-        client == .codex ? preferences.roots.map(\.path).sorted().joined(separator:"\n")+"\n"+accountRoot.path : "claude_code\n"+claudeLedger.root.path
+        switch client {
+        case .codex: preferences.roots.map(\.path).sorted().joined(separator:"\n")+"\n"+accountRoot.path
+        case .claudeCode: "claude_code\n"+claudeLedger.root.path
+        case .antigravity: "antigravity\n"+antigravityLedger.root.path
+        }
     }
     func prepareUsageReports(client: DesktopClient = .codex,completion: @escaping (Result<UsageReportCollection, Error>) -> Void) {
         let sourceKey = usageReportSourceKey(for:client)
@@ -284,7 +336,9 @@ final class AppState: ObservableObject {
             guard let self else {return}
             let result: Result<UsageReportCollection,Error>
             do {
-                if client == .claudeCode {
+                if client == .antigravity {
+                    result = .success(try self.usageReportStore.load(antigravity: self.antigravityLedger, sourceKey: sourceKey))
+                } else if client == .claudeCode {
                     result = .success(try self.usageReportStore.load(claude:self.claudeLedger,sourceKey:sourceKey))
                 } else {
                     let snapshot = try self.usageCache.load(roots:self.preferences.roots)
@@ -342,7 +396,44 @@ final class AppState: ObservableObject {
                 DispatchQueue.main.async { self.claudeWarning = error.localizedDescription }
                 self.finishInitialReportScan(.claudeCode, error: error)
             }
+            do {
+                try self.antigravityLedger.scan()
+                try self.publishAntigravity()
+                self.finishInitialReportScan(.antigravity)
+            } catch {
+                DispatchQueue.main.async { self.antigravityWarning = L("Antigravity 本机记录暂不可读", "Local Antigravity records are temporarily unreadable") }
+                self.finishInitialReportScan(.antigravity, error: error)
+            }
             DispatchQueue.main.async { self.scanning = false }
+        }
+    }
+    private func publishAntigravity() throws {
+        let now = Date(), calendar = Calendar.current, zone = TimeZone.current
+        let key = "\(antigravityLedger.revision)|\(calendar.startOfDay(for: now).timeIntervalSince1970)|\(zone.identifier)|\(zone.secondsFromGMT(for: now))"
+        let warning = antigravityLedger.warning
+        guard key != antigravityPublishedKey || now < antigravityLastScan || now >= antigravityFutureBoundary else {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.stopped else { return }
+                if self.antigravityWarning != warning { self.antigravityWarning = warning }
+            }
+            return
+        }
+        let today = try antigravityLedger.trend(range: UsageRange(period: "today", now: now), granularity: "hour")
+        let week = try antigravityLedger.trend(range: UsageRange(period: "week", now: now), granularity: "day")
+        let models = try antigravityLedger.models()
+        let next = AgentSurfaceData(ready: warning == nil || today.summary.requests > 0 || week.summary.requests > 0,
+                                    request: today.recent.first ?? week.recent.first, today: today.summary, days: week.days)
+        antigravityFutureBoundary = try antigravityLedger.nextFuture(after: now) ?? .distantFuture
+        antigravityPublishedKey = key
+        antigravityLastScan = now
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.stopped else { return }
+            self.antigravityRevision = UUID()
+            if self.antigravityModels != models { self.antigravityModels = models }
+            if self.antigravityWarning != warning { self.antigravityWarning = warning }
+            if self.antigravitySurface.contentKey != next.contentKey { self.antigravitySurface = next; self.onMenuDataChange?() }
+            self.antigravityClock.updated = now
+            self.publishWidget()
         }
     }
     private func publishCommittedOverview(roots: [URL]) {
@@ -738,35 +829,24 @@ final class AppState: ObservableObject {
     }
     func publishWidget() {
         guard !paths.mock, !stopped else { return }
-        mobileSync.update(usage,quota:menuQuota,observed:clock.updated)
-        if mobileSync.enabled,!claudeMobilePending,!paths.mock {
-            claudeMobilePending=true
-            let sync=mobileSync,name=mobileSync.deviceName,surface=claudeSurface,quota=claudeQuota,fresh=claudeQuotaFresh,observed=claudeClock.updated
-            dataQueue.async{[weak self] in
-                guard let self else{return}
-                let now=Date(),dayKey=String(Calendar.current.startOfDay(for:now).timeIntervalSince1970)+TimeZone.current.identifier
-                let key=String(self.claudeLedger.revision)+"|"+dayKey
-                let timeChanged=dayKey != self.claudeMobileDayKey || now < self.claudeMobileLastObserved || now >= self.claudeMobileTimeBoundary
-                self.claudeMobileLastObserved=now
-                if self.claudeMobileSnapshot == nil || timeChanged || (key != self.claudeMobileKey && now >= self.claudeMobileNext){
-                    if var prepared=try? self.claudeLedger.mobileSnapshot(){prepared.revision=key+"|"+String(now.timeIntervalSince1970);self.claudeMobileSnapshot=prepared;self.claudeMobileKey=key;self.claudeMobileDayKey=dayKey;self.claudeMobileTimeBoundary=self.claudeNextBoundary;self.claudeMobileNext=now.addingTimeInterval(60)}
-                }
-                if let snapshot=self.claudeMobileSnapshot {sync.updateClaude(snapshot,surface:surface,quota:quota,fresh:fresh,observed:observed,name:name)}
-                DispatchQueue.main.async{self.claudeMobilePending=false}
-            }
-        }
         let codex = AgentWidgetPayload.make(request:usage.widgetRequest,today:usage.summaries["today"],quota:quota,fresh:quota.fresh,observed:clock.updated)
         let claude = AgentWidgetPayload.make(request:claudeSurface.request,today:claudeSurface.ready ? claudeSurface.today : nil,quota:claudeQuota,fresh:claudeQuotaFresh,observed:claudeClock.updated)
+        var appQuota = QuotaState()
+        appQuota.applicable = antigravityQuota.availability == .available
+        appQuota.updated = antigravityQuota.observed
+        appQuota.windows = [menuWindow(.antigravity, week: false), menuWindow(.antigravity, week: true)].compactMap { $0 }
+        let antigravity = AgentWidgetPayload.make(request: antigravitySurface.request, today: antigravitySurface.ready ? antigravitySurface.today : nil,
+                                                    quota: appQuota, fresh: appQuota.fresh, observed: antigravityClock.updated)
         // Retain the Codex root fields for older extensions during atomic host
         // replacement. Both new source variants come from this one host snapshot.
         var snapshot = codex
         snapshot["schema"] = 1; snapshot["updated_at"] = Date().timeIntervalSince1970
         snapshot["host_running"] = true; snapshot["host_pid"] = Int(getpid())
-        snapshot["agents"] = ["chatgpt":codex,"claude":claude]
+        snapshot["agents"] = ["chatgpt":codex,"claude":claude,"antigravity":antigravity]
         var content = snapshot; content.removeValue(forKey:"updated_at")
         var quotaContent = content.object("quota"); quotaContent.removeValue(forKey:"updated_at"); content["quota"] = quotaContent
         var agents = content.object("agents")
-        for key in ["chatgpt","claude"] {
+        for key in agents.keys {
             var agent = agents.object(key); agent.removeValue(forKey:"updated_at")
             var allowance = agent.object("quota"); allowance.removeValue(forKey:"updated_at"); agent["quota"] = allowance; agents[key] = agent
         }
