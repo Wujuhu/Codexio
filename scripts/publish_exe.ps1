@@ -4,10 +4,11 @@ param(
     [string]$StagedExe,
     [Parameter(Mandatory = $true)]
     [ValidatePattern('^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$')]
-    [string]$Version
+    [string]$Version,
+    [string]$ProjectRoot = (Join-Path $PSScriptRoot "..")
 )
 $ErrorActionPreference = "Stop"
-$ProjectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
+$ProjectRoot = [IO.Path]::GetFullPath($ProjectRoot)
 $DevelopmentRoot = [IO.Path]::GetFullPath((Join-Path $ProjectRoot "build\dev"))
 $DevelopmentDir = [IO.Path]::GetFullPath((Join-Path $DevelopmentRoot "windows"))
 $BuildDir = [IO.Path]::GetFullPath((Join-Path $ProjectRoot "build"))
@@ -55,12 +56,13 @@ while ($Pending.Count -gt 0) {
 }
 
 $Destination = Join-Path $DevelopmentDir "Codexio.exe"
-# Windows may allow replacing an image while its process still runs. Preserve
-# the original pathname as well as the process; callers can deliver a pending EXE.
-$RunningPaths = @(Get-CimInstance Win32_Process -Filter "Name='Codexio.exe'" | Where-Object { $_.ExecutablePath } | Select-Object -ExpandProperty ExecutablePath)
-$RunningDestination = @($RunningPaths | Where-Object { $_.Equals($Destination, [StringComparison]::OrdinalIgnoreCase) })
-if ($RunningDestination.Count -gt 0) {
-    throw "The development EXE is running. Its original path and the staged build were preserved."
+$LegacyPendingPrefix = (Join-Path $DevelopmentDir "pending") + '\'
+function Test-DevelopmentExecutable([string]$Path) {
+    $Path -and ($Path -ieq $Destination -or $Path.StartsWith($LegacyPendingPrefix, [StringComparison]::OrdinalIgnoreCase))
+}
+$Metadata = (Get-Item -LiteralPath $Source).VersionInfo
+if ($Metadata.ProductName -ne 'Codexio' -or $Metadata.ProductVersion -ne $Version) {
+    throw "The staged executable does not match Codexio version $Version."
 }
 $BackupDir = [IO.Path]::GetFullPath((Join-Path $BuildDir ("backups\windows\" + [Guid]::NewGuid().ToString("N"))))
 if (-not $BackupDir.StartsWith($BuildPrefix, [StringComparison]::OrdinalIgnoreCase)) {
@@ -69,6 +71,28 @@ if (-not $BackupDir.StartsWith($BuildPrefix, [StringComparison]::OrdinalIgnoreCa
 New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
 $ExpectedHash = (Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash
 
+# Only stop Codexio processes that occupy this project's development paths.
+# The normal close-window action leaves the app running in the Windows tray.
+$Running = @(Get-CimInstance Win32_Process -Filter "Name='Codexio.exe'")
+foreach ($Instance in $Running) {
+    if (-not (Test-DevelopmentExecutable $Instance.ExecutablePath)) { continue }
+    $Process = Get-Process -Id $Instance.ProcessId -ErrorAction SilentlyContinue
+    if (-not $Process -or $Process.Path -ine $Instance.ExecutablePath) { continue }
+    try {
+        Stop-Process -InputObject $Process -Force
+    } catch {
+        if (-not $Process.HasExited) { throw }
+    }
+    if (-not $Process.WaitForExit(10000)) {
+        throw "The development Codexio process did not exit. The staged build was preserved."
+    }
+}
+$RunningPaths = @(Get-CimInstance Win32_Process -Filter "Name='Codexio.exe'" |
+    Where-Object { $_.ExecutablePath } | Select-Object -ExpandProperty ExecutablePath)
+if (@($RunningPaths | Where-Object { Test-DevelopmentExecutable $_ }).Count -gt 0) {
+    throw "The development EXE is still running. The staged build was preserved."
+}
+
 $Relocated = New-Object 'System.Collections.Generic.List[object]'
 # Retire previous filenames before publishing, so a locked old EXE cannot leave
 # two executables in the development directory. Restore them if any move or the publication fails.
@@ -76,7 +100,6 @@ try {
     $Index = 0
     foreach ($file in $Files) {
         if ($file.Equals($Destination, [StringComparison]::OrdinalIgnoreCase)) { continue }
-        # A user may be running the previous pending build. Keep that path too.
         if ($RunningPaths -icontains $file) { continue }
         $Index++
         $Backup = Join-Path $BackupDir ("obsolete-{0}.exe" -f $Index)
@@ -102,7 +125,7 @@ try {
     if ($RestoreErrors.Count -gt 0) {
         throw "Publication failed. The staged build is preserved; previous releases needing restoration are in $BackupDir. $PublishError $($RestoreErrors -join ' ')"
     }
-    throw "Could not publish build\dev\windows\Codexio.exe. Close the running widget and retry; the previous release and staged build are preserved. $PublishError"
+    throw "Could not publish build\dev\windows\Codexio.exe. The previous executable and staged build are preserved. $PublishError"
 }
 if ((Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash -ne $ExpectedHash) {
     throw "Published executable hash verification failed. Backup: $BackupDir"

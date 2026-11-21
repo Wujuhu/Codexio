@@ -13,7 +13,8 @@
 - `build/dev/macos` 保存最新开发 APP、APP ZIP 和清单；`build/dev/windows` 保存最新开发 EXE 和清单。中间文件使用 `build/staging`，构建缓存使用 `build/cache`，检查结果使用 `build/checks`，日志使用 `build/logs`，同版本临时备份使用 `build/backups`。
 - Mac 使用 `build_macos.sh` 生成本地开发包；Windows 通过局域网 SSH 在指定项目目录执行 `build_exe.ps1`，故障排查脚本按需要使用。手动 CI 保留，调用时须满足上述云端构建授权条件。
 - 收到用户“推送并且发布”或同等明确发布指令后，直接执行 `.venv/bin/python scripts/publish_release_from_macos.py --version <指定或最新源码版本号> --confirm-publish`，不再索要二次确认。先核验 Mac 包，通过 SSH 在 Windows 构建主机核对同一提交、干净工作区、源码指纹、原有冒烟和 EXE 元数据，再复用本机哈希相同的 EXE 或复制回传。全部通过后才推送 `main`，创建包含简短分平台正文及三附件的草稿；下载复核全部附件后一次发布并原子归档。该入口不触发 Windows CI。缺包、源码指纹过期、版本或哈希不符时不得发布。
-- 目标被运行进程占用时保留原文件及暂存新版，不自动结束用户进程。整理 `build` 时也必须保留运行中应用的原路径；当前 `build/macos` 属于待应用退出后清理的旧路径。
+- Windows 开发包通过版本、哈希和三项隔离冒烟校验后，交付时停止并等待项目 `build/dev/windows/Codexio.exe` 或旧 `pending` 开发副本中的 Codexio 进程退出，调用 `scripts/publish_exe.ps1` 原子覆盖 `build/dev/windows/Codexio.exe`，清单放在同目录。从 SSH 暂存源码构建时，调用本次的 `build_exe.ps1 -DeliveryRoot 'C:\CodeWJH\Projects\Codexio'`，避免沿用旧暂存脚本的复制分支。退出或替换失败时保留旧 EXE 和暂存产物，禁止转投 `pending`。交付结束后由用户自行启动新版。
+- Mac 目标被运行进程占用时保留原文件及暂存新版，不自动结束用户进程。整理 `build` 时保留运行中应用的原路径；当前 `build/macos` 属于待应用退出后清理的旧路径。
 - 本机 Codexio APP 由用户自行启动；开发、打包和核验时不要代用户启动已安装的 APP，也不要启动后要求用户确认。既有隔离模拟数据的打包冒烟入口照常执行。
 - 读取文本文件显式指定 UTF-8。
 
