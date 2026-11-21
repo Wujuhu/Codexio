@@ -224,7 +224,7 @@ func (s *Store) antigravityEntry(tx *sql.Tx, event Row, session string, current 
 	}
 	// Only public message content and metering metadata enter this adapter.
 	row := Row{}
-	for _, field := range []string{"type", "source", "created_at", "step_index", "status", "content", "model", "input_tokens", "cache_read_tokens", "output_tokens", "truncated_fields", "duration_ms", "ttft_ms"} {
+	for _, field := range []string{"type", "source", "created_at", "step_index", "status", "content", "model", "input_tokens", "cache_read_tokens", "output_tokens", "truncated_fields", "duration_ms", "ttft_ms", "reasoning_effort", "auth_mode", "billing_source", "usage_source"} {
 		if value, exists := event[field]; exists {
 			row[field] = value
 		}
@@ -273,6 +273,11 @@ func (s *Store) antigravityEntry(tx *sql.Tx, event Row, session string, current 
 		}
 		if _, hasInput := knownCount(row["input_tokens"]); hasInput {
 			call := Row{"id": id, "session_id": session, "timestamp": at, "model": firstString(row["model"], "unknown"), "client_kind": antigravityClient, "antigravity_request_id": requestID, "record_kind": "model_call", "quality": "response", "status": "completed", "request_status": "completed", "output_tokens": row["output_tokens"], "raw_input_tokens": row["input_tokens"], "raw_cache_read_tokens": row["cache_read_tokens"], "raw_output_tokens": row["output_tokens"], "source_id": "local:antigravity", "output_preview": clip(dataString(row, "content"), 600)}
+			for _, field := range []string{"reasoning_effort", "auth_mode", "billing_source", "usage_source"} {
+				if value, exists := row[field]; exists {
+					call[field] = value
+				}
+			}
 			input, inputOK := knownCount(row["input_tokens"])
 			cached, cacheOK := knownCount(row["cache_read_tokens"])
 			output, outputOK := knownCount(row["output_tokens"])
@@ -451,6 +456,10 @@ func (s *Store) antigravityDetail(request Row, call bool, page int, contexts ...
 		result["members"] = members
 	}
 	result["page"], result["pages"], result["total_members"] = page, max(1, (count+49)/50), count
+	visible := append([]Row{request}, ValueRows(result["members"])...)
+	if err = s.enrichAntigravityRows(visible, reader); err != nil {
+		return nil, err
+	}
 	if dataString(result, "user") == "" && dataString(result, "final") == "" {
 		result["availability"] = "unavailable"
 	}

@@ -201,6 +201,9 @@ func (s *Store) Page(q Query, contexts ...context.Context) (PageResult, error) {
 	if normalizedClient(q.ClientKind) == "codex" {
 		s.enrichUpstream(result.Rows, groups, reader.ctx)
 	}
+	if e = s.enrichAntigravityRows(result.Rows, reader); e != nil {
+		return result, e
+	}
 	return result, nil
 }
 
@@ -383,6 +386,9 @@ func (s *Store) Recent(q Query, n int, contexts ...context.Context) ([]Row, erro
 	}
 	if e == nil {
 		e = s.enrichCostModels(result, reader)
+	}
+	if e == nil {
+		e = s.enrichAntigravityRows(result, reader)
 	}
 	if e == nil {
 		e = s.claudeSourceFields(result, reader.ctx)

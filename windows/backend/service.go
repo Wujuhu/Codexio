@@ -16,38 +16,39 @@ import (
 // Service is the only public desktop bridge. Components own their IO and
 // background work; a webview receives pages and projections, never a live DB.
 type Service struct {
-	mu               sync.RWMutex
-	lifecycleMu      sync.Mutex
-	config           Row
-	directory        string
-	version          string
-	mock             bool
-	store            *Store
-	quota            *QuotaService
-	antigravityQuota *AntigravityQuota
-	claudeQuota      *ClaudeAllowance
-	claudeEstimate   *RollingEstimator
-	updater          *Updater
-	reports          *ReportManager
-	estimate         *RollingEstimator
-	upstream         *UpstreamProxy
-	callbacks        DesktopCallbacks
-	ctx              context.Context
-	cancel           context.CancelFunc
-	closeOnce        sync.Once
-	startOnce        sync.Once
-	firstOverview    chan struct{}
-	firstPaintOnce   sync.Once
-	reportMu         sync.Mutex
-	reportBusy       bool
-	reportGeneration int64
-	reportRead       time.Time
-	reportSignature  string
-	reportAccount    string
-	journeyOnce      sync.Once
-	journey          *localJourney
-	refreshActivity  map[string]bool
-	refreshRevision  int64
+	mu                  sync.RWMutex
+	lifecycleMu         sync.Mutex
+	config              Row
+	directory           string
+	version             string
+	mock                bool
+	store               *Store
+	quota               *QuotaService
+	antigravityQuota    *AntigravityQuota
+	antigravityEstimate *RollingEstimator
+	claudeQuota         *ClaudeAllowance
+	claudeEstimate      *RollingEstimator
+	updater             *Updater
+	reports             *ReportManager
+	estimate            *RollingEstimator
+	upstream            *UpstreamProxy
+	callbacks           DesktopCallbacks
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	closeOnce           sync.Once
+	startOnce           sync.Once
+	firstOverview       chan struct{}
+	firstPaintOnce      sync.Once
+	reportMu            sync.Mutex
+	reportBusy          bool
+	reportGeneration    int64
+	reportRead          time.Time
+	reportSignature     string
+	reportAccount       string
+	journeyOnce         sync.Once
+	journey             *localJourney
+	refreshActivity     map[string]bool
+	refreshRevision     int64
 
 	incompleteUsageNoticeDismissed bool
 }
@@ -72,9 +73,11 @@ func NewService(directory, executable, version string, mock bool, callbacks Desk
 			if healthy {
 				s.estimate.Process()
 				s.claudeEstimate.Process()
+				s.antigravityEstimate.Process()
 			} else {
 				s.estimate.Interrupt()
 				s.claudeEstimate.Interrupt()
+				s.antigravityEstimate.Interrupt()
 			}
 		}
 	}, ClientScanUpdated: func(client, stamp string) {
@@ -101,6 +104,12 @@ func NewService(directory, executable, version string, mock bool, callbacks Desk
 		return nil, err
 	}
 	s.claudeEstimate, err = NewRollingEstimator(s.store, s.Config, func() { s.notify("claude_quota") }, "claude")
+	if err != nil {
+		s.store.Close()
+		cancel()
+		return nil, err
+	}
+	s.antigravityEstimate, err = NewRollingEstimator(s.store, s.Config, func() { s.notify("antigravity_quota") }, antigravityClient)
 	if err != nil {
 		s.store.Close()
 		cancel()
@@ -134,6 +143,7 @@ func NewService(directory, executable, version string, mock bool, callbacks Desk
 	s.reports = NewReportManager(s.store, directory, s.Config)
 	s.upstream = NewUpstreamProxy(directory, version, s.Config, mock, func(id string) { s.store.markObservedPrice(id); s.notify("upstream") })
 	s.antigravityQuota = NewAntigravityQuota(s.Config, func() { s.notify("antigravity_quota") })
+	s.antigravityQuota.sample = s.antigravityEstimate.Sample
 	return s, nil
 }
 
@@ -318,7 +328,9 @@ func (s *Service) GetTrends(ctx context.Context, q Query) (Row, error) {
 func (s *Service) GetSubscription() Row { return s.subscription(true) }
 func (s *Service) GetClientSubscription(client string) Row {
 	if normalizedClient(client) == antigravityClient {
-		return s.antigravityQuota.Snapshot()
+		r := s.antigravityQuota.Snapshot()
+		r["rolling_estimates"] = s.antigravityEstimate.Rows(dataString(r, "account_key"))
+		return r
 	}
 	if normalizedClient(client) != "claude_code" {
 		return s.GetSubscription()
@@ -463,6 +475,7 @@ func (s *Service) SaveSettings(changes Row) (Row, error) {
 	if ValueInt(old["week_estimate_interval_minutes"]) != ValueInt(c["week_estimate_interval_minutes"]) {
 		s.estimate.Interrupt()
 		s.claudeEstimate.Interrupt()
+		s.antigravityEstimate.Interrupt()
 	}
 	if s.callbacks.Action != nil {
 		_ = s.callbacks.Action("apply-settings")

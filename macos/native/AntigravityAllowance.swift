@@ -19,6 +19,8 @@ struct AntigravityQuota: Equatable {
     var windows: [AntigravityQuotaWindow] = []
     var availability: Availability = .waiting
     var observed: Date?
+    var accountKey = ""
+    var planType = ""
 
     enum Cadence: String { case fiveHour = "5h", weekly }
     func representative(_ cadence: Cadence) -> AntigravityQuotaWindow? {
@@ -91,7 +93,14 @@ final class AntigravityAllowance: NSObject, URLSessionTaskDelegate {
                     guard let source = try? readListener(row.pid) else { continue }
                     for port in source.ports.prefix(12) where processPath(row.pid)?.hasPrefix(bundle.path + "/Contents/") == true {
                         guard generation == self.generation, ProcessInfo.processInfo.systemUptime < deadline else { break }
-                        if let quota = readSummary(port: port, token: source.token, generation: generation), generation == self.generation {
+                        let before = readAccount(port: port, token: source.token, generation: generation)
+                        if let summary = read("RetrieveUserQuotaSummary", body: Data("{\"forceRefresh\":false}".utf8), port: port, token: source.token, generation: generation),
+                           var quota = Self.parse(summary), generation == self.generation {
+                            if let before, before == readAccount(port: port, token: source.token, generation: generation) {
+                                quota.accountKey = before.key
+                                quota.planType = before.plan
+                            }
+                            guard generation == self.generation else { return }
                             completion(quota)
                             return
                         }
@@ -160,21 +169,40 @@ final class AntigravityAllowance: NSObject, URLSessionTaskDelegate {
         return (token, Array(Set(ports)).sorted())
     }
 
-    private func readSummary(port: UInt16, token: String, generation: UUID) -> AntigravityQuota? {
-        guard let url = URL(string: "https://127.0.0.1:\(port)/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary") else { return nil }
+    private struct Account: Equatable {
+        let key: String
+        let plan: String
+    }
+
+    private func readAccount(port: UInt16, token: String, generation: UUID) -> Account? {
+        let body = Data(#"{"metadata":{"ideName":"antigravity","extensionName":"antigravity","locale":"en"}}"#.utf8)
+        guard let value = read("GetUserStatus", body: body, port: port, token: token, generation: generation) else { return nil }
+        let status = value.object("userStatus")
+        let email = status.string("email").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let parts = email.split(separator: "@", omittingEmptySubsequences: false)
+        guard email.utf8.count <= 320, parts.count == 2, parts.allSatisfy({ !$0.isEmpty }), !email.contains(where: \.isWhitespace) else { return nil }
+        let tier = status.object("userTier").string("name").trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallback = status.object("planStatus").object("planInfo").string("planName").trimmingCharacters(in: .whitespacesAndNewlines)
+        let plan = tier.isEmpty ? fallback : tier
+        guard !plan.isEmpty, plan.utf8.count <= 160 else { return nil }
+        return Account(key: digest(Data(("antigravity-account:" + email).utf8)), plan: plan)
+    }
+
+    private func read(_ method: String, body: Data, port: UInt16, token: String, generation: UUID) -> Object? {
+        guard let url = URL(string: "https://127.0.0.1:\(port)/exa.language_server_pb.LanguageServerService/\(method)") else { return nil }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("1", forHTTPHeaderField: "Connect-Protocol-Version")
         request.setValue(token, forHTTPHeaderField: "X-Codeium-Csrf-Token")
-        request.httpBody = Data("{\"forceRefresh\":false}".utf8)
+        request.httpBody = body
         let done = DispatchSemaphore(value: 0)
         let result = QuotaResult()
         let task = client.dataTask(with: request) { data, response, error in
             defer { done.signal() }
             guard error == nil, (response as? HTTPURLResponse)?.statusCode == 200,
                   let data, data.count <= 512 * 1024 else { return }
-            let value = Self.parse(jsonObject(data))
+            let value = jsonObject(data)
             result.lock.lock(); result.value = value; result.lock.unlock()
         }
         requestLock.lock()
@@ -194,7 +222,7 @@ final class AntigravityAllowance: NSObject, URLSessionTaskDelegate {
 
     private final class QuotaResult: @unchecked Sendable {
         let lock = NSLock()
-        var value: AntigravityQuota?
+        var value: Object?
     }
 
     private static func parse(_ raw: Object) -> AntigravityQuota? {

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -28,6 +29,7 @@ type AntigravityQuota struct {
 	wake    chan struct{}
 	config  func() Row
 	changed func()
+	sample  func(Row)
 }
 
 func NewAntigravityQuota(config func() Row, changed func()) *AntigravityQuota {
@@ -74,7 +76,7 @@ func (q *AntigravityQuota) Run(ctx context.Context) {
 		case <-timer.C:
 		}
 		readCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
-		groups, err := readAntigravityQuota(readCtx)
+		value, err := readAntigravityQuota(readCtx)
 		cancel()
 		if ctx.Err() != nil {
 			return
@@ -83,8 +85,10 @@ func (q *AntigravityQuota) Run(ctx context.Context) {
 		old := CloneRow(q.state)
 		if err != nil {
 			q.state["status"], q.state["error"] = "unavailable", "打开 Antigravity App 后可读取额度"
+			q.state["account_key"] = ""
 		} else {
-			q.state = Row{"status": "ok", "groups": groups, "updated_at": UTCStamp(time.Now()), "primary": nil, "secondary": nil}
+			groups := ValueRows(value["groups"])
+			q.state = Row{"status": "ok", "groups": groups, "updated_at": UTCStamp(time.Now()), "primary": nil, "secondary": nil, "account_key": value["account_key"], "plan_type": value["plan_type"], "limit_id": antigravityClient}
 			for _, group := range groups {
 				for _, bucket := range ValueRows(group["buckets"]) {
 					key := "primary"
@@ -99,7 +103,11 @@ func (q *AntigravityQuota) Run(ctx context.Context) {
 		delete(before, "updated_at")
 		delete(after, "updated_at")
 		changed := dataJSON(before) != dataJSON(after)
+		sampled := CloneRow(q.state)
 		q.mu.Unlock()
+		if q.sample != nil {
+			q.sample(sampled)
+		}
 		if changed && q.changed != nil {
 			q.changed()
 		}
@@ -114,7 +122,7 @@ func (q *AntigravityQuota) Run(ctx context.Context) {
 	}
 }
 
-func readAntigravityQuota(ctx context.Context) ([]Row, error) {
+func readAntigravityQuota(ctx context.Context) (Row, error) {
 	endpoints, err := antigravityAppEndpoints(ctx)
 	if err != nil || len(endpoints) == 0 {
 		return nil, errors.New("Antigravity App 未运行")
@@ -128,24 +136,8 @@ func readAntigravityQuota(ctx context.Context) ([]Row, error) {
 		if endpoint.Port < 1 || endpoint.Port > 65535 || endpoint.CSRF == "" {
 			continue
 		}
-		url := "https://127.0.0.1:" + strconv.Itoa(endpoint.Port) + "/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary"
-		request, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBufferString(`{"forceRefresh":false}`))
-		if err != nil {
-			return nil, err
-		}
-		request.Header.Set("Content-Type", "application/json")
-		request.Header.Set("Connect-Protocol-Version", "1")
-		request.Header.Set("X-Codeium-Csrf-Token", endpoint.CSRF)
-		response, err := client.Do(request)
-		if err != nil {
-			continue
-		}
-		data, readErr := io.ReadAll(io.LimitReader(response.Body, 1<<20+1))
-		response.Body.Close()
-		if readErr != nil || response.StatusCode != http.StatusOK || len(data) > 1<<20 {
-			continue
-		}
-		root, err := DecodeRow(data)
+		before, _ := antigravityAccountIdentity(ctx, client, endpoint)
+		root, err := antigravityRPC(ctx, client, endpoint, "RetrieveUserQuotaSummary", Row{"forceRefresh": false})
 		if err != nil {
 			continue
 		}
@@ -179,7 +171,10 @@ func readAntigravityQuota(ctx context.Context) ([]Row, error) {
 				if n, ok := ValueFloat(fraction); ok && numeric && !math.IsNaN(n) && !math.IsInf(n, 0) && n >= 0 && n <= 1 && !ValueBool(raw["disabled"]) {
 					percent = n * 100
 				}
-				bucket := Row{"id": clip(id, 240), "name": clip(firstString(raw["displayName"], raw["name"], id), 240), "remaining_percent": percent, "resets_at": nil, "description": clip(dataString(raw, "description"), 600), "window": clip(dataString(raw, "window"), 120), "disabled": ValueBool(raw["disabled"])}
+				bucket := Row{"id": clip(id, 240), "name": clip(firstString(raw["displayName"], raw["name"], id), 240), "remaining_percent": percent, "used_percent": nil, "resets_at": nil, "description": clip(dataString(raw, "description"), 600), "window": clip(dataString(raw, "window"), 120), "disabled": ValueBool(raw["disabled"])}
+				if remaining, valid := ValueFloat(percent); valid {
+					bucket["used_percent"] = 100 - remaining
+				}
 				if date, err := time.Parse(time.RFC3339Nano, dataString(raw, "resetTime")); err == nil {
 					bucket["resets_at"] = UTCStamp(date)
 				}
@@ -190,8 +185,59 @@ func readAntigravityQuota(ctx context.Context) ([]Row, error) {
 			}
 		}
 		if len(groups) > 0 {
-			return groups, nil
+			result := Row{"groups": groups, "account_key": "", "plan_type": ""}
+			after, _ := antigravityAccountIdentity(ctx, client, endpoint)
+			if dataString(before, "account_key") != "" && before["account_key"] == after["account_key"] && before["plan_type"] == after["plan_type"] {
+				result["account_key"], result["plan_type"] = after["account_key"], after["plan_type"]
+			}
+			return result, nil
 		}
 	}
 	return nil, errors.New("Antigravity App 额度暂不可用")
+}
+
+func antigravityRPC(ctx context.Context, client *http.Client, endpoint antigravityEndpoint, method string, body Row) (Row, error) {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	url := "https://127.0.0.1:" + strconv.Itoa(endpoint.Port) + "/exa.language_server_pb.LanguageServerService/" + method
+	request, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Connect-Protocol-Version", "1")
+	request.Header.Set("X-Codeium-Csrf-Token", endpoint.CSRF)
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, errors.New("Antigravity App 本地读取暂不可用")
+	}
+	defer response.Body.Close()
+	data, err = io.ReadAll(io.LimitReader(response.Body, 1<<20+1))
+	if err != nil || response.StatusCode != http.StatusOK || len(data) > 1<<20 {
+		return nil, errors.New("Antigravity App 本地响应不可用")
+	}
+	root, err := DecodeRow(data)
+	if err != nil {
+		return nil, err
+	}
+	if code, exists := root["code"]; exists && code != nil && ValueString(code) != "0" && ValueString(code) != "OK" && ValueString(code) != "SUCCESS" {
+		return nil, errors.New("Antigravity App 本地响应暂不可用")
+	}
+	return root, nil
+}
+
+func antigravityAccountIdentity(ctx context.Context, client *http.Client, endpoint antigravityEndpoint) (Row, error) {
+	root, err := antigravityRPC(ctx, client, endpoint, "GetUserStatus", Row{"metadata": Row{"ideName": "antigravity", "extensionName": "antigravity", "locale": "en"}})
+	if err != nil {
+		return nil, err
+	}
+	status := ValueRow(root["userStatus"])
+	email := strings.ToLower(strings.TrimSpace(dataString(status, "email")))
+	if email == "" {
+		return Row{}, nil
+	}
+	plan := firstString(ValueRow(status["userTier"])["name"], ValueRow(ValueRow(status["planStatus"])["planInfo"])["planName"])
+	return Row{"account_key": "antigravity-account:" + HashString(email), "plan_type": plan}, nil
 }

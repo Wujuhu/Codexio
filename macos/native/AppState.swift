@@ -33,6 +33,10 @@ final class AppState: ObservableObject {
     private let antigravityAllowance = AntigravityAllowance()
     private var antigravityQuotaRequest: UUID?
     private(set) var antigravityQuota = AntigravityQuota()
+    private let antigravityEstimator: WeeklyEstimator
+    private var antigravityEstimateAccount = "" // dataQueue-owned
+    private var antigravityEstimateRevision = -1
+    @Published private(set) var antigravityWeeklyEstimates: [Object] = []
     @Published private(set) var antigravityRevision = UUID()
     @Published private(set) var antigravityModels: [String] = []
     @Published private(set) var antigravityWarning: String?
@@ -185,6 +189,7 @@ final class AppState: ObservableObject {
         claudeCatalog = ClaudePricingCatalog(paths.pricing)
         claudeLedger = try ClaudeLedger(paths:paths,pricing:claudeCatalog)
         antigravityLedger = try AntigravityLedger(paths: paths)
+        antigravityEstimator = try antigravityLedger.makeWeeklyEstimator()
         claudePrices = claudeCatalog.rows; claudePricesRevision = claudeCatalog.version
         claudeAllowance = ClaudeAllowance(paths:paths,root:claudeLedger.root)
         let ledger = claudeLedger
@@ -199,7 +204,9 @@ final class AppState: ObservableObject {
         menuClient = DesktopClient(rawValue:preferences.analytics.string("menu_bar_agent")) ?? .codex
         if !paths.mock {
             sleepObserver = NSWorkspace.shared.notificationCenter.addObserver(forName:NSWorkspace.willSleepNotification,object:nil,queue:.main) { [weak self] _ in
-                self?.dataQueue.async { [weak self] in self?.estimator.invalidate(); self?.claudeEstimator.invalidate() }
+                self?.dataQueue.async { [weak self] in
+                    self?.estimator.invalidate(); self?.claudeEstimator.invalidate(); self?.antigravityEstimator.interrupt()
+                }
             }
         }
         client.onNotification = { [weak self] method, _ in
@@ -248,6 +255,7 @@ final class AppState: ObservableObject {
     func stop() {
         stopped = true; claudeAllowance.stop(); scanTimer?.invalidate(); quotaTimer?.invalidate(); priceTimer?.invalidate(); indexer.cancel(); claudeLedger.cancel(); client.close()
         antigravityLedger.cancel(); antigravityAllowance.stop(); antigravityQuotaRequest = nil
+        dataQueue.async { [weak self] in self?.antigravityEstimator.interrupt() }
         fetchActivity.clear()
         reportGeneration = UUID()
     }
@@ -315,12 +323,56 @@ final class AppState: ObservableObject {
                 guard let self, self.antigravityQuotaRequest == request, !self.stopped else { return }
                 self.antigravityQuotaRequest = nil
                 let changed = self.antigravityQuota.windows != quota.windows || self.antigravityQuota.availability != quota.availability
+                if self.antigravityQuota.accountKey != quota.accountKey {
+                    self.antigravityEstimateRevision = -1
+                    if !self.antigravityWeeklyEstimates.isEmpty { self.antigravityWeeklyEstimates = [] }
+                }
                 if changed { self.objectWillChange.send() }
                 self.antigravityQuota = quota
                 if let observed = quota.observed { self.antigravityQuotaClock.updated = observed }
                 if changed { self.onMenuDataChange?() }
+                let seconds = max(30, min(300, self.preferences.general.number("refresh_interval_seconds") ?? 60))
+                let minutes = self.preferences.analytics.integer("week_estimate_interval_minutes") ?? 10
+                self.dataQueue.async { [weak self] in self?.observeAntigravityEstimate(quota, seconds: seconds, minutes: minutes) }
                 self.publishWidget()
             }
+        }
+    }
+    private func observeAntigravityEstimate(_ quota: AntigravityQuota, seconds: Double, minutes: Int) {
+        if antigravityEstimateAccount != quota.accountKey {
+            antigravityEstimateAccount = quota.accountKey
+            antigravityEstimator.interrupt()
+        }
+        let now = Date()
+        if quota.availability == .available, !quota.accountKey.isEmpty,
+           let observed = quota.observed, now.timeIntervalSince(observed) >= 0, now.timeIntervalSince(observed) <= seconds + 30,
+           let week = quota.representative(.weekly), let remaining = week.remaining, remaining > 0,
+           let reset = week.reset_at, reset > now.timeIntervalSince1970 {
+            antigravityEstimator.add([
+                "timestamp": observed.timeIntervalSince1970, "used_percent": 100 - remaining, "reset_at": reset,
+                "account_key": quota.accountKey, "plan_type": quota.planType,
+                "limit_id": "antigravity", "sample_interval_seconds": seconds, "max_gap_seconds": seconds + 30
+            ], intervalMinutes: minutes)
+        } else {
+            antigravityEstimator.invalidate()
+        }
+        publishAntigravityEstimates()
+    }
+
+    private func publishAntigravityEstimates() {
+        if antigravityLedger.warning != nil {
+            antigravityEstimator.interrupt()
+            return
+        }
+        let account = antigravityEstimateAccount
+        guard !account.isEmpty,
+              let history = try? antigravityEstimator.process(calls: [], priceVersion: ModelPricing.shared.version, accountKey: account) else { return }
+        let revision = antigravityEstimator.revision
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.stopped, self.antigravityQuota.accountKey == account,
+                  self.antigravityEstimateRevision != revision else { return }
+            self.antigravityEstimateRevision = revision
+            self.antigravityWeeklyEstimates = history
         }
     }
     private func usageReportSourceKey(for client: DesktopClient) -> String {
@@ -399,8 +451,10 @@ final class AppState: ObservableObject {
             do {
                 try self.antigravityLedger.scan()
                 try self.publishAntigravity()
+                self.publishAntigravityEstimates()
                 self.finishInitialReportScan(.antigravity)
             } catch {
+                self.antigravityEstimator.interrupt()
                 DispatchQueue.main.async { self.antigravityWarning = L("Antigravity 本机记录暂不可读", "Local Antigravity records are temporarily unreadable") }
                 self.finishInitialReportScan(.antigravity, error: error)
             }

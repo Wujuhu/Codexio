@@ -13,8 +13,16 @@ struct AntigravityQuotaView: View {
 
 struct AntigravitySubscriptionView: View {
     @ObservedObject var state: AppState
+    @State private var showLocalHistory = true
     var body: some View {
-        ScrollView { AntigravityQuotaView(state: state).padding(.horizontal, PageLayout.inset).padding(.bottom, PageLayout.inset) }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 23) {
+                AntigravityQuotaView(state: state)
+                DisclosureGroup(L("周额度估算", "Weekly allowance estimates"), isExpanded: $showLocalHistory) {
+                    EstimateHistoryView(state: state, rows: state.antigravityWeeklyEstimates)
+                }.font(.system(size: 13))
+            }.padding(.horizontal, PageLayout.inset).padding(.bottom, PageLayout.inset)
+        }
     }
 }
 
@@ -22,10 +30,11 @@ private func antigravityGridRow(_ row: UsageRow, state: AppState, timeOnly: Bool
     var grid = LogFields.row(row, timeOnly: timeOnly, showYear: showYear, details: { [] })
     let text = grid.text
     grid.text = { key in
+        var cell = text(key)
         if key == "content", row.raw.string("prompt_preview").isEmpty {
-            return GridText(main: "—", secondary: logDateText(row.date, timeOnly: timeOnly, showYear: showYear))
+            cell.main = "—"
         }
-        return text(key)
+        return cell
     }
     grid.detail = nil
     grid.customDetail = { AnyView(AntigravityDetailView(state: state, row: row)) }
@@ -276,7 +285,7 @@ private struct AntigravityDetailView: View {
                 if !detail.members.isEmpty {
                     Divider(); Text(L("模型调用", "Model calls")).font(.subheadline.weight(.medium))
                     ForEach(detail.members) { member in
-                        HStack { Text(requestValueText(modelName(member.raw.string("model")))); Spacer(); Text(compact(member.tokens.map(Double.init))).monospacedDigit(); Text(member.costText) }.font(.caption)
+                        HStack { Text(requestValueText(member.raw.string("model_display_name"))); Spacer(); Text(compact(member.tokens.map(Double.init))).monospacedDigit(); Text(member.costText) }.font(.caption)
                     }
                     AntigravityPager(page: $page, pages: detail.pages).font(.caption)
                 }

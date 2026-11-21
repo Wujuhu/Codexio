@@ -169,6 +169,7 @@ final class ModelPricing {
         return found.count==1 ? found.first : nil
     }
     func group(_ model: String) -> String {definitions[model]?.string("group") ?? ""}
+    func displayName(_ model: String) -> String? { definitions[model]?.string("display_name") }
     func resolve(_ raw: Object,returnedOnly: Bool=false) -> (String,Bool)? {
         if !raw.string("model_display_name").isEmpty {return model(raw.string("model_display_name")).map {($0,false)}}
         let returned=[raw.string("upstream_model"),raw.string("returned_model")].filter {!$0.isEmpty}

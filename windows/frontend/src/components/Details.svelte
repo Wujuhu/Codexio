@@ -33,8 +33,8 @@
     {:else if data.request}
       <section class="metric-fields">
         <div class="field-pair model-pair"><span class="muted">{tr('模型')}</span><Model record={request} align="right" showEffort={false}/></div>
-        {#if request.model_display_name}<div class="field-pair"><span class="muted">{tr('请求模型 ID')}</span><span>{text(request.model)}</span></div>{/if}
-        <div class="field-pair"><span class="muted">{tr('推理强度')}</span><span>{effort(request.reasoning_effort)||'—'}</span></div>
+        {#if request.model_display_name||request.model_label}<div class="field-pair"><span class="muted">{tr('请求模型 ID')}</span><span>{text(request.model)}</span></div>{/if}
+        <div class="field-pair"><span class="muted">{tr('推理强度')}</span><span>{effort(request.display_reasoning_effort||request.reasoning_effort)||'—'}</span></div>
         <div class="field-pair"><span class="muted">{tr('速度')}</span><span>{speed(request.service_tier)}</span></div>
         <div class="field-pair"><span class="muted">{tr('状态')}</span><span>{requestStatus(request)}</span></div>
         <div class="field-pair"><span class="muted">{tr('费用')}</span><span>{priced(request)}</span></div>

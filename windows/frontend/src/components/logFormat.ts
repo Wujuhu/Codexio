@@ -66,7 +66,7 @@ export function contextWindowText(value:unknown):string {
 export function requestMetadata(record: Row, query: Query, showYear?: boolean): string {
   const context = contextTokens(record);
   const tier = speed(record.service_tier);
-  return [logTime(record.timestamp,query,showYear), effort(record.reasoning_effort), ['Fast','Ultra Fast'].includes(tier) ? tier : '', contextWindowText(context)].filter(Boolean).join(' · ');
+  return [logTime(record.timestamp,query,showYear), effort(record.display_reasoning_effort||record.reasoning_effort), ['Fast','Ultra Fast'].includes(tier) ? tier : '', contextWindowText(context)].filter(Boolean).join(' · ');
 }
 
 function startedMillis(value:unknown):number|null {

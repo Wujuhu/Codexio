@@ -9,7 +9,7 @@
   function columnLabels(record:Row){
     const name=typeof record.model_display_name==='string'?record.model_display_name.trim():'';
     const requested=typeof record.model==='string'?record.model:'';
-    return{requested:name||modelName(requested)||'—',upstream:'',mismatch:false};
+    return{requested:(record.client_kind==='antigravity'?text(record.model_label,''):name)||name||modelName(requested)||'—',upstream:'',mismatch:false};
   }
   $: column=tableCell?columnLabels(record):null;
   $: observed=tableCell?[]:rows(record.upstream_observations??record.observations);
@@ -17,11 +17,11 @@
     ? observed.map(row=>text(row.upstream_model??row.response_model??row.model,'')).filter(Boolean)
     : Array.isArray(record.upstream_models) ? record.upstream_models.map((value:any)=>text(value,'')).filter(Boolean) : record.upstream_model ? [String(record.upstream_model)] : [];
   $: requested=text(record.model??record.models?.join(', '));
-  $: requestedLabel=column?.requested??(text(record.model_display_name,'')||modelName(requested));
+  $: requestedLabel=column?.requested??((record.client_kind==='antigravity'?text(record.model_label,''):'')||text(record.model_display_name,'')||modelName(requested));
   $: mismatch=column?.mismatch??(record.upstream_mismatched_calls!=null ? Number(record.upstream_mismatched_calls)>0 : record.upstream_mismatched!=null ? !!record.upstream_mismatched : !['—','unknown','mixed'].includes(requested)&&upstream.some((model:string)=>model!==requested));
   $: upstreamLabel=column?.upstream??[...new Set(upstream)].map(modelName).join(' · ');
   $: hasUpstream=!!upstreamLabel;
-  $: effortLabel=showEffort?effort(record.reasoning_effort):'';
+  $: effortLabel=showEffort?effort(record.display_reasoning_effort||record.reasoning_effort):'';
 </script>
 <div class="model-lines" class:has-upstream={hasUpstream} style:--model-alignment={align}>
   {#if hasUpstream}<div class="observed" class:mismatch title={upstreamLabel}><small>{upstreamLabel}</small></div>{/if}

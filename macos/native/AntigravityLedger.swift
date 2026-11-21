@@ -1,5 +1,52 @@
 import Foundation
 
+struct AntigravityModelLabel {
+    let source: String
+    let title: String
+    let effort: String
+    private static let suffix = try! NSRegularExpression(
+        pattern: #"(?i)(?:[\s_-]+|\s*\()(minimal|low|medium|high|extra(?:[-_ ]high)?|xhigh|max|ultra|thinking)\)?\s*$"#)
+    private static let versionedGemini = try! NSRegularExpression(
+        pattern: #"(?i)^gemini[-_ ]+([0-9]+(?:\.[0-9]+)?)[-_ ]+(pro|flash(?:[-_ ]lite)?|lite|neon|carbon|argon|hydrogen)$"#)
+
+    init(_ source: String, explicitEffort: String = "") {
+        let raw = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.source = raw
+        let entire = NSRange(raw.startIndex..<raw.endIndex, in: raw)
+        let match = Self.suffix.firstMatch(in: raw, range: entire)
+        let catalog = ModelPricing.shared
+        var base = raw, suffixEffort = ""
+        if let match, let suffixRange = Range(match.range, in: raw), let effortRange = Range(match.range(at: 1), in: raw) {
+            let candidate = String(raw[..<suffixRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let candidateEffort = Self.normalizedEffort(String(raw[effortRange]))
+            if catalog.model(candidate) != nil || (Self.geminiTitle(candidate) != nil && ["low", "medium", "high", "xhigh"].contains(candidateEffort)) {
+                base = candidate
+                suffixEffort = candidateEffort
+            }
+        }
+        title = catalog.model(base).flatMap(catalog.displayName) ?? Self.geminiTitle(base) ?? modelName(raw)
+        let suppliedEffort = Self.normalizedEffort(explicitEffort)
+        effort = suppliedEffort.isEmpty ? Self.normalizedEffort(suffixEffort) : suppliedEffort
+    }
+
+    private static func geminiTitle(_ value: String) -> String? {
+        guard let match = versionedGemini.firstMatch(in: value, range: NSRange(value.startIndex..<value.endIndex, in: value)),
+              let version = Range(match.range(at: 1), in: value), let variant = Range(match.range(at: 2), in: value) else { return nil }
+        let name = value[variant].split(whereSeparator: { $0 == "-" || $0 == "_" || $0 == " " }).map { $0.capitalized }.joined(separator: "-")
+        return "Gemini " + value[version] + " " + name
+    }
+
+    private static func normalizedEffort(_ value: String) -> String {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch normalized {
+        case "extra", "extra high", "extra_high", "extra-high", "xhigh": return "xhigh"
+        case "none", "minimal", "low", "medium", "high", "max", "ultra", "mixed": return normalized
+        case "thinking": return "Thinking"
+        default: return ""
+        }
+    }
+}
+
 /// Indexed copy of Antigravity App's local JSONL. The source is opened read-only;
 /// cursor updates and archived text commit with the corresponding ledger rows.
 final class AntigravityLedger {
@@ -13,6 +60,7 @@ final class AntigravityLedger {
     private var cancelled = false
     private(set) var revision = 0
     private(set) var warning: String?
+    private static let mainGeminiModels: Set<String> = ["gemini-4-neon", "gemini-4-carbon", "gemini-4-hydrogen", "gemini-3.8-flash"]
 
     init(paths: AppPaths) throws {
         root = paths.mock ? paths.data.appendingPathComponent("antigravity-mock")
@@ -33,6 +81,39 @@ final class AntigravityLedger {
 
     func cancel() { cancellationLock.lock(); cancelled = true; cancellationLock.unlock() }
     func resume() { cancellationLock.lock(); cancelled = false; cancellationLock.unlock() }
+    func makeWeeklyEstimator() throws -> WeeklyEstimator {
+        try WeeklyEstimator(database, limitID: "antigravity") { [weak self] start, end in
+            self?.weeklyConsumption(start: start, end: end) ?? (0, 0, true)
+        }
+    }
+
+    private func weeklyConsumption(start: Double, end: Double) -> (Int, Double, Bool) {
+        // Exclude calls that have explicit API-key or paid-credit funding. The
+        // rest are local App reference costs inside a verified sample interval.
+        guard let rows = try? database.query("""
+            SELECT model,count(*) AS calls,count(total) AS metered,count(cost) AS priced,sum(total) AS tokens,sum(cost) AS cost
+            FROM antigravity_records WHERE kind='model_call' AND timestamp>? AND timestamp<=?
+                AND replace(lower(trim(COALESCE(json_extract(data,'$.auth_mode'),''))),'-','_') NOT IN ('api','api_key','apikey','openai_api_key','gemini_api_key')
+                AND replace(lower(trim(COALESCE(json_extract(data,'$.billing_source'),''))),'-','_') NOT IN ('credits','credit','paid_credits','purchased_credits','usage_credits','prepaid','pay_as_you_go','payg','api','api_key','apikey')
+            GROUP BY model
+            """, [start, end]) else { return (0, 0, true) }
+        let catalog = ModelPricing.shared
+        var tokens = 0, cost = 0.0
+        for row in rows {
+            let raw = row.string("model"), model = catalog.model(raw) ?? ""
+            let lower = raw.lowercased()
+            if model == "gemini-4-argon" || catalog.group(model) == "claude" || catalog.group(model) == "gpt"
+                || lower.hasPrefix("claude-") || lower.hasPrefix("claude ") || lower.hasPrefix("gpt-oss") { continue }
+            guard Self.mainGeminiModels.contains(model), row.integer("calls") == row.integer("metered"),
+                  row.integer("calls") == row.integer("priced"), let count = row.integer("tokens"), let amount = row.number("cost") else { return (0, 0, true) }
+            let sum = tokens.addingReportingOverflow(count)
+            guard !sum.overflow else { return (0, 0, true) }
+            tokens = sum.partialValue
+            cost += amount
+        }
+        return cost.isFinite ? (tokens, cost, false) : (0, 0, true)
+    }
+
     private var isCancelled: Bool {
         cancellationLock.lock(); defer { cancellationLock.unlock() }
         return cancelled
@@ -198,6 +279,9 @@ final class AntigravityLedger {
             "antigravity_truncated": truncated, "antigravity_final": final,
             "body_digest": contentDigest
         ]
+        let effort = raw.string("reasoning_effort", raw.string("thinking_level"))
+        if !effort.isEmpty { payload["reasoning_effort"] = effort }
+        for key in ["auth_mode", "billing_source"] where !raw.string(key).isEmpty { payload[key] = raw[key] }
         if truncated, let stored = previous {
             let previous = jsonObject(Data(stored.string("data").utf8))
             if !previous.flag("antigravity_truncated"), !previous.string("prompt_preview").isEmpty {
@@ -309,12 +393,21 @@ final class AntigravityLedger {
 
     private func decode(_ rows: [Object]) throws -> [UsageRow] {
         let requests = rows.filter { $0.string("kind") == "user_request" }.map { $0.string("id") }
-        var models: [String: [String]] = [:]
+        let owners = Array(Set(rows.filter { $0.string("kind") == "model_call" }.map { $0.string("request") }.filter { !$0.isEmpty }))
+        var models: [String: [AntigravityModelLabel]] = [:]
         var metrics: [String: Object] = [:]
+        var summaries: [String: String] = [:]
+        if !owners.isEmpty {
+            let slots = Array(repeating: "?", count: owners.count).joined(separator: ",")
+            for item in try database.query("SELECT id,search FROM antigravity_records WHERE kind='user_request' AND id IN (\(slots))", owners) {
+                summaries[item.string("id")] = item.string("search")
+            }
+        }
         if !requests.isEmpty {
             let slots = Array(repeating: "?", count: requests.count).joined(separator: ",")
-            for item in try database.query("SELECT DISTINCT request,model FROM antigravity_records WHERE request IN (\(slots)) AND kind='model_call' AND model<>'' ORDER BY model", requests) {
-                models[item.string("request"), default: []].append(item.string("model"))
+            for item in try database.query("SELECT DISTINCT request,model,json_extract(data,'$.reasoning_effort') AS effort FROM antigravity_records WHERE request IN (\(slots)) AND kind='model_call' ORDER BY model,effort", requests) {
+                let label = AntigravityModelLabel(item.string("model"), explicitEffort: item.string("effort"))
+                models[item.string("request"), default: []].append(label)
             }
             let columns = ["input", "cached", "output", "total", "cost"].map { "CASE WHEN count(\($0))=count(*) THEN sum(\($0)) END AS \($0)" }.joined(separator: ",")
             for item in try database.query("SELECT request,\(columns) FROM antigravity_records WHERE request IN (\(slots)) AND kind='model_call' GROUP BY request", requests) {
@@ -323,9 +416,20 @@ final class AntigravityLedger {
         }
         return rows.map { row in
             var raw = jsonObject(Data(row.string("data").utf8))
-            if let returned = models[row.string("id")] {
-                raw["upstream_models"] = returned
-                if raw.string("model").isEmpty { raw["model_display_name"] = returned.map(modelName).joined(separator: " + ") }
+            let label = AntigravityModelLabel(raw.string("model"), explicitEffort: raw.string("reasoning_effort"))
+            let members = models[row.string("id")] ?? []
+            if !members.isEmpty { raw["upstream_models"] = Set(members.map(\.source).filter { !$0.isEmpty }).sorted() }
+            if !label.title.isEmpty { raw["model_display_name"] = label.title }
+            else if !members.isEmpty {
+                raw["model_display_name"] = Set(members.map(\.title).filter { !$0.isEmpty }).sorted().joined(separator: " + ")
+            }
+            let observedEfforts = Set(members.map(\.effort))
+            if !label.effort.isEmpty { raw["reasoning_effort"] = label.effort }
+            else if !observedEfforts.contains(""), let effort = observedEfforts.first {
+                raw["reasoning_effort"] = observedEfforts.count == 1 ? effort : "mixed"
+            }
+            if row.string("kind") == "model_call" {
+                raw["prompt_preview"] = summaries[row.string("request")] ?? ""
             }
             if let counts = metrics[row.string("id")] {
                 for (column, key) in [("input", "input_tokens"), ("cached", "cached_input_tokens"), ("output", "output_tokens"), ("total", "total_tokens"), ("cost", "cost_usd")] {
@@ -342,13 +446,13 @@ final class AntigravityLedger {
         sql += mode == "calls" ? " AND kind='model_call'" : " AND (kind='user_request' OR request='')"
         if status != "all" { sql += " AND status=?"; args.append(status) }
         if !query.isEmpty {
-            sql += " AND (instr(lower(search),lower(?))>0 OR instr(lower(session),lower(?))>0)"
-            args += [query, query]
+            sql += " AND (instr(lower(search),lower(?))>0 OR instr(lower(session),lower(?))>0 OR (kind='model_call' AND EXISTS(SELECT 1 FROM antigravity_records owner WHERE owner.id=antigravity_records.request AND owner.kind='user_request' AND instr(lower(owner.search),lower(?))>0)))"
+            args += [query, query, query]
         }
         let summary = try database.query("SELECT count(*) AS n,min(timestamp) AS first,sum(request='') AS orphan FROM antigravity_records WHERE \(sql)", args).first ?? [:]
         let count = summary.integer("n") ?? 0
         let selected = max(0, min(page, max(0, (count - 1) / 60)))
-        let rows = try decode(database.query("SELECT id,kind,data FROM antigravity_records WHERE \(sql) ORDER BY timestamp DESC,id LIMIT 60 OFFSET ?", args + [selected * 60]))
+        let rows = try decode(database.query("SELECT id,kind,request,data FROM antigravity_records WHERE \(sql) ORDER BY timestamp DESC,id LIMIT 60 OFFSET ?", args + [selected * 60]))
         let calendar = Calendar.current, year = calendar.component(.year, from: Date())
         let first = summary.number("first").map { Date(timeIntervalSince1970: $0) }
         let showYear = range.start == .distantPast ? first.map { calendar.component(.year, from: $0) != year } ?? false
@@ -404,7 +508,7 @@ final class AntigravityLedger {
         let body = try database.requestMessageRow(row.id).map { jsonObject(Data($0.string("data").utf8)) } ?? [:]
         guard isRequest else { return AntigravityDetail(answer: body.string("final"), counters: row.raw.object("antigravity_counters")) }
         let count = try database.query("SELECT count(*) AS n FROM antigravity_records WHERE request=? AND kind='model_call'", [row.id]).first?.integer("n") ?? 0
-        let members = try decode(database.query("SELECT id,kind,data FROM antigravity_records WHERE request=? AND kind='model_call' ORDER BY timestamp,id LIMIT 50 OFFSET ?", [row.id, max(0, page) * 50]))
+        let members = try decode(database.query("SELECT id,kind,request,data FROM antigravity_records WHERE request=? AND kind='model_call' ORDER BY timestamp,id LIMIT 50 OFFSET ?", [row.id, max(0, page) * 50]))
         // The final completed model step stays tied to its explicit request ID.
         let last = try database.query("SELECT id,data FROM antigravity_records WHERE request=? AND kind='model_call' AND json_extract(data,'$.antigravity_final')=1 ORDER BY timestamp DESC,id DESC LIMIT 1", [row.id]).first
         let answer = try last.flatMap { try database.requestMessageRow($0.string("id")) }.map { jsonObject(Data($0.string("data").utf8)).string("final") } ?? ""

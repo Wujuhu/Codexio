@@ -5,6 +5,7 @@ package backend
 import (
 	"encoding/json"
 	"math"
+	"strings"
 	"sync"
 	"time"
 )
@@ -186,6 +187,9 @@ func (e *RollingEstimator) process(now time.Time) {
 }
 
 func (e *RollingEstimator) usage(start, end time.Time, sole bool) (int64, float64, bool, error) {
+	if e.limitID == antigravityClient {
+		return e.antigravityUsage(start, end)
+	}
 	if e.limitID == "claude" {
 		rows, err := e.store.db.Query(`SELECT data FROM usage_priced_calls WHERE timestamp>? AND timestamp<=? AND json_extract(data,'$.client_kind')='claude_code' AND coalesce(json_extract(data,'$.service_tier'),'') NOT IN ('priority','fast') AND coalesce(json_extract(data,'$.auth_mode'),'') NOT IN ('api','api_key','apikey') AND coalesce(json_extract(data,'$.billing_source'),'') NOT IN ('credits','api','api_key','usage_credits')`, ledgerStamp(start), ledgerStamp(end))
 		if err != nil {
@@ -316,7 +320,8 @@ func (e *RollingEstimator) Rows(account string) []Row {
 	if account == "" {
 		return []Row{}
 	}
-	rows, err := e.store.db.Query("SELECT data FROM usage_week_intervals WHERE json_extract(data,'$.account_key')=? AND coalesce(json_extract(data,'$.limit_id'),'codex')=? ORDER BY end_at DESC,id DESC LIMIT 20", account, e.limitID)
+	reader := e.store.readDB(nil)
+	rows, err := reader.Query("SELECT data FROM usage_week_intervals WHERE json_extract(data,'$.account_key')=? AND coalesce(json_extract(data,'$.limit_id'),'codex')=? ORDER BY end_at DESC,id DESC LIMIT 20", account, e.limitID)
 	if err != nil {
 		return []Row{}
 	}
@@ -331,4 +336,62 @@ func (e *RollingEstimator) Rows(account string) []Row {
 		}
 	}
 	return result
+}
+
+// Gemini's main weekly pool excludes the separate Argon pool and third-party
+// models. Ambiguous ownership or incomplete metering invalidates this window.
+func (e *RollingEstimator) antigravityUsage(start, end time.Time) (int64, float64, bool, error) {
+	rows, err := e.store.db.Query(`SELECT data FROM usage_priced_calls WHERE timestamp>? AND timestamp<=? AND json_extract(data,'$.client_kind')='antigravity' ORDER BY timestamp,id`, ledgerStamp(start), ledgerStamp(end))
+	if err != nil {
+		return 0, 0, true, err
+	}
+	defer rows.Close()
+	var tokens int64
+	var dollars, correction float64
+	invalid := false
+	for rows.Next() {
+		var raw string
+		if err = rows.Scan(&raw); err != nil {
+			return 0, 0, true, err
+		}
+		call := dataRow(raw)
+		model := frozenPrices.model(dataString(call, "model"))
+		if model == "" {
+			invalid = true
+			continue
+		}
+		if !strings.HasPrefix(model, "gemini-") || strings.Contains(model, "-argon") {
+			continue
+		}
+		unrelated, ambiguousFunding := false, false
+		for _, field := range []string{"auth_mode", "billing_source", "usage_source"} {
+			funding := pricingIdentity(call[field])
+			switch funding {
+			case "", "subscription", "subscription_allowance", "included", "included_usage", "plan_allowance", "oauth", "google", "antigravity":
+			case "api", "api_key", "apikey", "credits", "credit", "paid_credits", "purchased_credits", "usage_credits":
+				unrelated = true
+			default:
+				ambiguousFunding = true
+			}
+		}
+		if unrelated {
+			continue
+		}
+		if ambiguousFunding {
+			invalid = true
+			continue
+		}
+		count, known := knownCount(call["total_tokens"])
+		cost, priced := ValueFloat(call["cost_usd"])
+		if !known || !priced || cost < 0 || (call["pricing_status"] != "priced" && call["pricing_status"] != "estimated") || tokens > math.MaxInt64-count {
+			invalid = true
+			continue
+		}
+		tokens += count
+		adjusted := cost - correction
+		next := dollars + adjusted
+		correction = (next - dollars) - adjusted
+		dollars = next
+	}
+	return tokens, dollars, invalid, rows.Err()
 }
