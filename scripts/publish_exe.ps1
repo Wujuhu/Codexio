@@ -148,3 +148,4 @@ if ($Remaining.Count -ne 1 -or $Remaining[0].FullName -ine $Destination) {
     throw "The development directory still contains more than one executable; publication is incomplete."
 }
 Write-Host "Published: $Destination"
+Write-Output $BackupDir

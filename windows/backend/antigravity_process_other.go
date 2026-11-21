@@ -2,11 +2,8 @@
 
 package backend
 
-import (
-	"context"
-	"errors"
-)
+import "context"
 
 func antigravityAppEndpoints(context.Context) ([]antigravityEndpoint, error) {
-	return nil, errors.New("Antigravity App 本地服务需要 Windows")
+	return nil, errAntigravityAppClosed
 }

@@ -1,10 +1,42 @@
 # Build and verify a Windows development artifact. No publishing or version bump.
-param([string]$Version, [string]$ManifestPath, [string]$DeliveryRoot)
+param([string]$Version, [string]$ManifestPath, [string]$DeliveryRoot, [switch]$SkipLaunch)
 $ErrorActionPreference = 'Stop'
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $DeliveryRoot) { $DeliveryRoot = $ProjectRoot }
 $DeliveryRoot = [IO.Path]::GetFullPath($DeliveryRoot)
 . (Join-Path $ProjectRoot 'scripts\windows_build_common.ps1')
+$InteractiveSession = [Diagnostics.Process]::GetCurrentProcess().SessionId
+if (-not $SkipLaunch -and $InteractiveSession -eq 0) {
+    throw 'Run Windows development delivery in the signed-in user session.'
+}
+
+function Get-CodexioDesktopShell {
+    $Explorer = New-Object -ComObject Shell.Application
+    $DesktopHandle = 0
+    # SWC_DESKTOP (8) and SWFO_NEEDDISPATCH (1) locate Explorer's desktop view.
+    $Desktop = $Explorer.Windows().FindWindowSW(0, $null, 8, [ref]$DesktopHandle, 1)
+    if (-not $Desktop -or -not $DesktopHandle) {
+        throw 'The signed-in user desktop is unavailable. The staged build was preserved.'
+    }
+    return $Desktop.Document.Application
+}
+
+function Start-CodexioDevelopmentApp {
+    param($DesktopShell, [string]$Executable, [int]$SessionId)
+    # Explorer owns this launch, independent of the temporary build task.
+    $DesktopShell.ShellExecute($Executable, '', (Split-Path -Parent $Executable), 'open', 1)
+    $Deadline = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        $Running = Get-Process -Name 'Codexio' -ErrorAction SilentlyContinue | Where-Object {
+            $_.SessionId -eq $SessionId -and $_.Path -ieq $Executable -and
+                $_.MainWindowHandle -ne [IntPtr]::Zero -and $_.Responding
+        } | Select-Object -First 1
+        if ($Running) { return $Running.Id }
+        Start-Sleep -Milliseconds 250
+    } while ($Deadline.Elapsed.TotalSeconds -lt 25)
+    throw 'The delivered Codexio main window did not become ready in the signed-in user session.'
+}
+
 $EnvironmentBefore = Get-CodexioBuildEnvironment
 try {
     Initialize-CodexioWindowsTools -ProjectRoot $ProjectRoot
@@ -61,10 +93,28 @@ try {
     if ($Fingerprint.sha256 -ne $BuildFingerprint.sha256) { throw 'Sources changed during compilation/smoke; the staged build was retained without delivery.' }
     Write-CodexioJSON -Path (Join-Path $Checks 'source-fingerprint.json') -Value $Fingerprint
     $DevelopmentDir = Join-Path $DeliveryRoot 'build\dev\windows'
-    & (Join-Path $ProjectRoot 'scripts\publish_exe.ps1') -StagedExe $StagedExe -Version $Version -ProjectRoot $DeliveryRoot
-    Move-Item -LiteralPath $StagedManifest -Destination (Join-Path $DevelopmentDir 'latest.json') -Force
+    if (-not $SkipLaunch) { $DesktopShell = Get-CodexioDesktopShell }
+    $BackupDir = & (Join-Path $ProjectRoot 'scripts\publish_exe.ps1') -StagedExe $StagedExe -Version $Version -ProjectRoot $DeliveryRoot
     $DeliveredExe = Join-Path $DevelopmentDir 'Codexio.exe'
+    $DeliveredManifest = Join-Path $DevelopmentDir 'latest.json'
     if ((Get-FileHash -LiteralPath $DeliveredExe -Algorithm SHA256).Hash.ToLowerInvariant() -ne $Hash) { throw 'Delivered EXE hash changed.' }
-    Write-CodexioJSON -Path (Join-Path $Checks 'delivery.json') -Value ([ordered]@{ version=$Version; platform='windows/amd64'; executable=$DeliveredExe; manifest=(Join-Path $DevelopmentDir 'latest.json'); size=$Size; sha256=$Hash; source_sha256=$Fingerprint.sha256; compile_source=$CompileRoot; smoke_result=$ResultPath; smoke_checks=@($Result.checks); runtime='Wails 3.0.0-beta.26'; go_version='1.26.1'; cgo=$false; signed=$false; built_at=[DateTime]::UtcNow.ToString('o') })
+    if (Test-Path -LiteralPath $DeliveredManifest) {
+        [IO.File]::Replace($StagedManifest, $DeliveredManifest, (Join-Path $BackupDir 'previous-latest.json'))
+    } else {
+        Move-Item -LiteralPath $StagedManifest -Destination $DeliveredManifest
+    }
+    $Delivery = [ordered]@{ version=$Version; platform='windows/amd64'; executable=$DeliveredExe; manifest=$DeliveredManifest; size=$Size; sha256=$Hash; source_sha256=$Fingerprint.sha256; compile_source=$CompileRoot; smoke_result=$ResultPath; smoke_checks=@($Result.checks); runtime='Wails 3.0.0-beta.26'; go_version='1.26.1'; cgo=$false; signed=$false; built_at=[DateTime]::UtcNow.ToString('o'); backup=$BackupDir; launch_pid=$null; launch_session_id=$null }
+    try {
+        if (-not $SkipLaunch) {
+            $Delivery.launch_pid = Start-CodexioDevelopmentApp -DesktopShell $DesktopShell -Executable $DeliveredExe -SessionId $InteractiveSession
+            $Delivery.launch_session_id = $InteractiveSession
+        }
+    } catch {
+        $Delivery['launch_error'] = $_.Exception.Message
+        throw "Development EXE and manifest were delivered, but startup failed. Recovery backup: $BackupDir. $($_.Exception.Message)"
+    } finally {
+        Write-CodexioJSON -Path (Join-Path $Checks 'delivery.json') -Value $Delivery
+    }
     Write-Host "Development build verified: $DeliveredExe"
+    if ($Delivery.launch_pid) { Write-Host "Development Codexio started: PID $($Delivery.launch_pid), session $($Delivery.launch_session_id)" }
 } finally { Restore-CodexioBuildEnvironment -Values $EnvironmentBefore }

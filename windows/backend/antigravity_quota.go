@@ -21,6 +21,11 @@ type antigravityEndpoint struct {
 	CSRF string `json:"csrf"`
 }
 
+var (
+	errAntigravityAppClosed        = errors.New("打开 Antigravity App 后可读取额度")
+	errAntigravityQuotaUnavailable = errors.New("Antigravity 额度暂不可用")
+)
+
 // This reader uses only the already-running desktop App's local language server.
 // It never changes model-request routing or obtains account OAuth credentials.
 type AntigravityQuota struct {
@@ -84,7 +89,11 @@ func (q *AntigravityQuota) Run(ctx context.Context) {
 		q.mu.Lock()
 		old := CloneRow(q.state)
 		if err != nil {
-			q.state["status"], q.state["error"] = "unavailable", "打开 Antigravity App 后可读取额度"
+			message := errAntigravityQuotaUnavailable
+			if errors.Is(err, errAntigravityAppClosed) {
+				message = errAntigravityAppClosed
+			}
+			q.state["status"], q.state["error"] = "unavailable", message.Error()
 			q.state["account_key"] = ""
 		} else {
 			groups := ValueRows(value["groups"])
@@ -124,8 +133,8 @@ func (q *AntigravityQuota) Run(ctx context.Context) {
 
 func readAntigravityQuota(ctx context.Context) (Row, error) {
 	endpoints, err := antigravityAppEndpoints(ctx)
-	if err != nil || len(endpoints) == 0 {
-		return nil, errors.New("Antigravity App 未运行")
+	if err != nil {
+		return nil, err
 	}
 	// A self-signed certificate is accepted only on a verified App-owned
 	// loopback port. The process session's CSRF token authenticates this RPC.
@@ -193,7 +202,7 @@ func readAntigravityQuota(ctx context.Context) (Row, error) {
 			return result, nil
 		}
 	}
-	return nil, errors.New("Antigravity App 额度暂不可用")
+	return nil, errAntigravityQuotaUnavailable
 }
 
 func antigravityRPC(ctx context.Context, client *http.Client, endpoint antigravityEndpoint, method string, body Row) (Row, error) {

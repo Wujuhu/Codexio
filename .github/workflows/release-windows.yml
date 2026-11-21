@@ -123,7 +123,7 @@ jobs:
           python -m venv .venv
           if ($LASTEXITCODE -ne 0) { throw "Could not create the Windows virtual environment." }
           $MacManifest = Join-Path $PWD "build\staging\release-ci\macos\latest.json"
-          .\build_exe.ps1 -ManifestPath $MacManifest
+          .\build_exe.ps1 -ManifestPath $MacManifest -SkipLaunch
           if ($LASTEXITCODE -ne 0) { throw "Windows build failed." }
           $Exe = Join-Path $PWD "build\dev\windows\Codexio.exe"
           $Info = (Get-Item -LiteralPath $Exe).VersionInfo
