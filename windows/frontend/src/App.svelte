@@ -28,6 +28,8 @@
  const filtersDirty=new Set<ClientKind>(['codex','claude_code','antigravity']);
  let page='overview';let settings:Row={};let data:Row={};let query=defaultQuery();let pageQueries:Record<string,Query>={};let cache:Record<string,Row>={};let busy=true;let error='';let notice='';let ready=false;let report=false;let reportPeriod='day';let language='zh';let theme='light';let sequence=0;let mounted=false;let eventTimer:ReturnType<typeof setTimeout>;let saveQueue=Promise.resolve();let smokeSent=false;let updateOpen=false;
  let nativeReady=false;
+ let startupSettingsReady=false;
+ let selectedBeforeStartup=false;
  let startupStage='';
  let startupEventSeen=false;
  let incompleteUsageNoticeClosed=false;
@@ -138,6 +140,8 @@
    try{await flight;}finally{if(acknowledgementFlight===flight)acknowledgementFlight=null;}
  }
  async function reload(){
+   // Native events and navigation can request data before the saved Agent arrives.
+   if(!startupSettingsReady)return;
    const ticket=++sequence;
    const active=page;
    const current={...query};
@@ -169,7 +173,21 @@
  }
  function cancelScheduledDataReload(){eventSequence++;clearTimeout(eventTimer);}
  function go(next:string){cancelScheduledDataReload();invalidateClientReads();pageQueries[pageKey(page)]={...query};page=next;query={...(pageQueries[pageKey(next)]??{...defaultQuery(),...(next==='trends'?{page_size:5}:{})}),client_kind:clientPages.has(next)?clientKind:'codex'};data=cache[pageKey(next)]??{};void reload()}
- function selectClient(next:ClientKind){if(next===clientKind)return;if(page==='pricing'){clientKind=next;return;}if(!clientPages.has(page))return;cancelScheduledDataReload();invalidateClientReads();pageQueries[pageKey(page)]={...query,tier:''};clientKind=next;query={...(pageQueries[pageKey(page)]??defaultQuery()),client_kind:next,tier:''};data=cache[pageKey(page)]??{};error='';void reload()}
+ function selectClient(next:ClientKind,openOverview=false){
+   const destination=openOverview&&!clientPages.has(page)?'overview':page;
+   if(destination!=='pricing'&&!clientPages.has(destination))return;
+   if(!startupSettingsReady||next!==clientKind){
+     if(!startupSettingsReady)selectedBeforeStartup=true;
+     void save({selected_client_kind:next});
+   }
+   if(next===clientKind&&destination===page)return;
+   if(destination==='pricing'){clientKind=next;return;}
+   cancelScheduledDataReload();invalidateClientReads();
+   pageQueries[pageKey(page)]={...query,tier:''};
+   clientKind=next;page=destination;
+   query={...(pageQueries[pageKey(page)]??defaultQuery()),client_kind:next,tier:''};
+   data=cache[pageKey(page)]??{};error='';void reload();
+ }
  function filter(next:Query){cancelScheduledDataReload();invalidateClientReads();query={...next,...(page==='logs'?{tier:''}:{}),client_kind:clientPages.has(page)?clientKind:'codex'};pageQueries[pageKey(page)]=query;void reload()}
  async function save(changes:Row){saveQueue=saveQueue.catch(()=>{}).then(async()=>{settingsSequence++;try{const next=await api('SaveSettings',changes);if(mounted)adoptSettings(next);}catch(e){if(mounted)fail(e);}});await saveQueue;}
  function searchLogs(){
@@ -221,15 +239,25 @@
    const offClock=listen('codexio:clock',event=>{if(mounted&&event.updated_at!=null){const client:ClientKind=event.client_kind==='claude_code'?'claude_code':event.client_kind==='antigravity'?'antigravity':'codex';adoptState({...clientStates[client],updated_at:event.updated_at},client);}});
    const offStartup=listen('codexio:startup',event=>{startupEventSeen=true;startupStage=text(event.stage,'');});
    void api('GetState').then(state=>{if(mounted){adoptState(state,'codex');adoptRefresh(state);if(!startupEventSeen)startupStage=text(state.startup_stage,'');}}).catch(e=>{if(mounted&&activeClient==='codex')fail(e);});
-   const offClient=listen('codexio:select-client',event=>{if(event.client_kind==='antigravity'){if(!clientPages.has(page))go('overview');selectClient('antigravity');}});
+   const offClient=listen('codexio:select-client',event=>{if(event.client_kind==='antigravity')selectClient('antigravity',true);});
    const offReport=listen('codexio:show-report',e=>{void showReport(e.period??'day')});
    const offNotice=listen('codexio:notice',e=>{notice=text(e.message??e.status,'');if(e.scope==='update')changed(e)});
    const media=matchMedia('(prefers-color-scheme: dark)');
    const systemTheme=()=>{if(settings.theme==='system')settings={...settings};};
    media.addEventListener('change',systemTheme);
     void (async()=>{
-      try{const initial=await api('GetStartupSettings');if(mounted)adoptSettings(initial);}catch(e){if(mounted)fail(e);}
+      try{
+        const initial=await api('GetStartupSettings');
+        if(!mounted)return;
+        adoptSettings(initial);
+        if(!selectedBeforeStartup){
+          const saved=initial.selected_client_kind;
+          clientKind=saved==='claude_code'||saved==='antigravity'?saved:'codex';
+          if(clientPages.has(page))query={...query,client_kind:clientKind};
+        }
+      }catch(e){if(mounted)fail(e);}
       if(!mounted)return;
+      startupSettingsReady=true;
       await reload();
       if(mounted)void refreshSettings(true);
     })();

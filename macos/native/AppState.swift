@@ -46,7 +46,7 @@ final class AppState: ObservableObject {
     private var antigravityLastScan = Date.distantPast
     private var antigravityFutureBoundary = Date.distantFuture
     private var antigravityPendingTiming: (session: String, signature: AntigravityNativeTiming.Signature)?
-    @Published var pageClient: DesktopClient = .codex
+    @Published private(set) var pageClient: DesktopClient = .codex
     var logFilters: [DesktopClient:LogFilterMemory] = [:]
     @Published private(set) var claudeRevision = UUID()
     @Published private(set) var claudeModels: [String] = []
@@ -204,6 +204,7 @@ final class AppState: ObservableObject {
         menuVisible = preferences.analytics.flag("menu_bar_visible",true)
         menuFields = MenuBarField.normalize(preferences.analytics["menu_bar_fields"] as? [String] ?? MenuBarField.defaults)
         menuClient = DesktopClient(rawValue:preferences.analytics.string("menu_bar_agent")) ?? .codex
+        pageClient = DesktopClient(rawValue: preferences.analytics.string("selected_client_kind")) ?? .codex
         if !paths.mock {
             sleepObserver = NSWorkspace.shared.notificationCenter.addObserver(forName:NSWorkspace.willSleepNotification,object:nil,queue:.main) { [weak self] _ in
                 self?.dataQueue.async { [weak self] in
@@ -836,6 +837,12 @@ final class AppState: ObservableObject {
                 if self.reportError != error { self.reportError = error }
             }
         }
+    }
+    func selectPageClient(_ client: DesktopClient) {
+        guard pageClient != client else { return }
+        pageClient = client
+        preferences.analytics["selected_client_kind"] = client.rawValue
+        do { try preferences.save() } catch { errorMessage = error.localizedDescription }
     }
     func setPreference(_ key: String, _ value: Any, general: Bool = false) {
         let value: Any = key == "menu_bar_fields" && !general ? MenuBarField.normalize(value as? [String] ?? MenuBarField.defaults) : value

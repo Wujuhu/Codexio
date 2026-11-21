@@ -10,7 +10,7 @@ struct ClientSwitcher: View {
     var body: some View {
         HStack(spacing:2) {
             ForEach(DesktopClient.allCases,id:\.self) { client in
-                Button { state.pageClient = client } label: {
+                Button { state.selectPageClient(client) } label: {
                     Group {
                         if let image = Self.images[client] {Image(nsImage:image).resizable().scaledToFit()}
                         else {Color.clear}

@@ -22,7 +22,7 @@ func systemDefaultConfig() Row {
 		"antigravity_log_columns": []string{"content", "model", "input", "output", "cost", "duration", "details"}, "antigravity_log_column_widths": Row{},
 		"usage_report_auto": true, "usage_report_style": "garden", "app_icon": "main", "upstream_detection_enabled": false,
 		"usage_refresh_interval_seconds": 10, "usage_refresh_interval_user_set": false, "week_estimate_interval_minutes": 10, "week_estimate_interval_version": 3, "log_column_defaults_version": 1,
-		"codex_roots": []string{systemCodexRoot()}, "account_since": UTCStamp(time.Now()), "main_geometry": nil,
+		"codex_roots": []string{systemCodexRoot()}, "account_since": UTCStamp(time.Now()), "main_geometry": nil, "selected_client_kind": "codex",
 		"navigation_order": []string{"overview", "logs", "trends", "subscription", "pricing", "settings"}, "navigation_order_version": 1,
 		"sidebar_collapsed": false, "sidebar_width": 238, "log_preview_width": 240, "native_log_columns": []string{"content", "model", "input", "output", "cost", "duration", "details"}, "claude_log_columns": []string{"content", "model", "input", "output", "cost", "duration", "details"}, "claude_log_column_widths": Row{}, "subscription_profile": Row{"plan": "", "price_usd": nil, "renewal_date": ""}, "language": systemLanguage()}) {
 		r[k] = v
@@ -174,6 +174,7 @@ func PublicConfig(r Row) Row {
 	return CloneRow(out)
 }
 func systemNormalizeConfig(r Row) Row {
+	r["selected_client_kind"] = normalizedClient(ValueString(r["selected_client_kind"]))
 	// These are the persisted palette identities from usage_report_ui.py.
 	if v := ValueString(r["usage_report_style"]); v == "cream" {
 		r["usage_report_style"] = "bookmark"

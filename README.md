@@ -51,7 +51,7 @@ Mac 使用 `/Applications/Codexio.app` 作为稳定安装位置。从其他目�
 
 | 功能 | 内容 |
 | --- | --- |
-| **客户端切换** | Mac／Windows 概览、日志、用量与订阅可在 ChatGPT／Codex、本地 Claude Code 和 Antigravity App 间切换。启动默认 ChatGPT／Codex，定价目录独立 |
+| **客户端切换** | Mac／Windows 概览、日志、用量与订阅可在 ChatGPT／Codex、本地 Claude Code 和 Antigravity App 间切换。首次启动默认 ChatGPT／Codex，此后恢复主窗口上次选择的客户端。定价目录独立 |
 | **额度与任务** | 5 小时／周剩余额度、重置时间、当前任务与最近请求 |
 | **请求记录** | 按日期、模型和状态筛选，查看请求时选择的模型名称、Token、费用、思考强度、速度、任务实时耗时、可靠来源的 TPS／TTFT 与可用正文 |
 | **用量分析** | 费用、总 Token、用户请求、命中率，以及趋势、活动热图、模型构成；聊天排行按本地线程费用或 Token 排序 |
