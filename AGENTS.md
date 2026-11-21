@@ -224,3 +224,4 @@
 - 只读 App 的 `~/.gemini/antigravity/brain/*/.system_generated/logs/transcript.jsonl`，复用原有文件身份和尾部游标机制。按会话、步骤编号和原始时间去重。来源不可见、日志截断或上下文压缩时保留确认过的账本。仅明确的用户输入产生用户请求计数。
 - 已确认 App 的 `input_tokens` 为未缓存输入，缓存读取另列，输出沿用源记录。以完整有效的原始计数派生总量，价格使用明确模型的官方 API 参考价。耗时、TPS、TTFT 缺少源证据时显示 `—`。参考 Google Hooks 文档及 agy-token-stats 的同口径记录。
 - 额度参考 CodexBar 在 App 模式使用的本机语言服务摘要。验证归属和同一用户后，通过 App 自有的 loopback HTTPS 读取主 Gemini 额度池的 `gemini-5h` 与 `gemini-weekly` 百分比和明确重置时间。额度采样与日志账本独立。Windows App 2.33.0 的实机核对记录在 `build/checks/antigravity-app-20261120/windows-quota.json`。Agent 标识来自 Google Antigravity Press Assets。
+- 模型调用的计时只读 App 原生会话数据库 `conversations/<UUID>.db` 和 WAL。按同一会话的生成记录所引用步骤、转录时间精度及原始输入／缓存读取／输出计数唯一匹配。明确首 Token 耗时与流式输出耗时相加得到调用耗时，再用同次调用的输出 Token 计算端到端平均 TPS。来源字段缺失或匹配冲突时保持缺失。参考 agy-statusline-rs 对 `gen_metadata` 的字段解码及 agy-pulse 的原生计时口径，Windows App 实机核对在 `build/checks/antigravity-timing-20261121/native-timing-evidence.json`。

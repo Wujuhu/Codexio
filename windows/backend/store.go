@@ -19,6 +19,7 @@ import (
 
 type Store struct {
 	antigravity             antigravityScan
+	antigravityTiming       antigravityTimingCache
 	modelNames              map[string]*requestModelNames
 	modelNameRoots          map[string]string
 	pendingObservedPrices   map[string]bool

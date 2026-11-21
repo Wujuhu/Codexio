@@ -30,6 +30,7 @@ final class AppState: ObservableObject {
     let antigravityLedger: AntigravityLedger
     let antigravityClock = ScanClock()
     let antigravityQuotaClock = ScanClock()
+    let antigravityTimingClock = ScanClock()
     private let antigravityAllowance = AntigravityAllowance()
     private var antigravityQuotaRequest: UUID?
     private(set) var antigravityQuota = AntigravityQuota()
@@ -310,7 +311,10 @@ final class AppState: ObservableObject {
     func refresh() {
         if selectedPage == "pricing" { syncPrices(); return }
         refreshUsage()
-        if pageClient == .antigravity { refreshAntigravityQuota() }
+        if pageClient == .antigravity {
+            refreshAntigravityQuota()
+            if selectedPage == "logs" || selectedPage == "overview" { antigravityTimingClock.updated = Date() }
+        }
         if pageClient == .codex || !["overview","logs","trends","subscription"].contains(selectedPage) { refreshQuota(force:true) }
         if selectedPage == "subscription" && pageClient == .codex { refreshReports(force:true) }
     }

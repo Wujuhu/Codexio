@@ -52,6 +52,7 @@ struct AntigravityModelLabel {
 final class AntigravityLedger {
     let root: URL
     private let database: Database
+    private lazy var nativeTiming = AntigravityNativeTiming(root: root)
     private var files: [(session: String, url: URL)] = []
     private var discoveryStamp: FileStamp?
     private var discoveredAt = Date.distantPast
@@ -281,6 +282,13 @@ final class AntigravityLedger {
         ]
         let effort = raw.string("reasoning_effort", raw.string("thinking_level"))
         if !effort.isEmpty { payload["reasoning_effort"] = effort }
+        if !isRequest {
+            if let duration = raw.number("duration_ms"), duration >= 0 {
+                payload["duration_ms"] = duration
+                payload["duration_source"] = "antigravity_transcript"
+            }
+            if let ttft = recordedTTFTMilliseconds(raw) { payload["ttft_ms"] = ttft }
+        }
         for key in ["auth_mode", "billing_source"] where !raw.string(key).isEmpty { payload[key] = raw[key] }
         if truncated, let stored = previous {
             let previous = jsonObject(Data(stored.string("data").utf8))
@@ -414,7 +422,7 @@ final class AntigravityLedger {
                 metrics[item.string("request")] = item
             }
         }
-        return rows.map { row in
+        var decoded = rows.map { row in
             var raw = jsonObject(Data(row.string("data").utf8))
             let label = AntigravityModelLabel(raw.string("model"), explicitEffort: raw.string("reasoning_effort"))
             let members = models[row.string("id")] ?? []
@@ -437,8 +445,10 @@ final class AntigravityLedger {
                 }
                 if counts.number("cost") != nil { raw["pricing_status"] = "estimated" }
             }
-            return UsageRow(raw: raw)
+            return raw
         }
+        nativeTiming.apply(to: &decoded, ledger: database, cancelled: { self.isCancelled })
+        return decoded.map(UsageRow.init(raw:))
     }
 
     func logPage(range: UsageRange, mode: String, model: String, status: String, query: String, page: Int) throws -> LogProjection {
@@ -506,7 +516,13 @@ final class AntigravityLedger {
     func detail(_ row: UsageRow, page: Int) throws -> AntigravityDetail {
         let isRequest = row.raw.string("record_kind") == "user_request"
         let body = try database.requestMessageRow(row.id).map { jsonObject(Data($0.string("data").utf8)) } ?? [:]
-        guard isRequest else { return AntigravityDetail(answer: body.string("final"), counters: row.raw.object("antigravity_counters")) }
+        guard isRequest else {
+            let latest = try database.query("SELECT data FROM antigravity_records WHERE id=? AND kind='model_call'", [row.id]).first
+            var decoded = [latest.map { jsonObject(Data($0.string("data").utf8)) } ?? row.raw]
+            nativeTiming.apply(to: &decoded, ledger: database, cancelled: { self.isCancelled })
+            let raw = decoded[0]
+            return AntigravityDetail(answer: body.string("final"), counters: raw.object("antigravity_counters"), timing: UsageRow(raw: raw))
+        }
         let count = try database.query("SELECT count(*) AS n FROM antigravity_records WHERE request=? AND kind='model_call'", [row.id]).first?.integer("n") ?? 0
         let members = try decode(database.query("SELECT id,kind,request,data FROM antigravity_records WHERE request=? AND kind='model_call' ORDER BY timestamp,id LIMIT 50 OFFSET ?", [row.id, max(0, page) * 50]))
         // The final completed model step stays tied to its explicit request ID.
@@ -594,6 +610,7 @@ struct AntigravityDetail {
     var prompt = ""
     var answer = ""
     var counters: Object = [:]
+    var timing: UsageRow?
     var members: [UsageRow] = []
     var pages = 1
     var answerTruncated = false

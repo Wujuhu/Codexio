@@ -60,6 +60,9 @@ func antigravityTitleWords(value string) string {
 }
 
 func (s *Store) enrichAntigravityRows(records []Row, reader queryReader) error {
+	if err := s.enrichAntigravityTimings(records, reader); err != nil {
+		return err
+	}
 	requests := map[string]bool{}
 	for _, row := range records {
 		if dataString(row, "client_kind") != antigravityClient {

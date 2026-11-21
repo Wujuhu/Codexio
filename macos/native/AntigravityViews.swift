@@ -108,6 +108,7 @@ struct AntigravityOverviewView: View {
 struct AntigravityLogsView: View {
     @ObservedObject var state: AppState
     @StateObject private var projection = AsyncProjection(LogProjection())
+    @State private var timingStamp: Date?
     @State private var mode: String
     @State private var period: String
     @State private var model: String
@@ -129,7 +130,7 @@ struct AntigravityLogsView: View {
         return ["content"] + LogFields.all.filter { $0 != "content" && $0 != "details" && saved.contains($0) } + ["details"]
     }
     private var filter: String { [mode, period, model, status, query, String(from.timeIntervalSince1970), String(through.timeIntervalSince1970)].joined(separator: "|") }
-    private var key: String { "\(state.antigravityRevision)|\(filter)|\(page)|\(TimeZone.current.identifier)" }
+    private var key: String { "\(state.antigravityRevision)|\(timingStamp?.timeIntervalSince1970 ?? 0)|\(filter)|\(page)|\(TimeZone.current.identifier)" }
     private func load() {
         let ledger = state.antigravityLedger, queue = state.dataQueue
         let range = UsageRange(period: period, from: from, through: through), mode = mode, model = model, status = status, query = query, page = page
@@ -154,6 +155,7 @@ struct AntigravityLogsView: View {
             }.font(.caption).foregroundStyle(.secondary)
         }.padding(.horizontal, PageLayout.inset).padding(.bottom, PageLayout.inset)
             .onAppear(perform: load).onChange(of: key) { _, _ in load() }
+            .onReceive(state.antigravityTimingClock.$updated.dropFirst()) { timingStamp = $0 }
             .onChange(of: filter) { _, _ in page = 0 }
             .onChange(of: projection.value.pages) { _, pages in if page >= pages { page = max(0, pages - 1) } }
             .onDisappear { state.logFilters[.antigravity] = LogFilterMemory(mode: mode, period: period, model: model, status: status, query: query, page: page, from: from, through: through) }
@@ -254,7 +256,8 @@ private struct AntigravityDetailView: View {
     let row: UsageRow
     @StateObject private var projection = AsyncProjection(AntigravityDetail())
     @State private var page = 0
-    private var key: String { "\(state.antigravityRevision)|\(row.id)|\(page)" }
+    @State private var timingStamp: Date?
+    private var key: String { "\(state.antigravityRevision)|\(timingStamp?.timeIntervalSince1970 ?? 0)|\(row.id)|\(page)" }
     private func load() {
         let queue = state.dataQueue, ledger = state.antigravityLedger, row = row, page = page
         projection.load(key: key, revision: state.antigravityRevision) {
@@ -271,6 +274,7 @@ private struct AntigravityDetailView: View {
                     Text(L("总 Token", "Total tokens") + " " + compact(row.tokens.map(Double.init)))
                     Spacer(); Text(L("费用", "Cost") + " " + row.costText)
                 }.font(.caption).monospacedDigit()
+                timing(detail.timing ?? row)
                 if row.raw.string("record_kind") == "user_request" { block(L("用户请求", "User request"), detail.prompt) }
                 block(L("回复", "Response"), detail.answer)
                 if row.raw.flag("antigravity_truncated") || detail.answerTruncated {
@@ -286,11 +290,22 @@ private struct AntigravityDetailView: View {
                     Divider(); Text(L("模型调用", "Model calls")).font(.subheadline.weight(.medium))
                     ForEach(detail.members) { member in
                         HStack { Text(requestValueText(member.raw.string("model_display_name"))); Spacer(); Text(compact(member.tokens.map(Double.init))).monospacedDigit(); Text(member.costText) }.font(.caption)
+                        timing(member)
                     }
                     AntigravityPager(page: $page, pages: detail.pages).font(.caption)
                 }
             }.frame(maxWidth: .infinity, alignment: .leading).padding(18)
         }.frame(width: 480, height: 460).onAppear(perform: load).onChange(of: key) { _, _ in load() }
+            .onReceive(state.antigravityTimingClock.$updated.dropFirst()) { timingStamp = $0 }
+    }
+
+    private func timing(_ row: UsageRow) -> some View {
+        let ttft = row.firstTokenSeconds.map { String(format: "%.2f", $0) + L(" 秒", " s") } ?? "—"
+        return HStack(spacing: 14) {
+            Text(L("耗时", "Duration") + " " + durationText(row.duration))
+            Text("TPS " + outputRateText(row.outputTokensPerSecond, unit: "tokens/s"))
+            Text("TTFT " + ttft)
+        }.font(.caption).monospacedDigit().foregroundStyle(.secondary)
     }
     private func block(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 7) {

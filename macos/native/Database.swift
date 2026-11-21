@@ -12,7 +12,7 @@ final class Database {
     let url: URL
     let requestMedia: RequestMediaStore
 
-    init(_ url: URL, readOnly: Bool = false, immutableSnapshot: Bool = false) throws {
+    init(_ url: URL, readOnly: Bool = false, immutableSnapshot: Bool = false, busyTimeout: Int32 = 15000) throws {
         self.url = url
         requestMedia = RequestMediaStore(database:url)
         precondition(!immutableSnapshot || readOnly)
@@ -24,7 +24,7 @@ final class Database {
             sqlite3_close(handle); handle=nil
             throw AppFailure(L("无法打开用量数据库", "Cannot open the usage database"))
         }
-        sqlite3_busy_timeout(handle, 15000)
+        sqlite3_busy_timeout(handle, busyTimeout)
         if !readOnly {
             try script("""
             PRAGMA journal_mode=WAL;
@@ -120,6 +120,32 @@ final class Database {
         try script("BEGIN IMMEDIATE")
         do { let value = try body(); try script("COMMIT"); return value }
         catch { try? script("ROLLBACK"); throw error }
+    }
+    func readTransaction<T>(_ body: () throws -> T) throws -> T {
+        lock.lock(); defer { lock.unlock() }
+        try script("BEGIN")
+        do { let value = try body(); try script("COMMIT"); return value }
+        catch { try? script("ROLLBACK"); throw error }
+    }
+    struct ReadBlob {
+        fileprivate let handle: OpaquePointer
+        var count: Int { Int(sqlite3_blob_bytes(handle)) }
+        func bytes(at start: Int, count: Int) throws -> Data {
+            guard start >= 0, count >= 0, start <= self.count, count <= self.count - start else { throw AppFailure("Invalid SQLite blob range") }
+            var bytes = Data(count: count)
+            let status = bytes.withUnsafeMutableBytes { (buffer: UnsafeMutableRawBufferPointer) in
+                sqlite3_blob_read(handle, buffer.baseAddress, Int32(count), Int32(start))
+            }
+            guard status == SQLITE_OK else { throw AppFailure("Unable to read SQLite blob") }
+            return bytes
+        }
+    }
+    func readBlob<T>(table: String, column: String, rowID: Int, _ read: (ReadBlob) throws -> T) throws -> T {
+        lock.lock(); defer { lock.unlock() }
+        var blob: OpaquePointer?
+        guard sqlite3_blob_open(handle, "main", table, column, Int64(rowID), 0, &blob) == SQLITE_OK, let blob else { throw failure() }
+        defer { sqlite3_blob_close(blob) }
+        return try read(ReadBlob(handle: blob))
     }
     func object(_ table: String, key: String) -> Object {
         guard ["usage_meta","usage_cursors"].contains(table), let row = try? query("SELECT data FROM \(table) WHERE key=?", [key]).first else { return [:] }
