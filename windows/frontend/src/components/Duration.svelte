@@ -10,14 +10,18 @@
 <script lang="ts">
  import{onMount}from'svelte';
  import{type Row}from'../lib/api';
+ import{tr}from'../lib/i18n';
  import{duration,durationMilliseconds,runningDuration,tpsLabel,ttftLabel}from'./logFormat';
  import RequestLines from './RequestLines.svelte';
  export let record:Row={};
  export let showTPS=false;
  let element:HTMLSpanElement;let now=Date.now();let visible=false;let foreground=false;
  let unsubscribe:(()=>void)|undefined;
- $: active=runningDuration(record);
+ $: active=runningDuration(record,now);
  $: elapsed=durationMilliseconds(record,now);
+ $: basis=record.duration_source==='antigravity_model_calls'
+  ?tr('累计模型调用耗时')
+  :active&&record.client_kind==='antigravity'?tr('自本轮请求开始计时'):'';
  $: tps=showTPS?tpsLabel(record):'';
  $: configure(active&&visible&&foreground);
  function stop(){unsubscribe?.();unsubscribe=undefined}
@@ -37,7 +41,7 @@
   return()=>{observer.disconnect();document.removeEventListener('visibilitychange',visibility);window.removeEventListener('focus',visibility);window.removeEventListener('blur',visibility);stop()};
  });
 </script>
-<span bind:this={element} class:two-line={showTPS}>{#if showTPS}<RequestLines primary={duration(elapsed)} secondary={tps} secondaryTitle={`TPS: ${tpsLabel(record,'tokens/s')}\nTTFT: ${ttftLabel(record)}`}/>{:else}{duration(elapsed)}{/if}</span>
+<span bind:this={element} class:two-line={showTPS} title={showTPS||!basis?undefined:basis}>{#if showTPS}<RequestLines primary={duration(elapsed)} primaryTitle={basis} secondary={tps} secondaryTitle={`TPS: ${tpsLabel(record,'tokens/s')}\nTTFT: ${ttftLabel(record)}`}/>{:else}{duration(elapsed)}{/if}</span>
 <style>
  .two-line{display:block;min-width:0;max-width:100%;text-align:inherit}
 </style>

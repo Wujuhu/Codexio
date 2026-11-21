@@ -3,7 +3,7 @@ import Foundation
 /// Desktop App SQLite telemetry, queried only for log rows and request details.
 /// The transcript supplies the ledger identity. SQLite only supplies timings.
 final class AntigravityNativeTiming {
-    private struct Signature: Equatable {
+    struct Signature: Equatable {
         let main: FileStamp
         let wal: FileStamp
         let journal: FileStamp
@@ -67,20 +67,29 @@ final class AntigravityNativeTiming {
 
     init(root: URL) { folder = root.appendingPathComponent("conversations", isDirectory: true) }
 
-    func apply(to rows: inout [Object], ledger: Database, cancelled: () -> Bool) {
+    func sourceSignature(for session: String) -> Signature? {
+        guard let url = sessionURL(session) else { return nil }
+        return Signature(url)
+    }
+
+    private func sessionURL(_ session: String) -> URL? {
+        guard let uuid = UUID(uuidString: session) else { return nil }
+        return folder.appendingPathComponent(uuid.uuidString.lowercased() + ".db")
+    }
+
+    func apply(to rows: inout [Object], ledger: Database, cancelled: () -> Bool, durationOnly: Bool = false) {
         let groups = Dictionary(grouping: rows.indices.filter { index in
             let row = rows[index]
             return row.string("record_kind") != "user_request" &&
-                (row.number("duration_ms") == nil || recordedTTFTMilliseconds(row) == nil)
+                (row.number("duration_ms") == nil || (!durationOnly && recordedTTFTMilliseconds(row) == nil))
         }, by: { rows[$0].string("session_id") })
         // Prepare and apply each session before moving on so cache eviction
         // never loses results for the currently requested page.
         for (session, positions) in groups {
-            guard let uuid = UUID(uuidString: session), !cancelled() else { continue }
+            guard let url = sessionURL(session), !cancelled() else { continue }
             var wanted: [String: Counts] = [:]
             for index in positions { wanted[rows[index].string("id")] = Counts(record: rows[index].object("antigravity_counters")) }
             guard !wanted.isEmpty else { continue }
-            let url = folder.appendingPathComponent(uuid.uuidString.lowercased() + ".db")
             guard let timing = sessionTiming(at: url, session: session, wanted: wanted, cancelled: cancelled) else { continue }
             for index in positions {
                 let id = rows[index].string("id")

@@ -214,6 +214,9 @@ func (s *Store) antigravityEntry(tx *sql.Tx, event Row, session string, current 
 	id := antigravityEventID(session, event)
 	kind := dataString(event, "type")
 	if kind != "USER_INPUT" && kind != "PLANNER_RESPONSE" && kind != "CHECKPOINT" {
+		if kind == "GENERIC" && event["source"] == "MODEL" && (event["status"] == "RUNNING" || event["status"] == "DONE") {
+			return extendAntigravityActivity(tx, session, *current, at)
+		}
 		return nil
 	}
 	if kind == "USER_INPUT" && dataString(event, "source") == "USER_EXPLICIT" {
@@ -238,8 +241,11 @@ func (s *Store) antigravityEntry(tx *sql.Tx, event Row, session string, current 
 	old := dataRow(prior)
 	requestID := firstString(old["request_id"], *current)
 	row["request_id"] = requestID
-	if dataString(row, "status") == "RUNNING" && (dataString(old, "status") == "DONE" || dataString(old, "status") == "ERROR") {
-		row["status"] = old["status"]
+	if row["status"] == "RUNNING" {
+		switch dataString(old, "status") {
+		case "DONE", "ERROR", "FAILED", "ABORTED", "CANCELLED", "CANCELED":
+			row["status"] = old["status"]
+		}
 	}
 	if prior == dataJSON(row) {
 		return nil
@@ -257,6 +263,9 @@ func (s *Store) antigravityEntry(tx *sql.Tx, event Row, session string, current 
 		if len(request) == 0 {
 			request = Row{"id": *current, "session_id": session, "timestamp": at, "client_kind": antigravityClient, "record_kind": "user_request", "source_ids": []string{"local:antigravity"}, "status": "unknown", "request_status": "unknown"}
 		}
+		if status := dataString(row, "status"); status == "DONE" || status == "RUNNING" {
+			observeAntigravityActivity(request, at, "running")
+		}
 		request["prompt_preview"] = clip(antigravityUserText(dataString(row, "content")), 600)
 		if preview := dataString(request, "prompt_preview"); preview != "" {
 			if _, err := tx.Exec("INSERT OR IGNORE INTO usage_session_titles VALUES(?,?)", session, clip(preview, 80)); err != nil {
@@ -268,8 +277,8 @@ func (s *Store) antigravityEntry(tx *sql.Tx, event Row, session string, current 
 		}
 	}
 	if kind == "PLANNER_RESPONSE" {
-		if len(request) > 0 && dataString(row, "status") == "RUNNING" && request["status"] != "completed" {
-			request["status"], request["request_status"], request["running_observed_at"] = "running", "running", at
+		if len(request) > 0 && (row["status"] == "RUNNING" || row["status"] == "DONE" && ValueBool(row["has_tool_calls"])) {
+			observeAntigravityActivity(request, at, "running")
 		}
 		if _, hasInput := knownCount(row["input_tokens"]); hasInput {
 			call := Row{"id": id, "session_id": session, "timestamp": at, "model": firstString(row["model"], "unknown"), "client_kind": antigravityClient, "antigravity_request_id": requestID, "record_kind": "model_call", "quality": "response", "status": "completed", "request_status": "completed", "output_tokens": row["output_tokens"], "raw_input_tokens": row["input_tokens"], "raw_cache_read_tokens": row["cache_read_tokens"], "raw_output_tokens": row["output_tokens"], "source_id": "local:antigravity", "output_preview": clip(dataString(row, "content"), 600)}
@@ -297,20 +306,91 @@ func (s *Store) antigravityEntry(tx *sql.Tx, event Row, session string, current 
 			}
 		}
 		if len(request) > 0 && !ValueBool(row["has_tool_calls"]) && dataString(row, "content") != "" && dataString(row, "status") == "DONE" {
-			request["status"], request["request_status"] = "completed", "completed"
-			request["output_preview"] = clip(dataString(row, "content"), 600)
-			if err := saveMessage(tx, requestID, Row{"final": dataString(row, "content"), "final_complete": antigravityComplete(row), "status": "completed"}); err != nil {
-				return err
+			if observeAntigravityActivity(request, at, "completed") {
+				request["output_preview"] = clip(dataString(row, "content"), 600)
+				if err := saveMessage(tx, requestID, Row{"final": dataString(row, "content"), "final_complete": antigravityComplete(row), "status": "completed"}); err != nil {
+					return err
+				}
 			}
 		}
 	}
 	if len(request) > 0 {
-		if dataString(row, "status") == "ERROR" {
-			request["status"], request["request_status"] = "failed", "failed"
+		switch dataString(row, "status") {
+		case "ERROR", "FAILED":
+			observeAntigravityActivity(request, at, "failed")
+		case "ABORTED", "CANCELLED", "CANCELED":
+			observeAntigravityActivity(request, at, "aborted")
 		}
 		return saveAntigravityRequest(tx, request)
 	}
 	return nil
+}
+
+func extendAntigravityActivity(tx *sql.Tx, session, owner, at string) error {
+	if owner == "" {
+		return nil
+	}
+	var raw string
+	err := tx.QueryRow("SELECT data FROM antigravity_requests WHERE id=? AND session_id=?", owner, session).Scan(&raw)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	request := dataRow(raw)
+	if request["status"] == "running" && at > dataString(request, "running_observed_at") &&
+		observeAntigravityActivity(request, at, "running") {
+		return saveAntigravityRequest(tx, request)
+	}
+	return nil
+}
+
+func observeAntigravityActivity(request Row, at, status string) bool {
+	if at < firstString(request["ended_at"], request["running_observed_at"]) {
+		return false
+	}
+	if status == "running" {
+		// Only verified progress after a known end can reopen the same request.
+		if request["status"] == "completed" || request["status"] == "failed" || request["status"] == "aborted" {
+			if end := dataString(request, "ended_at"); end == "" || at <= end {
+				return false
+			}
+			delete(request, "ended_at")
+		}
+		request["running_observed_at"] = at
+	} else {
+		request["ended_at"] = at
+	}
+	request["status"], request["request_status"] = status, status
+	return true
+}
+
+func presentAntigravityActivity(group Row, now time.Time) {
+	if group["status"] != "running" {
+		return
+	}
+	group["duration_running"] = false
+	delete(group, "duration_started_at")
+	delete(group, "duration_base_ms")
+	delete(group, "duration_refresh_at")
+	delete(group, "duration_valid_after")
+	observed, ok := ParseStamp(group["running_observed_at"])
+	if !ok || !now.Before(observed.Add(requestRunningFreshness)) {
+		group["status"], group["request_status"] = "unknown", "unknown"
+		return
+	}
+	if observed.After(now) {
+		group["status"], group["request_status"] = "unknown", "unknown"
+		group["duration_refresh_at"] = unixSeconds(observed)
+		return
+	}
+	group["duration_refresh_at"] = unixSeconds(observed.Add(requestRunningFreshness))
+	group["duration_valid_after"] = unixSeconds(observed)
+	if start, known := ParseStamp(group["timestamp"]); known && start.Unix() > 0 && !start.After(observed) {
+		group["duration_running"] = true
+		group["duration_started_at"], group["duration_base_ms"] = UTCStamp(start), 0
+	}
 }
 
 func saveAntigravityRequest(tx *sql.Tx, request Row) error {
@@ -330,7 +410,7 @@ func saveAntigravityRequest(tx *sql.Tx, request Row) error {
 	return err
 }
 
-func (s *Store) rebuildAntigravityGroups(tx *sql.Tx, full bool) error {
+func (s *Store) rebuildAntigravityGroups(tx *sql.Tx, full bool, now time.Time) error {
 	query := "SELECT id,data FROM antigravity_requests"
 	if !full {
 		query += ` WHERE id IN(SELECT item_id FROM usage_query_changes WHERE kind='antigravity_request'
@@ -347,14 +427,7 @@ func (s *Store) rebuildAntigravityGroups(tx *sql.Tx, full bool) error {
 		}
 		for _, group := range requests {
 			last = dataString(group, "id")
-			if group["status"] == "running" {
-				if observed, ok := ParseStamp(group["running_observed_at"]); ok && !time.Now().Before(observed) && time.Now().Before(observed.Add(requestRunningFreshness)) {
-					group["duration_refresh_at"] = unixSeconds(observed.Add(requestRunningFreshness))
-					group["duration_valid_after"] = unixSeconds(observed)
-				} else {
-					group["status"], group["request_status"] = "unknown", "unknown"
-				}
-			}
+			presentAntigravityActivity(group, now)
 			if _, err := tx.Exec("DELETE FROM usage_request_members WHERE request_id=?", last); err != nil {
 				return err
 			}

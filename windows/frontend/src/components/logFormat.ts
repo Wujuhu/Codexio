@@ -87,12 +87,17 @@ function durationAnchor(record:Row):{start:number;base:number}|null {
   return unique.length===1&&unique[0]!==null?{start:unique[0],base:completed}:null;
 }
 
-export function runningDuration(record:Row):boolean {
+export function runningDuration(record:Row,now=Date.now()):boolean {
+  if(record.client_kind==='antigravity'&&record.record_kind==='user_request'){
+    const expires=startedMillis(record.duration_refresh_at),observed=startedMillis(record.duration_valid_after);
+    if(expires===null||observed===null||now<observed||now>=expires)return false;
+  }
   return !!(record.duration_running??(record.request_status??record.status)==='running')&&durationAnchor(record)!==null;
 }
 
 export function durationMilliseconds(record:Row,now=Date.now()):number|null {
   if(record.duration_running??(record.request_status??record.status)==='running'){
+    if(!runningDuration(record,now))return null;
     const anchor=durationAnchor(record);
     return anchor===null?null:anchor.base+Math.max(0,now-anchor.start);
   }

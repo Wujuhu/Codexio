@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -42,6 +43,7 @@ type nativeTimingTarget struct {
 	id, key, session, original  string
 	step, input, cached, output int64
 	created                     time.Time
+	owner                       string
 }
 
 func nativeTimingID(row Row) string {
@@ -67,78 +69,142 @@ func nativeTimingStamp(path string) string {
 	return fmt.Sprintf("%s:%d:%d", ledgerFileIdentity(file), info.Size(), info.ModTime().UnixNano())
 }
 
-func (s *Store) enrichAntigravityTimings(records []Row, reader queryReader) error {
-	if s.options.Mock {
-		return nil
+func makeNativeTimingTarget(id, session, original string, step, input, cached, output any) (nativeTimingTarget, bool) {
+	target := nativeTimingTarget{id: id, session: session, original: original}
+	uuid := strings.TrimPrefix(session, "antigravity:app:")
+	if uuid == session || rolloutUUID.FindString(uuid) != uuid || uuid == "" {
+		return target, false
 	}
-	calls := map[string]Row{}
-	for _, row := range records {
-		if id := nativeTimingID(row); id != "" {
-			calls[id] = row
+	var stepOK, inputOK, cacheOK, outputOK bool
+	target.step, stepOK = knownCount(step)
+	target.input, inputOK = knownCount(input)
+	target.cached, cacheOK = knownCount(cached)
+	target.output, outputOK = knownCount(output)
+	if !stepOK || !inputOK || !cacheOK || !outputOK {
+		return target, false
+	}
+	var err error
+	target.created, err = time.Parse(time.RFC3339Nano, original)
+	if err != nil || antigravityEventID(session, Row{"created_at": original, "step_index": target.step}) != id {
+		return target, false
+	}
+	target.key = fmt.Sprintf("%s:%d:%d:%d", id, target.input, target.cached, target.output)
+	return target, true
+}
+
+func (s *Store) enrichAntigravityTimings(records []Row, reader queryReader) error {
+	calls := collectAntigravityTimingRows(records)
+	targets := map[string][]nativeTimingTarget{}
+	if err := s.addAntigravityTimingTargets(calls, targets, reader); err != nil {
+		return err
+	}
+	groups, err := collectAntigravityRequestTimings(records, targets, reader)
+	if err != nil {
+		return err
+	}
+	for session, wanted := range targets {
+		eligible := wanted[:0]
+		for _, target := range wanted {
+			if group := groups[target.owner]; group == nil || !group.incomplete {
+				eligible = append(eligible, target)
+			}
 		}
+		targets[session] = eligible
+	}
+	err = s.resolveAntigravityTimings(reader, targets, func(target nativeTimingTarget, value antigravityNativeTiming) {
+		if group := groups[target.owner]; group != nil && value.hasDuration {
+			group.addDuration(value.duration)
+		}
+		for _, row := range calls[target.id] {
+			if current, known := ValueFloat(row["duration_ms"]); (!known || current < 0) && value.hasDuration {
+				row["duration_ms"], row["duration_source"] = value.duration, "antigravity_native_generation"
+			}
+			if current, known := ValueFloat(row["ttft_ms"]); (!known || current < 0) && value.hasTTFT {
+				row["ttft_ms"] = value.ttft
+			}
+		}
+	})
+	if err != nil {
+		return err
+	}
+	for _, group := range groups {
+		group.apply()
+	}
+	return nil
+}
+
+func collectAntigravityTimingRows(records []Row) map[string][]Row {
+	calls := map[string][]Row{}
+	for _, row := range records {
+		id := nativeTimingID(row)
+		if id == "" {
+			continue
+		}
+		duration, hasDuration := ValueFloat(row["duration_ms"])
+		ttft, hasTTFT := ValueFloat(row["ttft_ms"])
+		if !hasDuration || duration < 0 || !hasTTFT || ttft < 0 {
+			calls[id] = append(calls[id], row)
+		}
+	}
+	return calls
+}
+
+func (s *Store) addAntigravityTimingTargets(calls map[string][]Row, targets map[string][]nativeTimingTarget, reader queryReader) error {
+	if s.options.Mock || len(calls) == 0 {
+		return nil
 	}
 	ids := make([]string, 0, len(calls))
 	for id := range calls {
 		ids = append(ids, id)
-	}
-	if len(ids) == 0 {
-		return nil
 	}
 	args := make([]any, len(ids))
 	for i, id := range ids {
 		args[i] = id
 	}
 	slots := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
-	rows, err := reader.Query("SELECT id,session_id,json_extract(data,'$.step_index'),json_extract(data,'$.created_at') FROM antigravity_events WHERE id IN ("+slots+")", args...)
+	rows, err := reader.Query("SELECT id,session_id,json_extract(data,'$.step_index'),coalesce(json_extract(data,'$.created_at'),'') FROM antigravity_events WHERE id IN ("+slots+")", args...)
 	if err != nil {
 		return err
 	}
-	targets := map[string][]nativeTimingTarget{}
-	byID := map[string]nativeTimingTarget{}
 	for rows.Next() {
-		var target nativeTimingTarget
-		if err = rows.Scan(&target.id, &target.session, &target.step, &target.original); err != nil {
+		var id, session, original string
+		var step any
+		if err = rows.Scan(&id, &session, &step, &original); err != nil {
 			rows.Close()
 			return err
 		}
-		row := calls[target.id]
-		var inputOK, cacheOK, outputOK bool
-		target.input, inputOK = knownCount(row["raw_input_tokens"])
-		target.cached, cacheOK = knownCount(row["raw_cache_read_tokens"])
-		target.output, outputOK = knownCount(row["raw_output_tokens"])
-		uuid := strings.TrimPrefix(target.session, "antigravity:app:")
-		if !inputOK || !cacheOK || !outputOK || uuid == target.session || rolloutUUID.FindString(uuid) != uuid {
-			continue
+		row := calls[id][0]
+		target, ok := makeNativeTimingTarget(id, session, original, step, row["raw_input_tokens"], row["raw_cache_read_tokens"], row["raw_output_tokens"])
+		if ok {
+			targets[session] = append(targets[session], target)
 		}
-		target.created, err = time.Parse(time.RFC3339Nano, target.original)
-		if err != nil || target.step < 0 {
-			continue
-		}
-		if antigravityEventID(target.session, Row{"created_at": target.original, "step_index": target.step}) != target.id {
-			continue
-		}
-		target.key = fmt.Sprintf("%s:%d:%d:%d", target.id, target.input, target.cached, target.output)
-		path := filepath.Join(filepath.Dir(antigravityRoot()), "conversations", uuid+".db")
-		targets[path] = append(targets[path], target)
-		byID[target.id] = target
 	}
 	err = rows.Err()
 	rows.Close()
-	if err != nil {
-		return err
+	return err
+}
+
+func (s *Store) resolveAntigravityTimings(reader queryReader, targets map[string][]nativeTimingTarget, apply func(nativeTimingTarget, antigravityNativeTiming)) error {
+	if s.options.Mock || len(targets) == 0 {
+		return nil
 	}
 	cache := &s.antigravityTiming
-	if err = cache.work.LockContext(reader.ctx); err != nil {
+	if err := cache.work.LockContext(reader.ctx); err != nil {
 		return err
 	}
 	defer cache.work.Unlock()
 	if cache.sources == nil {
 		cache.sources = map[string]*nativeTimingSource{}
 	}
-	for path, wanted := range targets {
-		if err = reader.ctx.Err(); err != nil {
+	for session, wanted := range targets {
+		if err := reader.ctx.Err(); err != nil {
 			return err
 		}
+		if len(wanted) == 0 {
+			continue
+		}
+		uuid := strings.TrimPrefix(session, "antigravity:app:")
+		path := filepath.Join(filepath.Dir(antigravityRoot()), "conversations", uuid+".db")
 		stamp := nativeTimingStamp(path)
 		if stamp == "" {
 			continue
@@ -152,53 +218,57 @@ func (s *Store) enrichAntigravityTimings(records []Row, reader queryReader) erro
 		}
 		entry.used = cache.clock
 		missing := []nativeTimingTarget{}
+		pending := map[string]bool{}
 		for _, target := range wanted {
-			if _, exists := entry.values[target.key]; !exists {
+			if _, exists := entry.values[target.key]; !exists && !pending[target.key] {
 				missing = append(missing, target)
+				pending[target.key] = true
 			}
 		}
+		var values map[string]antigravityNativeTiming
 		if len(missing) > 0 {
-			values, readErr := readAntigravityNativeTimings(reader, path, missing)
+			var readErr error
+			values, readErr = readAntigravityNativeTimings(reader, path, missing)
 			if reader.ctx.Err() != nil {
 				return reader.ctx.Err()
 			}
-			if readErr == nil && stamp == nativeTimingStamp(path)+"|"+nativeTimingStamp(path+"-wal") {
-				for _, target := range missing {
-					entry.values[target.key] = nativeTimingEntry{value: values[target.key], used: cache.clock}
-				}
+			if stamp != nativeTimingStamp(path)+"|"+nativeTimingStamp(path+"-wal") {
+				continue
+			}
+			if readErr != nil {
+				values = nil
 			}
 		}
-		for _, row := range records {
-			target, exists := byID[nativeTimingID(row)]
-			if !exists {
+		for _, target := range wanted {
+			cached, found := entry.values[target.key]
+			if !found && values == nil {
 				continue
 			}
-			cached, found := entry.values[target.key]
 			if !found {
-				continue
+				cached.value = values[target.key]
 			}
 			cached.used = cache.clock
 			entry.values[target.key] = cached
 			value := cached.value
-			if value.matches != 1 || value.conflict {
-				continue
-			}
-			if current, known := ValueFloat(row["duration_ms"]); (!known || current < 0) && value.hasDuration {
-				row["duration_ms"], row["duration_source"] = value.duration, "antigravity_native_generation"
-			}
-			if current, known := ValueFloat(row["ttft_ms"]); (!known || current < 0) && value.hasTTFT {
-				row["ttft_ms"] = value.ttft
+			if value.matches == 1 && !value.conflict {
+				apply(target, value)
 			}
 		}
-		for len(entry.values) > nativeTimingEntries {
-			oldest := ""
-			used := ^uint64(0)
-			for key, value := range entry.values {
-				if value.used < used {
-					oldest, used = key, value.used
-				}
+		if len(entry.values) > nativeTimingEntries {
+			keys := make([]string, 0, len(entry.values))
+			for key := range entry.values {
+				keys = append(keys, key)
 			}
-			delete(entry.values, oldest)
+			sort.Slice(keys, func(i, j int) bool {
+				left, right := entry.values[keys[i]].used, entry.values[keys[j]].used
+				if left == right {
+					return keys[i] < keys[j]
+				}
+				return left < right
+			})
+			for _, key := range keys[:len(keys)-nativeTimingEntries] {
+				delete(entry.values, key)
+			}
 		}
 	}
 	for len(cache.sources) > nativeTimingSessions {
@@ -272,9 +342,9 @@ func readAntigravityNativeTimings(reader queryReader, path string, targets []nat
 		return nil, err
 	}
 	defer sqlite3.Xsqlite3_finalize(source.tls, statement)
-	wantedSteps := map[int64]bool{}
+	wantedSteps := map[int64][]nativeTimingTarget{}
 	for _, target := range targets {
-		wantedSteps[target.step] = true
+		wantedSteps[target.step] = append(wantedSteps[target.step], target)
 	}
 	values := map[string]antigravityNativeTiming{}
 	for {
@@ -310,8 +380,8 @@ func readAntigravityNativeTimings(reader queryReader, path string, targets []nat
 			if !step.created.known {
 				continue
 			}
-			for _, target := range targets {
-				if step.index != target.step || generation.input != uint64(target.input) || generation.cached != uint64(target.cached) || generation.output != uint64(target.output) {
+			for _, target := range wantedSteps[step.index] {
+				if generation.input != uint64(target.input) || generation.cached != uint64(target.cached) || generation.output != uint64(target.output) {
 					continue
 				}
 				if step.created.seconds != target.created.Unix() {
@@ -341,7 +411,7 @@ func readAntigravityNativeTimings(reader queryReader, path string, targets []nat
 	return values, nil
 }
 
-func readNativeGeneration(source *sourceSQLite, rowID int64, wanted map[int64]bool) (nativeGeneration, error) {
+func readNativeGeneration(source *sourceSQLite, rowID int64, wanted map[int64][]nativeTimingTarget) (nativeGeneration, error) {
 	blob, err := source.blob("gen_metadata", "data", rowID)
 	if err != nil {
 		return nativeGeneration{}, err
@@ -353,7 +423,7 @@ func readNativeGeneration(source *sourceSQLite, rowID int64, wanted map[int64]bo
 	}
 	needed := false
 	for index := range generation.steps {
-		needed = needed || wanted[index]
+		needed = needed || len(wanted[index]) > 0
 	}
 	if needed {
 		err = generation.readTiming(blob)

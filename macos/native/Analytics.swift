@@ -59,7 +59,11 @@ struct UsageRow: Identifiable {
         return total
     }
     var duration: Double? {
-        if raw.flag("duration_running"), let start = runningSince { return max(0,Date().timeIntervalSince(start)) + (raw.number("duration_base_ms") ?? 0)/1000 }
+        if raw.flag("duration_running"), let start = runningSince {
+            let now = Date()
+            if let refresh = raw.number("duration_refresh_at"), now.timeIntervalSince1970 >= refresh { return nil }
+            return max(0,now.timeIntervalSince(start)) + (raw.number("duration_base_ms") ?? 0)/1000
+        }
         return raw.number("duration_ms").map {$0/1000}
     }
     var outputTokensPerSecond: Double? {

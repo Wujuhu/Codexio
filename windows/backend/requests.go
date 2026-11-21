@@ -230,7 +230,7 @@ func (s *Store) projectOnce(forceFull bool, contexts ...context.Context) (err er
 	if e = s.rebuildClaudeGroups(tx, groupFull, now); e != nil {
 		return e
 	}
-	if e = s.rebuildAntigravityGroups(tx, groupFull); e != nil {
+	if e = s.rebuildAntigravityGroups(tx, groupFull, now); e != nil {
 		return e
 	}
 	if e = rebuildLocalRank(tx, scope); e != nil {

@@ -45,6 +45,7 @@ final class AppState: ObservableObject {
     private var antigravityPublishedKey = "" // dataQueue-owned
     private var antigravityLastScan = Date.distantPast
     private var antigravityFutureBoundary = Date.distantFuture
+    private var antigravityPendingTiming: (session: String, signature: AntigravityNativeTiming.Signature)?
     @Published var pageClient: DesktopClient = .codex
     var logFilters: [DesktopClient:LogFilterMemory] = [:]
     @Published private(set) var claudeRevision = UUID()
@@ -470,18 +471,34 @@ final class AppState: ObservableObject {
         let key = "\(antigravityLedger.revision)|\(calendar.startOfDay(for: now).timeIntervalSince1970)|\(zone.identifier)|\(zone.secondsFromGMT(for: now))"
         let warning = antigravityLedger.warning
         guard key != antigravityPublishedKey || now < antigravityLastScan || now >= antigravityFutureBoundary else {
+            if let pending = antigravityPendingTiming,
+               antigravityLedger.timingSourceSignature(for: pending.session) != pending.signature {
+                let request = try antigravityLedger.surfaceRequest(now: now)
+                trackAntigravityTiming(request)
+                if let request, request.raw.string("duration_source") == "antigravity_call_sum" {
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self, !self.stopped, self.antigravitySurface.request?.id == request.id else { return }
+                        self.antigravitySurface.request = request
+                        self.antigravityRevision = UUID()
+                        self.publishWidget()
+                    }
+                }
+            }
             DispatchQueue.main.async { [weak self] in
                 guard let self, !self.stopped else { return }
                 if self.antigravityWarning != warning { self.antigravityWarning = warning }
             }
             return
         }
-        let today = try antigravityLedger.trend(range: UsageRange(period: "today", now: now), granularity: "hour")
-        let week = try antigravityLedger.trend(range: UsageRange(period: "week", now: now), granularity: "day")
+        let today = try antigravityLedger.trend(range: UsageRange(period: "today", now: now), granularity: "hour", includeRecent: false)
+        let week = try antigravityLedger.trend(range: UsageRange(period: "week", now: now), granularity: "day", includeRecent: false)
         let models = try antigravityLedger.models()
+        let request = try antigravityLedger.surfaceRequest(now: now)
+        trackAntigravityTiming(request)
         let next = AgentSurfaceData(ready: warning == nil || today.summary.requests > 0 || week.summary.requests > 0,
-                                    request: today.recent.first ?? week.recent.first, today: today.summary, days: week.days)
-        antigravityFutureBoundary = try antigravityLedger.nextFuture(after: now) ?? .distantFuture
+                                    request: request, today: today.summary, days: week.days, hasRunningTask: request?.raw.flag("duration_running") == true)
+        antigravityFutureBoundary = try min(antigravityLedger.nextFuture(after: now) ?? .distantFuture,
+                                             antigravityLedger.nextActivityBoundary(after: now) ?? .distantFuture)
         antigravityPublishedKey = key
         antigravityLastScan = now
         DispatchQueue.main.async { [weak self] in
@@ -493,6 +510,15 @@ final class AppState: ObservableObject {
             self.antigravityClock.updated = now
             self.publishWidget()
         }
+    }
+
+    private func trackAntigravityTiming(_ request: UsageRow?) {
+        guard let request, request.raw.string("status") == "completed", request.outputTokens != nil, request.duration == nil,
+              let signature = antigravityLedger.timingSourceSignature(for: request.raw.string("session_id")) else {
+            antigravityPendingTiming = nil
+            return
+        }
+        antigravityPendingTiming = (request.raw.string("session_id"), signature)
     }
     private func publishCommittedOverview(roots: [URL]) {
         guard let archived = usageCache.restoreOverview(roots:roots) else {

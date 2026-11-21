@@ -15121,6 +15121,22 @@
         }
       }
     },
+    "累计模型调用耗时": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cumulative model-call duration"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "累计模型调用耗时"
+          }
+        }
+      }
+    },
     "累计观测不能证明单次请求上下文与模型归属，仅供消费参考": {
       "localizations": {
         "en": {

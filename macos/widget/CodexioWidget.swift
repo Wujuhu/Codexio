@@ -43,6 +43,7 @@ struct RequestSnapshot: Decodable {
     let cost_usd: Double?
     let duration_ms: Double?
     let duration_started_at: Double?
+    var duration_refresh_at: Double? = nil
     let duration_running: Bool
     let input_tokens: Int?
     let output_tokens: Int?
@@ -132,9 +133,15 @@ private struct CodexioProvider: TimelineProvider {
     func getTimeline(in context: Context, completion: @escaping (Timeline<CodexioEntry>) -> Void) {
         let now = Date()
         let snapshot = Snapshot.read(agent:agent)
-        let interval: TimeInterval = snapshot?.request?.duration_running == true ? 300 : 1800
-        completion(Timeline(entries: [CodexioEntry(date: now, snapshot: snapshot,agent:agent)],
-                            policy: snapshot?.host_running == true ? .after(now.addingTimeInterval(interval)) : .never))
+        let request = snapshot?.request
+        let running = request?.duration_running == true
+        let interval: TimeInterval = running ? 300 : 1800
+        var entries = [CodexioEntry(date: now, snapshot: snapshot, agent: agent)]
+        let online = snapshot?.host_running == true
+        if online, running, let expires = request?.duration_refresh_at, expires > now.timeIntervalSince1970 {
+            entries.append(CodexioEntry(date: Date(timeIntervalSince1970: expires), snapshot: snapshot, agent: agent))
+        }
+        completion(Timeline(entries: entries, policy: online ? .after(now.addingTimeInterval(interval)) : .never))
     }
 }
 
@@ -252,8 +259,11 @@ private struct CodexioWidgetView: View {
 
     @ViewBuilder
     private func duration(_ request: RequestSnapshot) -> some View {
+        let now = Date().timeIntervalSince1970
+        let expiry = request.duration_refresh_at ?? .infinity
         if request.duration_running, let started = request.duration_started_at,
-           Date().timeIntervalSince1970 - (entry.snapshot?.updated_at ?? 0) < 900 {
+           started <= now, max(now, entry.date.timeIntervalSince1970) < expiry,
+           now - (entry.snapshot?.updated_at ?? 0) < 900 {
             Text(Date(timeIntervalSince1970: started), style: .timer)
         } else {
             Text(staticDuration(request.duration_ms))

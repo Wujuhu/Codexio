@@ -34,6 +34,9 @@ private func antigravityGridRow(_ row: UsageRow, state: AppState, timeOnly: Bool
         if key == "content", row.raw.string("prompt_preview").isEmpty {
             cell.main = "—"
         }
+        if key == "duration", row.raw.string("duration_source") == "antigravity_call_sum" {
+            cell.mainHint = L("累计模型调用耗时", "Cumulative model-call duration")
+        }
         return cell
     }
     grid.detail = nil
@@ -50,15 +53,17 @@ struct AntigravityOverviewView: View {
     @State private var from = Calendar.current.date(byAdding: .day, value: -6, to: Date()) ?? Date()
     @State private var through = Date()
     @State private var datesOpen = false
+    @State private var timingStamp: Date?
 
-    private var key: String { "antigravity|trend|\(state.antigravityRevision)|\(period)|\(model)|\(from)|\(through)|\(TimeZone.current.identifier)" }
+    private var key: String { "antigravity|trend|\(state.antigravityRevision)|\(timingStamp?.timeIntervalSince1970 ?? 0)|\(period)|\(model)|\(from)|\(through)|\(TimeZone.current.identifier)" }
 
     private func load() {
         let queue = state.dataQueue, ledger = state.antigravityLedger
         let range = UsageRange(period: period, from: from, through: through), model = model
         let granularity = period == "today" ? "hour" : period == "all" ? "week" : "day"
+        let includeRecent = overview
         projection.load(key: key, revision: state.antigravityRevision) {
-            queue.sync { (try? ledger.trend(range: range, model: model, granularity: granularity)) ?? TrendProjection() }
+            queue.sync { (try? ledger.trend(range: range, model: model, granularity: granularity, includeRecent: includeRecent)) ?? TrendProjection() }
         }
     }
 
@@ -102,6 +107,7 @@ struct AntigravityOverviewView: View {
             if !overview { period = "week" }
             load()
         }.onChange(of: key) { _, _ in load() }
+            .onReceive(state.antigravityTimingClock.$updated.dropFirst()) { if overview { timingStamp = $0 } }
     }
 }
 
@@ -269,7 +275,7 @@ private struct AntigravityDetailView: View {
             VStack(alignment: .leading, spacing: 14) {
                 let detail = projection.value
                 Text(requestValueText(row.raw.string("model_display_name", modelName(row.raw.string("model"))))).font(.headline)
-                HStack { Text(dateText(row.date)); Spacer(); Text(logStatusName(row.raw.string("status"))) }.font(.caption).foregroundStyle(.secondary)
+                HStack { Text(dateText(row.date)); Spacer(); Text(logStatusName((detail.timing ?? row).raw.string("status"))) }.font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Text(L("总 Token", "Total tokens") + " " + compact(row.tokens.map(Double.init)))
                     Spacer(); Text(L("费用", "Cost") + " " + row.costText)
@@ -299,10 +305,20 @@ private struct AntigravityDetailView: View {
             .onReceive(state.antigravityTimingClock.$updated.dropFirst()) { timingStamp = $0 }
     }
 
-    private func timing(_ row: UsageRow) -> some View {
+    @ViewBuilder private func timing(_ row: UsageRow) -> some View {
+        if row.raw.flag("duration_running") {
+            TimelineView(.periodic(from: .now, by: 1)) { _ in timingFields(row) }
+        } else {
+            timingFields(row)
+        }
+    }
+
+    private func timingFields(_ row: UsageRow) -> some View {
         let ttft = row.firstTokenSeconds.map { String(format: "%.2f", $0) + L(" 秒", " s") } ?? "—"
+        let durationHint = row.raw.string("duration_source") == "antigravity_call_sum"
+            ? L("累计模型调用耗时", "Cumulative model-call duration") : ""
         return HStack(spacing: 14) {
-            Text(L("耗时", "Duration") + " " + durationText(row.duration))
+            Text(L("耗时", "Duration") + " " + durationText(row.duration)).help(durationHint)
             Text("TPS " + outputRateText(row.outputTokensPerSecond, unit: "tokens/s"))
             Text("TTFT " + ttft)
         }.font(.caption).monospacedDigit().foregroundStyle(.secondary)

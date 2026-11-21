@@ -5,7 +5,7 @@
 - 额外 Windows 执行端为 `25415@100.87.215.6`，密钥路径 `/Users/wjh/.ssh/myw_to_exp`。2026-10-30 已通过 SSH 密钥认证连接，远端计算机名 `WJH`、账户 `wjh\25415`、用户目录 `C:\Users\25415`，系统为 Windows 11 专业版（10.0.26100.0）；SSH 会话位于 Session 0。首次记录的 ED25519 主机指纹为 `SHA256:ksT3zNZzjjR6pG8hK95RWCtE8AeDLh8j6yV+QEw58hA`，已保存到本机 `known_hosts`；后续使用 `StrictHostKeyChecking=yes`，不借用默认构建主机的 HostKeyAlias。该端作为额外连接记录，默认 Windows 构建主机仍沿用上一条配置。按用户要求，此连接信息只写项目记忆，不补充到 `.ssh` 下的 AGENTS／agent 文档。
 - Windows 主机上的项目目录为 `C:\CodeWJH\Projects\Codexio`。每次通过局域网 SSH 完成 Windows 构建后，必须在该电脑的 `C:\CodeWJH\Projects\Codexio\build\dev\windows` 保留经验证的 `Codexio.exe` 和配套清单；需要回传本机时使用复制，保留 Windows 上的产物。
 - SSH 处于 Windows Session 0 时，通过临时、按需的计划任务在已登录用户的交互会话中执行现有构建入口及三项隔离模拟冒烟；结束后删除该临时任务，保留构建日志和校验结果。
-- 开发构建与交付默认静默完成。三项隔离冒烟仍执行，模拟窗口在屏幕外运行，不抢焦点，不显示 Dock、任务栏或托盘图标；正常用户启动的窗口行为照常。交付通过现有原子替换／暂存流程完成，不自动启动已安装应用。
+- 开发构建和隔离冒烟默认静默完成。模拟窗口在屏幕外运行，不抢焦点，不显示 Dock、任务栏或托盘图标。两端交付复用各自的原子替换流程。
 - Mac 报告及信息型 sheet 必须允许 ⌘Q 走正常退出清理流程，设置 `preventsApplicationTerminationWhenModal = false`，无需先手动关闭报告。
 - **只有 Windows 主机的局域网与备用地址均无法连接时，才向用户请求允许使用云端构建 Windows；取得用户针对本次云端构建的明确许可后才能执行。** 不自动回退到 GitHub Actions 或其他云端构建服务；用户要求 Windows 开发或构建，不等于授权云端构建。
 - **自 2026-10-04 起，日常功能开发、修复与适用的界面改动默认同时覆盖 Mac 和 Windows，并分别完成必要验证与开发打包，无需用户逐次点名 Windows。** 用户明确限定平台，或功能仅适用于某个平台时，按实际范围处理。版本调整、正式发布及云端构建继续遵守各自的明确授权规则。
@@ -14,8 +14,7 @@
 - Mac 使用 `build_macos.sh` 生成本地开发包；Windows 通过局域网 SSH 在指定项目目录执行 `build_exe.ps1`，故障排查脚本按需要使用。手动 CI 保留，调用时须满足上述云端构建授权条件。
 - 收到用户“推送并且发布”或同等明确发布指令后，直接执行 `.venv/bin/python scripts/publish_release_from_macos.py --version <指定或最新源码版本号> --confirm-publish`，不再索要二次确认。先核验 Mac 包，通过 SSH 在 Windows 构建主机核对同一提交、干净工作区、源码指纹、原有冒烟和 EXE 元数据，再复用本机哈希相同的 EXE 或复制回传。全部通过后才推送 `main`，创建包含简短分平台正文及三附件的草稿；下载复核全部附件后一次发布并原子归档。该入口不触发 Windows CI。缺包、源码指纹过期、版本或哈希不符时不得发布。
 - Windows 开发包通过版本、哈希和三项隔离冒烟校验后，交付时停止并等待项目 `build/dev/windows/Codexio.exe` 或旧 `pending` 开发副本中的 Codexio 进程退出，调用 `scripts/publish_exe.ps1` 原子覆盖 `build/dev/windows/Codexio.exe`，清单放在同目录。从 SSH 暂存源码构建时，调用本次的 `build_exe.ps1 -DeliveryRoot 'C:\CodeWJH\Projects\Codexio'`，避免沿用旧暂存脚本的复制分支。退出或替换失败时保留旧 EXE 和暂存产物，禁止转投 `pending`。交付结束后由用户自行启动新版。
-- Mac 目标被运行进程占用时保留原文件及暂存新版，不自动结束用户进程。整理 `build` 时保留运行中应用的原路径；当前 `build/macos` 属于待应用退出后清理的旧路径。
-- 本机 Codexio APP 由用户自行启动；开发、打包和核验时不要代用户启动已安装的 APP，也不要启动后要求用户确认。既有隔离模拟数据的打包冒烟入口照常执行。
+- Mac 开发包通过版本、签名、归档和三项隔离冒烟后，直接运行完整开发 APP 的既有安装接管入口。该入口先让当前 Codexio 正常退出，再替换 `/Applications/Codexio.app` 并启动新版，在确认启动及小组件注册后完成交付。接管失败时沿用原有回滚流程。整理 `build` 时保留仍运行的应用路径。
 - 读取文本文件显式指定 UTF-8。
 
 ## macOS 交付
@@ -225,3 +224,4 @@
 - 已确认 App 的 `input_tokens` 为未缓存输入，缓存读取另列，输出沿用源记录。以完整有效的原始计数派生总量，价格使用明确模型的官方 API 参考价。耗时、TPS、TTFT 缺少源证据时显示 `—`。参考 Google Hooks 文档及 agy-token-stats 的同口径记录。
 - 额度参考 CodexBar 在 App 模式使用的本机语言服务摘要。验证归属和同一用户后，通过 App 自有的 loopback HTTPS 读取主 Gemini 额度池的 `gemini-5h` 与 `gemini-weekly` 百分比和明确重置时间。额度采样与日志账本独立。Windows App 2.33.0 的实机核对记录在 `build/checks/antigravity-app-20261120/windows-quota.json`。Agent 标识来自 Google Antigravity Press Assets。
 - 模型调用的计时只读 App 原生会话数据库 `conversations/<UUID>.db` 和 WAL。按同一会话的生成记录所引用步骤、转录时间精度及原始输入／缓存读取／输出计数唯一匹配。明确首 Token 耗时与流式输出耗时相加得到调用耗时，再用同次调用的输出 Token 计算端到端平均 TPS。来源字段缺失或匹配冲突时保持缺失。参考 agy-statusline-rs 对 `gen_metadata` 的字段解码及 agy-pulse 的原生计时口径，Windows App 实机核对在 `build/checks/antigravity-timing-20261121/native-timing-evidence.json`。
+- 用户请求复用现有耗时和 TPS。确认运行时从该请求的提交时间显示实时经过时间，TPS 等待完成。完成后按同组所有已完成模型调用累加实际计时，用同组输出 Token 总数除以累计秒数。成员缺少有效计时或输出时显示缺失。Mac 请求小组件的耗时使用主程序发布的同一开始时间、有效期及完结值，交给 WidgetKit 显示计时。

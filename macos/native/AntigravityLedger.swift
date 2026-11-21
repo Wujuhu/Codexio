@@ -59,6 +59,7 @@ final class AntigravityLedger {
     private var scanned: [URL: FileStamp] = [:]
     private let cancellationLock = NSLock()
     private var cancelled = false
+    private static let activityExpiry: TimeInterval = 900
     private(set) var revision = 0
     private(set) var warning: String?
     private static let mainGeminiModels: Set<String> = ["gemini-4-neon", "gemini-4-carbon", "gemini-4-hydrogen", "gemini-3.8-flash"]
@@ -77,6 +78,11 @@ final class AntigravityLedger {
             CREATE INDEX IF NOT EXISTS antigravity_model_time ON antigravity_records(kind,model,timestamp DESC,id);
             CREATE INDEX IF NOT EXISTS antigravity_request ON antigravity_records(request,timestamp DESC,id);
             CREATE INDEX IF NOT EXISTS antigravity_session ON antigravity_records(session,timestamp DESC,id);
+            CREATE TABLE IF NOT EXISTS antigravity_live_requests(
+                session TEXT PRIMARY KEY, request TEXT NOT NULL, observed_at REAL NOT NULL, step INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS antigravity_live_by_request ON antigravity_live_requests(request);
+            CREATE INDEX IF NOT EXISTS antigravity_live_observed ON antigravity_live_requests(observed_at);
             """)
     }
 
@@ -125,6 +131,8 @@ final class AntigravityLedger {
         try refreshPrices()
         let brain = root.appendingPathComponent("brain", isDirectory: true)
         let stamp = FileStamp(brain)
+        try database.run("DELETE FROM antigravity_live_requests WHERE observed_at<=?", [now.timeIntervalSince1970 - Self.activityExpiry])
+        if try database.query("SELECT changes() AS n").first?.integer("n") ?? 0 > 0 { revision += 1 }
         guard stamp.exists else {
             warning = L("未找到 Antigravity App 本机记录", "No local Antigravity App records found")
             return
@@ -147,8 +155,8 @@ final class AntigravityLedger {
         for file in files {
             if isCancelled { return }
             do {
-                try scan(file.url, session: file.session)
-                try scan(fullTranscript(file.url), session: file.session, full: true)
+                try scan(file.url, session: file.session, now: now)
+                try scan(fullTranscript(file.url), session: file.session, now: now, full: true)
             }
             catch { warning = L("部分 Antigravity 记录暂不可读，已保存历史保留", "Some Antigravity records could not be read; saved history is retained") }
         }
@@ -158,7 +166,7 @@ final class AntigravityLedger {
         compact.deletingLastPathComponent().appendingPathComponent("transcript_full.jsonl")
     }
 
-    private func scan(_ file: URL, session: String, full: Bool = false) throws {
+    private func scan(_ file: URL, session: String, now: Date, full: Bool = false) throws {
         let stamp = FileStamp(file)
         guard stamp.exists, scanned[file] != stamp,
               file.resolvingSymlinksInPath().path == file.path,
@@ -195,7 +203,7 @@ final class AntigravityLedger {
                     if !data.isEmpty {
                         let raw = jsonObject(data)
                         if raw.isEmpty { badLine = true }
-                        else if try ingest(raw, session: session, request: &request, full: full) { changed = true }
+                        else if try ingest(raw, session: session, request: &request, now: now, full: full) { changed = true }
                     }
                     offset += end - start + 1
                     start = end + 1
@@ -221,11 +229,16 @@ final class AntigravityLedger {
         return digest(bytes)
     }
 
-    private func ingest(_ raw: Object, session: String, request: inout String, full: Bool) throws -> Bool {
+    private func ingest(_ raw: Object, session: String, request: inout String, now: Date, full: Bool) throws -> Bool {
         let type = raw.string("type")
         let isRequest = type == "USER_INPUT"
-        guard isRequest || type == "PLANNER_RESPONSE", let timestamp = parsedDate(raw["created_at"]),
-              let sourceStep = raw.integer("step_index") else { return false }
+        guard let timestamp = parsedDate(raw["created_at"]), let sourceStep = raw.integer("step_index") else { return false }
+        let eventStatus = raw.string("status")
+        if type == "GENERIC", !full, raw.string("source") == "MODEL",
+           ["RUNNING", "DONE"].contains(eventStatus), !request.isEmpty {
+            return try observeActivity(session: session, request: request, timestamp: timestamp, step: sourceStep, now: now, start: false)
+        }
+        guard isRequest || type == "PLANNER_RESPONSE" else { return false }
         let kind = isRequest ? "user_request" : "model_call"
         let id = "antigravity:" + identity([session, type, raw["created_at"] ?? NSNull(), sourceStep])
         let sourceContent = raw.string("content")
@@ -258,8 +271,9 @@ final class AntigravityLedger {
         if isRequest { request = id }
         var status: String
         // DONE on USER_INPUT describes receipt of the user step, not turn completion.
-        switch isRequest ? "" : raw.string("status") {
+        switch isRequest ? "" : eventStatus {
         case "DONE": status = "completed"
+        case "RUNNING": status = "running"
         case "ERROR", "FAILED": status = "failed"
         case "CANCELLED", "CANCELED", "ABORTED": status = "aborted"
         default: status = "unknown"
@@ -270,7 +284,7 @@ final class AntigravityLedger {
         }
         let final = !isRequest && status == "completed" && !content.isEmpty && (raw["tool_calls"] as? [Any] ?? []).isEmpty
         let previous = isRequest || truncated || request.isEmpty ? try database.query("SELECT data,status,request FROM antigravity_records WHERE id=?", [id]).first : nil
-        if isRequest, previous?.string("status") == "completed" { status = "completed" }
+        if isRequest, let prior = previous?.string("status"), ["completed", "failed", "aborted"].contains(prior) { status = prior }
         let groupID = request.isEmpty ? previous?.string("request") ?? "" : request
         var payload: Object = [
             "client_kind": "antigravity", "source_id": "local:antigravity", "session_id": session,
@@ -280,6 +294,9 @@ final class AntigravityLedger {
             "antigravity_truncated": truncated, "antigravity_final": final,
             "body_digest": contentDigest
         ]
+        if isRequest, let previous, let step = jsonObject(Data(previous.string("data").utf8)).integer("antigravity_terminal_step") {
+            payload["antigravity_terminal_step"] = step
+        }
         let effort = raw.string("reasoning_effort", raw.string("thinking_level"))
         if !effort.isEmpty { payload["reasoning_effort"] = effort }
         if !isRequest {
@@ -323,12 +340,44 @@ final class AntigravityLedger {
         if changed, !content.isEmpty, payload.string("body_digest") == contentDigest, !payload.flag("antigravity_full_body") {
             try storeBody(id, field: field, content: content, complete: !truncated)
         }
-        if final, !request.isEmpty {
-            try database.run("UPDATE antigravity_records SET status='completed',data=json_set(data,'$.status','completed') WHERE id=? AND status<>'completed'", [request])
+        if !isRequest, !groupID.isEmpty, final || ["failed", "aborted"].contains(status) {
+            let terminal = final ? "completed" : status
+            try database.run("""
+                UPDATE antigravity_records SET status=?,data=json_set(data,'$.status',?,'$.antigravity_terminal_step',?)
+                WHERE id=? AND kind='user_request' AND timestamp<=?
+                    AND COALESCE(json_extract(data,'$.antigravity_terminal_step'),-1)<?
+                    AND (status<>'completed' OR COALESCE(json_extract(data,'$.antigravity_terminal_step'),-1)>=0 OR ?='completed')
+                """, [terminal, terminal, sourceStep, groupID, timestamp.timeIntervalSince1970, sourceStep, terminal])
             let finished = try database.query("SELECT changes() AS n").first?.integer("n") == 1
-            return changed || finished
+            try database.run("DELETE FROM antigravity_live_requests WHERE session=? AND request=? AND (observed_at,step)<=(?,?)",
+                             [session, groupID, timestamp.timeIntervalSince1970, sourceStep])
+            return try database.query("SELECT changes() AS n").first?.integer("n") == 1 || changed || finished
+        }
+        if isRequest, status == "unknown", raw.string("source") == "USER_EXPLICIT", ["DONE", "RUNNING"].contains(eventStatus), !content.isEmpty {
+            return try observeActivity(session: session, request: id, timestamp: timestamp, step: sourceStep, now: now, start: true) || changed
+        }
+        if !isRequest, !groupID.isEmpty, status == "running" || status == "completed" {
+            return try observeActivity(session: session, request: groupID, timestamp: timestamp, step: sourceStep, now: now, start: false) || changed
         }
         return changed
+    }
+
+    private func observeActivity(session: String, request: String, timestamp: Date, step: Int, now: Date, start: Bool) throws -> Bool {
+        guard abs(now.timeIntervalSince(timestamp)) < Self.activityExpiry else { return false }
+        let observed = timestamp.timeIntervalSince1970
+        if start {
+            try database.run("""
+                INSERT INTO antigravity_live_requests VALUES(?,?,?,?)
+                ON CONFLICT(session) DO UPDATE SET request=excluded.request,observed_at=excluded.observed_at,step=excluded.step
+                WHERE (excluded.observed_at,excluded.step)>(antigravity_live_requests.observed_at,antigravity_live_requests.step)
+                """, [session, request, observed, step])
+        } else {
+            try database.run("""
+                UPDATE antigravity_live_requests SET observed_at=?,step=?
+                WHERE session=? AND request=? AND (observed_at,step)<(?,?)
+                """, [observed, step, session, request, observed, step])
+        }
+        return try database.query("SELECT changes() AS n").first?.integer("n") == 1
     }
 
     private func storeBody(_ id: String, field: String, content: String, complete: Bool) throws {
@@ -389,6 +438,35 @@ final class AntigravityLedger {
             .map { Date(timeIntervalSince1970: $0) }
     }
 
+    func nextActivityBoundary(after now: Date) throws -> Date? {
+        let threshold = now.timeIntervalSince1970
+        return try database.query("""
+            SELECT min(CASE WHEN observed_at>? THEN observed_at ELSE observed_at+? END) AS boundary
+            FROM antigravity_live_requests WHERE observed_at>?
+            """, [threshold, Self.activityExpiry, threshold - Self.activityExpiry]).first?.number("boundary")
+            .map { Date(timeIntervalSince1970: $0) }
+    }
+
+    func timingSourceSignature(for session: String) -> AntigravityNativeTiming.Signature? {
+        nativeTiming.sourceSignature(for: session)
+    }
+
+    func surfaceRequest(now: Date) throws -> UsageRow? {
+        let threshold = now.timeIntervalSince1970
+        let running = try database.query("""
+            SELECT r.id,r.kind,r.data FROM antigravity_live_requests live
+            JOIN antigravity_records r ON r.id=live.request AND r.session=live.session
+            WHERE r.kind='user_request' AND r.status='unknown' AND r.timestamp<=? AND live.observed_at>? AND live.observed_at<=?
+            ORDER BY r.timestamp DESC,r.id LIMIT 1
+            """, [threshold, threshold - Self.activityExpiry, threshold])
+        if !running.isEmpty { return try decode(running, now: now).first }
+        let range = UsageRange(period: "week", now: now)
+        return try decode(database.query("""
+            SELECT id,kind,data FROM antigravity_records WHERE kind='user_request' AND timestamp>=? AND timestamp<=?
+            ORDER BY timestamp DESC,id LIMIT 1
+            """, [range.start.timeIntervalSince1970, range.end.timeIntervalSince1970]), now: now).first
+    }
+
     private func filter(range: UsageRange, model: String = "all") -> (String, [Any]) {
         var sql = "timestamp>=? AND timestamp<=?"
         var args: [Any] = [range.start.timeIntervalSince1970, range.end.timeIntervalSince1970]
@@ -399,12 +477,13 @@ final class AntigravityLedger {
         return (sql, args)
     }
 
-    private func decode(_ rows: [Object]) throws -> [UsageRow] {
+    private func decode(_ rows: [Object], now: Date = Date()) throws -> [UsageRow] {
         let requests = rows.filter { $0.string("kind") == "user_request" }.map { $0.string("id") }
         let owners = Array(Set(rows.filter { $0.string("kind") == "model_call" }.map { $0.string("request") }.filter { !$0.isEmpty }))
         var models: [String: [AntigravityModelLabel]] = [:]
         var metrics: [String: Object] = [:]
         var summaries: [String: String] = [:]
+        var runningObservations: [String: Double] = [:]
         if !owners.isEmpty {
             let slots = Array(repeating: "?", count: owners.count).joined(separator: ",")
             for item in try database.query("SELECT id,search FROM antigravity_records WHERE kind='user_request' AND id IN (\(slots))", owners) {
@@ -413,6 +492,13 @@ final class AntigravityLedger {
         }
         if !requests.isEmpty {
             let slots = Array(repeating: "?", count: requests.count).joined(separator: ",")
+            let threshold = now.timeIntervalSince1970
+            for item in try database.query("""
+                SELECT request,observed_at FROM antigravity_live_requests
+                WHERE request IN (\(slots)) AND observed_at>? AND observed_at<=?
+                """, requests.map { $0 as Any } + [threshold - Self.activityExpiry, threshold]) {
+                runningObservations[item.string("request")] = item.number("observed_at")
+            }
             for item in try database.query("SELECT DISTINCT request,model,json_extract(data,'$.reasoning_effort') AS effort FROM antigravity_records WHERE request IN (\(slots)) AND kind='model_call' ORDER BY model,effort", requests) {
                 let label = AntigravityModelLabel(item.string("model"), explicitEffort: item.string("effort"))
                 models[item.string("request"), default: []].append(label)
@@ -445,16 +531,93 @@ final class AntigravityLedger {
                 }
                 if counts.number("cost") != nil { raw["pricing_status"] = "estimated" }
             }
+            if row.string("kind") == "user_request", raw.string("status") == "unknown",
+               let observed = runningObservations[row.string("id")], let start = parsedDate(raw["timestamp"]), start <= now {
+                raw["status"] = "running"
+                raw["duration_running"] = true
+                raw["duration_started_at"] = iso(start)
+                raw["duration_base_ms"] = 0
+                raw["duration_refresh_at"] = observed + Self.activityExpiry
+            }
             return raw
         }
         nativeTiming.apply(to: &decoded, ledger: database, cancelled: { self.isCancelled })
+        try applyRequestTiming(to: &decoded)
         return decoded.map(UsageRow.init(raw:))
+    }
+
+    private func applyRequestTiming(to rows: inout [Object]) throws {
+        let targets = rows.indices.filter { index in
+            let row = rows[index]
+            return row.string("record_kind") == "user_request" && row.string("status") == "completed" && row.integer("output_tokens") != nil
+        }
+        guard !targets.isEmpty else { return }
+        let requestSessions = Dictionary(uniqueKeysWithValues: targets.map { (rows[$0].string("id"), rows[$0].string("session_id")) })
+        let requests = requestSessions.keys.sorted()
+        let slots = Array(repeating: "?", count: requests.count).joined(separator: ",")
+        var sums: [String: Double] = [:]
+        var incomplete = Set<String>()
+        var after: [Any] = ["", "", 0.0, 0.0, ""]
+        // Read only the identity, output and timing fields of visible groups'
+        // children. Each batch may reuse the session's native timing cache.
+        while !isCancelled {
+            let batch = try database.query("""
+                SELECT request,session,timestamp,id,status,output,
+                       json_extract(data,'$.duration_ms') AS duration_ms,
+                       json_extract(data,'$.antigravity_counters') AS counters
+                FROM antigravity_records
+                WHERE kind='model_call' AND request IN (\(slots)) AND request>=?
+                    AND (request<>? OR timestamp<? OR (timestamp=? AND id>?))
+                ORDER BY request,timestamp DESC,id LIMIT 256
+                """, requests.map { $0 as Any } + after)
+            guard let last = batch.last, let timestamp = last.number("timestamp") else { break }
+            let request = last.string("request")
+            after = [request, request, timestamp, timestamp, last.string("id")]
+            var calls: [Object] = []
+            for child in batch {
+                let request = child.string("request"), session = child.string("session")
+                guard !incomplete.contains(request), child.string("status") == "completed",
+                      child.integer("output") != nil, requestSessions[request] == session else {
+                    incomplete.insert(request)
+                    continue
+                }
+                var call: Object = ["id": child.string("id"), "session_id": session, "request": request]
+                if let duration = child.number("duration_ms") { call["duration_ms"] = duration }
+                else { call["antigravity_counters"] = jsonObject(Data(child.string("counters").utf8)) }
+                calls.append(call)
+            }
+            nativeTiming.apply(to: &calls, ledger: database, cancelled: { self.isCancelled }, durationOnly: true)
+            for call in calls {
+                let request = call.string("request")
+                guard let duration = call.number("duration_ms"), duration > 0 else {
+                    incomplete.insert(request)
+                    continue
+                }
+                sums[request, default: 0] += duration
+            }
+        }
+        guard !isCancelled else { return }
+        for index in targets {
+            let id = rows[index].string("id")
+            guard !incomplete.contains(id), let duration = sums[id], duration.isFinite else { continue }
+            rows[index]["duration_ms"] = duration
+            rows[index]["duration_source"] = "antigravity_call_sum"
+        }
     }
 
     func logPage(range: UsageRange, mode: String, model: String, status: String, query: String, page: Int) throws -> LogProjection {
         var (sql, args) = filter(range: range, model: model)
         sql += mode == "calls" ? " AND kind='model_call'" : " AND (kind='user_request' OR request='')"
-        if status != "all" { sql += " AND status=?"; args.append(status) }
+        if status == "running" || status == "unknown" {
+            let now = Date().timeIntervalSince1970
+            let running = """
+                (kind='user_request' AND EXISTS(SELECT 1 FROM antigravity_live_requests l
+                WHERE l.request=antigravity_records.id AND l.observed_at>? AND l.observed_at<=?))
+                """
+            sql += status == "running" ? " AND (status='running' OR (status='unknown' AND \(running)))"
+                : " AND (status='unknown' AND NOT \(running))"
+            args += [now - Self.activityExpiry, now]
+        } else if status != "all" { sql += " AND status=?"; args.append(status) }
         if !query.isEmpty {
             sql += " AND (instr(lower(search),lower(?))>0 OR instr(lower(session),lower(?))>0 OR (kind='model_call' AND EXISTS(SELECT 1 FROM antigravity_records owner WHERE owner.id=antigravity_records.request AND owner.kind='user_request' AND instr(lower(owner.search),lower(?))>0)))"
             args += [query, query, query]
@@ -470,7 +633,7 @@ final class AntigravityLedger {
         return LogProjection(rows: rows, count: count, unassigned: summary.integer("orphan") ?? 0, showYear: showYear, page: selected)
     }
 
-    func trend(range: UsageRange, model: String = "all", granularity: String) throws -> TrendProjection {
+    func trend(range: UsageRange, model: String = "all", granularity: String, includeRecent: Bool = true) throws -> TrendProjection {
         let (sql, args) = filter(range: range, model: model)
         var summary = UsageSummary()
         let aggregate = "count(*) AS n,sum(input) AS input,sum(cached) AS cached,sum(output) AS output,sum(total) AS tokens,sum(cost) AS cost,count(*)-count(cost) AS unknown_costs,sum(total IS NULL OR cost IS NULL) AS incomplete"
@@ -481,7 +644,7 @@ final class AntigravityLedger {
             .map { row in UsageModel(id: row.string("model"), name: modelName(row.string("model")), metric: ModelMetrics(tokens: row.integer("tokens"), cost: row.number("cost"), costComplete: row.integer("unknown_costs") == 0)) }
         let byCost = models.sorted { ($0.metric.cost ?? 0) == ($1.metric.cost ?? 0) ? $0.id < $1.id : ($0.metric.cost ?? 0) > ($1.metric.cost ?? 0) }
         let byTokens = models.sorted { ($0.metric.tokens ?? 0) == ($1.metric.tokens ?? 0) ? $0.id < $1.id : ($0.metric.tokens ?? 0) > ($1.metric.tokens ?? 0) }
-        let recent = try decode(database.query("SELECT id,kind,data FROM antigravity_records WHERE kind='user_request' AND \(sql) ORDER BY timestamp DESC,id LIMIT 3", args))
+        let recent = includeRecent ? try decode(database.query("SELECT id,kind,data FROM antigravity_records WHERE kind='user_request' AND \(sql) ORDER BY timestamp DESC,id LIMIT 3", args)) : []
         return TrendProjection(summary: summary, days: try days(sql: sql, args: args, range: range, granularity: granularity), recent: recent, modelRows: [byCost, byTokens, []])
     }
 
@@ -529,7 +692,8 @@ final class AntigravityLedger {
         let last = try database.query("SELECT id,data FROM antigravity_records WHERE request=? AND kind='model_call' AND json_extract(data,'$.antigravity_final')=1 ORDER BY timestamp DESC,id DESC LIMIT 1", [row.id]).first
         let answer = try last.flatMap { try database.requestMessageRow($0.string("id")) }.map { jsonObject(Data($0.string("data").utf8)).string("final") } ?? ""
         let answerTruncated = last.map { jsonObject(Data($0.string("data").utf8)).flag("antigravity_truncated") } ?? false
-        return AntigravityDetail(prompt: body.string("user"), answer: answer, members: members, pages: max(1, (count + 49)/50), answerTruncated: answerTruncated)
+        let timing = try decode(database.query("SELECT id,kind,data FROM antigravity_records WHERE id=? AND kind='user_request'", [row.id])).first
+        return AntigravityDetail(prompt: body.string("user"), answer: answer, timing: timing, members: members, pages: max(1, (count + 49)/50), answerTruncated: answerTruncated)
     }
 
     func reportAggregate(range: DateInterval) throws -> UsageReportStore.Aggregate {
