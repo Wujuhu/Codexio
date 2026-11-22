@@ -50,9 +50,19 @@ struct AntigravityModelLabel {
 /// Indexed copy of Antigravity App's local JSONL. The source is opened read-only;
 /// cursor updates and archived text commit with the corresponding ledger rows.
 final class AntigravityLedger {
+    private struct LiveRequest: Equatable {
+        let session: String
+        let id: String
+        let started: Double
+        let observed: Double
+        let step: Int
+    }
+
     let root: URL
     private let database: Database
     private lazy var nativeTiming = AntigravityNativeTiming(root: root)
+    private let nativeSummaries = ReadOnlySource()
+    private var checkedSummaries: (stamp: AntigravityNativeTiming.Signature, requests: [LiveRequest])?
     private var files: [(session: String, url: URL)] = []
     private var discoveryStamp: FileStamp?
     private var discoveredAt = Date.distantPast
@@ -83,6 +93,12 @@ final class AntigravityLedger {
             );
             CREATE INDEX IF NOT EXISTS antigravity_live_by_request ON antigravity_live_requests(request);
             CREATE INDEX IF NOT EXISTS antigravity_live_observed ON antigravity_live_requests(observed_at);
+            CREATE TEMP TABLE antigravity_idle_requests(request TEXT PRIMARY KEY, observed_at REAL NOT NULL, step INTEGER NOT NULL);
+            CREATE TEMP VIEW antigravity_running_requests AS
+                SELECT live.* FROM antigravity_live_requests live WHERE NOT EXISTS (
+                    SELECT 1 FROM antigravity_idle_requests idle
+                    WHERE idle.request=live.request AND idle.observed_at=live.observed_at AND idle.step=live.step
+                );
             """)
     }
 
@@ -160,6 +176,68 @@ final class AntigravityLedger {
             }
             catch { warning = L("部分 Antigravity 记录暂不可读，已保存历史保留", "Some Antigravity records could not be read; saved history is retained") }
         }
+        if !isCancelled { try reconcileIdleRequests(now: now) }
+    }
+
+    private func reconcileIdleRequests(now: Date) throws {
+        let threshold = now.timeIntervalSince1970
+        try database.run("DELETE FROM antigravity_idle_requests WHERE observed_at<=?", [threshold - Self.activityExpiry])
+        let live = try database.query("""
+            SELECT l.session,l.request,l.observed_at,l.step,r.timestamp FROM antigravity_running_requests l
+            JOIN antigravity_records r ON r.id=l.request AND r.session=l.session
+            WHERE r.kind='user_request' AND r.status='unknown' AND l.observed_at>? AND l.observed_at<=?
+            AND NOT EXISTS (SELECT 1 FROM antigravity_records other WHERE other.session=r.session
+                AND other.timestamp=r.timestamp AND other.kind='user_request' AND other.id<>r.id)
+            ORDER BY l.observed_at DESC,l.session LIMIT 64
+            """, [threshold - Self.activityExpiry, threshold]).compactMap { row -> LiveRequest? in
+            guard let started = row.number("timestamp"), let observed = row.number("observed_at"),
+                  let step = row.integer("step"), started == floor(started), observed == floor(observed) else { return nil }
+            return LiveRequest(session: row.string("session"), id: row.string("request"), started: started, observed: observed, step: step)
+        }
+        guard !live.isEmpty else { checkedSummaries = nil; return }
+        let url = root.appendingPathComponent("conversation_summaries.db")
+        let stamp = AntigravityNativeTiming.Signature(url)
+        guard stamp.main.exists, url.resolvingSymlinksInPath().path == url.path,
+              checkedSummaries?.stamp != stamp || checkedSummaries?.requests != live else { return }
+        let parameters = Array(repeating: "?", count: live.count).joined(separator: ",")
+        func read(_ source: Database) throws -> [Object] {
+            try source.query("""
+                SELECT conversation_id,step_count,last_user_input_step_index,
+                    CAST(strftime('%s',last_user_input_time) AS INTEGER) AS input_at,
+                    strftime('%Y-%m-%dT%H:%M:%SZ',last_user_input_time) AS input_iso,
+                    CAST(strftime('%s',last_modified_time) AS INTEGER) AS modified_at
+                FROM conversation_summaries WHERE conversation_id IN (\(parameters))
+                    AND status='CASCADE_RUN_STATUS_IDLE' AND not_fully_idle=0 AND killed=0
+                    AND julianday(last_modified_time)>julianday(last_user_input_time)
+                """, live.map(\.session))
+        }
+        let summaries: [Object]
+        do {
+            summaries = try read(Database(url, readOnly: true, busyTimeout: 50))
+        } catch {
+            guard !stamp.wal.exists, !stamp.journal.exists, !isCancelled,
+                  let fallback = try? nativeSummaries.read(url, read) else { return }
+            summaries = fallback
+        }
+        guard !isCancelled, AntigravityNativeTiming.Signature(url) == stamp else { return }
+        var changed = false
+        for summary in summaries {
+            guard let request = live.first(where: { $0.session == summary.string("conversation_id") }),
+                  summary.number("input_at") == request.started,
+                  let modified = summary.number("modified_at"), modified >= request.observed, modified <= threshold,
+                  let count = summary.integer("step_count"), count > request.step,
+                  let userStep = summary.integer("last_user_input_step_index"), userStep >= -1 else { continue }
+            if userStep >= 0 {
+                let sourceID = "antigravity:" + identity([request.session, "USER_INPUT", summary.string("input_iso"), userStep] as [Any])
+                guard sourceID == request.id else { continue }
+            }
+            // Idle removes only the timer for this exact observation. A later
+            // step can resume it, and the transcript owns the final outcome.
+            try database.run("INSERT OR REPLACE INTO antigravity_idle_requests VALUES(?,?,?)", [request.id, request.observed, request.step])
+            changed = true
+        }
+        checkedSummaries = (stamp, live)
+        if changed { revision += 1 }
     }
 
     private func fullTranscript(_ compact: URL) -> URL {
@@ -442,7 +520,7 @@ final class AntigravityLedger {
         let threshold = now.timeIntervalSince1970
         return try database.query("""
             SELECT min(CASE WHEN observed_at>? THEN observed_at ELSE observed_at+? END) AS boundary
-            FROM antigravity_live_requests WHERE observed_at>?
+            FROM antigravity_running_requests WHERE observed_at>?
             """, [threshold, Self.activityExpiry, threshold - Self.activityExpiry]).first?.number("boundary")
             .map { Date(timeIntervalSince1970: $0) }
     }
@@ -454,7 +532,7 @@ final class AntigravityLedger {
     func surfaceRequest(now: Date) throws -> UsageRow? {
         let threshold = now.timeIntervalSince1970
         let running = try database.query("""
-            SELECT r.id,r.kind,r.data FROM antigravity_live_requests live
+            SELECT r.id,r.kind,r.data FROM antigravity_running_requests live
             JOIN antigravity_records r ON r.id=live.request AND r.session=live.session
             WHERE r.kind='user_request' AND r.status='unknown' AND r.timestamp<=? AND live.observed_at>? AND live.observed_at<=?
             ORDER BY r.timestamp DESC,r.id LIMIT 1
@@ -494,7 +572,7 @@ final class AntigravityLedger {
             let slots = Array(repeating: "?", count: requests.count).joined(separator: ",")
             let threshold = now.timeIntervalSince1970
             for item in try database.query("""
-                SELECT request,observed_at FROM antigravity_live_requests
+                SELECT request,observed_at FROM antigravity_running_requests
                 WHERE request IN (\(slots)) AND observed_at>? AND observed_at<=?
                 """, requests.map { $0 as Any } + [threshold - Self.activityExpiry, threshold]) {
                 runningObservations[item.string("request")] = item.number("observed_at")
@@ -611,7 +689,7 @@ final class AntigravityLedger {
         if status == "running" || status == "unknown" {
             let now = Date().timeIntervalSince1970
             let running = """
-                (kind='user_request' AND EXISTS(SELECT 1 FROM antigravity_live_requests l
+                (kind='user_request' AND EXISTS(SELECT 1 FROM antigravity_running_requests l
                 WHERE l.request=antigravity_records.id AND l.observed_at>? AND l.observed_at<=?))
                 """
             sql += status == "running" ? " AND (status='running' OR (status='unknown' AND \(running)))"

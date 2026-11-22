@@ -29,11 +29,12 @@ func antigravityUserText(value string) string {
 }
 
 type antigravityScan struct {
-	files      []string
-	stamp      int64
-	discovered time.Time
-	status     Row
-	updated    string
+	files              []string
+	stamp              int64
+	discovered         time.Time
+	status             Row
+	updated            string
+	activityReconciled bool
 }
 
 func antigravityRoot() string {
@@ -47,6 +48,9 @@ func (s *Store) antigravitySchema() error {
 		CREATE INDEX IF NOT EXISTS antigravity_events_session ON antigravity_events(session_id,timestamp);
 		CREATE TABLE IF NOT EXISTS antigravity_requests(id TEXT PRIMARY KEY,session_id TEXT NOT NULL,data TEXT NOT NULL);
 		CREATE INDEX IF NOT EXISTS antigravity_requests_session ON antigravity_requests(session_id);
+		CREATE INDEX IF NOT EXISTS antigravity_requests_start ON antigravity_requests(session_id,json_extract(data,'$.timestamp'));
+		CREATE INDEX IF NOT EXISTS antigravity_requests_running ON antigravity_requests(json_extract(data,'$.running_observed_at'))
+		WHERE json_extract(data,'$.status')='running';
 		CREATE INDEX IF NOT EXISTS go_priced_antigravity_owner ON usage_priced_calls(json_extract(data,'$.antigravity_request_id'),timestamp,id)
 		WHERE json_extract(data,'$.client_kind')='antigravity';`)
 	return err
@@ -260,6 +264,7 @@ func (s *Store) antigravityEntry(tx *sql.Tx, event Row, session string, current 
 		request = dataRow(raw)
 	}
 	if kind == "USER_INPUT" && dataString(row, "source") == "USER_EXPLICIT" {
+		s.antigravity.activityReconciled = false
 		if len(request) == 0 {
 			request = Row{"id": *current, "session_id": session, "timestamp": at, "client_kind": antigravityClient, "record_kind": "user_request", "source_ids": []string{"local:antigravity"}, "status": "unknown", "request_status": "unknown"}
 		}
@@ -278,7 +283,9 @@ func (s *Store) antigravityEntry(tx *sql.Tx, event Row, session string, current 
 	}
 	if kind == "PLANNER_RESPONSE" {
 		if len(request) > 0 && (row["status"] == "RUNNING" || row["status"] == "DONE" && ValueBool(row["has_tool_calls"])) {
-			observeAntigravityActivity(request, at, "running")
+			if observeAntigravityActivity(request, at, "running") {
+				s.antigravity.activityReconciled = false
+			}
 		}
 		if _, hasInput := knownCount(row["input_tokens"]); hasInput {
 			call := Row{"id": id, "session_id": session, "timestamp": at, "model": firstString(row["model"], "unknown"), "client_kind": antigravityClient, "antigravity_request_id": requestID, "record_kind": "model_call", "quality": "response", "status": "completed", "request_status": "completed", "output_tokens": row["output_tokens"], "raw_input_tokens": row["input_tokens"], "raw_cache_read_tokens": row["cache_read_tokens"], "raw_output_tokens": row["output_tokens"], "source_id": "local:antigravity", "output_preview": clip(dataString(row, "content"), 600)}
@@ -351,6 +358,9 @@ func observeAntigravityActivity(request Row, at, status string) bool {
 		return false
 	}
 	if status == "running" {
+		if ValueBool(request["running_superseded"]) {
+			return false
+		}
 		// Only verified progress after a known end can reopen the same request.
 		if request["status"] == "completed" || request["status"] == "failed" || request["status"] == "aborted" {
 			if end := dataString(request, "ended_at"); end == "" || at <= end {
@@ -364,6 +374,50 @@ func observeAntigravityActivity(request Row, at, status string) bool {
 	}
 	request["status"], request["request_status"] = status, status
 	return true
+}
+
+func (s *Store) reconcileAntigravityActivity(ctx context.Context) error {
+	if s.antigravity.activityReconciled {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// A conversation has one visible active request. The transcript can record
+	// multiple accepted inputs for a reused step, with only the newer input
+	// receiving the reply. Preserve both rows and any independent terminal state.
+	const limit = 64
+	rows, err := queryJSON(tx, `SELECT earlier.data FROM antigravity_requests earlier
+		WHERE json_extract(earlier.data,'$.status')='running'
+		  AND json_extract(earlier.data,'$.running_observed_at')>=?
+		  AND EXISTS (
+		    SELECT 1 FROM antigravity_requests later
+		    JOIN antigravity_events input ON input.id=replace(later.id,':request:',':event:')
+		    WHERE later.session_id=earlier.session_id AND later.id<>earlier.id
+		      AND json_extract(later.data,'$.timestamp')>=json_extract(earlier.data,'$.timestamp')
+		      AND json_extract(input.data,'$.source')='USER_EXPLICIT'
+		      AND json_extract(input.data,'$.type')='USER_INPUT'
+		      AND json_extract(input.data,'$.status') IN ('DONE','RUNNING')
+		      AND (json_extract(later.data,'$.timestamp')>json_extract(earlier.data,'$.timestamp')
+		        OR json_extract(input.data,'$.step_index')>(SELECT json_extract(origin.data,'$.step_index')
+		          FROM antigravity_events origin WHERE origin.id=replace(earlier.id,':request:',':event:')))
+		  ) ORDER BY json_extract(earlier.data,'$.running_observed_at') DESC LIMIT ?`, ledgerStamp(time.Now().Add(-24*time.Hour)), limit)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		row["status"], row["request_status"], row["running_superseded"] = "unknown", "unknown", true
+		if err := saveAntigravityRequest(tx, row); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.antigravity.activityReconciled = len(rows) < limit
+	return nil
 }
 
 func presentAntigravityActivity(group Row, now time.Time) {

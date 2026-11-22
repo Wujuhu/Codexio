@@ -402,7 +402,7 @@ func (s *Store) Run(ctx context.Context, changed func(partial bool), firstOvervi
 				s.setStartupStage("claude")
 			}
 			claudeErr = s.collectClaude(ctx, force)
-			antigravityErr = s.collectAntigravity(ctx, force)
+			antigravityErr = errors.Join(s.collectAntigravity(ctx, force), s.reconcileAntigravityActivity(ctx))
 			if codexErr == nil && claudeErr == nil {
 				_ = s.syncPrices(ctx, false)
 				_ = s.syncClaudePrices(ctx, false)
