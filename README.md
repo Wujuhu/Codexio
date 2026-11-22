@@ -21,7 +21,7 @@ Codexio 是 Codex、Claude Code 与 Antigravity App 的用量和请求看板。�
 
 ## 下载与安装
 
-当前 Mac 与 Windows 源码版本为 **0.3.17**。正式安装包、各平台版本与更新说明以 **[最新 Release](https://github.com/Wujuhu/Codexio/releases/latest)** 和其中的 `latest.json` 为准。
+当前 Mac 与 Windows 源码版本为 **0.3.19**。正式安装包、各平台版本与更新说明以 **[最新 Release](https://github.com/Wujuhu/Codexio/releases/latest)** 和其中的 `latest.json` 为准。
 
 | 平台 | 系统要求 | 安装包 |
 | --- | --- | --- |
@@ -64,7 +64,7 @@ Mac 使用 `/Applications/Codexio.app` 作为稳定安装位置。从其他目�
 
 过程来自本机可读取的 Codex／Claude Code 记录，按需分页加载。单个工具通常没有独立的 Token 或费用数据，应用不会分摊模型调用的消耗；日志缺失的摘要、计时等字段显示 `—`，不重建不可见的思考过程。文件操作展示路径和类型，不展开文件差异或完整命令输出。此执行行程仅在桌面端展示。
 
-Antigravity 读取原版桌面 App 的本地会话记录，提供概览、日志、用量、正文详情和使用报告。额度来自已登录 App 自带的本机语言服务，显示主 Gemini 额度池的 5 小时和周剩余量及重置时间。App 运行时可刷新，缺失字段显示 `—`。Mac 菜单栏弹层纵向排列三组 Agent 卡片，菜单栏设置可选 Antigravity 字段。小组件和 Windows 托盘也使用本机额度数据。[Antigravity 日志来源](https://antigravity.google/docs/hooks#common-input-fields)
+Antigravity 读取原版桌面 App 的本地会话记录，提供概览、日志、用量、正文详情和使用报告。额度来自已登录 App 自带的本机语言服务，兼容 Antigravity 2.34，显示主 Gemini 额度池的 5 小时和周剩余量及重置时间。App 运行时可刷新，订阅页在积累有效采样后显示周额度估算，未获取的数据和已过重置时间的额度显示 `—`。Mac 菜单栏弹层纵向排列三组 Agent 卡片，菜单栏设置可选 Antigravity 字段。小组件和 Windows 托盘也使用本机额度数据。[Antigravity 日志来源](https://antigravity.google/docs/hooks#common-input-fields)
 
 当前桌面源码同时读取 Codex 的 `.jsonl` 与 `.jsonl.zst` 压缩会话日志，包含归档会话；历史 Token、费用、请求分组、可读取的正文与执行行程沿用同一解析和计价规则。文件压缩后仍使用原有记录身份，避免重复计数，来源暂时不可见也不会清除已经确认的用量。已采集的完整请求正文与元数据压缩后长期保存，内嵌图片按内容哈希保留；清理明文缓存不删除这些正式历史数据。解压在后台进行，临时文件在最后一个读取者关闭时删除；来源未变化且已经完成采集和归档时，不重复解压。不以 1 GB 文件或前 64 MB 正文范围作为读取截止条件，原始 Codex 文件保持只读。
 

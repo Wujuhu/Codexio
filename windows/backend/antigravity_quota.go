@@ -49,86 +49,133 @@ func (q *AntigravityQuota) Refresh() {
 }
 
 func (q *AntigravityQuota) Snapshot() Row {
+	result, _ := q.snapshot(q.interval())
+	return result
+}
+
+func (q *AntigravityQuota) interval() int64 {
+	interval := ValueInt(q.config()["refresh_interval_seconds"])
+	if interval < 30 {
+		return 60
+	}
+	return interval
+}
+
+func (q *AntigravityQuota) snapshot(interval int64) (Row, time.Time) {
 	q.mu.RLock()
 	result := CloneRow(q.state)
 	q.mu.RUnlock()
+	now := time.Now()
 	updated, valid := ParseStamp(result["updated_at"])
-	stale := !valid || time.Since(updated) > time.Duration(max(120, ValueInt(q.config()["refresh_interval_seconds"])*2))*time.Second || time.Since(updated) < 0
+	freshUntil := updated.Add(time.Duration(max(120, interval*2)) * time.Second)
+	stale := !valid || now.Before(updated) || !now.Before(freshUntil)
+	var deadline time.Time
+	if !stale && result["status"] == "ok" {
+		deadline = freshUntil
+	}
+	projectBucket := func(bucket Row) {
+		reset, ok := ParseStamp(bucket["resets_at"])
+		if !ok {
+			return
+		}
+		if !now.Before(reset) {
+			bucket["remaining_percent"], bucket["used_percent"] = nil, nil
+			stale = true
+		} else if deadline.IsZero() || reset.Before(deadline) {
+			deadline = reset
+		}
+	}
 	for _, key := range []string{"primary", "secondary"} {
-		bucket := ValueRow(result[key])
-		if len(bucket) > 0 {
-			if reset, ok := ParseStamp(bucket["resets_at"]); ok && !time.Now().Before(reset) {
-				bucket["remaining_percent"], bucket["used_percent"] = nil, nil
-				stale = true
-			}
+		projectBucket(ValueRow(result[key]))
+	}
+	for _, group := range ValueRows(result["groups"]) {
+		for _, bucket := range ValueRows(group["buckets"]) {
+			projectBucket(bucket)
 		}
 	}
 	if stale && result["status"] == "ok" {
 		result["status"] = "stale"
 	}
 	result["client_kind"], result["retained"] = antigravityClient, valid && result["status"] != "ok"
-	return result
+	return result, deadline
 }
 
 func (q *AntigravityQuota) Run(ctx context.Context) {
-	timer := time.NewTimer(time.Millisecond)
+	timer := time.NewTimer(0)
 	defer timer.Stop()
+	var nextPoll time.Time
+	var published string
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-q.wake:
+			nextPoll = time.Time{}
 		case <-timer.C:
 		}
-		readCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
-		value, err := readAntigravityQuota(readCtx)
-		cancel()
-		if ctx.Err() != nil {
-			return
-		}
-		q.mu.Lock()
-		old := CloneRow(q.state)
-		if err != nil {
-			message := errAntigravityQuotaUnavailable
-			if errors.Is(err, errAntigravityAppClosed) {
-				message = errAntigravityAppClosed
+		interval := q.interval()
+		if !time.Now().Before(nextPoll) {
+			pollInterval := q.poll(ctx, interval)
+			if ctx.Err() != nil {
+				return
 			}
-			q.state["status"], q.state["error"] = "unavailable", message.Error()
-			q.state["account_key"] = ""
-		} else {
-			groups := ValueRows(value["groups"])
-			q.state = Row{"status": "ok", "groups": groups, "updated_at": UTCStamp(time.Now()), "primary": nil, "secondary": nil, "account_key": value["account_key"], "plan_type": value["plan_type"], "limit_id": antigravityClient}
-			for _, group := range groups {
-				for _, bucket := range ValueRows(group["buckets"]) {
-					key := "primary"
-					if bucket["id"] == "gemini-weekly" {
-						key = "secondary"
-					}
-					q.state[key] = bucket
-				}
+			nextPoll = time.Now().Add(pollInterval)
+		}
+		// Compare the displayed values to the last publication so aged values
+		// expire even when the App returns the previous billing window again.
+		result, deadline := q.snapshot(interval)
+		delete(result, "updated_at")
+		if signature := dataJSON(result); signature != published {
+			published = signature
+			if q.changed != nil {
+				q.changed()
 			}
 		}
-		before, after := CloneRow(old), CloneRow(q.state)
-		delete(before, "updated_at")
-		delete(after, "updated_at")
-		changed := dataJSON(before) != dataJSON(after)
-		sampled := CloneRow(q.state)
-		q.mu.Unlock()
-		if q.sample != nil {
-			q.sample(sampled)
+		next := nextPoll
+		if !deadline.IsZero() && deadline.Before(next) {
+			next = deadline
 		}
-		if changed && q.changed != nil {
-			q.changed()
+		timer.Reset(time.Until(next))
+	}
+}
+
+func (q *AntigravityQuota) poll(ctx context.Context, interval int64) time.Duration {
+	readCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	value, err := readAntigravityQuota(readCtx)
+	cancel()
+	if ctx.Err() != nil {
+		return 0
+	}
+	q.mu.Lock()
+	if err != nil {
+		message := errAntigravityQuotaUnavailable
+		if errors.Is(err, errAntigravityAppClosed) {
+			message = errAntigravityAppClosed
 		}
-		interval := ValueInt(q.config()["refresh_interval_seconds"])
-		if interval < 30 {
-			interval = 60
-		}
-		if err != nil && len(ValueRows(old["groups"])) == 0 {
+		q.state["status"], q.state["error"] = "unavailable", message.Error()
+		q.state["account_key"] = ""
+		if len(ValueRows(q.state["groups"])) == 0 {
 			interval = 30
 		}
-		timer.Reset(time.Duration(interval) * time.Second)
+	} else {
+		groups := ValueRows(value["groups"])
+		q.state = Row{"status": "ok", "groups": groups, "updated_at": UTCStamp(time.Now()), "primary": nil, "secondary": nil, "account_key": value["account_key"], "plan_type": value["plan_type"], "limit_id": antigravityClient}
+		for _, group := range groups {
+			for _, bucket := range ValueRows(group["buckets"]) {
+				key := "primary"
+				if bucket["id"] == "gemini-weekly" {
+					key = "secondary"
+				}
+				q.state[key] = bucket
+			}
+		}
 	}
+	sampled := CloneRow(q.state)
+	q.mu.Unlock()
+	if q.sample != nil {
+		q.sample(sampled)
+	}
+	return time.Duration(interval) * time.Second
 }
 
 func readAntigravityQuota(ctx context.Context) (Row, error) {

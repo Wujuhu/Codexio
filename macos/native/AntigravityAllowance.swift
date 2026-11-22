@@ -45,6 +45,18 @@ final class AntigravityAllowance: NSObject, URLSessionTaskDelegate {
         let pid: pid_t
         let parent: pid_t
     }
+    private struct ListenerDescriptor: Decodable {
+        let pid: pid_t
+        let httpPort: UInt16
+        let httpsPort: UInt16
+        let csrfToken: String
+
+        var validToken: Bool {
+            (16...512).contains(csrfToken.utf8.count) && csrfToken.allSatisfy {
+                $0.isASCII && ($0.isLetter || $0.isNumber || "._~+/=-".contains($0))
+            }
+        }
+    }
     private let queue = DispatchQueue(label: "com.wujuhu.codexio.antigravity-quota", qos: .utility)
     private var verifiedBundles: [URL: FileStamp] = [:] // queue owned
     private lazy var client: URLSession = {
@@ -153,20 +165,58 @@ final class AntigravityAllowance: NSObject, URLSessionTaskDelegate {
     }
 
     private func readListener(_ pid: pid_t) throws -> (token: String, ports: [UInt16]) {
+        let listeners = try execute("/usr/sbin/lsof", ["-nP", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN", "-Fn"], timeout: 2)
+        let ports = Set(String(decoding: listeners.output, as: UTF8.self).split(separator: "\n").compactMap { line -> UInt16? in
+            guard line.hasPrefix("n127.0.0.1:"), let value = UInt16(line.dropFirst("n127.0.0.1:".count)), value > 0 else { return nil }
+            return value
+        })
+        guard !ports.isEmpty else { return ("", []) }
+        if let descriptor = listenerDescriptor(pid, ports: ports) {
+            return (descriptor.csrfToken, [descriptor.httpsPort])
+        }
+
+        // Older desktop App builds still advertise their handshake in arguments.
         let command = try execute("/bin/ps", ["-ww", "-p", String(pid), "-o", "command="], timeout: 2)
         let arguments = String(decoding: command.output, as: UTF8.self).split(whereSeparator: \.isWhitespace)
         let token = arguments.enumerated().compactMap { index, value -> String? in
-            if value == "--csrf_token", arguments.indices.contains(index + 1) { return String(arguments[index + 1]) }
-            if value.hasPrefix("--csrf_token=") { return String(value.dropFirst("--csrf_token=".count)) }
+            for flag in ["--csrf_token", "--csrf-token"] {
+                if value == flag, arguments.indices.contains(index + 1) { return String(arguments[index + 1]) }
+                if value.hasPrefix(flag + "=") { return String(value.dropFirst(flag.count + 1)) }
+            }
             return nil
         }.first
         guard let token, !token.isEmpty, token.utf8.count <= 512, token.utf8.allSatisfy({ $0 > 32 && $0 < 127 }) else { return ("", []) }
-        let listeners = try execute("/usr/sbin/lsof", ["-nP", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN", "-Fn"], timeout: 2)
-        let ports = String(decoding: listeners.output, as: UTF8.self).split(separator: "\n").compactMap { line -> UInt16? in
-            guard line.hasPrefix("n127.0.0.1:"), let value = UInt16(line.dropFirst("n127.0.0.1:".count)), value > 0 else { return nil }
-            return value
+        return (token, ports.sorted())
+    }
+
+    private func listenerDescriptor(_ pid: pid_t, ports: Set<UInt16>) -> ListenerDescriptor? {
+        var process = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &process, size) == size, process.pbi_uid == getuid() else { return nil }
+        let start = Double(process.pbi_start_tvsec) + Double(process.pbi_start_tvusec) / 1_000_000
+        let daemon = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".gemini/antigravity/daemon", isDirectory: true)
+        for port in ports.sorted() {
+            let path = daemon.appendingPathComponent("hub_\(port).json")
+            guard let descriptor = readDescriptor(path, since: start), descriptor.pid == pid,
+                  descriptor.httpPort == port, descriptor.httpsPort != port, ports.contains(descriptor.httpsPort),
+                  descriptor.validToken else { continue }
+            return descriptor
         }
-        return (token, Array(Set(ports)).sorted())
+        return nil
+    }
+
+    private func readDescriptor(_ path: URL, since start: TimeInterval) -> ListenerDescriptor? {
+        let maxSize = 16 * 1024
+        let fd = open(path.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard fd >= 0 else { return nil }
+        let file = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        defer { try? file.close() }
+        var info = stat()
+        guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_uid == getuid(),
+              info.st_mode & 0o022 == 0, (1...maxSize).contains(Int(info.st_size)) else { return nil }
+        let modified = Double(info.st_mtimespec.tv_sec) + Double(info.st_mtimespec.tv_nsec) / 1_000_000_000
+        guard modified >= start, let data = try? file.read(upToCount: maxSize + 1), data.count <= maxSize else { return nil }
+        return try? JSONDecoder().decode(ListenerDescriptor.self, from: data)
     }
 
     private struct Account: Equatable {

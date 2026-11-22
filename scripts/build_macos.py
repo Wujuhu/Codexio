@@ -20,7 +20,7 @@ from codexio.versions import AppVersion
 BUILD = ROOT / "build"
 STAGING = BUILD / "staging/macos"
 DESTINATION = BUILD / "dev/macos"
-WIDGET_VERSION = 37  # Antigravity live request timing.
+WIDGET_VERSION = 38  # v0.3.19 host/version registration.
 
 
 def run(*args, **kwargs):

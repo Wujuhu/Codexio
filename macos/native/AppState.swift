@@ -34,6 +34,7 @@ final class AppState: ObservableObject {
     private let antigravityAllowance = AntigravityAllowance()
     private var antigravityQuotaRequest: UUID?
     private(set) var antigravityQuota = AntigravityQuota()
+    private var antigravityVisibleWindows: [AntigravityQuotaWindow] = []
     private let antigravityEstimator: WeeklyEstimator
     private var antigravityEstimateAccount = "" // dataQueue-owned
     private var antigravityEstimateRevision = -1
@@ -328,12 +329,14 @@ final class AppState: ObservableObject {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.antigravityQuotaRequest == request, !self.stopped else { return }
                 self.antigravityQuotaRequest = nil
-                let changed = self.antigravityQuota.windows != quota.windows || self.antigravityQuota.availability != quota.availability
+                let visibleWindows = quota.windows.filter { !$0.expired }
+                let changed = self.antigravityVisibleWindows != visibleWindows || self.antigravityQuota.availability != quota.availability
                 if self.antigravityQuota.accountKey != quota.accountKey {
                     self.antigravityEstimateRevision = -1
                     if !self.antigravityWeeklyEstimates.isEmpty { self.antigravityWeeklyEstimates = [] }
                 }
                 if changed { self.objectWillChange.send() }
+                self.antigravityVisibleWindows = visibleWindows
                 self.antigravityQuota = quota
                 if let observed = quota.observed { self.antigravityQuotaClock.updated = observed }
                 if changed { self.onMenuDataChange?() }
